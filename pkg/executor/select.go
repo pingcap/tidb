@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -260,7 +259,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			for tblID, cols := range e.tblID2Handle {
 				for _, col := range cols {
-					handle, err := col.BuildHandle(e.Ctx().GetSessionVars().StmtCtx, row)
+					handle, err := col.BuildHandle(row)
 					if err != nil {
 						return err
 					}
@@ -323,7 +322,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
 
-			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).
+			return kv.NewResourceGroupTagBuilder().
 				SetPlanDigest(planDigest).
 				SetSQLDigest(digest).
 				EncodeTagWithKey(mutation.Key)
@@ -566,7 +565,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is, nil)
+		e := newExecutorBuilder(sctx, is)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -956,7 +955,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
-	vars.ResetRelevantOptVarsAndFixes(false)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -975,11 +973,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
-	sessDom := domain.GetDomain(ctx)
-	var logOnQueryExceedMemQuota func(uint64)
-	if sessDom != nil {
-		logOnQueryExceedMemQuota = sessDom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota
-	}
+	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
 	switch vardef.OOMAction.Load() {
 	case vardef.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}

@@ -581,11 +581,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		partitions = tblInfo.GetPartitionInfo().Definitions
 	}
-	var scatterScope string
-	if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
-		scatterScope = val
-	}
-	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, scatterScope)
+	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions)
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -1702,20 +1698,4 @@ func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err err
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("alter table no cache", tbInfo.TableCacheStatusType.String())
 	}
 	return ver, err
-}
-
-func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	_, err = model.GetRefreshMetaArgs(job)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(err)
-	}
-	// update schema version
-	ver, err = updateSchemaVersion(jobCtx, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.State = model.JobStateDone
-	job.SchemaState = model.StatePublic
-	return ver, nil
 }

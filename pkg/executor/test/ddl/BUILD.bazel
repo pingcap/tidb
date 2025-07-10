@@ -16,7 +16,6 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/errno",
-        "//pkg/infoschema/issyncer",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",

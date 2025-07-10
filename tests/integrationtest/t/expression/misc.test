@@ -6,12 +6,11 @@ select timestamp '2017-01-01 00:00:00';
 select timestamp '2017@01@01 00:00:00';
 select timestamp '2017@01@01 00~00~00';
 select timestamp '2017@01@0001 00~00~00.333';
--- error 1525
+-- error 1292
 select timestamp '00:00:00';
--- error 1525
+-- error 1292
 select timestamp '1992-01-03';
--- error 1525
-# This is OK in MySQL!
+-- error 1292
 select timestamp '20171231235959.999999';
 
 # TestTimeLiteral

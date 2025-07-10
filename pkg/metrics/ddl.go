@@ -21,7 +21,6 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -99,7 +98,7 @@ var (
 
 // InitDDLMetrics initializes defines DDL metrics.
 func InitDDLMetrics() {
-	JobsGauge = metricscommon.NewGaugeVec(
+	JobsGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -107,7 +106,7 @@ func InitDDLMetrics() {
 			Help:      "Gauge of jobs.",
 		}, []string{LblType})
 
-	HandleJobHistogram = metricscommon.NewHistogramVec(
+	HandleJobHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -116,7 +115,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24hours
 		}, []string{LblType, LblResult})
 
-	BatchAddIdxHistogram = metricscommon.NewHistogramVec(
+	BatchAddIdxHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -125,7 +124,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
-	DeploySyncerHistogram = metricscommon.NewHistogramVec(
+	DeploySyncerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -134,7 +133,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
-	UpdateSelfVersionHistogram = metricscommon.NewHistogramVec(
+	UpdateSelfVersionHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -143,7 +142,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblResult})
 
-	OwnerHandleSyncerHistogram = metricscommon.NewHistogramVec(
+	OwnerHandleSyncerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -152,7 +151,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
-	DDLWorkerHistogram = metricscommon.NewHistogramVec(
+	DDLWorkerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -161,7 +160,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblAction, LblResult})
 
-	DDLCounter = metricscommon.NewCounterVec(
+	DDLCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -169,7 +168,7 @@ func InitDDLMetrics() {
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	BackfillTotalCounter = metricscommon.NewCounterVec(
+	BackfillTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -177,7 +176,7 @@ func InitDDLMetrics() {
 			Help:      "Speed of add index",
 		}, []string{LblType})
 
-	BackfillProgressGauge = metricscommon.NewGaugeVec(
+	BackfillProgressGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -185,7 +184,7 @@ func InitDDLMetrics() {
 			Help:      "Percentage progress of backfill",
 		}, []string{LblType})
 
-	DDLJobTableDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	DDLJobTableDuration = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "ddl",
 		Name:      "job_table_duration_seconds",
@@ -193,7 +192,7 @@ func InitDDLMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 	}, []string{LblType})
 
-	DDLRunningJobCount = metricscommon.NewGaugeVec(
+	DDLRunningJobCount = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -201,7 +200,7 @@ func InitDDLMetrics() {
 			Help:      "Running DDL jobs count",
 		}, []string{LblType})
 
-	AddIndexScanRate = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	AddIndexScanRate = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "ddl",
 		Name:      "scan_rate",
@@ -209,7 +208,7 @@ func InitDDLMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
-	RetryableErrorCount = metricscommon.NewCounterVec(prometheus.CounterOpts{
+	RetryableErrorCount = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "ddl",
 		Name:      "retryable_error_total",
@@ -293,9 +292,6 @@ func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 
 // UnregisterLightningCommonMetricsForDDL unregisters the registered common metrics.
 func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
-	if metrics == nil {
-		return
-	}
 	mu.Lock()
 	defer mu.Unlock()
 	metrics.UnregisterFrom(prometheus.DefaultRegisterer)

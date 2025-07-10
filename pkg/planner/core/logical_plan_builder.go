@@ -15,13 +15,10 @@
 package core
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"maps"
 	"math"
 	"math/bits"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -325,7 +321,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		}
 		// combine identical aggregate functions
 		combined := false
-		for j := range i {
+		for j := 0; j < i; j++ {
 			oldFunc := plan4Agg.AggFuncs[aggIndexMap[j]]
 			if oldFunc.Equal(b.ctx.GetExprCtx().GetEvalCtx(), newFunc) {
 				aggIndexMap[i] = aggIndexMap[j]
@@ -889,7 +885,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	copy(names[len(lNames):], rNames[commonLen:])
 
 	conds := make([]expression.Expression, 0, commonLen)
-	for i := range commonLen {
+	for i := 0; i < commonLen; i++ {
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
 		if err != nil {
@@ -1186,7 +1182,9 @@ func (p *userVarTypeProcessor) Leave(in ast.Node) (ast.Node, bool) {
 
 func (b *PlanBuilder) preprocessUserVarTypes(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) error {
 	aggMapper := make(map[*ast.AggregateFuncExpr]int)
-	maps.Copy(aggMapper, mapper)
+	for agg, i := range mapper {
+		aggMapper[agg] = i
+	}
 	processor := userVarTypeProcessor{
 		ctx:     ctx,
 		plan:    p,
@@ -1576,7 +1574,7 @@ func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.
 		return
 	}
 	isBinary := resultTp.GetCharset() == charset.CharsetBin
-	for i := range cols {
+	for i := 0; i < len(cols); i++ {
 		childTp := cols[i].GetType(b.ctx.GetExprCtx().GetEvalCtx())
 		childTpCharLen := 1
 		if isBinary {
@@ -1699,7 +1697,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	oldLen := setOprPlan.Schema().Len()
 
-	for range setOpr.SelectList.Selects {
+	for i := 0; i < len(setOpr.SelectList.Selects); i++ {
 		b.handleHelper.popMap()
 	}
 	b.handleHelper.pushMap(nil)
@@ -1749,7 +1747,7 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	joinPlan.SetSchema(leftPlan.Schema())
 	joinPlan.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()))
 	copy(joinPlan.OutputNames(), leftPlan.OutputNames())
-	for j := range rightPlan.Schema().Columns {
+	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
 		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
 		eqCond, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 		if err != nil {
@@ -1911,7 +1909,6 @@ func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []base.LogicalP
 	if len(subPlan) == 0 {
 		return nil, nil
 	}
-	b.optFlag |= rule.FlagEliminateUnionAllDualItem
 	u := logicalop.LogicalUnionAll{}.Init(b.ctx, b.getSelectOffset())
 	u.SetChildren(subPlan...)
 	err := b.buildProjection4Union(ctx, u)
@@ -1986,7 +1983,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	// select distinct a+1 from t order by a+1;                       ✔
 	// select distinct a+1 from t order by a+2;                       ✗
 	evalCtx := b.ctx.GetExprCtx().GetEvalCtx()
-	for j := range length {
+	for j := 0; j < length; j++ {
 		// both check original expression & as name
 		if expr.Equal(evalCtx, originalExprs[j]) || expr.Equal(evalCtx, p.Schema().Columns[j]) {
 			return nil
@@ -2002,7 +1999,7 @@ func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr e
 	cols := expression.ExtractColumns(expr)
 CheckReferenced:
 	for _, col := range cols {
-		for j := range length {
+		for j := 0; j < length; j++ {
 			if col.Equal(evalCtx, originalExprs[j]) || col.Equal(evalCtx, p.Schema().Columns[j]) {
 				continue CheckReferenced
 			}
@@ -4031,7 +4028,7 @@ func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) ba
 			return p
 		}
 		if ctes[i].isInline || ctes[i].cteClass == nil {
-			ctes = slices.Delete(ctes, i, i+1)
+			ctes = append(ctes[:i], ctes[i+1:]...)
 		}
 	}
 	if len(ctes) == 0 {
@@ -4100,11 +4097,7 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
 func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	var statsHandle *handle.Handle
-	dom := domain.GetDomain(ctx)
-	if dom != nil {
-		statsHandle = dom.StatsHandle()
-	}
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -4693,7 +4686,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if handleCols == nil {
 		if tableInfo.IsCommonHandle {
 			primaryIdx := tables.FindPrimaryIndex(tableInfo)
-			handleCols = util.NewCommonHandleCols(tableInfo, primaryIdx, ds.TblCols)
+			handleCols = util.NewCommonHandleCols(b.ctx.GetSessionVars().StmtCtx, tableInfo, primaryIdx, ds.TblCols)
 		} else {
 			extraCol := ds.NewExtraHandleSchemaCol()
 			handleCols = util.NewIntHandleCols(extraCol)
@@ -5276,17 +5269,22 @@ func (t *TblColPosInfo) MemoryUsage() (sum int64) {
 	return
 }
 
-// Cmp compares two TblColPosInfo by their Start field.
-func (t *TblColPosInfo) Cmp(a TblColPosInfo) int {
-	return cmp.Compare(t.Start, a.Start)
-}
-
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
 type TblColPosInfoSlice []TblColPosInfo
 
 // Len implements sort.Interface#Len.
 func (c TblColPosInfoSlice) Len() int {
 	return len(c)
+}
+
+// Swap implements sort.Interface#Swap.
+func (c TblColPosInfoSlice) Swap(i, j int) {
+	c[i], c[j] = c[j], c[i]
+}
+
+// Less implements sort.Interface#Less.
+func (c TblColPosInfoSlice) Less(i, j int) bool {
+	return c[i].Start < c[j].Start
 }
 
 // FindTblIdx finds the ordinal of the corresponding access column.
@@ -5323,9 +5321,7 @@ func buildColumns2HandleWithWrtiableColumns(
 			cols2Handles = append(cols2Handles, TblColPosInfo{TblID: tblID, Start: offset, End: end, HandleCols: handleCol})
 		}
 	}
-	slices.SortFunc(cols2Handles, func(a, b TblColPosInfo) int {
-		return a.Cmp(b)
-	})
+	sort.Sort(cols2Handles)
 	return cols2Handles, nil
 }
 
@@ -5367,9 +5363,8 @@ func pruneAndBuildColPositionInfoForDelete(
 		}
 	}
 	// Sort by start position. To do the later column pruning.
-	slices.SortFunc(cols2PosInfos, func(a, b TblColPosInfo) int {
-		return a.Cmp(b)
-	})
+	// TODO: `sort`` package has a rather worse performance. We should replace it with the new `slice` package.
+	sort.Sort(cols2PosInfos)
 	prunedColCnt := 0
 	var err error
 	for i := range cols2PosInfos {
@@ -5456,7 +5451,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// Fix the column offsets.
 	pruned := 0
-	for i := range tblLen {
+	for i := 0; i < tblLen; i++ {
 		if _, ok := fixedPos[i]; !ok {
 			nonPrunedSet.Clear(uint(i + originalStart))
 			pruned++
@@ -6152,14 +6147,19 @@ func (p *Delete) cleanTblID2HandleMap(
 			delete(tblID2Handle, id)
 			continue
 		}
-		cols = slices.DeleteFunc(cols, func(hCols util.HandleCols) bool {
+		for i := len(cols) - 1; i >= 0; i-- {
+			hCols := cols[i]
+			var hasMatch bool
 			for col := range hCols.IterColumns() {
 				if p.matchingDeletingTable(names, outputNames[col.Index]) {
-					return false
+					hasMatch = true
+					break
 				}
 			}
-			return true
-		})
+			if !hasMatch {
+				cols = append(cols[:i], cols[i+1:]...)
+			}
+		}
 		if len(cols) == 0 {
 			delete(tblID2Handle, id)
 			continue
@@ -6478,7 +6478,7 @@ func restoreByItemText(item *ast.ByItem) string {
 
 func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) bool {
 	minLen := min(len(lItems), len(rItems))
-	for i := range minLen {
+	for i := 0; i < minLen; i++ {
 		res := strings.Compare(restoreByItemText(lItems[i]), restoreByItemText(rItems[i]))
 		if res != 0 {
 			return res < 0
@@ -6740,8 +6740,10 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 
 // append ast.WindowSpec to []*ast.WindowSpec if absent
 func appendIfAbsentWindowSpec(specs []*ast.WindowSpec, ns *ast.WindowSpec) []*ast.WindowSpec {
-	if slices.Contains(specs, ns) {
-		return specs
+	for _, spec := range specs {
+		if spec == ns {
+			return specs
+		}
 	}
 	return append(specs, ns)
 }

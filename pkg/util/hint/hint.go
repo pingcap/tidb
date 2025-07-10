@@ -203,9 +203,6 @@ const (
 
 // StmtHints are hints that apply to the entire statement, like 'max_exec_time', 'memory_quota'.
 type StmtHints struct {
-	// This is true iff there were hints in the statement.
-	QueryHasHints bool
-
 	// Hint Information
 	MemQuotaQuery           int64
 	MaxExecutionTime        uint64
@@ -255,7 +252,6 @@ func (sh *StmtHints) Clone() *StmtHints {
 		copy(tableHints, sh.OriginalTableHints)
 	}
 	return &StmtHints{
-		QueryHasHints:                  sh.QueryHasHints,
 		MemQuotaQuery:                  sh.MemQuotaQuery,
 		MaxExecutionTime:               sh.MaxExecutionTime,
 		ReplicaRead:                    sh.ReplicaRead,
@@ -295,12 +291,9 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	hypoIndexChecker func(db, tbl, col ast.CIStr) (colOffset int, err error),
 	currentDB string, replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
-	stmtHints.QueryHasHints = len(hints) != 0
-
 	if len(hints) == 0 {
 		return
 	}
-
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
 	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int

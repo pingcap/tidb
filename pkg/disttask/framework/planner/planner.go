@@ -15,7 +15,7 @@
 package planner
 
 import (
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 )
 
@@ -39,15 +39,13 @@ func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 		return 0, err
 	}
 
-	targetScope := handle.GetTargetScope()
-
 	return taskManager.CreateTaskWithSession(
 		planCtx.Ctx,
 		planCtx.SessionCtx,
 		planCtx.TaskKey,
 		planCtx.TaskType,
 		planCtx.ThreadCnt,
-		targetScope,
+		config.GetGlobalConfig().Instance.TiDBServiceScope,
 		planCtx.MaxNodeCnt,
 		plan.GetTaskExtraParams(),
 		taskMeta,

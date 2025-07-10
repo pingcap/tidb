@@ -510,7 +510,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
-		if !ex.HasIndex(index.Name.L) || index.State != model.StatePublic {
+		if !ex.HasIndex(index.Name.L) {
 			continue
 		}
 		nonUnique := "1"
@@ -2062,7 +2062,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	}
 	requestByTableRange := false
 	var allRegionsInfo *pd.RegionsInfo
-	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
@@ -3854,9 +3854,9 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 
 // used in resource_groups
 const (
-	burstableModeratedStr = "MODERATED"
-	burstableUnlimitedStr = "UNLIMITED"
-	burstdisableStr       = "OFF"
+	burstableModeratedStr = "YES(MODERATED)"
+	burstableUnlimitedStr = "YES(UNLIMITED)"
+	burstdisableStr       = "NO"
 	unlimitedFillRate     = "UNLIMITED"
 )
 

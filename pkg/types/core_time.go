@@ -495,6 +495,8 @@ func mixDateAndDuration(date *CoreTime, dur Duration) {
 	date.setDay(uint8(day))
 }
 
+var daysInMonth = []int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
 // getDateFromDaynr changes a daynr to year, month and day,
 // daynr 0 is returned as date 00.00.00
 func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
@@ -525,7 +527,7 @@ func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
 	}
 
 	month = 1
-	for _, days := range daysByMonth {
+	for _, days := range daysInMonth {
 		if dayOfYear <= uint(days) {
 			break
 		}

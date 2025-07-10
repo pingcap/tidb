@@ -71,6 +71,11 @@ var TableLockAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.Lock != nil
 }
 
+// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
+var ForeignKeysAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return len(t.ForeignKeys) > 0
+}
+
 // PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
 var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
@@ -78,7 +83,7 @@ var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 
 // HasSpecialAttributes checks if a table has any special attributes.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
@@ -106,8 +111,6 @@ type MetaOnlyInfoSchema interface {
 	AllSchemaNames() []ast.CIStr
 	SchemaSimpleTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableNameInfo, error)
 	ListTablesWithSpecialAttribute(filter SpecialAttributeFilter) []TableInfoResult
-	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 	Misc
 }
 
@@ -135,6 +138,8 @@ type Misc interface {
 	CloneResourceGroups() map[string]*model.ResourceGroupInfo
 	// HasTemporaryTable returns whether information schema has temporary table
 	HasTemporaryTable() bool
+	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
 
 // DBInfoAsInfoSchema is used mainly in test.

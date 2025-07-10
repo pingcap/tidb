@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -35,11 +34,11 @@ type Pool struct {
 		sync.Mutex
 		closed bool
 	}
-	resPool util.SessionPool
+	resPool *pools.ResourcePool
 }
 
 // NewSessionPool creates a new Session pool.
-func NewSessionPool(resPool util.SessionPool) *Pool {
+func NewSessionPool(resPool *pools.ResourcePool) *Pool {
 	intest.AssertNotNil(resPool)
 	return &Pool{resPool: resPool}
 }

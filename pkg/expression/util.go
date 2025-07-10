@@ -1018,12 +1018,17 @@ func containOuterNot(expr Expression, not bool) bool {
 
 // Contains tests if `exprs` contains `e`.
 func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
-	return slices.ContainsFunc(exprs, func(expr Expression) bool {
-		if expr == nil {
-			return e == nil
+	for _, expr := range exprs {
+		// Check string equivalence if one of the expressions is a clone.
+		sameString := false
+		if e != nil && expr != nil {
+			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
 		}
-		return e == expr || expr.Equal(ectx, e)
-	})
+		if e == expr || sameString {
+			return true
+		}
+	}
+	return false
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
@@ -1399,18 +1404,16 @@ func IsImmutableFunc(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(exprs []Expression) []Expression {
-	if len(exprs) <= 1 {
-		return exprs
-	}
+	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
-	return slices.DeleteFunc(exprs, func(expr Expression) bool {
+	for _, expr := range exprs {
 		key := string(expr.HashCode())
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
+			res = append(res, expr)
 			exists[key] = struct{}{}
-			return false
 		}
-		return true
-	})
+	}
+	return res
 }
 
 // GetUint64FromConstant gets a uint64 from constant expression.
@@ -1550,7 +1553,7 @@ func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bo
 // 2. Whether the statement can be cached.
 // 3. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
-func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs ...Expression) bool {
+func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
 	if !ctx.IsUseCache() {
 		return false
@@ -1576,7 +1579,7 @@ func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx BuildContext, exprs ...Expression) (err error) {
+func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -1591,7 +1594,7 @@ func RemoveMutableConst(ctx BuildContext, exprs ...Expression) (err error) {
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			return RemoveMutableConst(ctx, v.GetArgs()...)
+			return RemoveMutableConst(ctx, v.GetArgs())
 		}
 	}
 	return nil

@@ -199,12 +199,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
 				}, nil)
-			case "undeterminedResult":
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{
-						UndeterminedResult: &errorpb.UndeterminedResult{}},
-					},
-				}, nil)
 			}
 		})
 

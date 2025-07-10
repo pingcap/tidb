@@ -29,7 +29,6 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/exp/slices"
@@ -39,13 +38,10 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile            = getSSTMetaFromFile
-	GetKeyRangeByMode             = getKeyRangeByMode
-	GetFileRangeKey               = getFileRangeKey
-	GetSortedPhysicalTables       = getSortedPhysicalTables
-	GetMinUserTableID             = getMinUserTableID
-	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
-	UpdateStatsTableSchema        = updateStatsTableSchema
+	GetSSTMetaFromFile      = getSSTMetaFromFile
+	GetKeyRangeByMode       = getKeyRangeByMode
+	GetFileRangeKey         = getFileRangeKey
+	GetSortedPhysicalTables = getSortedPhysicalTables
 )
 
 // MockClient create a fake Client used to test.
@@ -87,7 +83,7 @@ func (rc *SnapClient) CreateTablesTest(
 	newTS uint64,
 ) (*restoreutils.RewriteRules, []*model.TableInfo, error) {
 	rc.dom = dom
-	rc.AllocTableIDs(context.TODO(), tables, false, false, nil)
+	rc.AllocTableIDs(context.TODO(), tables)
 	rewriteRules := &restoreutils.RewriteRules{
 		Data: make([]*import_sstpb.RewriteRule, 0),
 	}
@@ -96,7 +92,7 @@ func (rc *SnapClient) CreateTablesTest(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	rc.AllocTableIDs(context.Background(), tables, false, false, nil)
+	rc.AllocTableIDs(context.Background(), tables)
 	createdTables, err := rc.CreateTables(context.TODO(), tables, newTS)
 	if err != nil {
 		return nil, nil, err
@@ -120,31 +116,4 @@ func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	statsConcurrency uint,
 ) {
 	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
-}
-
-func (rc *SnapClient) ReplaceTables(
-	ctx context.Context,
-	createdTables []*restoreutils.CreatedTable,
-	schemaVersionPair SchemaVersionPairT,
-	restoreTS uint64,
-	loadStatsPhysical, loadSysTablePhysical bool,
-	kvClient kv.Client,
-	checksum bool,
-	checksumConcurrency uint,
-) (int, error) {
-	return rc.replaceTables(
-		ctx,
-		createdTables,
-		schemaVersionPair,
-		restoreTS,
-		loadStatsPhysical,
-		loadSysTablePhysical,
-		kvClient,
-		checksum,
-		checksumConcurrency,
-	)
-}
-
-func NewTemporaryTableChecker(loadStatsPhysical, loadSysTablePhysical bool) *TemporaryTableChecker {
-	return &TemporaryTableChecker{loadStatsPhysical: loadStatsPhysical, loadSysTablePhysical: loadSysTablePhysical}
 }

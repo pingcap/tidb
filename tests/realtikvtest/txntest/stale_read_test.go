@@ -512,6 +512,8 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 	}
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
+		require.NoError(t, failpoint.Enable("tikvclient/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectSafeTS",
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		tk.MustExec(testcase.sql)
@@ -525,6 +527,7 @@ func TestTimeBoundedStalenessTxn(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("tikvclient/injectSafeTS"))
 }
 
 func TestStalenessTransactionSchemaVer(t *testing.T) {

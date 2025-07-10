@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -24,49 +25,37 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-// TableKVEncoder encodes a row of data into a KV pair.
-type TableKVEncoder struct {
-	*kv.BaseKVEncoder
-	// see import.go
-	columnAssignments []expression.Expression
-	fieldMappings     []*FieldMapping
-	insertColumns     []*table.Column
-	// Following cache use to avoid `runtime.makeslice`.
-	insertColumnRowCache []types.Datum
-	rowCache             []types.Datum
-	hasValueCache        []bool
+// KVEncoder encodes a row of data into a KV pair.
+type KVEncoder interface {
+	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
+	io.Closer
 }
 
-// NewTableKVEncoder creates a new TableKVEncoder.
+// tableKVEncoder encodes a row of data into a KV pair.
+type tableKVEncoder struct {
+	*kv.BaseKVEncoder
+	// see import.go
+	columnAssignments  []expression.Expression
+	columnsAndUserVars []*ast.ColumnNameOrUserVar
+	fieldMappings      []*FieldMapping
+	insertColumns      []*table.Column
+}
+
+var _ KVEncoder = &tableKVEncoder{}
+
+// NewTableKVEncoder creates a new tableKVEncoder.
 // exported for test.
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	ti *TableImporter,
-) (*TableKVEncoder, error) {
-	return newTableKVEncoderInner(config, ti, ti.FieldMappings, ti.InsertColumns)
-}
-
-// NewTableKVEncoderForDupResolve creates a new TableKVEncoder for duplicate resolution.
-func NewTableKVEncoderForDupResolve(
-	config *encode.EncodingConfig,
-	ti *TableImporter,
-) (*TableKVEncoder, error) {
-	mappings, _ := ti.tableVisCols2FieldMappings()
-	return newTableKVEncoderInner(config, ti, mappings, ti.Table.VisibleCols())
-}
-
-func newTableKVEncoderInner(
-	config *encode.EncodingConfig,
-	ti *TableImporter,
-	fieldMappings []*FieldMapping,
-	insertColumns []*table.Column,
-) (*TableKVEncoder, error) {
+) (KVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
 		return nil, err
@@ -76,16 +65,17 @@ func newTableKVEncoderInner(
 		return nil, err
 	}
 
-	return &TableKVEncoder{
-		BaseKVEncoder:     baseKVEncoder,
-		columnAssignments: colAssignExprs,
-		fieldMappings:     fieldMappings,
-		insertColumns:     insertColumns,
+	return &tableKVEncoder{
+		BaseKVEncoder:      baseKVEncoder,
+		columnAssignments:  colAssignExprs,
+		columnsAndUserVars: ti.ColumnsAndUserVars,
+		fieldMappings:      ti.FieldMappings,
+		insertColumns:      ti.InsertColumns,
 	}, nil
 }
 
-// Encode table row into KVs.
-func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+// Encode implements the KVEncoder interface.
+func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
 	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
@@ -100,11 +90,8 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 }
 
 // todo merge with code in load_data.go
-func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
-	if cap(en.insertColumnRowCache) < len(en.insertColumns) {
-		en.insertColumnRowCache = make([]types.Datum, 0, len(en.insertColumns))
-	}
-	row := en.insertColumnRowCache[:0]
+func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
+	row := make([]types.Datum, 0, len(en.insertColumns))
 	setVar := func(name string, col *types.Datum) {
 		// User variable names are not case-sensitive
 		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
@@ -162,21 +149,9 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 // copied from InsertValues
-func (en *TableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
-	rowLen := len(en.Columns)
-	if cap(en.rowCache) < rowLen || cap(en.hasValueCache) < rowLen {
-		en.rowCache = make([]types.Datum, rowLen)
-		en.hasValueCache = make([]bool, rowLen)
-	} else {
-		en.rowCache = en.rowCache[:0]
-		en.hasValueCache = en.hasValueCache[:0]
-		for range rowLen {
-			en.rowCache = append(en.rowCache, types.Datum{})
-			en.hasValueCache = append(en.hasValueCache, false)
-		}
-	}
-	row := en.rowCache
-	hasValue := en.hasValueCache
+func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
+	row := make([]types.Datum, len(en.Columns))
+	hasValue := make([]bool, len(en.Columns))
 	for i := range en.insertColumns {
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
@@ -191,19 +166,17 @@ func (en *TableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 	return en.fillRow(row, hasValue, rowID)
 }
 
-func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	var value types.Datum
 	var err error
 
 	record := en.GetOrCreateRecord()
 	for i, col := range en.Columns {
 		var theDatum *types.Datum
-		doCast := true
 		if hasValue[i] {
 			theDatum = &row[i]
-			doCast = false
 		}
-		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
+		value, err = en.ProcessColDatum(col, rowID, theDatum)
 		if err != nil {
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
@@ -231,8 +204,7 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	return record, nil
 }
 
-// Close the TableKVEncoder.
-func (en *TableKVEncoder) Close() error {
+func (en *tableKVEncoder) Close() error {
 	en.SessionCtx.Close()
 	return nil
 }

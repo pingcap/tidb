@@ -69,7 +69,7 @@ func NewOptimizer(sctx sessionctx.Context) Optimizer {
 }
 
 func (opt *optimizerImpl) is() infoschema.InfoSchema {
-	return opt.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	return opt.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 }
 
 // IndexNameExist returns whether the specified index name exists in the specified table.

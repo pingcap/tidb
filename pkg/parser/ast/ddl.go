@@ -736,16 +736,15 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize               uint64
-	Tp                         IndexType
-	Comment                    string
-	ParserName                 CIStr
-	Visibility                 IndexVisibility
-	PrimaryKeyTp               PrimaryKeyType
-	Global                     bool
-	SplitOpt                   *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
-	SecondaryEngineAttr        string
-	AddColumnarReplicaOnDemand int
+	KeyBlockSize        uint64
+	Tp                  IndexType
+	Comment             string
+	ParserName          CIStr
+	Visibility          IndexVisibility
+	PrimaryKeyTp        PrimaryKeyType
+	Global              bool
+	SplitOpt            *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	SecondaryEngineAttr string
 }
 
 // IsEmpty is true if only default options are given
@@ -768,16 +767,7 @@ func (n *IndexOption) IsEmpty() bool {
 // Restore implements Node interface.
 func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
-
-	if n.AddColumnarReplicaOnDemand > 0 {
-		ctx.WriteKeyWord("ADD_COLUMNAR_REPLICA_ON_DEMAND")
-		hasPrevOption = true
-	}
-
 	if n.PrimaryKeyTp != PrimaryKeyTypeDefault {
-		if hasPrevOption {
-			ctx.WritePlain(" ")
-		}
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
 			ctx.WriteKeyWord(n.PrimaryKeyTp.String())
 			return nil

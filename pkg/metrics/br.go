@@ -14,10 +14,7 @@
 
 package metrics
 
-import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
-	"github.com/prometheus/client_golang/prometheus"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
 var (
 	// RestoreImportFileSeconds records the time cost for importing a file.
@@ -52,33 +49,17 @@ var (
 	KVApplyBatchSize prometheus.Histogram
 	// KVApplyRegionFiles counts how many KV files restored for a region
 	KVApplyRegionFiles prometheus.Histogram
-
-	// KVApplyTasksEvents tracks the event of the apply tasks.
-	// Label: event. Possible values: "skipped", "submitted", "started", "finished".
-	// `submitted` - `started` = pending tasks.
-	// `finished` - `started` = running tasks.
-	KVApplyTasksEvents *prometheus.CounterVec
-	// KVLogFileEmittedMemory tracks the memory usage of metadata.
-	// Label: status. Possible values: "0-loaded", "1-split", "2-applied".
-	// `1-split` - `0-loaded` = file info used for splitting regions.
-	// `2-applied` - `1-split` = file info used for running restore tasks.
-	KVLogFileEmittedMemory *prometheus.CounterVec
-	// KVApplyRunOverRegionsEvents tracks the event of the run over regions call.
-	// Label: event. Possible values: "request-region", "retry-region", "retry-range", "region-success".
-	KVApplyRunOverRegionsEvents *prometheus.CounterVec
-	// KVSplitHelperMemUsage tracks the memory usage of the split helper.
-	KVSplitHelperMemUsage prometheus.Gauge
 )
 
 // InitBRMetrics initializes all metrics in BR.
 func InitBRMetrics() {
-	RestoreTableCreatedCount = metricscommon.NewCounter(prometheus.CounterOpts{
+	RestoreTableCreatedCount = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "BR",
 		Name:      "table_created",
 		Help:      "The count of tables have been created.",
 	})
 
-	RestoreImportFileSeconds = metricscommon.NewHistogram(prometheus.HistogramOpts{
+	RestoreImportFileSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "br",
 		Name:      "restore_import_file_seconds",
@@ -88,7 +69,7 @@ func InitBRMetrics() {
 		Buckets: prometheus.ExponentialBuckets(0.01, 4, 14),
 	})
 
-	RestoreUploadSSTForPiTRSeconds = metricscommon.NewHistogram(prometheus.HistogramOpts{
+	RestoreUploadSSTForPiTRSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "br",
 		Name:      "restore_upload_sst_for_pitr_seconds",
@@ -98,7 +79,7 @@ func InitBRMetrics() {
 		Buckets: prometheus.DefBuckets,
 	})
 
-	RestoreUploadSSTMetaForPiTRSeconds = metricscommon.NewHistogram(prometheus.HistogramOpts{
+	RestoreUploadSSTMetaForPiTRSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "br",
 		Name:      "restore_upload_sst_meta_for_pitr_seconds",
@@ -107,7 +88,7 @@ func InitBRMetrics() {
 		Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
 	})
 
-	MetaKVBatchFiles = metricscommon.NewHistogramVec(
+	MetaKVBatchFiles = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -115,7 +96,7 @@ func InitBRMetrics() {
 			Help:      "The number of meta KV files in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
 		}, []string{"cf"})
-	MetaKVBatchFilteredKeys = metricscommon.NewHistogramVec(
+	MetaKVBatchFilteredKeys = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -123,7 +104,7 @@ func InitBRMetrics() {
 			Help:      "The number of filtered meta KV entries from the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 18), // 1 ~ 128Ki
 		}, []string{"cf"})
-	MetaKVBatchKeys = metricscommon.NewHistogramVec(
+	MetaKVBatchKeys = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -131,7 +112,7 @@ func InitBRMetrics() {
 			Help:      "The number of meta KV entries in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 18), // 1 ~ 128Ki
 		}, []string{"cf"})
-	MetaKVBatchSize = metricscommon.NewHistogramVec(
+	MetaKVBatchSize = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -140,7 +121,7 @@ func InitBRMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(256, 2, 20), // 256 ~ 128Mi
 		}, []string{"cf"})
 
-	KVApplyBatchDuration = metricscommon.NewHistogram(
+	KVApplyBatchDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -148,7 +129,7 @@ func InitBRMetrics() {
 			Help:      "The duration to apply the batch of KV files",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 21), // 1ms ~ 15min
 		})
-	KVApplyBatchFiles = metricscommon.NewHistogram(
+	KVApplyBatchFiles = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -156,7 +137,7 @@ func InitBRMetrics() {
 			Help:      "The number of KV files in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
 		})
-	KVApplyBatchRegions = metricscommon.NewHistogram(
+	KVApplyBatchRegions = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -164,7 +145,7 @@ func InitBRMetrics() {
 			Help:      "The number of regions in the range of entries in the batch of KV files",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12), // 1 ~ 2048
 		})
-	KVApplyBatchSize = metricscommon.NewHistogram(
+	KVApplyBatchSize = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -172,7 +153,7 @@ func InitBRMetrics() {
 			Help:      "The number of KV files in the batch",
 			Buckets:   prometheus.ExponentialBuckets(1024, 2, 21), // 1KiB ~ 1GiB
 		})
-	KVApplyRegionFiles = metricscommon.NewHistogram(
+	KVApplyRegionFiles = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "br",
@@ -180,40 +161,4 @@ func InitBRMetrics() {
 			Help:      "The number of KV files restored for a region",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
 		})
-
-	KVApplyTasksEvents = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "br",
-			Name:      "apply_tasks_events",
-			Help:      "The count of events of the apply tasks.",
-		},
-		[]string{"event"},
-	)
-	KVLogFileEmittedMemory = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "br",
-			Name:      "kv_log_file_metadata_memory_bytes",
-			Help:      "The memory usage of metadata for KV log files.",
-		},
-		[]string{"status"},
-	)
-	KVApplyRunOverRegionsEvents = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "br",
-			Name:      "apply_run_over_regions_events",
-			Help:      "The count of events of the run over regions call.",
-		},
-		[]string{"event"},
-	)
-	KVSplitHelperMemUsage = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "br",
-			Name:      "kv_split_helper_memory_usage_bytes",
-			Help:      "The memory usage of the split helper.",
-		},
-	)
 }

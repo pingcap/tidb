@@ -178,7 +178,7 @@ type CheckpointProgress struct {
 	Progress RestoreProgress `json:"progress"`
 }
 
-// TaskInfoForLogRestore is tied to a specific cluster.
+// CheckpointTaskInfoForLogRestore is tied to a specific cluster.
 // It represents the last restore task executed in this cluster.
 type TaskInfoForLogRestore struct {
 	Metadata            *CheckpointMetadataForLogRestore
@@ -187,11 +187,7 @@ type TaskInfoForLogRestore struct {
 	Progress RestoreProgress
 }
 
-func (t *TaskInfoForLogRestore) IdMapSaved() bool {
-	return t.Progress == InLogRestoreAndIdMapPersisted
-}
-
-func GetCheckpointTaskInfo(
+func TryToGetCheckpointTaskInfo(
 	ctx context.Context,
 	snapshotManager SnapshotMetaManagerT,
 	logManager LogMetaManagerT,

@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -49,7 +48,6 @@ import (
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -58,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -164,8 +161,6 @@ type SnapClient struct {
 
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 
-	temporarySystemTablesRenamed bool
-
 	// restoreUUID is the UUID of this restore.
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
@@ -192,14 +187,6 @@ func (rc *SnapClient) GetRestorer(checkpointRunner *checkpoint.CheckpointRunner[
 		rc.restorer = rc.getRestorerFn(checkpointRunner)
 	}
 	return rc.restorer
-}
-
-func (rc *SnapClient) CreatePreallocIDCheckpoint() *checkpoint.PreallocIDs {
-	if rc.preallocedIDs == nil {
-		return nil
-	}
-
-	return rc.preallocedIDs.CreateCheckpoint()
 }
 
 func (rc *SnapClient) closeConn() {
@@ -232,24 +219,6 @@ func (rc *SnapClient) SetRateLimit(rateLimit uint64) {
 
 func (rc *SnapClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
-}
-
-func (rc *SnapClient) CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical bool, tables []*metautil.Table) []*metautil.Table {
-	if !rc.temporarySystemTablesRenamed {
-		return tables
-	}
-	newTables := make([]*metautil.Table, 0, len(tables))
-	temporaryTableChecker := &TemporaryTableChecker{
-		loadStatsPhysical:    loadStatsPhysical,
-		loadSysTablePhysical: loadSysTablePhysical,
-	}
-	for _, table := range tables {
-		if _, ok := temporaryTableChecker.CheckTemporaryTables(table.DB.Name.O, table.Info.Name.O); ok {
-			continue
-		}
-		newTables = append(newTables, table)
-	}
-	return newTables
 }
 
 // GetClusterID gets the cluster id from down-stream cluster.
@@ -326,79 +295,19 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
-func getMinUserTableID(tables []*metautil.Table) int64 {
-	minUserTableID := int64(math.MaxInt64)
-	for _, table := range tables {
-		if !utils.IsSysOrTempSysDB(table.DB.Name.O) {
-			if table.Info.ID < minUserTableID {
-				minUserTableID = table.Info.ID
-			}
-			if table.Info.Partition != nil && table.Info.Partition.Definitions != nil {
-				for _, part := range table.Info.Partition.Definitions {
-					if part.ID < minUserTableID {
-						minUserTableID = part.ID
-					}
-				}
-			}
-		}
-	}
-	return minUserTableID
-}
-
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-// It returns whether any user table ID is not reused when need check.
-func (rc *SnapClient) AllocTableIDs(
-	ctx context.Context,
-	tables []*metautil.Table,
-	loadStatsPhysical, loadSysTablePhysical bool,
-	reusePreallocIDs *checkpoint.PreallocIDs,
-) (bool, error) {
-	var preallocedTableIDs *tidalloc.PreallocIDs
-	var err error
-	if reusePreallocIDs == nil {
-		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-		err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-			preallocedTableIDs, err = tidalloc.NewAndPrealloc(tables, meta.NewMutator(txn))
-			return err
-		})
-		if err != nil {
-			return false, err
-		}
-	} else {
-		preallocedTableIDs, err = tidalloc.ReuseCheckpoint(reusePreallocIDs, tables)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+	preallocedTableIDs := tidalloc.New(tables)
+	if preallocedTableIDs == nil {
+		return errors.Errorf("failed to pre-alloc table IDs")
 	}
-	userTableIDNotReusedWhenNeedCheck := false
-	if loadStatsPhysical {
-		minUserTableID := getMinUserTableID(tables)
-		start, _ := preallocedTableIDs.GetIDRange()
-		if minUserTableID != int64(math.MaxInt64) && minUserTableID < start {
-			userTableIDNotReusedWhenNeedCheck = true
-			loadStatsPhysical = false
-		}
-	}
-	if reusePreallocIDs != nil && (loadStatsPhysical || loadSysTablePhysical) {
-		temporaryTableChecker := &TemporaryTableChecker{
-			loadStatsPhysical:    loadStatsPhysical,
-			loadSysTablePhysical: loadSysTablePhysical,
-		}
-		for _, table := range tables {
-			if dbName, ok := temporaryTableChecker.CheckTemporaryTables(table.DB.Name.O, table.Info.Name.O); ok {
-				downstreamId, err := preallocedTableIDs.AllocID(table.Info.ID)
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-				if tableInfo, err := rc.dom.InfoSchema().TableInfoByName(ast.NewCIStr(dbName), table.Info.Name); err == nil {
-					if tableInfo.ID == downstreamId {
-						rc.temporarySystemTablesRenamed = true
-					}
-					break
-				}
-			}
-		}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
+	})
+	if err != nil {
+		return err
 	}
 
 	log.Info("registering the table IDs", zap.Stringer("ids", preallocedTableIDs))
@@ -409,7 +318,7 @@ func (rc *SnapClient) AllocTableIDs(
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
 	rc.preallocedIDs = preallocedTableIDs
-	return userTableIDNotReusedWhenNeedCheck, nil
+	return nil
 }
 
 func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
@@ -421,7 +330,7 @@ func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
 
 	if start >= end {
 		log.Warn("PreAlloced IDs range is empty, no table to restore")
-		return [2]int64{}, nil
+		return [2]int64{start, end}, nil
 	}
 
 	return [2]int64{start, end}, nil
@@ -436,13 +345,12 @@ func (rc *SnapClient) InitCheckpoint(
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
 	logRestoredTS uint64,
-	hash []byte,
-	checkpointExists bool,
+	checkpointFirstRun bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
 	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
-	if checkpointExists {
+	if !checkpointFirstRun {
 		// load the checkpoint since this is not the first time to restore
 		meta, err := snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
@@ -454,16 +362,8 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
-					"or just clean the checkpoint %v if the cluster has been cleaned up.",
+					"or just clean the checkpoint %s if the cluster has been cleaned up.",
 				rc.backupMeta.ClusterId, meta.UpstreamClusterID, snapshotCheckpointMetaManager)
-		}
-
-		if !bytes.Equal(meta.Hash, hash) {
-			return checkpointSetWithTableID, nil, errors.Errorf(
-				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
-					"Please don't use the checkpoint, "+
-					"or use the the same restore command. checkpoint manager: %v",
-				snapshotCheckpointMetaManager)
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
@@ -527,8 +427,6 @@ func (rc *SnapClient) InitCheckpoint(
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
 			LogRestoredTS:     logRestoredTS,
-			Hash:              hash,
-			PreallocIDs:       rc.CreatePreallocIDCheckpoint(),
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID
@@ -757,9 +655,6 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	loadStats bool,
 	RawStartKey []byte,
 	RawEndKey []byte,
-	hasExplicitFilter bool,
-	isFullRestore bool,
-	withSys bool,
 ) error {
 	if needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
@@ -781,16 +676,11 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 			}
 		}
 		rc.ddlJobs = ddlJobs
-		log.Info("loaded backup meta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	}
 	rc.backupMeta = backupMeta
+	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	if err := rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey); err != nil {
-		return errors.Trace(err)
-	}
-
-	rc.InitFullClusterRestore(hasExplicitFilter, isFullRestore, withSys)
-	return nil
+	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey)
 }
 
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
@@ -879,52 +769,6 @@ func (rc *SnapClient) GetDatabaseMap() map[int64]*metautil.Database {
 		dbMap[db.Info.ID] = db
 	}
 	return dbMap
-}
-
-// GetTableMap returns all tables in a map indexed by table id
-func (rc *SnapClient) GetTableMap() map[int64]*metautil.Table {
-	tableMap := make(map[int64]*metautil.Table)
-	for _, db := range rc.databases {
-		for _, table := range db.Tables {
-			if table.Info == nil {
-				continue
-			}
-			tableMap[table.Info.ID] = table
-		}
-	}
-	return tableMap
-}
-
-// GetPartitionMap returns all partitions with their related information indexed by partition ID
-func (rc *SnapClient) GetPartitionMap() map[int64]*stream.TableLocationInfo {
-	partitionMap := make(map[int64]*stream.TableLocationInfo)
-	for _, db := range rc.databases {
-		for _, table := range db.Tables {
-			if table.Info == nil {
-				continue
-			}
-
-			// Skip if the table doesn't have partition info
-			if table.Info.Partition == nil || table.Info.Partition.Definitions == nil {
-				continue
-			}
-
-			// Iterate through all partitions in the table
-			for _, part := range table.Info.Partition.Definitions {
-				// Create the partition info with all required details
-				partInfo := &stream.TableLocationInfo{
-					ParentTableID: table.Info.ID,
-					TableName:     table.Info.Name.O,
-					DbID:          db.Info.ID,
-					IsPartition:   true,
-				}
-
-				// Add to the map with partition ID as key
-				partitionMap[part.ID] = partInfo
-			}
-		}
-	}
-	return partitionMap
 }
 
 // HasBackedUpSysDB whether we have backed up system tables
@@ -1040,7 +884,7 @@ func (rc *SnapClient) CreateTables(
 	ctx context.Context,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]*restoreutils.CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	log.Info("start create tables", zap.Int("total count", len(tables)))
 	rc.generateRebasedTables(tables)
 
@@ -1069,7 +913,7 @@ func (rc *SnapClient) createTables(
 	db *tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]*restoreutils.CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	log.Info("client to create tables")
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
@@ -1079,7 +923,7 @@ func (rc *SnapClient) createTables(
 			return nil, errors.Trace(err)
 		}
 	}
-	cts := make([]*restoreutils.CreatedTable, 0, len(tables))
+	cts := make([]*CreatedTable, 0, len(tables))
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -1093,7 +937,7 @@ func (rc *SnapClient) createTables(
 				newTableInfo.IsCommonHandle)
 		}
 		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-		ct := &restoreutils.CreatedTable{
+		ct := &CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
 			OldTable:    table,
@@ -1126,8 +970,7 @@ func SortTablesBySchemaID(tables []*metautil.Table) []*metautil.Table {
 	return orderedTables
 }
 
-func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) (
-	[]*restoreutils.CreatedTable, error) {
+func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
@@ -1138,9 +981,9 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 	numOfTables := len(orderedTables)
 	createdTables := struct {
 		sync.Mutex
-		tables []*restoreutils.CreatedTable
+		tables []*CreatedTable
 	}{
-		tables: make([]*restoreutils.CreatedTable, 0, numOfTables),
+		tables: make([]*CreatedTable, 0, numOfTables),
 	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
@@ -1180,7 +1023,7 @@ func (rc *SnapClient) createTable(
 	db *tidallocdb.DB,
 	table *metautil.Table,
 	newTS uint64,
-) (*restoreutils.CreatedTable, error) {
+) (*CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
@@ -1201,7 +1044,7 @@ func (rc *SnapClient) createTable(
 			newTableInfo.IsCommonHandle)
 	}
 	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-	et := &restoreutils.CreatedTable{
+	et := &CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
 		OldTable:    table,
@@ -1214,15 +1057,15 @@ func (rc *SnapClient) createTablesSingle(
 	dbPool []*tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]*restoreutils.CreatedTable, error) {
+) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
 	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	createdTables := struct {
 		sync.Mutex
-		tables []*restoreutils.CreatedTable
+		tables []*CreatedTable
 	}{
-		tables: make([]*restoreutils.CreatedTable, 0, len(tables)),
+		tables: make([]*CreatedTable, 0, len(tables)),
 	}
 	for _, tbl := range tables {
 		table := tbl
@@ -1255,28 +1098,33 @@ func (rc *SnapClient) createTablesSingle(
 }
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
-func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool, isFullRestore bool, withSys bool) {
-	rc.fullClusterRestore = !explicitFilter && !rc.IsIncremental() && isFullRestore && withSys
+func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool) {
+	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
 
-	log.Info("mark full cluster restore", zap.Bool("value", rc.fullClusterRestore))
+	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
 }
 
 func (rc *SnapClient) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
 }
 
+// IsFull returns whether this backup is full.
+func (rc *SnapClient) IsFull() bool {
+	failpoint.Inject("mock-incr-backup-data", func() {
+		failpoint.Return(false)
+	})
+	return !rc.IsIncremental()
+}
+
 // IsIncremental returns whether this backup is incremental.
 func (rc *SnapClient) IsIncremental() bool {
-	failpoint.Inject("mock-incr-backup-data", func() {
-		failpoint.Return(true)
-	})
 	return !(rc.backupMeta.StartVersion == rc.backupMeta.EndVersion ||
 		rc.backupMeta.StartVersion == 0)
 }
 
 // NeedCheckFreshCluster is every time. except restore from a checkpoint or user has not set filter argument.
-func (rc *SnapClient) NeedCheckFreshCluster(ExplicitFilter bool, checkpointEnabledAndExists bool) bool {
-	return !rc.IsIncremental() && !ExplicitFilter && !checkpointEnabledAndExists
+func (rc *SnapClient) NeedCheckFreshCluster(ExplicitFilter bool, firstRun bool) bool {
+	return rc.IsFull() && !ExplicitFilter && firstRun
 }
 
 // EnableSkipCreateSQL sets switch of skip create schema and tables.
@@ -1289,10 +1137,11 @@ func (rc *SnapClient) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// EnsureNoUserTables returns error if target cluster contains user tables.
-// However, user may have created some db users or made other changes.
-func (rc *SnapClient) EnsureNoUserTables() error {
-	log.Info("checking whether cluster contains user dbs and tables")
+// CheckTargetClusterFresh check whether the target cluster is fresh or not
+// if there's no user dbs or tables, we take it as a fresh cluster, although
+// user may have created some users or made other changes.
+func (rc *SnapClient) CheckTargetClusterFresh(ctx context.Context) error {
+	log.Info("checking whether target cluster is fresh")
 	return restore.AssertUserDBsEmpty(rc.dom)
 }
 
@@ -1318,7 +1167,7 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 
 func (rc *SnapClient) execAndValidateChecksum(
 	ctx context.Context,
-	tbl *restoreutils.CreatedTable,
+	tbl *CreatedTable,
 	kvClient kv.Client,
 	concurrency uint,
 ) error {
@@ -1341,7 +1190,6 @@ func (rc *SnapClient) execAndValidateChecksum(
 
 	item, exists := rc.checkpointChecksum[tbl.Table.ID]
 	if !exists {
-		log.Info("did not find checksum from checkpoint, scanning table to calculate checksum")
 		startTS, err := restore.GetTSWithRetry(ctx, rc.pdClient)
 		if err != nil {
 			return errors.Trace(err)
@@ -1382,7 +1230,6 @@ func (rc *SnapClient) execAndValidateChecksum(
 		checksumMatch = false
 	})
 	if !checksumMatch {
-		// Enhanced logging with more detailed information
 		logger.Error("failed in validate checksum",
 			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
@@ -1390,20 +1237,8 @@ func (rc *SnapClient) execAndValidateChecksum(
 			zap.Uint64("calculated total kvs", item.TotalKvs),
 			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
-			zap.Int64("table_id", tbl.Table.ID),
-			zap.String("table_info", tbl.Table.Name.String()),
 		)
-
-		// Create an error with more diagnostic details
-		return errors.Annotatef(berrors.ErrRestoreChecksumMismatch,
-			"checksum mismatch for table '%s.%s' (ID: %d): "+
-				"crc64xor (expected: %d, actual: %d), "+
-				"totalKvs (expected: %d, actual: %d), "+
-				"totalBytes (expected: %d, actual: %d)",
-			tbl.OldTable.DB.Name.O, tbl.OldTable.Info.Name.O, tbl.Table.ID,
-			expectedChecksumStats.Crc64Xor, item.Crc64xor,
-			expectedChecksumStats.TotalKvs, item.TotalKvs,
-			expectedChecksumStats.TotalBytes, item.TotalBytes)
+		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
 	logger.Info("success in validating checksum")
 	return nil

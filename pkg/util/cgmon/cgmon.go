@@ -38,11 +38,9 @@ var (
 	ctx             context.Context
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
-	lastCPU         int
+	cfgMaxProcs     int
+	lastMaxProcs    int
 	lastMemoryLimit uint64
-
-	getCgroupCPUPeriodAndQuota = cgroup.GetCPUPeriodAndQuota
-	getCgroupMemoryLimit       = cgroup.GetMemoryLimit
 )
 
 // StartCgroupMonitor uses to start the cgroup monitoring.
@@ -117,44 +115,45 @@ func refreshCgroupCPU() error {
 	quota := runtime.NumCPU()
 
 	// Get CPU quota from cgroup.
-	cpuPeriod, cpuQuota, err := getCgroupCPUPeriodAndQuota()
-
-	// Only use cgroup CPU quota if it is available. It's possible that the cgroup doesn't have CPU quota set.
-	// Then in some environments, systemd will not enable the cpu controller if cpu quota is not set.
-	if err == nil && cpuPeriod > 0 && cpuQuota > 0 {
+	cpuPeriod, cpuQuota, err := cgroup.GetCPUPeriodAndQuota()
+	if err != nil {
+		return err
+	}
+	if cpuPeriod > 0 && cpuQuota > 0 {
 		ratio := float64(cpuQuota) / float64(cpuPeriod)
 		if ratio < float64(quota) {
 			quota = int(math.Ceil(ratio))
 		}
 	}
 
-	if quota != lastCPU {
+	if quota != lastMaxProcs {
 		log.Info("set the maxprocs", zap.Int("quota", quota))
 		metrics.MaxProcs.Set(float64(quota))
-		lastCPU = quota
+		lastMaxProcs = quota
+	} else if lastMaxProcs == 0 {
+		log.Info("set the maxprocs", zap.Int("cfgMaxProcs", cfgMaxProcs))
+		metrics.MaxProcs.Set(float64(cfgMaxProcs))
+		lastMaxProcs = cfgMaxProcs
 	}
-
-	return err
+	return nil
 }
 
 func refreshCgroupMemory() error {
-	// Get the total memory limit from `procfs`
+	memLimit, err := cgroup.GetMemoryLimit()
+	if err != nil {
+		return err
+	}
 	vmem, err := mem.VirtualMemory()
 	if err != nil {
 		return err
 	}
-	memLimit := vmem.Total
-
-	// Only use cgroup memory limit if it is available.
-	cgroupMemLimit, err := getCgroupMemoryLimit()
-	if err == nil && cgroupMemLimit < memLimit {
-		memLimit = cgroupMemLimit
+	if memLimit > vmem.Total {
+		memLimit = vmem.Total
 	}
-
 	if memLimit != lastMemoryLimit {
 		log.Info("set the memory limit", zap.Uint64("memLimit", memLimit))
 		metrics.MemoryLimit.Set(float64(memLimit))
 		lastMemoryLimit = memLimit
 	}
-	return err
+	return nil
 }

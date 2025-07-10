@@ -45,13 +45,10 @@ type PlanContext interface {
 	GetStore() kv.Storage
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
-	// GetLatestInfoSchema returns the latest information schema.
-	// except schema of physical schema objects, the information schema returned
-	// also includes the temporary table definitions stored in session.
-	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
-	// GetLatestISWithoutSessExt is same as GetLatestInfoSchema, except that it
-	// does NOT include the temporary table definitions stored in session.
-	GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema
+	// GetDomainInfoSchema returns the latest information schema in domain
+	// Different with `domain.InfoSchema()`, the information schema returned by this method
+	// includes the temporary table definitions stored in session
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
@@ -81,9 +78,6 @@ type PlanContext interface {
 	GetReadonlyUserVarMap() map[string]struct{}
 	// Reset reset the local context.
 	Reset()
-	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
-	// Notice that this is a thread safe function
-	BuiltinFunctionUsageInc(scalarFuncSigName string)
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.

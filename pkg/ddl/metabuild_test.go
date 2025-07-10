@@ -133,7 +133,7 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 		{
 			field: "is",
 			check: func(ctx *metabuild.Context) {
-				sctxInfoSchema := sctx.GetLatestInfoSchema()
+				sctxInfoSchema := sctx.GetDomainInfoSchema()
 				require.NotNil(t, sctxInfoSchema)
 				is, ok := ctx.GetInfoSchema()
 				require.True(t, ok)

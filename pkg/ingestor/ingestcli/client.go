@@ -19,17 +19,14 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	goerrors "errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -127,15 +124,9 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
 			if err1 != nil {
-				w.sendReqErr.Store(errors.Trace(&errdef.HTTPStatusError{
-					StatusCode: resp.StatusCode,
-					Message:    fmt.Sprintf("failed to read response body: %s", err1.Error()),
-				}))
+				w.sendReqErr.Store(errors.Annotate(err1, "failed to readAll response"))
 			} else {
-				w.sendReqErr.Store(errors.Trace(&errdef.HTTPStatusError{
-					StatusCode: resp.StatusCode,
-					Message:    fmt.Sprintf("failed to send chunked request: %s", string(body)),
-				}))
+				w.sendReqErr.Store(errors.Errorf("failed to send chunked request: %s", string(body)))
 			}
 			return
 		}
@@ -154,12 +145,6 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 }
 
 func (w *writeClient) cause(err error) error {
-	if goerrors.Is(err, io.ErrClosedPipe) {
-		// we close the writer only on Recv or Close, else this error is caused by
-		// closed Reader, i.e. the request failed. We need to wait the async routine
-		// to finish setting sendReqErr to return the correct error.
-		w.wg.Wait()
-	}
 	if reqErr := w.sendReqErr.Load(); reqErr != nil {
 		return errors.Trace(reqErr)
 	}
@@ -207,7 +192,6 @@ func (w *writeClient) Close() {
 var _ Client = &client{}
 
 type client struct {
-	urlSchema     string
 	tikvWorkerURL string
 	clusterID     uint64
 	httpClient    *http.Client
@@ -215,17 +199,8 @@ type client struct {
 }
 
 // NewClient creates a new Client instance.
-func NewClient(tikvWorkerURL string, clusterID uint64, isHTTPS bool, httpClient *http.Client, splitCli split.SplitClient) Client {
-	urlSchema := "http://"
-	if isHTTPS {
-		urlSchema = "https://"
-	}
-	// if tikvWorkerURL doesn't contain schema, add it.
-	if !strings.HasPrefix(tikvWorkerURL, "http://") && !strings.HasPrefix(tikvWorkerURL, "https://") {
-		tikvWorkerURL = urlSchema + tikvWorkerURL
-	}
+func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client, splitCli split.SplitClient) Client {
 	return &client{
-		urlSchema:     urlSchema,
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		httpClient:    httpClient,
@@ -245,8 +220,8 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	url := fmt.Sprintf("%s%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
-		c.urlSchema, store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
+	url := fmt.Sprintf("http://%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
+		store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
 	sstMeta := in.WriteResp.nextGenSSTMeta
 	logutil.BgLogger().Debug("calling ingest", in.Region.ToZapFields(), zap.Stringer("sstMeta", sstMeta))
@@ -269,21 +244,25 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if resp.StatusCode != http.StatusOK {
 		body, err1 := io.ReadAll(resp.Body)
 		if err1 != nil {
-			return errors.Trace(&errdef.HTTPStatusError{
-				StatusCode: resp.StatusCode,
-				Message:    fmt.Sprintf("failed to read response body: %s", err1.Error()),
-			})
+			return errors.Annotate(err1, "failed to readAll response")
 		}
 		var pbErr errorpb.Error
 		if err := proto.Unmarshal(body, &pbErr); err != nil {
-			return errors.Trace(&errdef.HTTPStatusError{
-				StatusCode: resp.StatusCode,
-				Message:    fmt.Sprintf("failed to unmarshal error response: %s", err.Error()),
-			})
+			return errors.Annotatef(err, "failed to unmarshal error(%s)", string(body))
 		}
 		// we annotate the SST ID to help diagnose.
 		pbErr.Message = fmt.Sprintf("%s(ingest SST ID %d)", pbErr.Message, sstMeta.ID)
-		return NewIngestAPIError(&pbErr, nil)
+		return &PBError{Err: &pbErr}
 	}
 	return nil
+}
+
+// PBError is a implementation of error.
+type PBError struct {
+	Err *errorpb.Error
+}
+
+// Error implements the error.
+func (re *PBError) Error() string {
+	return re.Err.GetMessage()
 }

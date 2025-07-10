@@ -68,7 +68,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 	if isExtraHandle {
 		end--
 	}
-	handle, err := colInfo.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, row)
+	handle, err := colInfo.HandleCols.BuildHandleByDatums(row)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[handleInfoPair]()
 		}
-		handle, err := info.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, joinedRow)
+		handle, err := info.HandleCols.BuildHandleByDatums(joinedRow)
 		if err != nil {
 			return err
 		}

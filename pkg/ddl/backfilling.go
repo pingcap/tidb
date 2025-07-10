@@ -169,7 +169,8 @@ type backfillCtx struct {
 	metricCounter prometheus.Counter
 }
 
-func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isUpdateColumn bool) (*backfillCtx, error) {
+func newBackfillCtx(id int, rInfo *reorgInfo,
+	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool, isUpdateColumn bool) (*backfillCtx, error) {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
 	exprCtx, err := newReorgExprCtxWithReorgMeta(rInfo.ReorgMeta, warnHandler)
 	if err != nil {
@@ -192,6 +193,9 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	}
 
 	tblCtx := newReorgTableMutateContext(exprCtx)
+	if isDistributed {
+		id = int(backfillContextID.Add(1))
+	}
 
 	colOrIdxName := ""
 	switch rInfo.Job.Type {
@@ -483,7 +487,6 @@ func loadTableRanges(
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
-	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	if len(startKey) == 0 && len(endKey) == 0 {
@@ -542,7 +545,6 @@ func loadTableRanges(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges = splitRangesByKeys(ranges, splitKeys)
 	logutil.DDLLogger().Info("load table ranges from PD done",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
@@ -550,37 +552,6 @@ func loadTableRanges(
 		zap.Int("range count", len(ranges)))
 	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
 	return ranges, nil
-}
-
-// splitRangesByKeys splits the ranges into more ranges by given split keys.
-// The split keys should be ordered.
-func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
-	if len(splitKeys) == 0 {
-		return ranges
-	}
-	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
-	for _, r := range ranges {
-		start := r.StartKey
-		finishOneRange := false
-		for !finishOneRange {
-			if len(splitKeys) == 0 {
-				break
-			}
-			split := splitKeys[0]
-			switch {
-			case split.Cmp(start) <= 0:
-				splitKeys = splitKeys[1:]
-			case split.Cmp(r.EndKey) < 0:
-				splitKeys = splitKeys[1:]
-				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
-				start = split
-			default:
-				finishOneRange = true
-			}
-		}
-		ret = append(ret, kv.KeyRange{StartKey: start, EndKey: r.EndKey})
-	}
-	return ret
 }
 
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
@@ -803,7 +774,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
-	rowCntListener := &localRowCntCollector{
+	rowCntListener := &localRowCntListener{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
 		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
@@ -920,7 +891,8 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	return err
 }
 
-type localRowCntCollector struct {
+type localRowCntListener struct {
+	EmptyRowCntListener
 	reorgCtx *reorgCtx
 	counter  prometheus.Counter
 
@@ -933,15 +905,15 @@ type localRowCntCollector struct {
 	}
 }
 
-func (s *localRowCntCollector) Add(_, rowCnt int64) {
+func (s *localRowCntListener) Written(rowCnt int) {
 	s.curPhysicalRowCnt.mu.Lock()
-	s.curPhysicalRowCnt.cnt += rowCnt
+	s.curPhysicalRowCnt.cnt += int64(rowCnt)
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)
 	s.curPhysicalRowCnt.mu.Unlock()
 	s.counter.Add(float64(rowCnt))
 }
 
-func (s *localRowCntCollector) SetTotal(total int) {
+func (s *localRowCntListener) SetTotal(total int) {
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
 }
 
@@ -1006,11 +978,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return errors.Trace(err)
 	}
 
-	var splitKeys []kv.Key
-	if reorgInfo.mergingTmpIdx {
-		splitKeys = getSplitKeysForTempIndexRanges(t.GetPhysicalID(), reorgInfo.elements)
-	}
-
 	// process result goroutine
 	eg.Go(func() error {
 		totalAddedCount := reorgInfo.Job.GetRowCount()
@@ -1069,7 +1036,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, splitKeys, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}

@@ -735,11 +735,6 @@ type Storage interface {
 	SetOption(k any, v any)
 	// GetOption is a thin wrapper around sync.Map.
 	GetOption(k any) (any, bool)
-	// GetClusterID returns the physical cluster ID of the storage.
-	// for nextgen, all keyspace in the storage share the same cluster ID.
-	GetClusterID() uint64
-	// GetKeyspace returns the keyspace name of the storage.
-	GetKeyspace() string
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
@@ -795,15 +790,14 @@ const (
 
 // ResourceGroupTagBuilder is used to build the resource group tag for a kv request.
 type ResourceGroupTagBuilder struct {
-	sqlDigest    *parser.Digest
-	planDigest   *parser.Digest
-	keyspaceName []byte
-	accessKey    []byte
+	sqlDigest  *parser.Digest
+	planDigest *parser.Digest
+	accessKey  []byte
 }
 
 // NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.
-func NewResourceGroupTagBuilder(keyspaceName []byte) *ResourceGroupTagBuilder {
-	return &ResourceGroupTagBuilder{keyspaceName: keyspaceName}
+func NewResourceGroupTagBuilder() *ResourceGroupTagBuilder {
+	return &ResourceGroupTagBuilder{}
 }
 
 // SetSQLDigest sets the sql digest for the request.
@@ -827,7 +821,7 @@ func (b *ResourceGroupTagBuilder) BuildProtoTagger() tikvrpc.ResourceGroupTagger
 
 // EncodeTagWithKey encodes the resource group tag, returns the encoded bytes.
 func (b *ResourceGroupTagBuilder) EncodeTagWithKey(key []byte) []byte {
-	tag := &tipb.ResourceGroupTag{KeyspaceName: b.keyspaceName}
+	tag := &tipb.ResourceGroupTag{}
 	if b.sqlDigest != nil {
 		tag.SqlDigest = b.sqlDigest.Bytes()
 	}

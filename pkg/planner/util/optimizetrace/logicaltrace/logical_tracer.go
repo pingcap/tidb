@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
-func appendItemPruneTraceStep[T expression.StringerWithCtx](p base.LogicalPlan, itemType string, prunedObjects []T,
+func appendItemPruneTraceStep(p base.LogicalPlan, itemType string, prunedObjects []expression.StringerWithCtx,
 	opt *optimizetrace.LogicalOptimizeOp) {
 	if len(prunedObjects) < 1 {
 		return
@@ -54,7 +54,11 @@ func AppendColumnPruneTraceStep(p base.LogicalPlan, prunedColumns []*expression.
 	if len(prunedColumns) < 1 {
 		return
 	}
-	appendItemPruneTraceStep(p, "columns", prunedColumns, opt)
+	s := make([]expression.StringerWithCtx, 0, len(prunedColumns))
+	for _, item := range prunedColumns {
+		s = append(s, item)
+	}
+	appendItemPruneTraceStep(p, "columns", s, opt)
 }
 
 // AppendFunctionPruneTraceStep appends a trace step for group by pruning.
@@ -63,7 +67,11 @@ func AppendFunctionPruneTraceStep(p base.LogicalPlan, prunedFunctions []*aggrega
 	if len(prunedFunctions) < 1 {
 		return
 	}
-	appendItemPruneTraceStep(p, "aggregation functions", prunedFunctions, opt)
+	s := make([]expression.StringerWithCtx, 0, len(prunedFunctions))
+	for _, item := range prunedFunctions {
+		s = append(s, item)
+	}
+	appendItemPruneTraceStep(p, "aggregation functions", s, opt)
 }
 
 // AppendByItemsPruneTraceStep appends a trace step for group by pruning.
@@ -72,7 +80,11 @@ func AppendByItemsPruneTraceStep(p base.LogicalPlan, prunedByItems []*util.ByIte
 	if len(prunedByItems) < 1 {
 		return
 	}
-	appendItemPruneTraceStep(p, "byItems", prunedByItems, opt)
+	s := make([]expression.StringerWithCtx, 0, len(prunedByItems))
+	for _, item := range prunedByItems {
+		s = append(s, item)
+	}
+	appendItemPruneTraceStep(p, "byItems", s, opt)
 }
 
 // AppendGroupByItemsPruneTraceStep appends a trace step for group by pruning.
@@ -81,7 +93,11 @@ func AppendGroupByItemsPruneTraceStep(p base.LogicalPlan, prunedGroupByItems []e
 	if len(prunedGroupByItems) < 1 {
 		return
 	}
-	appendItemPruneTraceStep(p, "groupByItems", prunedGroupByItems, opt)
+	s := make([]expression.StringerWithCtx, 0, len(prunedGroupByItems))
+	for _, item := range prunedGroupByItems {
+		s = append(s, item)
+	}
+	appendItemPruneTraceStep(p, "groupByItems", s, opt)
 }
 
 // ApplyEliminateTraceStep appends a trace step for aggregation pruning.

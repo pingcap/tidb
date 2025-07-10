@@ -71,8 +71,6 @@ func IsReadOnly(node Node, checkGlobalVars bool) bool {
 		default:
 			return false
 		}
-	case *TraceStmt:
-		return IsReadOnly(st.Stmt, checkGlobalVars)
 	default:
 		return false
 	}

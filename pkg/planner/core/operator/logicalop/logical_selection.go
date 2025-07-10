@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -97,12 +96,8 @@ func (p *LogicalSelection) HashCode() []byte {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	exprCtx := p.SCtx().GetExprCtx()
-	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
-	// Apply predicate simplification to the conditions. because propagateConstant has been dealed in the ConstantPropagationSolver
-	// so we don't need to do it again.
-	p.Conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.Conditions, false)
+	predicates = constraint.DeleteTrueExprs(p, predicates)
+	p.Conditions = constraint.DeleteTrueExprs(p, p.Conditions)
 	var child base.LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
@@ -110,9 +105,9 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	originConditions = canBePushDown
 	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
 	retConditions = append(retConditions, canNotBePushDown...)
-	sctx := p.SCtx()
+	exprCtx := p.SCtx().GetExprCtx()
 	if len(retConditions) > 0 {
-		p.Conditions = utilfuncp.ApplyPredicateSimplification(sctx, retConditions, true)
+		p.Conditions = expression.PropagateConstant(exprCtx, retConditions)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
@@ -121,7 +116,6 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 		}
 		return nil, p
 	}
-	p.Conditions = p.Conditions[:0]
 	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
 	return nil, child
 }
@@ -191,24 +185,6 @@ func (p *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base
 }
 
 // PredicateSimplification inherits BaseLogicalPlan.<7th> implementation.
-func (p *LogicalSelection) PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	// it is only test
-	pp := p.Self().(*LogicalSelection)
-	intest.AssertFunc(func() bool {
-		ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-		expected := make([]string, 0, len(pp.Conditions))
-		for _, cond := range pp.Conditions {
-			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), pp.Conditions, false)
-		actual := make([]string, 0, len(actualExprs))
-		for _, cond := range actualExprs {
-			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		return slices.Equal(expected, actual)
-	})
-	return pp.BaseLogicalPlan.PredicateSimplification(opt)
-}
 
 // ConstantPropagation inherits BaseLogicalPlan.<8th> implementation.
 

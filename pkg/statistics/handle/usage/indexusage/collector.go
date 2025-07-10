@@ -126,6 +126,8 @@ type Collector struct {
 	collector  collector.GlobalCollector[indexUsage]
 	indexUsage indexUsage
 	sync.RWMutex
+
+	closed bool
 }
 
 // NewCollector create an index usage collector

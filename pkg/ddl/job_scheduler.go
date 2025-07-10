@@ -655,10 +655,10 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	}
 }
 
-func getTableByTxn(ctx context.Context, store kv.Storage, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
+func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
 	var tbl table.Table
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
@@ -669,10 +669,7 @@ func getTableByTxn(ctx context.Context, store kv.Storage, schemaID, tableID int6
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		// This tableInfo should never interact with the autoid allocator,
-		// so we can use the autoid.Allocators{} here.
-		// TODO(tangenta): Use model.TableInfo instead of tables.Table.
-		tbl, err1 = table.TableFromMeta(autoid.Allocators{}, tblInfo)
+		tbl, err1 = getTable(r, schemaID, tblInfo)
 		return errors.Trace(err1)
 	})
 	return dbInfo, tbl, err

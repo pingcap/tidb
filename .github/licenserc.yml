@@ -11,7 +11,6 @@ header:
     - ".gitattributes"
     - ".cilinter.yaml"
     - ".golangci.yml"
-    - ".golangci.bck.yml"
     - ".golangci_br.yml"
     - "LICENSES/"
     - "**/BUILD.bazel"

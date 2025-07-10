@@ -51,8 +51,7 @@ func init() {
 }
 
 // SetupTopSQL sets up the top-sql worker.
-func SetupTopSQL(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater) {
-	globalTopSQLReport.BindKeyspaceName(keyspaceName)
+func SetupTopSQL(updater collector.ProcessCPUTimeUpdater) {
 	globalTopSQLReport.BindProcessCPUTimeUpdater(updater)
 	globalTopSQLReport.Start()
 	singleTargetDataSink.Start()

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -72,10 +71,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
-	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/servicescope"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -234,7 +233,7 @@ func initFlagSet() *flag.FlagSet {
 	metricsInterval = fset.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
 	// subcommand collect-log
-	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs when using collect-log subcommand, e.g. ./tidb-server --redact=xxx collect-log <input> <output>")
+	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs, if `./tidb-server --redact=xxx collect-log <input> <output>` subcommand is used")
 
 	// PROXY Protocol
 	proxyProtocolNetworks = fset.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
@@ -278,17 +277,6 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
-	// we cannot add this check inside config.Valid(), as previous '-V' also relies
-	// on initialized global config.
-	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is required for nextgen TiDB")
-		os.Exit(0)
-	} else if kerneltype.IsClassic() && len(config.GetGlobalConfig().KeyspaceName) > 0 {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is not supported for classic TiDB")
-		os.Exit(0)
-	}
-
-	signal.SetupUSR1Handler()
 	registerStores()
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
@@ -349,7 +337,7 @@ func main() {
 		executor.Stop()
 		close(exited)
 	})
-	topsql.SetupTopSQL(keyspace.GetKeyspaceNameBytesBySettings(), svr)
+	topsql.SetupTopSQL(svr)
 	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
@@ -409,7 +397,7 @@ func setCPUAffinity() {
 }
 
 func registerStores() {
-	err := kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
+	err := kvstore.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
 	terror.MustNil(err)
 	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
@@ -418,23 +406,20 @@ func registerStores() {
 }
 
 func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
-	storage := kvstore.MustInitStorage(keyspaceName)
-	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
-		pdhttpCli := tikvStore.GetPDHTTPClient()
-		// unistore also implements kv.StorageWithPD, but it does not have PD client.
-		if pdhttpCli != nil {
-			pdStatus, err := pdhttpCli.GetStatus(context.Background())
-			terror.MustNil(err)
-			if !kerneltype.IsMatch(pdStatus.KernelType) {
-				log.Fatal("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
-					zap.String("tidb", kerneltype.Name()))
-			}
-		}
+	cfg := config.GetGlobalConfig()
+	var fullPath string
+	if keyspaceName == "" {
+		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	} else {
+		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
 	}
+	var err error
+	storage, err := kvstore.New(fullPath)
+	terror.MustNil(err)
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
-	err := ddl.StartOwnerManager(context.Background(), storage)
+	err = ddl.StartOwnerManager(context.Background(), storage)
 	terror.MustNil(err)
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
@@ -657,7 +642,7 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 
 	if actualFlags[nmTiDBServiceScope] {
-		err = naming.Check(*serviceScope)
+		err = servicescope.CheckServiceScope(*serviceScope)
 		terror.MustNil(err)
 		cfg.Instance.TiDBServiceScope = *serviceScope
 	}
@@ -927,10 +912,6 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
-	if keyspace.IsRunningOnUser() {
-		err = kvstore.GetSystemStorage().Close()
-		terror.Log(errors.Annotate(err, "close system storage"))
-	}
 }
 
 // The amount of time we wait for the ongoing txt to finished.

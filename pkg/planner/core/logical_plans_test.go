@@ -117,7 +117,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	ctx.BindDomainAndSchValidator(do, nil)
+	ctx.BindDomain(do)
 	ctx.SetInfoSchema(s.is)
 	s.ctx = ctx
 	s.sctx = ctx
@@ -145,7 +145,7 @@ func TestPredicatePushDown(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -1600,7 +1600,7 @@ func checkVisitInfo(t *testing.T, v1, v2 []visitInfo, comment string) {
 	v2 = unique(v2)
 
 	require.Equal(t, len(v2), len(v1), comment)
-	for i := range v1 {
+	for i := 0; i < len(v1); i++ {
 		// loose compare errors for code match
 		require.True(t, terror.ErrorEqual(v1[i].err, v2[i].err), fmt.Sprintf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
 		// compare remainder
@@ -2027,7 +2027,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 or g = 5",
-			result: "PRIMARY_KEY,[b_global,g]",
+			result: "PRIMARY_KEY,[g,b_global]",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
@@ -2356,7 +2356,7 @@ func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 	iterations := 100
 	s := createPlannerSuite()
 	defer s.Close()
-	for range iterations {
+	for i := 0; i < iterations; i++ {
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		nodeW := resolve.NewNodeW(stmt)
@@ -2549,7 +2549,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 				innerRet = append(innerRet, sb.String())
 				sb.Reset()
 				fmt.Fprintf(&sb, "handle cols: %s:", colsLayout.HandleCols.StringWithCtx(s.sctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
-				for i := range colsLayout.HandleCols.NumCols() {
+				for i := 0; i < colsLayout.HandleCols.NumCols(); i++ {
 					if i > 0 {
 						sb.WriteString(", ")
 					}

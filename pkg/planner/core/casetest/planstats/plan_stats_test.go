@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -88,7 +87,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // PartitionTable
 			sql: "select * from pt where a < 15 and c > 1",
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				pua, ok := p.(*physicalop.PhysicalUnionAll)
+				pua, ok := p.(*plannercore.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
 					require.Greater(t, countFullStats(child.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)

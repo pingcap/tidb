@@ -752,7 +752,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(cond, newTp, types.UnspecifiedLength, false), collator)
 		if len(points[offset]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
@@ -780,7 +780,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
 		} else if len(points[i]) == 0 { // Early termination if false expression found
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
 				// `a>@x and a<@y` --> `invalid-range if @x>=@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}
@@ -795,7 +795,7 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 				// Maybe we can improve it later.
 				columnValues[i] = &valueInfo{mutable: true}
 			}
-			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions...) {
+			if expression.MaybeOverOptimized4PlanCache(sctx.ExprCtx, conditions) {
 				// `a=@x and a=@y` --> `a=@x if @x==@y`
 				sctx.SetSkipPlanCache("some parameters may be overwritten")
 			}

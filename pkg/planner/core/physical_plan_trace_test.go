@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -48,17 +47,17 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select * from t",
 			physicalList: []string{
-				"TableFullScan_5", "TableReader_6", "Projection_3",
+				"TableFullScan_4", "TableReader_5", "Projection_3",
 			},
 		},
 		{
 			sql: "select max(b) from t",
 			physicalList: []string{
-				"IndexFullScan_28",
-				"Limit_29",
-				"IndexReader_30",
+				"IndexFullScan_19",
 				"Limit_20",
-				"StreamAgg_15",
+				"IndexReader_21",
+				"Limit_14",
+				"StreamAgg_10",
 				"Projection_8",
 			},
 		},
@@ -78,7 +77,6 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err)
-		plan.SCtx().GetSessionVars().StmtCtx.OriginalSQL = testcase.sql
 		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 		require.NoError(t, err)
 		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
@@ -93,7 +91,7 @@ func checkList(d []string, s []string) bool {
 	if len(d) != len(s) {
 		return false
 	}
-	for i := range d {
+	for i := 0; i < len(d); i++ {
 		if strings.Compare(d[i], s[i]) != 0 {
 			return false
 		}
@@ -139,39 +137,34 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
+	flag := uint64(0)
 	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
-	flag := rule.FlagGcSubstitute | rule.FlagStabilizeResults | rule.FlagSkewDistinctAgg | rule.FlagEliminateOuterJoin | rule.FlagPushDownAgg
+	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<14 | 1<<17
 	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		25: "TableReader",
-		17: "HashAgg",
-		29: "TableReader",
-		16: "HashJoin",
-		10: "Sort",
-		8:  "Projection",
-		23: "TableFullScan",
-		24: "HashAgg",
-		27: "TableReader",
-		26: "TableFullScan",
-		19: "HashAgg",
-		28: "TableFullScan",
+		12: "TableReader",
+		14: "TableReader",
+		13: "TableFullScan",
 		15: "HashJoin",
-		14: "HashAgg",
+		6:  "Projection",
+		11: "TableFullScan",
+		9:  "HashJoin",
+		10: "HashJoin",
+		7:  "HashAgg",
+		16: "HashJoin",
+		8:  "StreamAgg",
 	}
 	final := map[int]struct{}{
-		23: {},
-		17: {},
-		25: {},
-		24: {},
-		28: {},
-		29: {},
-		16: {},
+		11: {},
+		12: {},
+		13: {},
 		14: {},
-		10: {},
-		8:  {},
+		9:  {},
+		7:  {},
+		6:  {},
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]

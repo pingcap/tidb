@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -57,6 +56,8 @@ import (
 var (
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = atomicutil.NewInt32(0)
+	// backfillContextID is used for generating the next backfill context ID.
+	backfillContextID = atomicutil.NewInt32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 
@@ -701,7 +702,7 @@ func (w *ReorgContext) getResourceGroupTaggerForTopSQL() *kv.ResourceGroupTagBui
 	}
 
 	digest := w.cacheDigest
-	return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(digest)
+	return kv.NewResourceGroupTagBuilder().SetSQLDigest(digest)
 }
 
 func (w *ReorgContext) ddlJobSourceType() string {
@@ -1047,8 +1048,6 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
-	case model.ActionRefreshMeta:
-		ver, err = onRefreshMeta(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

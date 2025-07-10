@@ -15,7 +15,6 @@
 package metrics
 
 import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -62,7 +61,7 @@ var (
 
 // InitExecutorMetrics initializes excutor metrics.
 func InitExecutorMetrics() {
-	ExecutorCounter = metricscommon.NewCounterVec(
+	ExecutorCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -71,7 +70,7 @@ func InitExecutorMetrics() {
 		}, []string{LblType},
 	)
 
-	StmtNodeCounter = metricscommon.NewCounterVec(
+	StmtNodeCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -79,7 +78,7 @@ func InitExecutorMetrics() {
 			Help:      "Counter of StmtNode.",
 		}, []string{LblType, LblDb, LblResourceGroup})
 
-	DbStmtNodeCounter = metricscommon.NewCounterVec(
+	DbStmtNodeCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -87,7 +86,7 @@ func InitExecutorMetrics() {
 			Help:      "Counter of StmtNode by Database.",
 		}, []string{LblDb, LblType})
 
-	ExecPhaseDuration = metricscommon.NewSummaryVec(
+	ExecPhaseDuration = NewSummaryVec(
 		prometheus.SummaryOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -95,7 +94,7 @@ func InitExecutorMetrics() {
 			Help:      "Summary of each execution phase duration.",
 		}, []string{LblPhase, LblInternal})
 
-	OngoingTxnDurationHistogram = metricscommon.NewHistogramVec(
+	OngoingTxnDurationHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -104,7 +103,7 @@ func InitExecutorMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(60, 2, 15), // 60s ~ 273hours
 		}, []string{LblType})
 
-	MppCoordinatorStats = metricscommon.NewGaugeVec(
+	MppCoordinatorStats = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -112,7 +111,7 @@ func InitExecutorMetrics() {
 			Help:      "Mpp Coordinator related stats",
 		}, []string{LblType})
 
-	MppCoordinatorLatency = metricscommon.NewHistogramVec(
+	MppCoordinatorLatency = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -121,7 +120,7 @@ func InitExecutorMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
-	AffectedRowsCounter = metricscommon.NewCounterVec(
+	AffectedRowsCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -134,7 +133,7 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterDelete = AffectedRowsCounter.WithLabelValues("Delete")
 	AffectedRowsCounterReplace = AffectedRowsCounter.WithLabelValues("Replace")
 
-	NetworkTransmissionStats = metricscommon.NewCounterVec(
+	NetworkTransmissionStats = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",

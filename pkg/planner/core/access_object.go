@@ -28,6 +28,22 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// A plan is dataAccesser means it can access underlying data.
+// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
+// ExplainInfo = AccessObject + OperatorInfo
+type dataAccesser interface {
+
+	// AccessObject return plan's `table`, `partition` and `index`.
+	AccessObject() base.AccessObject
+
+	// OperatorInfo return other operator information to be explained.
+	OperatorInfo(normalized bool) string
+}
+
+type partitionAccesser interface {
+	accessObject(base.PlanContext) base.AccessObject
+}
+
 // DynamicPartitionAccessObject represents the partitions accessed by the children of this operator.
 // It's mainly used in dynamic pruning mode.
 type DynamicPartitionAccessObject struct {
@@ -217,7 +233,7 @@ func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	}
 }
 
-// AccessObject implements DataAccesser interface.
+// AccessObject implements dataAccesser interface.
 func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.DBName.O,
@@ -250,7 +266,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 	return res
 }
 
-// AccessObject implements DataAccesser interface.
+// AccessObject implements dataAccesser interface.
 func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.DBName.O,
@@ -289,7 +305,7 @@ func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 	return res
 }
 
-// AccessObject implements DataAccesser interface.
+// AccessObject implements dataAccesser interface.
 func (p *PhysicalMemTable) AccessObject() base.AccessObject {
 	return &ScanAccessObject{
 		Database: p.DBName.O,
@@ -297,7 +313,7 @@ func (p *PhysicalMemTable) AccessObject() base.AccessObject {
 	}
 }
 
-// AccessObject implements DataAccesser interface.
+// AccessObject implements dataAccesser interface.
 func (p *PointGetPlan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.dbName,
@@ -330,7 +346,7 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 	return res
 }
 
-// AccessObject implements DataAccesser interface.
+// AccessObject implements physicalScan interface.
 func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 	res := &ScanAccessObject{
 		Database: p.dbName,
@@ -408,8 +424,7 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	return res
 }
 
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -478,18 +493,15 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 	return DynamicPartitionAccessObjects{res}
 }
 
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalIndexReader) accessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalIndexLookUpReader) accessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
+func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -505,7 +517,7 @@ func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.Acce
 	return DynamicPartitionAccessObjects{res}
 }
 
-// AccessObject implements DataAccesser interface.
+// AccessObject implements physicalScan interface.
 func (p *PhysicalCTE) AccessObject() base.AccessObject {
 	if p.cteName == p.cteAsName {
 		return OtherAccessObject(fmt.Sprintf("CTE:%s", p.cteName.L))

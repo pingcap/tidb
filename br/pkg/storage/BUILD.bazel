@@ -34,7 +34,6 @@ go_library(
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/util",
-        "//pkg/util/injectfailpoint",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/prefetch",

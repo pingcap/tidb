@@ -18,8 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
-	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -27,8 +25,8 @@ import (
 
 func TestSchemaCheckerSimple(t *testing.T) {
 	lease := 5 * time.Millisecond
-	validator := isvalidator.New(lease)
-	checker := &SchemaChecker{Validator: validator, needCheckSchema: true}
+	validator := NewSchemaValidator(lease, nil)
+	checker := &SchemaChecker{SchemaValidator: validator, needCheckSchema: true}
 
 	// Add some schema versions and delta table IDs.
 	ts := uint64(time.Now().UnixNano())
@@ -65,8 +63,8 @@ func TestSchemaCheckerSimple(t *testing.T) {
 	_, err = checker.Check(ts)
 	require.NoError(t, err)
 
-	// Use checker.schemaValidator.Check instead of checker.Check here because backoff make CI slow.
+	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	nowTS := uint64(time.Now().UnixNano())
-	_, result := checker.Validator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs, true)
-	require.Equal(t, validatorapi.ResultUnknown, result)
+	_, result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs, true)
+	require.Equal(t, ResultUnknown, result)
 }

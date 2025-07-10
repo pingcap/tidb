@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/bits"
 	"math/rand"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -399,7 +400,7 @@ var (
 func (c *Column) resize(n, typeSize int, isNull bool) {
 	sizeData := n * typeSize
 	if cap(c.data) >= sizeData {
-		c.data = c.data[:sizeData]
+		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
 	} else {
 		c.data = make([]byte, sizeData)
 	}
@@ -412,7 +413,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	newNulls := false
 	sizeNulls := (n + 7) >> 3
 	if cap(c.nullBitmap) >= sizeNulls {
-		c.nullBitmap = c.nullBitmap[:sizeNulls]
+		(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = sizeNulls
 	} else {
 		c.nullBitmap = make([]byte, sizeNulls)
 		newNulls = true
@@ -439,7 +440,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 	}
 
 	if cap(c.elemBuf) >= typeSize {
-		c.elemBuf = c.elemBuf[:typeSize]
+		(*reflect.SliceHeader)(unsafe.Pointer(&c.elemBuf)).Len = typeSize
 	} else {
 		c.elemBuf = make([]byte, typeSize)
 	}
@@ -582,61 +583,60 @@ func (c *Column) ReserveEnum(n int) {
 	c.reserve(n, 8)
 }
 
+func (c *Column) castSliceHeader(header *reflect.SliceHeader, typeSize int) {
+	header.Data = (*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Data
+	header.Len = c.length
+	header.Cap = cap(c.data) / typeSize
+}
+
 // Int64s returns an int64 slice stored in this Column.
 func (c *Column) Int64s() []int64 {
-	if len(c.data) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*int64)(unsafe.Pointer(&c.data[0])), c.length)
+	var res []int64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeInt64)
+	return res
 }
 
 // Uint64s returns a uint64 slice stored in this Column.
 func (c *Column) Uint64s() []uint64 {
-	if len(c.data) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*uint64)(unsafe.Pointer(&c.data[0])), c.length)
+	var res []uint64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeUint64)
+	return res
 }
 
 // Float32s returns a float32 slice stored in this Column.
 func (c *Column) Float32s() []float32 {
-	if len(c.data) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*float32)(unsafe.Pointer(&c.data[0])), c.length)
+	var res []float32
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat32)
+	return res
 }
 
 // Float64s returns a float64 slice stored in this Column.
 func (c *Column) Float64s() []float64 {
-	if len(c.data) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*float64)(unsafe.Pointer(&c.data[0])), c.length)
+	var res []float64
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeFloat64)
+	return res
 }
 
 // GoDurations returns a Golang time.Duration slice stored in this Column.
 // Different from the Row.GetDuration method, the argument Fsp is ignored, so the user should handle it outside.
 func (c *Column) GoDurations() []time.Duration {
-	if len(c.data) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*time.Duration)(unsafe.Pointer(&c.data[0])), c.length)
+	var res []time.Duration
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeGoDuration)
+	return res
 }
 
 // Decimals returns a MyDecimal slice stored in this Column.
 func (c *Column) Decimals() []types.MyDecimal {
-	if len(c.data) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*types.MyDecimal)(unsafe.Pointer(&c.data[0])), c.length)
+	var res []types.MyDecimal
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeMyDecimal)
+	return res
 }
 
 // Times returns a Time slice stored in this Column.
 func (c *Column) Times() []types.Time {
-	if len(c.data) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*types.Time)(unsafe.Pointer(&c.data[0])), c.length)
+	var res []types.Time
+	c.castSliceHeader((*reflect.SliceHeader)(unsafe.Pointer(&res)), sizeTime)
+	return res
 }
 
 // GetInt64 returns the int64 in the specific row.

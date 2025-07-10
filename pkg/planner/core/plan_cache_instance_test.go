@@ -217,8 +217,8 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 
 	pc := NewInstancePlanCache(300, 100000)
 	var flag [100][100]bool
-	for k := range 100 {
-		for statsHash := range 100 {
+	for k := 0; k < 100; k++ {
+		for statsHash := 0; statsHash < 100; statsHash++ {
 			if rand.Intn(10) < 7 {
 				_put(pc, int64(k), 1, int64(statsHash))
 				flag[k][statsHash] = true
@@ -227,11 +227,11 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 10000 {
+			for i := 0; i < 10000; i++ {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash] {
 					_hit(t, pc, k, statsHash)
@@ -254,11 +254,11 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 	var flag [100][100]atomic.Bool
 	pc := NewInstancePlanCache(300, 100000)
 	var wg sync.WaitGroup
-	for range 5 { // writers
+	for i := 0; i < 5; i++ { // writers
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 1000 {
+			for i := 0; i < 1000; i++ {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if _put(pc, int64(k), 1, int64(statsHash)) {
 					flag[k][statsHash].Store(true)
@@ -267,11 +267,11 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 			}
 		}()
 	}
-	for range 5 { // readers
+	for i := 0; i < 5; i++ { // readers
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 2000 {
+			for i := 0; i < 2000; i++ {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash].Load() {
 					_hit(t, pc, k, statsHash)

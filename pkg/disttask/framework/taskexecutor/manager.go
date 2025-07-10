@@ -48,6 +48,10 @@ var (
 	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
+	unfinishedSubtaskStates = []proto.SubtaskState{
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning,
+	}
 )
 
 // Manager monitors the task table and manages the taskExecutors.

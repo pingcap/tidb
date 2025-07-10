@@ -18,7 +18,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -293,7 +292,6 @@ func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskNa
 	if err != nil {
 		return err
 	}
-	metrics.LastCheckpoint.WithLabelValues(taskName).Set(float64(checkpoint))
 	return nil
 }
 

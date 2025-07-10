@@ -28,12 +28,13 @@ import (
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -186,7 +187,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 
 		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
 		if !ok {
-			statslogutil.StatsLogger().Debug(
+			logutil.BgLogger().Debug(
 				"unknown physical ID in stats meta table, maybe it has been dropped",
 				zap.Int64("ID", physicalID),
 			)
@@ -307,7 +308,7 @@ func (s *StatsCacheImpl) Close() {
 func (s *StatsCacheImpl) Clear() {
 	cache, err := NewStatsCache()
 	if err != nil {
-		statslogutil.StatsLogger().Warn("create stats cache failed", zap.Error(err))
+		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
 		return
 	}
 	s.replace(cache)

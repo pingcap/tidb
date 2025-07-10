@@ -35,6 +35,13 @@ import (
 	"golang.org/x/time/rate"
 )
 
+var (
+
+	// the base exponential backoff time
+	// the variable is only changed in unit test for running test faster.
+	splitRegionBaseBackOffTime = time.Second
+)
+
 // splitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
 func (local *Backend) splitAndScatterRegionInBatches(

@@ -50,7 +50,7 @@ func TestSelectCheckVisibility(t *testing.T) {
 	ts := txn.StartTS()
 	sessionStore := tk.Session().GetStore().(tikv.Storage)
 	// Update gc safe time for check data visibility.
-	sessionStore.UpdateTxnSafePointCache(ts+1, time.Now())
+	sessionStore.UpdateSPCache(ts+1, time.Now())
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)
 		require.NoError(t, err)
@@ -60,15 +60,15 @@ func TestSelectCheckVisibility(t *testing.T) {
 		require.True(t, expectErr.Equal(err))
 	}
 	// Test point get.
-	checkSelectResultError("select * from t where a='1'", storeerr.ErrTxnAbortedByGC)
+	checkSelectResultError("select * from t where a='1'", storeerr.ErrGCTooEarly)
 	// Test batch point get.
-	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrTxnAbortedByGC)
+	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrGCTooEarly)
 	// Test Index look up read.
-	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
+	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrGCTooEarly)
 	// Test Index read.
-	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
+	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrGCTooEarly)
 	// Test table read.
-	checkSelectResultError("select * from t", storeerr.ErrTxnAbortedByGC)
+	checkSelectResultError("select * from t", storeerr.ErrGCTooEarly)
 }
 
 func TestReturnValues(t *testing.T) {

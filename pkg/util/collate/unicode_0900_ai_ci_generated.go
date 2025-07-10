@@ -18,12 +18,6 @@
 
 package collate
 
-import (
-	"unicode/utf8"
-
-	"github.com/pingcap/tidb/pkg/util/hack"
-)
-
 // unicode0900AICICollator implements UCA. see http://unicode.org/reports/tr10/
 type unicode0900AICICollator struct {
 	impl unicode0900Impl
@@ -46,16 +40,11 @@ func (uc *unicode0900AICICollator) Compare(a, b string) int {
 	ar, br := rune(0), rune(0)
 	// decode index of a, b
 	ai, bi := 0, 0
-	arLen, brLen := 0, 0
 	for {
 		if an == 0 {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
-					ar, arLen = utf8.DecodeRune(hack.Slice(a[ai:]))
-					if ar == utf8.RuneError {
-						return 0
-					}
-					ai = ai + arLen
+					ar, ai = decodeRune(a, ai)
 					an, as = uc.impl.GetWeight(ar)
 				}
 			} else {
@@ -67,11 +56,7 @@ func (uc *unicode0900AICICollator) Compare(a, b string) int {
 		if bn == 0 {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
-					br, brLen = utf8.DecodeRune(hack.Slice(b[bi:]))
-					if br == utf8.RuneError {
-						return 0
-					}
-					bi = bi + brLen
+					br, bi = decodeRune(b, bi)
 					bn, bs = uc.impl.GetWeight(br)
 				}
 			} else {
@@ -110,16 +95,10 @@ func (uc *unicode0900AICICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	r := rune(0)
 	si := 0                        // decode index of s
 	sn, ss := uint64(0), uint64(0) // weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
-	rLen := 0
 
 	for si < len(str) {
-		r, rLen = utf8.DecodeRune(hack.Slice(str[si:]))
+		r, si = decodeRune(str, si)
 
-		if r == utf8.RuneError {
-			return buf
-		}
-
-		si = si + rLen
 		sn, ss = uc.impl.GetWeight(r)
 
 		for sn != 0 {

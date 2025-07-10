@@ -16,6 +16,7 @@ package charset
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 	"unsafe"
 
@@ -122,10 +123,12 @@ func generateEncodingErr(name string, invalidBytes []byte) error {
 // HackSlice converts string to slice without copy.
 // Use at your own risk.
 func HackSlice(s string) (b []byte) {
-	if len(s) == 0 {
-		return []byte{}
-	}
-	return unsafe.Slice(unsafe.StringData(s), len(s))
+	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pBytes.Data = pString.Data
+	pBytes.Len = pString.Len
+	pBytes.Cap = pString.Len
+	return
 }
 
 // HackString converts slice to string without copy.
@@ -134,5 +137,9 @@ func HackString(b []byte) (s string) {
 	if len(b) == 0 {
 		return ""
 	}
-	return unsafe.String(unsafe.SliceData(b), len(b))
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
+	return
 }

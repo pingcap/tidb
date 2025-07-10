@@ -17,6 +17,7 @@ package context
 import (
 	"encoding/json"
 	"io"
+	"reflect"
 	"testing"
 	"unsafe"
 
@@ -178,5 +179,7 @@ func warnSliceInnerArrayEqual(a []SQLWarn, b []SQLWarn) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return unsafe.SliceData(a) == unsafe.SliceData(b)
+	header1 := (*reflect.SliceHeader)(unsafe.Pointer(&a))
+	header2 := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	return header1.Data == header2.Data
 }

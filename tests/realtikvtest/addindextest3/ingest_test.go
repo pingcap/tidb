@@ -25,11 +25,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	disttestutil "github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -142,7 +140,6 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
-	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -401,7 +398,6 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 }
 
 func TestAddIndexLoadTableRangeError(t *testing.T) {
-	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -453,7 +449,6 @@ func TestAddIndexMockFlushError(t *testing.T) {
 }
 
 func TestAddIndexDiskQuotaTS(t *testing.T) {
-	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -482,9 +477,6 @@ func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
 }
 
 func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -520,9 +512,6 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -543,9 +532,6 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 }
 
 func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -559,9 +545,6 @@ func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
 }
 
 func TestAddIndexBackfillLostUpdate(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -617,9 +600,6 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 }
 
 func TestAddIndexIngestFailures(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -644,9 +624,6 @@ func TestAddIndexIngestFailures(t *testing.T) {
 }
 
 func TestAddIndexImportFailed(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("have overlapped ingest sst, skip")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -773,9 +750,6 @@ func TestConcFastReorg(t *testing.T) {
 }
 
 func TestIssue55808(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("this is specific to classic kernel")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")

@@ -199,7 +199,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *copro
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is, nil)
+	b := newExecutorBuilder(h.sctx, is)
 	return b.build(plan), nil
 }
 

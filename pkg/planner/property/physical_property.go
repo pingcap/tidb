@@ -258,6 +258,10 @@ type PhysicalProperty struct {
 	// Non-MPP tasks do not care about it.
 	SortItemsForPartition []SortItem
 
+	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
+	// Non-MPP tasks do not care about it.
+	RejectSort bool
+
 	CTEProducerStatus cteProducerStatus
 
 	VectorProp struct {
@@ -518,6 +522,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		ExpectedCnt:           p.ExpectedCnt,
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
+		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.

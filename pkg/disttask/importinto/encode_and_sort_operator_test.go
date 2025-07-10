@@ -148,61 +148,52 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 	cases := []struct {
 		createSQL               string
 		numOfIndexGenKV         int
-		numOfUKGenKV            int
 		dataKVMemSizePerCon     uint64
 		perIndexKVMemSizePerCon uint64
 	}{
 		{
 			createSQL:           "create table t (a int)",
 			numOfIndexGenKV:     0,
-			numOfUKGenKV:        0,
 			dataKVMemSizePerCon: units.GiB,
 		},
 		{
 			createSQL:           "create table t (a int primary key clustered)",
 			numOfIndexGenKV:     0,
-			numOfUKGenKV:        0,
 			dataKVMemSizePerCon: units.GiB,
 		},
 		{
 			createSQL:               "create table t (a int primary key nonclustered)",
 			numOfIndexGenKV:         1,
-			numOfUKGenKV:            1,
 			dataKVMemSizePerCon:     768 * units.MiB,
 			perIndexKVMemSizePerCon: 256 * units.MiB,
 		},
 		{
 			createSQL:               "create table t (a int primary key clustered, b int, key(b))",
 			numOfIndexGenKV:         1,
-			numOfUKGenKV:            0,
 			dataKVMemSizePerCon:     768 * units.MiB,
 			perIndexKVMemSizePerCon: 256 * units.MiB,
 		},
 		{
 			createSQL:               "create table t (a int primary key clustered, b int, key(b), key(a,b))",
 			numOfIndexGenKV:         2,
-			numOfUKGenKV:            0,
 			dataKVMemSizePerCon:     644245094,
 			perIndexKVMemSizePerCon: 214748364,
 		},
 		{
 			createSQL:               "create table t (a int primary key clustered, b int, c int, key(b,c), unique(b), unique(c), key(a,b))",
 			numOfIndexGenKV:         4,
-			numOfUKGenKV:            2,
 			dataKVMemSizePerCon:     460175067,
 			perIndexKVMemSizePerCon: 153391689,
 		},
 		{
 			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) clustered, key(b,c), unique(b), unique(c), key(a,b))",
 			numOfIndexGenKV:         4,
-			numOfUKGenKV:            2,
 			dataKVMemSizePerCon:     460175067,
 			perIndexKVMemSizePerCon: 153391689,
 		},
 		{
 			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) nonclustered, key(b,c), unique(b), unique(c), key(a,b))",
 			numOfIndexGenKV:         5,
-			numOfUKGenKV:            3,
 			dataKVMemSizePerCon:     402653184,
 			perIndexKVMemSizePerCon: 134217728,
 		},
@@ -219,14 +210,6 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			info.State = model.StatePublic
 
 			require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
-			indicesGenKV := getIndicesGenKV(info)
-			var ukCountGenKV int
-			for _, g := range indicesGenKV {
-				if g.unique {
-					ukCountGenKV++
-				}
-			}
-			require.Equal(t, c.numOfUKGenKV, ukCountGenKV, c.createSQL)
 			dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(&proto.StepResource{
 				Mem: proto.NewAllocatable(2 * units.GiB),
 			}, &importer.Plan{
@@ -240,4 +223,10 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			require.LessOrEqual(t, c.dataKVMemSizePerCon+c.perIndexKVMemSizePerCon*uint64(c.numOfIndexGenKV), uint64(units.GiB))
 		})
 	}
+}
+
+func TestGetKVGroupBlockSize(t *testing.T) {
+	require.Equal(t, 32*units.MiB, getKVGroupBlockSize(dataKVGroup))
+	require.Equal(t, 16*units.MiB, getKVGroupBlockSize(""))
+	require.Equal(t, 16*units.MiB, getKVGroupBlockSize("1"))
 }

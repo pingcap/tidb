@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -798,8 +797,8 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalApply{},
 		&plannercore.PhysicalHashAgg{},
 		&plannercore.PhysicalStreamAgg{},
-		&physicalop.PhysicalLimit{},
-		&physicalop.PhysicalSort{},
+		&plannercore.PhysicalLimit{},
+		&plannercore.PhysicalSort{},
 		&plannercore.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},
@@ -809,7 +808,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalTableDual{},
 		&plannercore.PhysicalWindow{},
 		&plannercore.PhysicalShuffle{},
-		&physicalop.PhysicalUnionAll{},
+		&plannercore.PhysicalUnionAll{},
 	}
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
@@ -847,7 +846,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
@@ -938,7 +937,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
@@ -1567,7 +1566,9 @@ func TestGetResultRowsCount(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		cnt := tk.Session().GetSessionVars().StmtCtx.GetResultRowsCount()
+		p, ok := info.Plan.(base.Plan)
+		require.True(t, ok)
+		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
@@ -2631,8 +2632,9 @@ func TestAdmin(t *testing.T) {
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
-	tk.MustExec("admin check table admin_test")
-	tk.MustExec("admin check table admin_test1")
+	r, err = tk.Exec("admin check table admin_test, admin_test1")
+	require.NoError(t, err)
+	require.Nil(t, r)
 	// error table name
 	require.Error(t, tk.ExecToErr("admin check table admin_test_error"))
 	// different index values
@@ -2827,10 +2829,11 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
-	err := tk.ExecToErr("select /*+inl_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	err := tk.ExecToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	fmt.Println(err.Error())
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	tk.MustExec("set tidb_mem_quota_query=1000")
-	rs, err := tk.Exec("select /*+inl_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.NoError(t, err)
 	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
 	err = rs.Close()

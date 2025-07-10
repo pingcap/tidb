@@ -797,9 +797,7 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	}
 	logutil.DDLLogger().Info("start DDL", zap.String("ID", d.uuid),
 		zap.Bool("runWorker", campaignOwner),
-		zap.Stringer("jobVersion", model.GetJobVerInUse()),
-		zap.String("startMode", string(startMode)),
-	)
+		zap.Stringer("jobVersion", model.GetJobVerInUse()))
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool

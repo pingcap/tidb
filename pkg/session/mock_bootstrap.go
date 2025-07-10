@@ -153,18 +153,19 @@ const (
 // MockUpgradeToVerLatestKind is used to indicate the use of different mock bootstrapVersion.
 var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
-func addMockBootstrapVersionForTest(s types.Session) []versionedUpgradeFunction {
+func addMockBootstrapVersionForTest(s types.Session) {
 	if WithMockUpgrade == nil || !*WithMockUpgrade {
-		return upgradeToVerFunctions
+		return
 	}
 
 	TestHook.OnBootstrapBefore(s)
-	currentBootstrapVersion = mockLatestVer
-	additionalUpgradeFn := versionedUpgradeFunction{version: mockLatestVer, fn: mockUpgradeToVerLatest}
-	if MockUpgradeToVerLatestKind == MockSimpleUpgradeToVerLatest {
-		additionalUpgradeFn = versionedUpgradeFunction{version: mockLatestVer, fn: mockSimpleUpgradeToVerLatest}
+	if MockUpgradeToVerLatestKind == defaultMockUpgradeToVerLatest {
+		// TODO if we run all tests in this pkg, it will append again, and fail the test.
+		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
+	} else {
+		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)
 	}
-	return append(upgradeToVerFunctions, additionalUpgradeFn)
+	currentBootstrapVersion = mockLatestVer
 }
 
 // Callback is used for Test.

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -232,7 +231,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		ddl.NewDDLReorgMeta(tk.Session()),
 		0,
 		2,
-		execute.NewDummyCollector(),
+		&ddl.EmptyRowCntListener{},
 	)
 	require.NoError(t, err)
 	err = pipeline.Execute()
@@ -332,7 +331,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				ddl.NewDDLReorgMeta(tk.Session()),
 				0,
 				2,
-				execute.NewDummyCollector(),
+				&ddl.EmptyRowCntListener{},
 			)
 			require.NoError(t, err)
 			err = pipeline.Execute()

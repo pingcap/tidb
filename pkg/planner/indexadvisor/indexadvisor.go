@@ -272,7 +272,10 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			return impacts[i].Improvement > impacts[j].Improvement
 		})
 
-		topN := min(3, len(impacts))
+		topN := 3
+		if topN > len(impacts) {
+			topN = len(impacts)
+		}
 		indexResult.TopImpactedQueries = impacts[:topN]
 		if workloadCostBefore == 0 { // avoid NaN
 			workloadCostBefore += 0.1
@@ -312,7 +315,7 @@ func gracefulIndexName(opt Optimizer, schema, tableName string, cols []string) s
 	if ok, _ := opt.IndexNameExist(schema, tableName, strings.ToLower(indexName)); !ok {
 		return indexName
 	}
-	for i := range 30 {
+	for i := 0; i < 30; i++ {
 		indexName = fmt.Sprintf("idx_%v_%v", cols[0], i)
 		if len(indexName) > 64 {
 			indexName = indexName[:64]

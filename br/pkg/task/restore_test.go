@@ -5,6 +5,7 @@ package task_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strconv"
 	"testing"
@@ -25,11 +26,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -526,6 +530,23 @@ func TestCheckTikvSpace(t *testing.T) {
 	require.NoError(t, task.CheckStoreSpace(400*pb, &store))
 }
 
+type testCase struct {
+	name             string
+	filterPattern    []string
+	logBackupHistory []struct {
+		tableID   int64
+		tableName string
+		dbID      int64
+	}
+	dbIDToName       map[int64]string
+	snapshotDBMap    map[int64]*metautil.Database
+	snapshotTableMap map[int64]*metautil.Table
+	expectedTableIDs map[int64][]int64 // dbID -> []tableID
+	expectedDBs      []int64
+	expectedTables   []int64
+	expectedFileMap  map[int64][]*backuppb.File
+}
+
 func generateDBMap(snapshotDBMap map[int64]*metautil.Database) map[int64]*metautil.Database {
 	m := make(map[int64]*metautil.Database)
 	for id, dbinfo := range snapshotDBMap {
@@ -561,20 +582,42 @@ func generateTableMap(snapshotDBMap map[int64]*metautil.Database) map[int64]*met
 	return m
 }
 
+func generateFiles(tableMap map[int64]*metautil.Table) map[int64][]*backuppb.File {
+	m := make(map[int64][]*backuppb.File)
+	for _, tableInfo := range tableMap {
+		m[tableInfo.Info.ID] = []*backuppb.File{
+			{Name: tableInfo.Info.Name.O},
+		}
+	}
+	return m
+}
+
+func generateFilesByID(ids ...int64) map[int64][]*backuppb.File {
+	m := make(map[int64][]*backuppb.File)
+	for _, id := range ids {
+		m[id] = []*backuppb.File{
+			{Name: fmt.Sprintf("test_table_%d", id)},
+		}
+	}
+	return m
+}
+
 func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
-	// Create a mock snapshot database map
+	// Setup common test database and table maps
+	dbInfo1 := model.DBInfo{
+		ID:   1,
+		Name: ast.NewCIStr("test_db_1"),
+	}
+	dbInfo2 := model.DBInfo{
+		ID:   2,
+		Name: ast.NewCIStr("test_db_2"),
+	}
 	snapshotDBMap := map[int64]*metautil.Database{
 		1: {
-			Info: &model.DBInfo{
-				ID:   1,
-				Name: ast.NewCIStr("test_db_1"),
-			},
+			Info: &dbInfo1,
 			Tables: []*metautil.Table{
 				{
-					DB: &model.DBInfo{
-						ID:   1,
-						Name: ast.NewCIStr("test_db_1"),
-					},
+					DB: &dbInfo1,
 					Info: &model.TableInfo{
 						ID:   11,
 						Name: ast.NewCIStr("test_table_11"),
@@ -584,10 +627,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 					},
 				},
 				{
-					DB: &model.DBInfo{
-						ID:   1,
-						Name: ast.NewCIStr("test_db_1"),
-					},
+					DB: &dbInfo1,
 					Info: &model.TableInfo{
 						ID:   12,
 						Name: ast.NewCIStr("test_table_12"),
@@ -599,16 +639,10 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			},
 		},
 		2: {
-			Info: &model.DBInfo{
-				ID:   2,
-				Name: ast.NewCIStr("test_db_2"),
-			},
+			Info: &dbInfo2,
 			Tables: []*metautil.Table{
 				{
-					DB: &model.DBInfo{
-						ID:   2,
-						Name: ast.NewCIStr("test_db_2"),
-					},
+					DB: &dbInfo2,
 					Info: &model.TableInfo{
 						ID:   21,
 						Name: ast.NewCIStr("test_table_21"),
@@ -621,26 +655,10 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 		},
 	}
 
-	tests := []struct {
-		name             string
-		filterPattern    []string
-		logBackupHistory []struct {
-			tableID   int64
-			tableName string
-			dbID      int64
-		}
-		dbIDToName       map[int64]string
-		snapshotDBMap    map[int64]*metautil.Database
-		snapshotTableMap map[int64]*metautil.Table
-		snapshotFileMap  map[int64][]*backuppb.File
-		expectedTableIDs map[int64][]int64
-		expectedDBs      []int64
-		expectedTables   []int64
-		expectedFileMap  map[int64][]*backuppb.File
-	}{
+	tests := []testCase{
 		{
-			name:          "No filter",
-			filterPattern: []string{"*.*"},
+			name:          "Basic table tracking",
+			filterPattern: []string{"test_db*.*"},
 			logBackupHistory: []struct {
 				tableID   int64
 				tableName string
@@ -656,12 +674,13 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				1: {11, 12},
 				2: {21},
 			},
-			expectedDBs:    []int64{1, 2},
-			expectedTables: []int64{11, 12, 21},
+			expectedDBs:     []int64{1, 2},
+			expectedTables:  []int64{11, 12, 21},
+			expectedFileMap: generateFilesByID(11, 12, 21),
 		},
 		{
-			name:          "Filter by database",
-			filterPattern: []string{"test_db_1.*"},
+			name:          "Table not in filter",
+			filterPattern: []string{"other_db.other_table"},
 			logBackupHistory: []struct {
 				tableID   int64
 				tableName string
@@ -671,15 +690,14 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
 			},
-			expectedTableIDs: map[int64][]int64{
-				1: {11, 12},
-			},
-			expectedDBs:    []int64{1},
-			expectedTables: []int64{11, 12},
+			expectedTableIDs: map[int64][]int64{},
+			expectedDBs:      []int64{},
+			expectedTables:   []int64{},
+			expectedFileMap:  generateFilesByID(),
 		},
 		{
-			name:          "Filter by table",
-			filterPattern: []string{"*.test_table_11"},
+			name:          "New table created during log backup",
+			filterPattern: []string{"test_db*.*"},
 			logBackupHistory: []struct {
 				tableID   int64
 				tableName string
@@ -688,55 +706,39 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				{11, "test_table_11", 1},
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
-			},
-			expectedTableIDs: map[int64][]int64{
-				1: {11},
-			},
-			expectedDBs:    []int64{1, 2},
-			expectedTables: []int64{11},
-		},
-		{
-			name:          "Table renamed during log backup",
-			filterPattern: []string{"*.*"},
-			logBackupHistory: []struct {
-				tableID   int64
-				tableName string
-				dbID      int64
-			}{
-				{11, "test_table_11", 1},
-				{11, "renamed_table", 1},
-				{12, "test_table_12", 1},
-				{21, "test_table_21", 2},
+				{13, "new_table", 1},
 			},
 			snapshotDBMap:    generateDBMap(snapshotDBMap),
 			snapshotTableMap: generateTableMap(snapshotDBMap),
 			expectedTableIDs: map[int64][]int64{
-				1: {11, 12},
+				1: {11, 12, 13},
 				2: {21},
 			},
-			expectedDBs:    []int64{1, 2},
-			expectedTables: []int64{11, 12, 21}, // 13 not in full backup
+			expectedDBs:     []int64{1, 2},
+			expectedTables:  []int64{11, 12, 21}, // 13 not in full backup
+			expectedFileMap: generateFilesByID(11, 12, 21),
 		},
 		{
-			name:          "Table renamed to different database during log backup",
+			name:          "Table renamed into filter during log backup",
 			filterPattern: []string{"test_db_2.*"},
 			logBackupHistory: []struct {
 				tableID   int64
 				tableName string
 				dbID      int64
 			}{
-				{11, "test_table_11", 1},
-				{11, "renamed_table", 2},
+				{11, "test_table_11", 1}, // drop
+				{11, "renamed_table", 2}, // create
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
 			},
-			snapshotDBMap:    generateDBMap(snapshotDBMap),
-			snapshotTableMap: generateTableMap(snapshotDBMap),
+			snapshotDBMap:    generateDBMap(map[int64]*metautil.Database{2: snapshotDBMap[2]}),
+			snapshotTableMap: generateTableMap(map[int64]*metautil.Database{2: snapshotDBMap[2]}),
 			expectedTableIDs: map[int64][]int64{
 				2: {11, 21},
 			},
-			expectedDBs:    []int64{1, 2},
-			expectedTables: []int64{11, 21},
+			expectedDBs:     []int64{1, 2}, // need original db for restore
+			expectedTables:  []int64{11, 21},
+			expectedFileMap: generateFilesByID(11, 21),
 		},
 		{
 			name:          "Table renamed out of filter during log backup",
@@ -756,8 +758,9 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				1: {12},
 			},
-			expectedDBs:    []int64{1},
-			expectedTables: []int64{12},
+			expectedDBs:     []int64{1},
+			expectedTables:  []int64{12},
+			expectedFileMap: generateFilesByID(12),
 		},
 		{
 			name:          "Log backup table not in snapshot",
@@ -773,6 +776,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{},
 			expectedDBs:      []int64{},
 			expectedTables:   []int64{},
+			expectedFileMap:  generateFilesByID(),
 		},
 		{
 			name:          "DB created during log backup",
@@ -791,8 +795,9 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				1: {11},
 			},
-			expectedDBs:    []int64{}, // not in full backup
-			expectedTables: []int64{}, // not in full backup
+			expectedDBs:     []int64{}, // not in full backup
+			expectedTables:  []int64{}, // not in full backup
+			expectedFileMap: generateFilesByID(),
 		},
 	}
 
@@ -804,19 +809,16 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				localSnapshotDBMap = map[int64]*metautil.Database{}
 			}
 
-			snapTableMap := tc.snapshotTableMap
-			if snapTableMap == nil {
-				snapTableMap = generateTableMap(localSnapshotDBMap)
-			}
-
+			tableMap := tc.snapshotTableMap
+			dbMap := tc.snapshotDBMap
 			logBackupTableHistory := stream.NewTableHistoryManager()
 
 			for _, h := range tc.logBackupHistory {
-				logBackupTableHistory.AddTableHistory(h.tableID, h.tableName, h.dbID, 1)
+				logBackupTableHistory.AddTableHistory(h.tableID, h.tableName, h.dbID)
 			}
 
 			for dbID, dbName := range tc.dbIDToName {
-				logBackupTableHistory.RecordDBIdToName(dbID, dbName, 1)
+				logBackupTableHistory.RecordDBIdToName(dbID, dbName)
 			}
 
 			testFilter, err := filter.Parse(tc.filterPattern)
@@ -827,198 +829,143 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				},
 			}
 
-			// Create empty partition map for the test
-			partitionMap := make(map[int64]*stream.TableLocationInfo)
-
-			currentTableMap := make(map[int64]*metautil.Table)
-			currentDBMap := make(map[int64]*metautil.Database)
-
-			filterSnapshotMaps(testFilter, localSnapshotDBMap, currentDBMap, currentTableMap)
-
 			// Run the function
 			err = task.AdjustTablesToRestoreAndCreateTableTracker(
 				logBackupTableHistory,
 				cfg,
 				localSnapshotDBMap,
-				snapTableMap,
-				partitionMap,
-				currentTableMap,
-				currentDBMap,
+				tableMap,
+				dbMap,
 			)
 			require.NoError(t, err)
 
 			for dbID, tableIDs := range tc.expectedTableIDs {
 				for _, tableID := range tableIDs {
-					require.True(t, cfg.PiTRTableTracker.ContainsDBAndTableId(dbID, tableID))
+					require.True(t, cfg.PiTRTableTracker.ContainsTableId(dbID, tableID))
 				}
 			}
 
-			require.Len(t, currentDBMap, len(tc.expectedDBs))
+			require.Len(t, dbMap, len(tc.expectedDBs))
 			for _, dbID := range tc.expectedDBs {
-				require.NotNil(t, currentDBMap[dbID])
+				require.NotNil(t, dbMap[dbID])
 			}
 
-			require.Len(t, currentTableMap, len(tc.expectedTables))
+			require.Len(t, tableMap, len(tc.expectedTables))
 			for _, tableID := range tc.expectedTables {
-				require.NotNil(t, currentTableMap[tableID])
+				require.NotNil(t, tableMap[tableID])
+			}
+
+			fileMap := generateFiles(tableMap)
+			require.Len(t, fileMap, len(tc.expectedFileMap))
+			for tableID, files := range tc.expectedFileMap {
+				files2, exists := fileMap[tableID]
+				require.True(t, exists)
+				require.Len(t, files, 1)
+				require.Len(t, files2, 1)
+				require.Equal(t, files[0].Name, files2[0].Name)
 			}
 		})
 	}
 }
 
-func TestHash(t *testing.T) {
-	baseConfig := task.RestoreConfig{
-		UpstreamClusterID: 1,
-		Config: task.Config{
-			Storage:        "default-storage",
-			ExplicitFilter: true,
-			FilterStr:      []string{"filter1", "filter2"},
-		},
-		RestoreCommonConfig: task.RestoreCommonConfig{
-			WithSysTable: true,
-		},
+func TestSortKeyRanges(t *testing.T) {
+	makeKeyRange := func(start, end int64) [2]kv.Key {
+		return [2]kv.Key{
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(start)),
+			codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(end)),
+		}
 	}
-
 	testCases := []struct {
-		name        string
-		modifyFunc  func(*task.RestoreConfig)
-		changeTask  bool
-		expectEqual bool
+		name       string
+		ids        []int64
+		preAlloced [2]int64
+		expected   [][2]kv.Key
 	}{
 		{
-			name:        "identical_configuration",
-			modifyFunc:  func(*task.RestoreConfig) {},
-			expectEqual: true,
+			name:       "empty_ids",
+			ids:        []int64{},
+			preAlloced: [2]int64{100, 200},
+			expected:   nil,
 		},
 		{
-			name: "change_upstream_cluster_id",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.UpstreamClusterID = 999
+			name:       "single_id",
+			ids:        []int64{5},
+			preAlloced: [2]int64{0, 0},
+			expected:   [][2]kv.Key{makeKeyRange(5, 6)},
+		},
+		{
+			name:       "prealloc_non_overlap",
+			ids:        []int64{50, 51, 52, 53},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(50, 54)},
+		},
+		{
+			name:       "prealloc_partial_overlap",
+			ids:        []int64{95, 96, 97, 98, 99, 100, 101, 102, 170, 171, 172},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(95, 200)},
+		},
+		{
+			name:       "prealloc_contains_all",
+			ids:        []int64{120, 121, 122, 123, 150, 180},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(100, 200)},
+		},
+		{
+			name:       "prealloc_left_adjacent",
+			ids:        []int64{99, 100},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(99, 200)},
+		},
+		{
+			name:       "prealloc_left_not_adjacent",
+			ids:        []int64{99},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(99, 100)},
+		},
+		{
+			name:       "prealloc_right_adjacent",
+			ids:        []int64{200},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(200, 201)},
+		},
+		{
+			name:       "prealloc_not_adjacent",
+			ids:        []int64{201},
+			preAlloced: [2]int64{100, 200},
+			expected:   [][2]kv.Key{makeKeyRange(201, 202)},
+		},
+		{
+			name:       "multiple_merge",
+			ids:        []int64{10, 11, 15, 16, 20},
+			preAlloced: [2]int64{12, 18},
+			expected: [][2]kv.Key{
+				makeKeyRange(10, 18),
+				makeKeyRange(20, 21),
 			},
-			expectEqual: false,
 		},
 		{
-			name: "change_storage",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.Config.Storage = "new-storage"
-			},
-			expectEqual: false,
+			name:       "full_merge",
+			ids:        []int64{5, 6, 7},
+			preAlloced: [2]int64{4, 8},
+			expected:   [][2]kv.Key{makeKeyRange(4, 8)},
 		},
 		{
-			name: "toggle_explicit_filter",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.Config.ExplicitFilter = !cfg.Config.ExplicitFilter
-			},
-			expectEqual: true,
-		},
-		{
-			name: "modify_filter_strings",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.Config.FilterStr = append(cfg.Config.FilterStr, "new-filter")
-			},
-			expectEqual: false,
-		},
-		{
-			name: "reorder_filter_strings",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.Config.FilterStr = []string{cfg.Config.FilterStr[1], cfg.Config.FilterStr[0]}
-			},
-			expectEqual: false,
-		},
-		{
-			name: "toggle_system_tables",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.WithSysTable = !cfg.WithSysTable
-			},
-			expectEqual: false,
-		},
-		{
-			name: "empty_vs_base_config",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				*cfg = task.RestoreConfig{}
-			},
-			expectEqual: false,
-		},
-		{
-			name: "multiple_changes",
-			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.UpstreamClusterID = 2
-				cfg.Config.Storage = "multi-change-storage"
-			},
-			expectEqual: false,
-		},
-		{
-			name:        "change_task_type",
-			changeTask:  true,
-			modifyFunc:  func(*task.RestoreConfig) {},
-			expectEqual: false,
+			name:       "min_boundary",
+			ids:        []int64{0},
+			preAlloced: [2]int64{0, 1},
+			expected:   [][2]kv.Key{makeKeyRange(0, 1)},
 		},
 	}
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			originalCfg := baseConfig
-			modifiedCfg := baseConfig
+			result := task.SortKeyRanges(tc.ids, tc.preAlloced)
+			require.Equal(t, len(tc.expected), len(result))
 
-			if tc.modifyFunc != nil {
-				tc.modifyFunc(&modifiedCfg)
-			}
-
-			var cfg1, cfg2 *task.RestoreConfig
-			if tc.name == "nil_configuration" {
-				cfg1 = &originalCfg
-				cfg2 = nil
-			} else {
-				cfg1 = &originalCfg
-				cfg2 = &modifiedCfg
-			}
-
-			taskType1 := "full"
-			taskType2 := "full"
-			if tc.changeTask {
-				taskType2 = "db"
-			}
-
-			hash1, err1 := cfg1.Hash(taskType1)
-			hash2, err2 := cfg2.Hash(taskType2)
-
-			if cfg2 == nil {
-				require.Error(t, err2, "Expected error for nil config")
-				return
-			}
-			require.NoError(t, err1)
-			require.NoError(t, err2)
-
-			if tc.expectEqual {
-				require.Equal(t, hash1, hash2, "Hashes should be equal for: %s", tc.name)
-			} else {
-				require.NotEqual(t, hash1, hash2, "Hashes should differ for: %s", tc.name)
+			for i := range result {
+				require.Equal(t, tc.expected[i][0], result[i][0], "StartKey mismatch at index %d", i)
+				require.Equal(t, tc.expected[i][1], result[i][1], "EndKey mismatch at index %d", i)
 			}
 		})
-	}
-}
-
-// filterSnapshotMaps filters the snapshot maps based on the filter criteria and populates the current maps
-func filterSnapshotMaps(
-	tableFilter filter.Filter,
-	snapDBMap map[int64]*metautil.Database,
-	currentDBMap map[int64]*metautil.Database,
-	currentTableMap map[int64]*metautil.Table,
-) {
-	for dbID, db := range snapDBMap {
-		dbName := db.Info.Name.O
-
-		if tableFilter.MatchSchema(dbName) {
-			currentDBMap[dbID] = db
-		}
-
-		for _, table := range db.Tables {
-			tableID := table.Info.ID
-			tableName := table.Info.Name.O
-
-			if tableFilter.MatchTable(dbName, tableName) {
-				currentTableMap[tableID] = table
-			}
-		}
 	}
 }

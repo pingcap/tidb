@@ -90,11 +90,6 @@ func (e FlatPlanTree) GetSelectPlan() (FlatPlanTree, int) {
 	return nil, 0
 }
 
-// ExplainID of FlatOperator is a wrapper for call its original ExplainID with IsINLProbeChild inside.
-func (f *FlatOperator) ExplainID() fmt.Stringer {
-	return f.Origin.ExplainID(f.IsINLProbeChild)
-}
-
 // FlatOperator is a simplified operator.
 // It contains a reference to the original operator and some usually needed information.
 type FlatOperator struct {
@@ -130,10 +125,6 @@ type FlatOperator struct {
 	// The below two fields are mainly for text tree formatting. See texttree.PrettyIdentifier().
 	TextTreeIndent string
 	IsLastChild    bool
-
-	// IsINLProbeChild will change the underlying tableScan to rowIDScan for example.
-	// IsINLProbeChild indicates whether this operator is in indexLookupReader or indexMergeReader inner side.
-	IsINLProbeChild bool
 
 	IsPhysicalPlan bool
 }
@@ -179,8 +170,6 @@ type operatorCtx struct {
 	reqType     ReadReqType
 	indent      string
 	isLastChild bool
-	// IsINLProbeChild indicates whether this operator is in indexLookupReader or indexMergeReader inner side.
-	isINLProbeChild bool
 }
 
 // FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete, Update, Explain or Execute.
@@ -204,7 +193,6 @@ func FlattenPhysicalPlan(p base.Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	flattenedCTEPlan := make(map[int]struct{}, len(res.ctesToFlatten))
 
 	// Note that ctesToFlatten may be modified during the loop, so we manually loop over it instead of using for...range.
-	// nolint:intrange
 	for i := 0; i < len(res.ctesToFlatten); i++ {
 		cte := res.ctesToFlatten[i]
 		cteDef := (*CTEDefinition)(cte)
@@ -238,15 +226,14 @@ func (*FlatPhysicalPlan) flattenSingle(p base.Plan, info *operatorCtx) *FlatOper
 		return nil
 	}
 	res := &FlatOperator{
-		Origin:          p,
-		Label:           info.label,
-		IsRoot:          info.isRoot,
-		StoreType:       info.storeType,
-		Depth:           info.depth,
-		ReqType:         info.reqType,
-		TextTreeIndent:  info.indent,
-		IsLastChild:     info.isLastChild,
-		IsINLProbeChild: info.isINLProbeChild,
+		Origin:         p,
+		Label:          info.label,
+		IsRoot:         info.isRoot,
+		StoreType:      info.storeType,
+		Depth:          info.depth,
+		ReqType:        info.reqType,
+		TextTreeIndent: info.indent,
+		IsLastChild:    info.isLastChild,
 	}
 
 	if _, ok := p.(base.PhysicalPlan); ok {
@@ -271,8 +258,6 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		storeType: info.storeType,
 		reqType:   info.reqType,
 		indent:    texttree.Indent4Child(info.indent, info.isLastChild),
-		// inherit the isINLProbeChild from the upper.
-		isINLProbeChild: info.isINLProbeChild,
 	}
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
@@ -364,8 +349,6 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
 		childCtx.isLastChild = true
-		// set the index lookup child signal.
-		childCtx.isINLProbeChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexMergeReader:
@@ -380,8 +363,6 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		}
 		childCtx.label = ProbeSide
 		childCtx.isLastChild = true
-		// set the index merge child signal.
-		childCtx.isINLProbeChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalShuffleReceiverStub:

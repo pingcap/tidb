@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
@@ -69,26 +68,26 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
-	case *physicalop.PhysicalSort:
+	case *PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *PhysicalTopN:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *physicalop.NominalSort:
+	case *NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
-	case *physicalop.PhysicalUnionAll:
+	case *PhysicalUnionAll:
 		plan = injectProjBelowUnion(p)
 	}
 	return plan
 }
 
-func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalUnionAll {
-	if !un.Mpp {
+func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
+	if !un.mpp {
 		return un
 	}
 	for i, ch := range un.Children() {
 		exprs := make([]expression.Expression, len(ch.Schema().Columns))
 		needChange := false
-		for i, dstCol := range un.Schema().Columns {
+		for i, dstCol := range un.schema.Columns {
 			dstType := dstCol.RetType
 			srcCol := ch.Schema().Columns[i]
 			srcCol.Index = i
@@ -104,7 +103,7 @@ func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalU
 			proj := PhysicalProjection{
 				Exprs: exprs,
 			}.Init(un.SCtx(), ch.StatsInfo(), 0)
-			proj.SetSchema(un.Schema().Clone())
+			proj.SetSchema(un.schema.Clone())
 			proj.SetChildren(ch)
 			un.Children()[i] = proj
 		}

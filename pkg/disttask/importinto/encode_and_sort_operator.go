@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -36,6 +37,10 @@ import (
 
 const (
 	maxWaitDuration = 30 * time.Second
+
+	// we use a larger block size for data KV group to support larger row.
+	// TODO: make it configurable?
+	dataKVGroupBlockSize = 32 * units.MiB
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -86,7 +91,7 @@ func newEncodeAndSortOperator(
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
 			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
-				executor.perIndexKVMemSizePerCon, executor.dataBlockSize, executor.indexBlockSize)
+				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -145,7 +150,7 @@ type chunkWorker struct {
 }
 
 func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
-	perIndexKVMemSizePerCon uint64, dataBlockSize, indexBlockSize int) *chunkWorker {
+	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -154,7 +159,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) (*external.Writer, error) {
+		indexWriterFn := func(indexID int64) *external.Writer {
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
@@ -166,14 +171,14 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
-			return writer, nil
+			return writer
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(dataBlockSize).
+			SetBlockSize(getKVGroupBlockSize(dataKVGroup)).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
@@ -244,28 +249,30 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 }
 
 func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
-	return len(getIndicesGenKV(tblInfo))
-}
-
-type genKVIndex struct {
-	name   string
-	unique bool
-}
-
-func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
-	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
+	var count int
+	var nonClusteredPK bool
 	for _, idxInfo := range tblInfo.Indices {
 		// all public non-primary index generates index KVs
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
+		if idxInfo.Primary {
+			if !tblInfo.HasClusteredIndex() {
+				nonClusteredPK = true
+			}
 			continue
 		}
-		res[idxInfo.ID] = genKVIndex{
-			name:   idxInfo.Name.L,
-			unique: idxInfo.Unique,
-		}
+		count++
 	}
-	return res
+	if nonClusteredPK {
+		count++
+	}
+	return count
+}
+
+func getKVGroupBlockSize(group string) int {
+	if group == dataKVGroup {
+		return dataKVGroupBlockSize
+	}
+	return external.DefaultBlockSize
 }

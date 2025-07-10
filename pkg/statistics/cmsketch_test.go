@@ -279,9 +279,7 @@ func TestTopNScale(t *testing.T) {
 			sumCount += cnt
 		}
 		topN := TopN{TopN: data}
-		for i := range topN.TopN {
-			topN.TopN[i].Count = uint64(float64(topN.TopN[i].Count) * scaleFactor)
-		}
+		topN.Scale(scaleFactor)
 		scaleCount := float64(sumCount) * scaleFactor
 		delta := math.Abs(float64(topN.TotalCount()) - scaleCount)
 		roundErrorRatio := delta / scaleCount

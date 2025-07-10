@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"math"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -60,28 +61,48 @@ func bytesToU32Slice(b []byte) []uint32 {
 	if len(b) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*uint32)(unsafe.Pointer(&b[0])), len(b)/4)
+	var u32s []uint32
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&u32s))
+	hdr.Len = len(b) / 4
+	hdr.Cap = hdr.Len
+	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
+	return u32s
 }
 
 func bytes2U16Slice(b []byte) []uint16 {
 	if len(b) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*uint16)(unsafe.Pointer(&b[0])), len(b)/2)
+	var u16s []uint16
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&u16s))
+	hdr.Len = len(b) / 2
+	hdr.Cap = hdr.Len
+	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
+	return u16s
 }
 
 func u16SliceToBytes(u16s []uint16) []byte {
 	if len(u16s) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&u16s[0])), len(u16s)*2)
+	var b []byte
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	hdr.Len = len(u16s) * 2
+	hdr.Cap = hdr.Len
+	hdr.Data = uintptr(unsafe.Pointer(&u16s[0]))
+	return b
 }
 
 func u32SliceToBytes(u32s []uint32) []byte {
 	if len(u32s) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&u32s[0])), len(u32s)*4)
+	var b []byte
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	hdr.Len = len(u32s) * 4
+	hdr.Cap = hdr.Len
+	hdr.Data = uintptr(unsafe.Pointer(&u32s[0]))
+	return b
 }
 
 func encodeInt(buf []byte, iVal int64) []byte {

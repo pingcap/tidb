@@ -15,7 +15,6 @@
 package metrics
 
 import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -36,7 +35,7 @@ var (
 
 // InitMetaMetrics initializes meta metrics.
 func InitMetaMetrics() {
-	AutoIDHistogram = metricscommon.NewHistogramVec(
+	AutoIDHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "autoid",
@@ -45,7 +44,7 @@ func InitMetaMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblResult})
 
-	MetaHistogram = metricscommon.NewHistogramVec(
+	MetaHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "meta",
@@ -54,7 +53,7 @@ func InitMetaMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblResult})
 
-	ResetAutoIDConnCounter = metricscommon.NewCounter(
+	ResetAutoIDConnCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "meta",

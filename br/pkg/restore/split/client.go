@@ -87,7 +87,7 @@ type SplitClient interface {
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegions gets a list of regions, starts from the region that contains key.
 	// Limit limits the maximum number of regions returned.
-	ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*RegionInfo, error)
+	ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error)
 	// GetPlacementRule loads a placement rule from PD.
 	GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error)
 	// SetPlacementRule insert or update a placement rule to PD.
@@ -189,38 +189,21 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo) error {
 	log.Info("scatter regions", zap.Int("regions", len(newRegions)))
 	// the retry is for the temporary network errors during sending request.
-	err := utils.WithRetry(ctx, func() error {
-		failedRegionsID, err := c.tryScatterRegions(ctx, newRegions)
+	return utils.WithRetry(ctx, func() error {
+		err := c.tryScatterRegions(ctx, newRegions)
 		if isUnsupportedError(err) {
 			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
-				// backoff about 1h total, or we give up scattering this region.
-				utils.NewBackoffRetryAllErrorStrategy(1800, 100*time.Millisecond, 2*time.Second))
+				// backoff about 6s, or we give up scattering this region.
+				utils.NewBackoffRetryAllErrorStrategy(7, 100*time.Millisecond, 2*time.Second))
 			return nil
 		}
-		// If there are failed regions, retry them
-		if len(failedRegionsID) > 0 {
-			failedRegions := make([]*RegionInfo, 0, len(failedRegionsID))
-			for _, region := range newRegions {
-				if _, exists := failedRegionsID[region.Region.Id]; exists {
-					failedRegions = append(failedRegions, region)
-				}
-			}
-			newRegions = failedRegions
-			return errors.Annotatef(berrors.ErrPDNotFullyScatter,
-				"pd returns error during batch scattering: %d regions failed to scatter", len(failedRegionsID))
-		}
 		return err
-	}, utils.NewBackoffRetryAllErrorStrategy(1800, 500*time.Millisecond, 2*time.Second))
-	if err != nil && berrors.ErrPDNotFullyScatter.Equal(err) {
-		log.Warn("some regions haven't been scattered", zap.Error(err))
-		return nil
-	}
-	return err
+	}, utils.NewBackoffRetryAllErrorStrategy(3, 500*time.Millisecond, 2*time.Second))
 }
 
-func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) (map[uint64]struct{}, error) {
+func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
 	regionsID := make([]uint64, 0, len(regionInfo))
 	for _, v := range regionInfo {
 		regionsID = append(regionsID, v.Region.Id)
@@ -230,19 +213,13 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 	}
 	resp, err := c.client.ScatterRegions(ctx, regionsID, opt.WithSkipStoreLimit())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
-		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse,
+		return errors.Annotatef(berrors.ErrPDInvalidResponse,
 			"pd returns error during batch scattering: %s", pbErr)
 	}
-
-	failedRegionsID := make(map[uint64]struct{})
-	for _, id := range resp.FailedRegionsId {
-		failedRegionsID[id] = struct{}{}
-	}
-
-	return failedRegionsID, nil
+	return nil
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -764,14 +741,14 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 	return c.client.GetOperator(ctx, regionID)
 }
 
-func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*RegionInfo, error) {
+func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
 	failpoint.Inject("no-leader-error", func(_ failpoint.Value) {
 		logutil.CL(ctx).Debug("failpoint no-leader-error injected.")
 		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
 	})
 
 	//nolint:staticcheck
-	regions, err := c.client.ScanRegions(ctx, key, endKey, limit, opts...)
+	regions, err := c.client.ScanRegions(ctx, key, endKey, limit, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1024,8 +1001,6 @@ func PdErrorCanRetry(err error) bool {
 	// (1) region %d has no leader
 	// (2) region %d is hot
 	// (3) region %d is not fully replicated
-	// (4) operator canceled because cannot add an operator to the execute queue [PD:store-limit]
-	// (5) failed to create scatter region operator [PD:schedule:ErrCreateOperator]
 	//
 	// (2) shouldn't happen in a recently splitted region.
 	// (1) and (3) might happen, and should be retried.
@@ -1034,9 +1009,7 @@ func PdErrorCanRetry(err error) bool {
 		return false
 	}
 	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
-		strings.Contains(grpcErr.Message(), "has no leader") ||
-		strings.Contains(grpcErr.Message(), "cannot add an operator to the execute queue") ||
-		strings.Contains(grpcErr.Message(), "failed to create scatter region operator")
+		strings.Contains(grpcErr.Message(), "has no leader")
 }
 
 // NextBackoff returns a duration to wait before retrying again.

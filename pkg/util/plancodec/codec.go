@@ -111,7 +111,7 @@ type planInfo struct {
 }
 
 func (pd *planDecoder) decode(planString string) (string, error) {
-	b, err := Decompress(planString)
+	b, err := decompress(planString)
 	if err != nil {
 		if planString == PlanDiscardedEncoded {
 			return planDiscardedDecoded, nil
@@ -434,8 +434,7 @@ func Compress(input []byte) string {
 	return base64.StdEncoding.EncodeToString(compressBytes)
 }
 
-// Decompress decodes the input from base64 then decompresses it with snappy.
-func Decompress(str string) ([]byte, error) {
+func decompress(str string) ([]byte, error) {
 	decodeBytes, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		return nil, err

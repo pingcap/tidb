@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -95,28 +96,31 @@ func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []pla
 		return nil
 	}
 	// write external meta when using global sort
-	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)
+	controller, err := buildControllerForPlan(p)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer controller.Close()
+	if err := controller.InitDataFiles(planCtx.Ctx); err != nil {
+		return err
+	}
 
 	for i, spec := range specs {
 		externalPath := external.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
 		switch sp := spec.(type) {
 		case *ImportSpec:
 			sp.ImportStepMeta.ExternalPath = externalPath
-			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.ImportStepMeta); err != nil {
+			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.ImportStepMeta); err != nil {
 				return err
 			}
 		case *MergeSortSpec:
 			sp.MergeSortStepMeta.ExternalPath = externalPath
-			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.MergeSortStepMeta); err != nil {
+			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.MergeSortStepMeta); err != nil {
 				return err
 			}
 		case *WriteIngestSpec:
 			sp.WriteIngestStepMeta.ExternalPath = externalPath
-			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.WriteIngestStepMeta); err != nil {
+			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.WriteIngestStepMeta); err != nil {
 				return err
 			}
 		}
@@ -280,7 +284,10 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 }
 
 func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error) {
-	plan, stmt := &p.Plan, p.Stmt
+	return buildController(&p.Plan, p.Stmt)
+}
+
+func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
 	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
@@ -347,16 +354,20 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
+	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 
 	ctx := planCtx.Ctx
-	store, err := importer.GetSortStore(ctx, p.Plan.CloudStorageURI)
+	controller, err := buildControllerForPlan(p)
 	if err != nil {
 		return nil, err
 	}
-	defer store.Close()
+	defer controller.Close()
+	if err := controller.InitDataStore(ctx); err != nil {
+		return nil, err
+	}
 
-	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], store)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], controller.GlobalSortStore)
 	if err != nil {
 		return nil, err
 	}
@@ -368,16 +379,13 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
-		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, planCtx.ThreadCnt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, files := range dataFilesGroup {
+		length := len(dataFiles)
+		for start := 0; start < length; start += step {
+			end := min(start+step, length)
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
-					DataFiles: files,
+					DataFiles: dataFiles[start:end],
 				},
 			})
 		}
@@ -387,15 +395,18 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 
 func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	ctx := planCtx.Ctx
-	store, err2 := importer.GetSortStore(ctx, p.Plan.CloudStorageURI)
+	controller, err2 := buildControllerForPlan(p)
 	if err2 != nil {
 		return nil, err2
 	}
-	defer store.Close()
+	defer controller.Close()
+	if err2 = controller.InitDataStore(ctx); err2 != nil {
+		return nil, err2
+	}
 	// kvMetas contains data kv meta and all index kv metas.
 	// each kvMeta will be split into multiple range group individually,
 	// i.e. data and index kv will NOT be in the same subtask.
-	kvMetas, err := getSortedKVMetasForIngest(planCtx, p, store)
+	kvMetas, err := getSortedKVMetasForIngest(planCtx, p, controller.GlobalSortStore)
 	if err != nil {
 		return nil, err
 	}
@@ -414,14 +425,15 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		}, nil)
 	})
 
-	ver, err := planCtx.Store.CurrentVersion(tidbkv.GlobalTxnScope)
+	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return nil, err
 	}
+	ts := oracle.ComposeTS(pTS, lTS)
 
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
-		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ver.Ver)
+		specsForOneSubtask, err3 := splitForOneSubtask(ctx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
 		if err3 != nil {
 			return nil, err3
 		}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,8 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -273,12 +272,18 @@ func createIndexOneCol(ctx *SuiteContext, tableID int, colID int) (err error) {
 	}
 	if err != nil {
 		if ctx.isUnique || ctx.isPK {
-			require.Contains(ctx.t, err.Error(), "Duplicate entry")
+			errorContainsDupKey(ctx.t, err)
 		} else {
 			require.NoError(ctx.t, err)
 		}
 	}
 	return err
+}
+
+func errorContainsDupKey(t *testing.T, err error) {
+	s := err.Error()
+	contains := strings.Contains(s, "Duplicate entry") || strings.Contains(s, "found index conflict records")
+	require.True(t, contains, s)
 }
 
 func createIndexTwoCols(ctx *SuiteContext, tableID int, indexID int, colID1 int, colID2 int) (err error) {
@@ -382,7 +387,7 @@ func TestOneColFrame(ctx *SuiteContext, colIDs [][]int, f func(*SuiteContext, in
 			err := f(ctx, tableID, tableName, i)
 			if err != nil {
 				if ctx.isUnique || ctx.isPK {
-					require.Contains(ctx.t, err.Error(), "Duplicate entry")
+					errorContainsDupKey(ctx.t, err)
 				} else {
 					logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 					require.NoError(ctx.t, err)
@@ -492,7 +497,7 @@ func AddIndexUnique(ctx *SuiteContext, tableID int, tableName string, indexID in
 	} else {
 		err = createIndexOneCol(ctx, tableID, indexID)
 		if err != nil {
-			require.Contains(ctx.t, err.Error(), "1062")
+			errorContainsDupKey(ctx.t, err)
 			logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"),
 				zap.Error(err), zap.String("table name", tableName), zap.Int("index ID", indexID))
 		}
@@ -597,9 +602,7 @@ func UpdateTiDBConfig() {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Path = "127.0.0.1:2379"
 		if kerneltype.IsNextGen() {
-			conf.TiKVWorkerURL = "localhost:19000"
-			conf.KeyspaceName = keyspace.System
-			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
+			conf.TiKVWorkerURL = "http://localhost:19000"
 		}
 	})
 }

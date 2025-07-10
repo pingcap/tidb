@@ -273,7 +273,7 @@ func equalPartitionRangeOR(x, y partitionRangeOR) bool {
 	if len(x) != len(y) {
 		return false
 	}
-	for i := range x {
+	for i := 0; i < len(x); i++ {
 		if x[i] != y[i] {
 			return false
 		}
@@ -635,7 +635,7 @@ func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
 	}
 	lessThan := make([][]*expression.Expression, 0, parts)
 	partDefs := make([][]int64, 0, parts)
-	for i := range parts - 1 {
+	for i := 0; i < parts-1; i++ {
 		partDefs = append(partDefs, []int64{int64(i * 10000)})
 	}
 	partDefs = append(partDefs, []int64{-99})

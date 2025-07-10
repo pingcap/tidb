@@ -361,7 +361,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	if !ok {
 		return nil
 	}
-	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := s.statsHandle.TableInfoByID(is, item.TableID)
 	if !ok {
 		return nil

@@ -480,7 +480,6 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		}
 		waitGroup.Done()
 	}()
-
 	for {
 		select {
 		case <-e.finishCh:

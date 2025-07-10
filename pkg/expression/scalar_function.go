@@ -186,13 +186,10 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
-	for i, arg := range args {
-		argflags := arg.GetType(ctx)
-		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
-			newarg := arg.Clone()
-			*newarg.GetType(ctx) = *retFieldTp.Clone()
-			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
-			args[i] = newarg
+	for _, arg := range args {
+		if isNull(arg) {
+			*arg.GetType(ctx) = *retFieldTp
+			arg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
 		}
 	}
 }
@@ -729,7 +726,6 @@ func (sf *ScalarFunction) Equals(other any) bool {
 // ReHashCode is used after we change the argument in place.
 func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = sf.hashcode[:0]
-	sf.hashcode = slices.Grow(sf.hashcode, 1+len(sf.FuncName.L)+len(sf.GetArgs())*8+1)
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {

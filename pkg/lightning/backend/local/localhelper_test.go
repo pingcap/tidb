@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
 )
 
@@ -168,7 +167,7 @@ func (c *testSplitClient) SplitWaitAndScatter(ctx context.Context, region *split
 	return newRegions, err
 }
 
-func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*split.RegionInfo, error) {
+func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

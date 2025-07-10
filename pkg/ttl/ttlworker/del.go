@@ -80,7 +80,7 @@ func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	if intest.EnableInternalCheck {
+	if intest.InTest {
 		intest.Assert(l.limiter.Limit() > 0)
 		if fn, ok := ctx.Value(beforeWaitLimiterForTest).(func()); ok {
 			fn()

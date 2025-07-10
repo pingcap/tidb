@@ -43,8 +43,8 @@ func newPartitionID(ids []int64) *model.PartitionInfo {
 	return &model.PartitionInfo{Definitions: definitions}
 }
 
-func newCreatedTable(oldTableID, newTableID int64, oldPartitionIDs, newPartitionIDs []int64) *restoreutils.CreatedTable {
-	return &restoreutils.CreatedTable{
+func newCreatedTable(oldTableID, newTableID int64, oldPartitionIDs, newPartitionIDs []int64) *snapclient.CreatedTable {
+	return &snapclient.CreatedTable{
 		Table: &model.TableInfo{
 			ID:        newTableID,
 			Partition: newPartitionID(newPartitionIDs),
@@ -70,7 +70,7 @@ func physicalIDs(physicalTables []*snapclient.PhysicalTable) (oldIDs, newIDs []i
 }
 
 func TestGetSortedPhysicalTables(t *testing.T) {
-	createdTables := []*restoreutils.CreatedTable{
+	createdTables := []*snapclient.CreatedTable{
 		newCreatedTable(100, 200, []int64{32, 145, 324}, []int64{900, 23, 54}),
 		newCreatedTable(300, 400, []int64{322, 11245, 343224}, []int64{9030, 22353, 5354}),
 	}
@@ -88,14 +88,13 @@ func (m MockUpdateCh) IncBy(cnt int64) {}
 
 func (m MockUpdateCh) Inc() {}
 
-func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64,
-	filesmap map[int64]map[int64][]*backuppb.File, downstreamID func(upstream int64) int64) []*restoreutils.CreatedTable {
-	createdTables := make([]*restoreutils.CreatedTable, 0, len(upstreamTableIDs))
+func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64, filesmap map[int64]map[int64][]*backuppb.File, downstreamID func(upstream int64) int64) []*snapclient.CreatedTable {
+	createdTables := make([]*snapclient.CreatedTable, 0, len(upstreamTableIDs))
 	triggerID := 0
 	for _, upstreamTableID := range upstreamTableIDs {
 		files := filesmap[upstreamTableID]
 		downstreamTableID := downstreamID(upstreamTableID)
-		createdTable := &restoreutils.CreatedTable{
+		createdTable := &snapclient.CreatedTable{
 			Table: &model.TableInfo{
 				ID:   downstreamTableID,
 				Name: ast.NewCIStr(fmt.Sprintf("tbl-%d", upstreamTableID)),
@@ -150,7 +149,7 @@ func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamParti
 	return createdTables
 }
 
-func disorderTables(createdTables []*restoreutils.CreatedTable) {
+func disorderTables(createdTables []*snapclient.CreatedTable) {
 	// Each position will be replaced by a random table
 	rand.Shuffle(len(createdTables), func(i, j int) {
 		createdTables[i], createdTables[j] = createdTables[j], createdTables[i]

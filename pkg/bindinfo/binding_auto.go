@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -32,19 +30,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// CalculatePlanDigest is used to get the plan digest of this SQL.
-// This function will call the optimizer.
-var CalculatePlanDigest func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
-
-// RecordRelevantOptVarsAndFixes is used to get the relevant optimizer variables for this SQL.
-// This function will call the optimizer.
-var RecordRelevantOptVarsAndFixes func(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error)
-
-// GenBriefPlanWithSCtx generates the plan for the given SQL statement under the given session context.
-// This function will call the optimizer, the output is same as "EXPLAIN FORMAT='brief' {SQL}".
-// PlanHintStr is a set of hints to reproduce this plan, which is used to create binding.
-// PlanText is the results of EXPLAIN of the current plan.
-var GenBriefPlanWithSCtx func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
+// PlanDigestFunc is used to get the plan digest of this SQL.
+var PlanDigestFunc func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
 // "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
@@ -69,8 +56,8 @@ type BindingPlanInfo struct {
 type BindingPlanEvolution interface {
 	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
 
-	// ExplorePlansForSQL explores plans for this SQL.
-	ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest string, analyze bool) ([]*BindingPlanInfo, error)
+	// ShowPlansForSQL shows historical plans for a specific SQL.
+	ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
 }
 
 type bindingAuto struct {
@@ -83,37 +70,25 @@ type bindingAuto struct {
 func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 	return &bindingAuto{
 		sPool:              sPool,
-		planGenerator:      &planGenerator{sPool: sPool},
+		planGenerator:      new(knobBasedPlanGenerator),
 		ruleBasedPredictor: new(ruleBasedPlanPerfPredictor),
 		llmPredictor:       new(llmBasedPlanPerfPredictor),
 	}
 }
 
-// ExplorePlansForSQL explores plans for the specified SQL.
+// ShowPlansForSQL evolves plans for the specified SQL.
 // 1. get historical plan candidates.
 // 2. generate new plan candidates.
 // 3. score all historical and newly-generated plan candidates and recommend the best one.
-func (ba *bindingAuto) ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest string, analyze bool) ([]*BindingPlanInfo, error) {
-	currentDB := stmtSCtx.GetSessionVars().CurrentDB
-	charset, collation := stmtSCtx.GetSessionVars().GetCharsetInfo()
-	historicalPlans, err := ba.getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation)
+func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+	historicalPlans, err := ba.getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
 	}
 
-	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest, charset, collation)
+	generatedPlans, err := ba.planGenerator.Generate(currentDB, sqlOrDigest)
 	if err != nil {
 		return nil, err
-	}
-	generatedPlans, err = ba.recordIntoStmtStats(stmtSCtx, generatedPlans)
-	if err != nil {
-		return nil, err
-	}
-
-	if analyze {
-		if err := ba.runToGetExecInfo(generatedPlans); err != nil {
-			return nil, err
-		}
 	}
 
 	planCandidates := append(historicalPlans, generatedPlans...)
@@ -125,90 +100,7 @@ func (ba *bindingAuto) ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest
 	return planCandidates, err
 }
 
-// recordIntoStmtStats records these plans into information_schema.tidb_statements_stats table for later usage.
-func (ba *bindingAuto) recordIntoStmtStats(stmtSCtx base.PlanContext, plans []*BindingPlanInfo) (reproduciblePlans []*BindingPlanInfo, err error) {
-	currentUser := stmtSCtx.GetSessionVars().User
-	reproduciblePlans = make([]*BindingPlanInfo, 0, len(plans))
-	for _, plan := range plans {
-		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
-			vars := sctx.GetSessionVars()
-			defer func(db string, usePlanBaselines, inExplainExplore bool, user *auth.UserIdentity) {
-				vars.CurrentDB = db
-				vars.UsePlanBaselines = usePlanBaselines
-				vars.InExplainExplore = inExplainExplore
-				vars.User = user
-			}(vars.CurrentDB, vars.UsePlanBaselines, vars.InExplainExplore, vars.User)
-			vars.CurrentDB = plan.Binding.Db
-			vars.UsePlanBaselines = false
-			vars.InExplainExplore = true
-			vars.User = currentUser
-			_, _, err := execRows(sctx, plan.BindSQL)
-			if err != nil {
-				return err
-			}
-
-			execInfo, err := ba.getPlanExecInfo(plan.Binding.PlanDigest)
-			if err != nil {
-				return err
-			}
-			// Due to the flaw of `core.GenHintsFromFlatPlan`, sometimes we might not be able to reproduce the prior
-			// plan exactly with `plan.Binding.Hint`.
-			// In this case we can't get any record in `tidb_statements_stats` via its PlanDigest, and since
-			if execInfo != nil {
-				reproduciblePlans = append(reproduciblePlans, plan)
-			}
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return reproduciblePlans, nil
-}
-
-// runToGetExecInfo runs these plans to get their execution info.
-func (ba *bindingAuto) runToGetExecInfo(plans []*BindingPlanInfo) error {
-	// TODO: support setting timeout
-	// TODO: support killing since this process might be very time-consuming.
-	for _, plan := range plans {
-		if plan.ExecTimes > 0 {
-			// already has execution info, no need to run again.
-			continue
-		}
-
-		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
-			vars := sctx.GetSessionVars()
-			defer func(db string, usePlanBaselines bool) {
-				vars.CurrentDB = db
-				vars.UsePlanBaselines = usePlanBaselines
-			}(vars.CurrentDB, vars.UsePlanBaselines)
-			vars.CurrentDB = plan.Binding.Db
-			vars.UsePlanBaselines = false
-			_, _, err := execRows(sctx, plan.BindSQL)
-			if err != nil {
-				return err
-			}
-
-			// get the execution info from the sctx.
-			plan.ExecTimes = 1
-			plan.AvgLatency = float64(vars.GetTotalCostDuration())
-			if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
-				plan.AvgScanRows = float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys)
-			}
-			plan.AvgReturnedRows = float64(vars.StmtCtx.GetResultRowsCount())
-			if plan.AvgReturnedRows > 0 {
-				plan.LatencyPerReturnRow = plan.AvgLatency / plan.AvgReturnedRows
-				plan.ScanRowsPerReturnRow = plan.AvgScanRows / plan.AvgReturnedRows
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// getBindingPlanInfo retrieves the binding plan info for the given SQL or digest.
-func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+func (ba *bindingAuto) getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	// parse and normalize sqlOrDigest
 	// if the length is 64 and it has no " ", treat it as a digest.
 	var whereCond string

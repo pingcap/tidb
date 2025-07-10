@@ -41,7 +41,7 @@ type PlanCtx struct {
 	NextTaskStep         proto.Step
 	ExecuteNodesCnt      int
 
-	Store kv.Storage
+	Store kv.StorageWithPD
 }
 
 // LogicalPlan represents a logical plan in distribute framework.

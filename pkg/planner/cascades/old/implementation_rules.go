@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -301,11 +300,11 @@ func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalPro
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
 	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
-		ns := physicalop.NominalSort{}.Init(
+		ns := plannercore.NominalSort{}.Init(
 			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
 		return []memo.Implementation{impl.NewNominalSortImpl(ns)}, nil
 	}
-	ps := physicalop.PhysicalSort{ByItems: ls.ByItems}.Init(
+	ps := plannercore.PhysicalSort{ByItems: ls.ByItems}.Init(
 		ls.SCtx(),
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		ls.QueryBlockOffset(),
@@ -358,7 +357,7 @@ func (*ImplLimit) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (mat
 func (*ImplLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalLimit := expr.ExprNode.(*logicalop.LogicalLimit)
 	newProp := &property.PhysicalProperty{ExpectedCnt: float64(logicalLimit.Count + logicalLimit.Offset)}
-	physicalLimit := physicalop.PhysicalLimit{
+	physicalLimit := plannercore.PhysicalLimit{
 		Offset: logicalLimit.Offset,
 		Count:  logicalLimit.Count,
 	}.Init(logicalLimit.SCtx(), expr.Group.Prop.Stats, logicalLimit.QueryBlockOffset(), newProp)
@@ -420,7 +419,7 @@ func (*ImplTopNAsLimit) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalPr
 		newProp.SortItems[i].Col = item.Expr.(*expression.Column)
 		newProp.SortItems[i].Desc = item.Desc
 	}
-	physicalLimit := physicalop.PhysicalLimit{
+	physicalLimit := plannercore.PhysicalLimit{
 		Offset: lt.Offset,
 		Count:  lt.Count,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.QueryBlockOffset(), newProp)
@@ -535,7 +534,7 @@ func (*ImplUnionAll) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 	for i := range expr.Children {
 		chReqProps[i] = &property.PhysicalProperty{ExpectedCnt: reqProp.ExpectedCnt}
 	}
-	physicalUnion := physicalop.PhysicalUnionAll{}.Init(
+	physicalUnion := plannercore.PhysicalUnionAll{}.Init(
 		logicalUnion.SCtx(),
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		logicalUnion.QueryBlockOffset(),

@@ -34,8 +34,8 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 )
 
-func generateTables() []*restoreutils.CreatedTable {
-	return []*restoreutils.CreatedTable{
+func generateTables() []*snapclient.CreatedTable {
+	return []*snapclient.CreatedTable{
 		{
 			Table: &model.TableInfo{
 				ID: 1,

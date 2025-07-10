@@ -47,6 +47,7 @@ type CheckpointManager struct {
 	cancel        context.CancelFunc
 	sessPool      *sess.Pool
 	jobID         int64
+	indexIDs      []int64
 	localStoreDir string
 	pdCli         pd.Client
 	logger        *zap.Logger
@@ -80,6 +81,7 @@ type CheckpointManager struct {
 type taskCheckpoint struct {
 	totalKeys     int
 	writtenKeys   int
+	checksum      int64
 	endKey        kv.Key
 	lastBatchRead bool
 }

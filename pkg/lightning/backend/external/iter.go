@@ -475,7 +475,7 @@ func getPairKey(p *kvPair) []byte {
 
 type kvReaderProxy struct {
 	p string
-	r *KVReader
+	r *kvReader
 }
 
 func (p kvReaderProxy) path() string {
@@ -531,7 +531,7 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
-			rd, err := NewKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
 				return nil, err
 			}

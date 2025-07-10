@@ -17,9 +17,7 @@ package collate
 import (
 	_ "embed"
 	"encoding/binary"
-	"unicode/utf8"
 
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -46,17 +44,9 @@ func (*gb18030ChineseCICollator) Compare(a, b string) int {
 
 	r1, r2 := rune(0), rune(0)
 	ai, bi := 0, 0
-	r1Len, r2Len := 0, 0
 	for ai < len(a) && bi < len(b) {
-		r1, r1Len = utf8.DecodeRune(hack.Slice(a[ai:]))
-		r2, r2Len = utf8.DecodeRune(hack.Slice(b[bi:]))
-
-		if r1 == utf8.RuneError || r2 == utf8.RuneError {
-			return 0
-		}
-
-		ai = ai + r1Len
-		bi = bi + r2Len
+		r1, ai = decodeRune(a, ai)
+		r2, bi = decodeRune(b, bi)
 
 		cmp := int(gb18030ChineseCISortKey(r1)) - int(gb18030ChineseCISortKey(r2))
 		if cmp != 0 {
@@ -74,16 +64,10 @@ func (g *gb18030ChineseCICollator) Key(str string) []byte {
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
-	i, rLen := 0, 0
+	i := 0
 	r := rune(0)
 	for i < len(str) {
-		r, rLen = utf8.DecodeRune(hack.Slice(str[i:]))
-
-		if r == utf8.RuneError {
-			return buf
-		}
-
-		i = i + rLen
+		r, i = decodeRune(str, i)
 		u32 := gb18030ChineseCISortKey(r)
 		if u32 > 0xFFFFFF {
 			buf = append(buf, byte(u32>>24))

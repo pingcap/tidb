@@ -1519,14 +1519,40 @@ func (m *Mutator) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 }
 
 // DDL job structure
+//	DDLJobList: list jobs
 //	DDLJobHistory: hash
+//	DDLJobReorg: hash
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
+	mDDLJobListKey    = []byte("DDLJobList")
+	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 )
+
+// JobListKeyType is a key type of the DDL job queue.
+type JobListKeyType []byte
+
+func (m *Mutator) getDDLJob(key []byte, index int64) (*model.Job, error) {
+	value, err := m.txn.LIndex(key, index)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	job := &model.Job{
+		// For compatibility, if the job is enqueued by old version TiDB and Priority field is omitted,
+		// set the default priority to kv.PriorityLow.
+		Priority: kv.PriorityLow,
+	}
+	err = job.Decode(value)
+	// Check if the job.Priority is valid.
+	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
+		job.Priority = kv.PriorityLow
+	}
+	return job, errors.Trace(err)
+}
 
 func (*Mutator) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)

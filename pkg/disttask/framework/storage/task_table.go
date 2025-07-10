@@ -25,14 +25,12 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	clitutil "github.com/tikv/client-go/v2/util"
@@ -41,12 +39,12 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope, t.max_node_count, t.extra_params, t.keyspace`
+	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope, t.max_node_count, t.extra_params`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
 	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error, t.modify_params`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope, max_node_count, extra_params, keyspace`
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope, max_node_count, extra_params`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
 	SubtaskColumns = basicSubtaskColumns + `, state_update_time, meta, summary`
@@ -260,12 +258,11 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	keyspace := config.GetGlobalKeyspaceName()
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
-			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?, %?)`,
+			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?)`,
 		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency,
-		proto.StepInit, meta, targetScope, maxNodeCount, json.RawMessage(extraParamBytes), keyspace)
+		proto.StepInit, meta, targetScope, maxNodeCount, json.RawMessage(extraParamBytes))
 	if err != nil {
 		return 0, err
 	}
@@ -607,19 +604,15 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 	return rs[0].GetInt64(0), nil
 }
 
-// UpdateSubtaskSummary updates the subtask summary.
-func (mgr *TaskManager) UpdateSubtaskSummary(ctx context.Context, subtaskID int64, summary any) error {
+// UpdateSubtaskRowCount updates the subtask row count.
+func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-
-	summaryBytes, err := json.Marshal(summary)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask set summary = %? where id = %?`,
-		hack.String(summaryBytes), subtaskID)
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
+		rowCount, subtaskID)
 	return err
 }
 
@@ -851,17 +844,14 @@ func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask 
 	return res
 }
 
-func serializeErr(inErr error) []byte {
-	if inErr == nil {
+func serializeErr(err error) []byte {
+	if err == nil {
 		return nil
 	}
-	var tErr *errors.Error
-	if goerrors.As(inErr, &tErr) {
-		// we want to keep the original message to have more context info
-		tErr = errors.Normalize(errors.GetErrStackMsg(inErr), errors.RFCCodeText(string(tErr.RFCCode())),
-			errors.MySQLErrorCode(int(tErr.Code())))
-	} else {
-		tErr = errors.Normalize(inErr.Error())
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*errors.Error)
+	if !ok {
+		tErr = errors.Normalize(originErr.Error())
 	}
 	errBytes, err := tErr.MarshalJSON()
 	if err != nil {

@@ -17,7 +17,6 @@ package metrics
 import (
 	"sync"
 
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -92,7 +91,6 @@ func InitMetrics() {
 	InitSessionMetrics()
 	InitSliMetrics()
 	InitStatsMetrics()
-	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
@@ -103,7 +101,7 @@ func InitMetrics() {
 
 	InitBRMetrics()
 
-	PanicCounter = metricscommon.NewCounterVec(
+	PanicCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -111,7 +109,7 @@ func InitMetrics() {
 			Help:      "Counter of panic.",
 		}, []string{LblType})
 
-	MemoryUsage = metricscommon.NewGaugeVec(
+	MemoryUsage = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -326,7 +324,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(KVApplyBatchSize)
 	prometheus.MustRegister(KVApplyRegionFiles)
 
-	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, metricscommon.GetConstLabels())
+	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 }

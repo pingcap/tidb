@@ -21,8 +21,3 @@ package kerneltype
 func IsNextGen() bool {
 	return true
 }
-
-// IsClassic returns true if the current kernel type is Classic.
-func IsClassic() bool {
-	return !IsNextGen()
-}

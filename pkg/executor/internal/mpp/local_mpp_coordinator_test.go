@@ -18,21 +18,20 @@ import (
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNeedReportExecutionSummary(t *testing.T) {
 	tableScan := &plannercore.PhysicalTableScan{}
-	limit := &physicalop.PhysicalLimit{}
+	limit := &plannercore.PhysicalLimit{}
 	passSender := &plannercore.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	passSender.SetID(10)
 	tableReader := &plannercore.PhysicalTableReader{}
 	tableReader.SetTablePlanForTest(passSender)
-	limitTIDB := &physicalop.PhysicalLimit{}
+	limitTIDB := &plannercore.PhysicalLimit{}
 	limitTIDB.SetChildren(tableReader)
 	passSender.SetChildren(limit)
 	limit.SetChildren(tableScan)
@@ -50,7 +49,7 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	tableReader2 := &plannercore.PhysicalTableReader{}
 	tableReader2.SetTablePlanForTest(tableScan2)
 	join.SetChildren(tableReader2, projection)
-	limitTIDB2 := &physicalop.PhysicalLimit{}
+	limitTIDB2 := &plannercore.PhysicalLimit{}
 	limitTIDB2.SetChildren(join)
 	require.True(t, needReportExecutionSummary(limitTIDB2, 10, false))
 }

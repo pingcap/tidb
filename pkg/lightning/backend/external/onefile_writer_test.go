@@ -20,11 +20,13 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
@@ -72,7 +74,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := NewKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -135,7 +137,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := NewKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -216,7 +218,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 
 	kvs := make([]kvPair, 0, kvCount)
 
-	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
+	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
 	require.NoError(t, err)
 	for range kvCount {
 		key, value, err := kvReader.nextKV()
@@ -231,9 +233,16 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
+	dir := t.TempDir()
+	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
+	require.NoError(t, err)
 	data := &MemoryIngestData{
-		kvs: kvs,
-		ts:  123,
+		keyAdapter:         common.NoopKeyAdapter{},
+		duplicateDetection: true,
+		duplicateDB:        db,
+		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
+		kvs:                kvs,
+		ts:                 123,
 	}
 	pool := membuf.NewPool()
 	defer pool.Destroy()
@@ -242,7 +251,8 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	for iter.First(); iter.Valid(); iter.Next() {
 	}
 	err = iter.Error()
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "found duplicate key")
 }
 
 func TestOnefileWriterManyRows(t *testing.T) {
@@ -311,7 +321,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -423,7 +433,7 @@ func TestOnefileWriterDupError(t *testing.T) {
 
 	kvCnt := 10
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		kvs[i].Key = []byte(strconv.Itoa(i))
 		kvs[i].Val = []byte(strconv.Itoa(i * i))
 	}

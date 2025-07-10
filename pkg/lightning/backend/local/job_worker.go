@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"strings"
 	"sync"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -155,7 +155,6 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 			// an error, TiKV will take the responsibility to do so.
 			// TODO: let client-go provide a high-level write interface.
 			res, err := w.writeFn(ctx, job)
-			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
 					return err
@@ -185,7 +184,6 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 		// if the job is empty, it might go to ingested stage directly.
 		if job.stage == wrote {
 			err := w.ingestFn(ctx, job)
-			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
 					return err
@@ -377,7 +375,11 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
-		return err
+		pbErr := &ingestcli.PBError{}
+		if goerrors.As(err, &pbErr) {
+			return convertPBError2Error(job, pbErr.Err)
+		}
+		return &ingestAPIError{err: err}
 	}
 	return nil
 }

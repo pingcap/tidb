@@ -236,34 +236,34 @@ func TestFailSchemaSyncer(t *testing.T) {
 	defer func() {
 		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
-	require.True(t, s.dom.GetSchemaValidator().IsStarted())
+	require.True(t, s.dom.SchemaValidator.IsStarted())
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*schemaver.MemSyncer)
 	require.True(t, ok)
 
 	// make reload failed.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for range 50 {
-		if !s.dom.GetSchemaValidator().IsStarted() {
+		if !s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	require.False(t, s.dom.GetSchemaValidator().IsStarted())
+	require.False(t, s.dom.SchemaValidator.IsStarted())
 	_, err := tk.Exec("insert into t values(1)")
 	require.Error(t, err)
 	require.EqualError(t, err, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
 	// wait the schemaValidator is started.
 	for range 50 {
-		if s.dom.GetSchemaValidator().IsStarted() {
+		if s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	require.True(t, s.dom.GetSchemaValidator().IsStarted())
+	require.True(t, s.dom.SchemaValidator.IsStarted())
 	err = tk.ExecToErr("insert into t values(1)")
 	require.NoError(t, err)
 }

@@ -72,11 +72,11 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 	}
 
 	tk.MustQuery("explain select a from t where a=1").Check(testkit.Rows(
-		`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_ab automatically since it has the smallest row-size in all access paths.
-		`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
+		`IndexReader_6 10.00 root  index:IndexRangeScan_5`, // use idx_ab automatically since it has the smallest row-size in all access paths.
+		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
 	tk.MustQuery("explain select a, b, c from t where a=1").Check(testkit.Rows(
-		`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_abc automatically
-		`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+		`IndexReader_6 10.00 root  index:IndexRangeScan_5`, // use idx_abc automatically
+		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
 }
 
 func TestCostModelTraceVer2(t *testing.T) {
@@ -85,7 +85,7 @@ func TestCostModelTraceVer2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, key(b))`)
 	vals := make([]string, 0, 10)
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, i, i))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(vals, ", ")))

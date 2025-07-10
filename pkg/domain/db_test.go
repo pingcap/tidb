@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
@@ -195,7 +194,10 @@ func TestFetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	require.Equal(t, len(dbs), 1003)
 
 	// inject the failpoint
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/failed-fetch-schemas-with-tables", "return()")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables"))
+	}()
 	dbs, err = domain.FetchAllSchemasWithTables(m)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "failpoint: failed to fetch schemas with tables")

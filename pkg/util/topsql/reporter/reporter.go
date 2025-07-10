@@ -58,9 +58,6 @@ type TopSQLReporter interface {
 	// BindProcessCPUTimeUpdater is used to pass ProcessCPUTimeUpdater
 	BindProcessCPUTimeUpdater(updater collector.ProcessCPUTimeUpdater)
 
-	// BindKeyspaceName binds the keyspace name to the reporter.
-	BindKeyspaceName(keyspaceName []byte)
-
 	// Close uses to close and release the reporter resource.
 	Close()
 }
@@ -86,7 +83,6 @@ type RemoteTopSQLReporter struct {
 	// Instead of dropping large plans, we compress it into encoded format and report
 	compressPlan planBinaryCompressFunc
 	DefaultDataSinkRegisterer
-	keyspaceName []byte
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
@@ -138,11 +134,6 @@ func (tsr *RemoteTopSQLReporter) Collect(data []collector.SQLCPUTimeRecord) {
 // BindProcessCPUTimeUpdater implements TopSQLReporter.
 func (tsr *RemoteTopSQLReporter) BindProcessCPUTimeUpdater(updater collector.ProcessCPUTimeUpdater) {
 	tsr.sqlCPUCollector.SetProcessCPUUpdater(updater)
-}
-
-// BindKeyspaceName implements TopSQLReporter.
-func (tsr *RemoteTopSQLReporter) BindKeyspaceName(keyspaceName []byte) {
-	tsr.keyspaceName = keyspaceName
 }
 
 // CollectStmtStatsMap implements stmtstats.Collector.
@@ -286,9 +277,9 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			rs := data.collected.getReportRecords()
 			// Convert to protobuf data and do report.
 			tsr.doReport(&ReportData{
-				DataRecords: rs.toProto(tsr.keyspaceName),
-				SQLMetas:    data.normalizedSQLMap.toProto(tsr.keyspaceName),
-				PlanMetas:   data.normalizedPlanMap.toProto(tsr.keyspaceName, tsr.decodePlan, tsr.compressPlan),
+				DataRecords: rs.toProto(),
+				SQLMetas:    data.normalizedSQLMap.toProto(),
+				PlanMetas:   data.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan),
 			})
 		case <-tsr.ctx.Done():
 			return

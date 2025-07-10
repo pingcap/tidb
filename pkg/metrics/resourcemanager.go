@@ -14,10 +14,7 @@
 
 package metrics
 
-import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
-	"github.com/prometheus/client_golang/prometheus"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
 var (
 	// EMACPUUsageGauge means exponential moving average of CPU usage
@@ -29,14 +26,14 @@ var (
 
 // InitResourceManagerMetrics initializes resource manager metrics.
 func InitResourceManagerMetrics() {
-	EMACPUUsageGauge = metricscommon.NewGauge(prometheus.GaugeOpts{
+	EMACPUUsageGauge = NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "rm",
 		Name:      "ema_cpu_usage",
 		Help:      "exponential moving average of CPU usage",
 	})
 
-	PoolConcurrencyCounter = metricscommon.NewGaugeVec(
+	PoolConcurrencyCounter = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "rm",

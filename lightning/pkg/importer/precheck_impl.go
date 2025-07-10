@@ -577,42 +577,31 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 		return nil, errors.Trace(err)
 	}
 	localAvailable := int64(storageSize.Available)
-	availableStr := units.BytesSize(float64(localAvailable))
-
 	estimatedDataSizeResult, err := ci.preInfoGetter.EstimateSourceDataSize(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	estimatedDataSizeWithIndex := estimatedDataSizeResult.SizeWithIndex
-	estimatedStr := units.BytesSize(float64(estimatedDataSizeWithIndex))
-
-	diskQuota := int64(ci.cfg.TikvImporter.DiskQuota)
-	diskQuotaStr := units.BytesSize(float64(diskQuota))
-
-	// Warn the user if diskQuota is 0 or negative, as it's likely a misconfiguration
-	if diskQuota <= 0 {
-		log.FromContext(ctx).Warn("`tikv-importer.disk-quota` is set to 0 or less; please configure a valid positive value")
-	}
 
 	switch {
 	case localAvailable > estimatedDataSizeWithIndex:
 		theResult.Message = fmt.Sprintf("local disk resources are rich, estimate sorted data size %s, local available is %s",
-			estimatedStr, availableStr)
+			units.BytesSize(float64(estimatedDataSizeWithIndex)), units.BytesSize(float64(localAvailable)))
 		theResult.Passed = true
-	case diskQuota > localAvailable:
-		theResult.Message = fmt.Sprintf("local disk space is insufficient to meet the configured disk-quota. "+
-			"Available space: %s, Configured disk-quota: %s. "+
-			"Please increase the available disk space or adjust the tikv-importer.disk-quota setting to a value lower than the available space and try again",
-			availableStr,
-			diskQuotaStr)
+	case int64(ci.cfg.TikvImporter.DiskQuota) > localAvailable:
+		theResult.Message = fmt.Sprintf("local disk space may not enough to finish import, estimate sorted data size is %s,"+
+			" but local available is %s, please set `tikv-importer.disk-quota` to a smaller value than %s"+
+			" or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports",
+			units.BytesSize(float64(estimatedDataSizeWithIndex)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(localAvailable)))
 		theResult.Passed = false
 		log.FromContext(ctx).Error(theResult.Message)
 	default:
 		theResult.Message = fmt.Sprintf("local disk space may not enough to finish import, "+
 			"estimate sorted data size is %s, but local available is %s,"+
 			"we will use disk-quota (size: %s) to finish imports, which may slow down import",
-			estimatedStr,
-			availableStr, diskQuotaStr)
+			units.BytesSize(float64(estimatedDataSizeWithIndex)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(ci.cfg.TikvImporter.DiskQuota)))
 		theResult.Passed = true
 		log.FromContext(ctx).Warn(theResult.Message)
 	}

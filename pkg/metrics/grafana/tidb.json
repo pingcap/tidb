@@ -25256,7 +25256,7 @@
         },
         {
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Active parallel upload worker count, only valid for GCS now",
+          "description": "",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -25338,7 +25338,7 @@
               "refId": "A"
             }
           ],
-          "title": "Active Parallel Upload Worker Count",
+          "title": "Parallel Upload Worker Count",
           "type": "timeseries"
         }
       ],

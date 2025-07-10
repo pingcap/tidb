@@ -377,12 +377,11 @@ func (r *record) rebuildTsIndex() {
 }
 
 // toProto converts the record to the corresponding protobuf representation.
-func (r *record) toProto(keyspaceName []byte) tipb.TopSQLRecord {
+func (r *record) toProto() tipb.TopSQLRecord {
 	return tipb.TopSQLRecord{
-		KeyspaceName: keyspaceName,
-		SqlDigest:    r.sqlDigest,
-		PlanDigest:   r.planDigest,
-		Items:        r.tsItems.toProto(),
+		SqlDigest:  r.sqlDigest,
+		PlanDigest: r.planDigest,
+		Items:      r.tsItems.toProto(),
 	}
 }
 
@@ -417,10 +416,10 @@ func (rs records) topN(n int) (top, evicted records) {
 }
 
 // toProto converts the records to the corresponding protobuf representation.
-func (rs records) toProto(keyspaceName []byte) []tipb.TopSQLRecord {
+func (rs records) toProto() []tipb.TopSQLRecord {
 	pb := make([]tipb.TopSQLRecord, 0, len(rs))
 	for _, r := range rs {
-		pb = append(pb, r.toProto(keyspaceName))
+		pb = append(pb, r.toProto())
 	}
 	return pb
 }
@@ -642,12 +641,11 @@ func (m *normalizedSQLMap) take() *normalizedSQLMap {
 }
 
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
-func (m *normalizedSQLMap) toProto(keyspaceName []byte) []tipb.SQLMeta {
+func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
 	metas := make([]tipb.SQLMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
-			KeyspaceName:  keyspaceName,
 			SqlDigest:     []byte(k.(string)),
 			NormalizedSql: meta.normalizedSQL,
 			IsInternalSql: meta.isInternal,
@@ -707,13 +705,12 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-func (m *normalizedPlanMap) toProto(keyspaceName []byte, decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
+func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
-			KeyspaceName: keyspaceName,
-			PlanDigest:   hack.Slice(k.(string)),
+			PlanDigest: hack.Slice(k.(string)),
 		}
 
 		var err error

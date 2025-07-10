@@ -193,12 +193,8 @@ func (s *mockSession) GetStore() kv.Storage {
 	return nil
 }
 
-func (s *mockSession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+func (s *mockSession) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
-}
-
-func (s *mockSession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
-	return s.GetLatestInfoSchema()
 }
 
 func (s *mockSession) SessionInfoSchema() infoschemactx.MetaOnlyInfoSchema {

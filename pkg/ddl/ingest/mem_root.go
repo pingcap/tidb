@@ -39,6 +39,8 @@ type MemRoot interface {
 }
 
 var (
+	// structSizeBackendCtx is the size of litBackendCtx.
+	structSizeBackendCtx int64
 	// structSizeEngineInfo is the size of engineInfo.
 	structSizeEngineInfo int64
 	// structSizeWriterCtx is the size of writerContext.
@@ -46,6 +48,7 @@ var (
 )
 
 func init() {
+	structSizeBackendCtx = int64(unsafe.Sizeof(litBackendCtx{}))
 	structSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
 	structSizeWriterCtx = int64(unsafe.Sizeof(writerContext{}))
 }

@@ -20,6 +20,7 @@ import (
 	"maps"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,6 +35,9 @@ var TableRowStatsCache = &StatsTableRowCache{
 	tableRows: make(map[int64]uint64),
 	colLength: make(map[tableHistID]uint64),
 }
+
+// tableStatsCacheExpiry is the expiry time for table stats cache.
+var tableStatsCacheExpiry = 3 * time.Second
 
 type tableHistID struct {
 	tableID int64

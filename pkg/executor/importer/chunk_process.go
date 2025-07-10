@@ -57,11 +57,11 @@ type rowToEncode struct {
 	resetFn   func()
 }
 
-type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
+type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
 
 // parserEncodeReader wraps a mydump.Parser as a encodeReaderFn.
 func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) encodeReaderFn {
-	return func(context.Context, []types.Datum) (data rowToEncode, closed bool, err error) {
+	return func(context.Context) (data rowToEncode, closed bool, err error) {
 		readPos, _ := parser.Pos()
 		if readPos >= endOffset {
 			closed = true
@@ -99,7 +99,7 @@ type queryChunkEncodeReader struct {
 	numRows int
 }
 
-func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode, closed bool, err error) {
 	if r.currChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
@@ -116,20 +116,10 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 		}
 	}
 
-	chkRow := r.currChk.Chk.GetRow(r.cursor)
-	rowLen := chkRow.Len()
-	if cap(row) < rowLen {
-		row = make([]types.Datum, rowLen)
-	} else {
-		row = row[:0]
-		for range rowLen {
-			row = append(row, types.Datum{}) // nozero
-		}
-	}
-	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
+	row := r.currChk.Chk.GetRow(r.cursor)
 	r.cursor++
 	data = rowToEncode{
-		row:       row,
+		row:       row.GetDatumRow(r.currChk.Fields),
 		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
 		endOffset: -1,
 		resetFn:   func() {},
@@ -140,8 +130,8 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 // queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
 func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
 	reader := queryChunkEncodeReader{chunkCh: chunkCh}
-	return func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
-		return reader.readRow(ctx, row)
+	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+		return reader.readRow(ctx)
 	}
 }
 
@@ -165,9 +155,8 @@ func (b *encodedKVGroupBatch) reset() {
 	b.memBuf = nil
 }
 
-func newEncodedKVGroupBatch(keyspace []byte, count int) *encodedKVGroupBatch {
+func newEncodedKVGroupBatch(keyspace []byte) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
-		dataKVs:       make([]common.KvPair, 0, count),
 		indexKVs:      make(map[int64][]common.KvPair, 8),
 		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
@@ -183,9 +172,6 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
 				return errors.Trace(err)
-			}
-			if len(b.indexKVs[indexID]) == 0 {
-				b.indexKVs[indexID] = make([]common.KvPair, 0, cap(b.dataKVs))
 			}
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
 			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
@@ -208,7 +194,7 @@ type chunkEncoder struct {
 
 	chunkName string
 	logger    *zap.Logger
-	encoder   *TableKVEncoder
+	encoder   KVEncoder
 	keyspace  []byte
 
 	// total duration takes by read/encode.
@@ -224,7 +210,7 @@ func newChunkEncoder(
 	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
 	logger *zap.Logger,
-	encoder *TableKVEncoder,
+	encoder KVEncoder,
 	keyspace []byte,
 ) *chunkEncoder {
 	return &chunkEncoder{
@@ -277,7 +263,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
-		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, rowCount)
+		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace)
+
 		for _, kvs := range rowBatch {
 			if err := kvGroupBatch.add(kvs); err != nil {
 				return errors.Trace(err)
@@ -300,17 +287,15 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
-	var readRowCache []types.Datum
 	for {
 		readDurStart := time.Now()
-		data, closed, err := p.readFn(ctx, readRowCache)
+		data, closed, err := p.readFn(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if closed {
 			break
 		}
-		readRowCache = data.row
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
@@ -394,7 +379,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 // exported for test.
 func NewFileChunkProcessor(
 	parser mydump.Parser,
-	encoder *TableKVEncoder,
+	encoder KVEncoder,
 	keyspace []byte,
 	chunk *checkpoints.ChunkCheckpoint,
 	logger *zap.Logger,
@@ -538,7 +523,7 @@ type QueryChunk struct {
 
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,
-	encoder *TableKVEncoder,
+	encoder KVEncoder,
 	keyspace []byte,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
@@ -572,20 +557,17 @@ func newQueryChunkProcessor(
 	}
 }
 
-// WriterFactory is a factory function to create a new index KV writer.
-type WriterFactory func(indexID int64) (*external.Writer, error)
-
 // IndexRouteWriter is a writer for index when using global sort.
 // we route kvs of different index to different writer in order to make
 // merge sort easier, else kv data of all subtasks will all be overlapped.
 type IndexRouteWriter struct {
 	writers       map[int64]*external.Writer
 	logger        *zap.Logger
-	writerFactory WriterFactory
+	writerFactory func(int64) *external.Writer
 }
 
 // NewIndexRouteWriter creates a new IndexRouteWriter.
-func NewIndexRouteWriter(logger *zap.Logger, writerFactory WriterFactory) *IndexRouteWriter {
+func NewIndexRouteWriter(logger *zap.Logger, writerFactory func(int64) *external.Writer) *IndexRouteWriter {
 	return &IndexRouteWriter{
 		writers:       make(map[int64]*external.Writer),
 		logger:        logger,
@@ -603,11 +585,7 @@ func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows enco
 		for _, item := range kvs {
 			writer, ok := w.writers[indexID]
 			if !ok {
-				var err error
-				writer, err = w.writerFactory(indexID)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				writer = w.writerFactory(indexID)
 				w.writers[indexID] = writer
 			}
 			if err := writer.WriteRow(ctx, item.Key, item.Val, nil); err != nil {

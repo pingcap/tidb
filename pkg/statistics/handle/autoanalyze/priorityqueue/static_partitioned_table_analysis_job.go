@@ -152,7 +152,7 @@ func (j *StaticPartitionedTableAnalysisJob) ValidateAndPrepare(
 			j.failureHook(j, needRetry)
 		}
 	}
-	is := sctx.GetLatestInfoSchema()
+	is := sctx.GetDomainInfoSchema()
 	tableInfo, ok := is.TableInfoByID(j.GlobalTableID)
 	if !ok {
 		callFailureHook(false)

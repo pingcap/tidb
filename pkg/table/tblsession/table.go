@@ -163,7 +163,7 @@ func (ctx *MutateContext) GetTemporaryTableSupport() (tblctx.TemporaryTableSuppo
 
 // GetInfoSchemaToCheckExchangeConstraint implements the ExchangePartitionDMLSupport interface.
 func (ctx *MutateContext) GetInfoSchemaToCheckExchangeConstraint() infoschema.MetaOnlyInfoSchema {
-	return ctx.Context.GetLatestInfoSchema()
+	return ctx.Context.GetDomainInfoSchema()
 }
 
 // GetExchangePartitionDMLSupport implements the MutateContext interface.

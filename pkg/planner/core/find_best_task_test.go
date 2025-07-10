@@ -217,7 +217,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 	task, _, err := mockPlan0.FindBestTask(prop0, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
-	_, enforcedSort := task.Plan().(*physicalop.PhysicalSort)
+	_, enforcedSort := task.Plan().(*PhysicalSort)
 	require.True(t, enforcedSort)
 	plan2 := task.Plan().Children()[0]
 	mockPhysicalPlan, ok := plan2.(*mockPhysicalPlan4Test)
@@ -233,7 +233,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 	task, _, err = mockPlan0.FindBestTask(prop1, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
-	_, enforcedSort = task.Plan().(*physicalop.PhysicalSort)
+	_, enforcedSort = task.Plan().(*PhysicalSort)
 	require.True(t, enforcedSort)
 	plan2 = task.Plan().Children()[0]
 	mockPhysicalPlan, ok = plan2.(*mockPhysicalPlan4Test)

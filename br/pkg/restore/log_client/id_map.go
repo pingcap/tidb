@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -41,10 +40,6 @@ func pitrIDMapsFilename(clusterID, restoredTS uint64) string {
 
 func (rc *LogClient) pitrIDMapTableExists() bool {
 	return rc.dom.InfoSchema().TableExists(ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
-}
-
-func (rc *LogClient) pitrIDMapHasRestoreIDColumn() bool {
-	return restore.HasRestoreIDColumn(rc.GetDomain())
 }
 
 func (rc *LogClient) tryGetCheckpointStorage(
@@ -111,44 +106,19 @@ func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.Pit
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
-
-	if hasRestoreIDColumn {
-		// new version with restore_id column
-		// clean the dirty id map at first
-		err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? and restore_id = %?;",
-			rc.restoreTS, rc.upstreamClusterID, rc.restoreID)
+	// clean the dirty id map at first
+	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
+	for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
+		endIdx := min(startIdx+PITRIdMapBlockSize, len(data))
+		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}
-		replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restore_id, restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?, %?);"
-		for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
-			endIdx := min(startIdx+PITRIdMapBlockSize, len(data))
-			err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreID, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
-			if err != nil {
-				return errors.Trace(err)
-			}
-			startIdx = endIdx
-		}
-	} else {
-		// old version without restore_id column - use default value 0 for restore_id
-		log.Info("mysql.tidb_pitr_id_map table does not have restore_id column, using backward compatible mode")
-		// clean the dirty id map at first (without restore_id filter)
-		err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;",
-			rc.restoreTS, rc.upstreamClusterID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		replacePitrIDMapSQL := "REPLACE INTO mysql.tidb_pitr_id_map (restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?);"
-		for startIdx, segmentId := 0, 0; startIdx < len(data); segmentId += 1 {
-			endIdx := min(startIdx+PITRIdMapBlockSize, len(data))
-			err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
-			if err != nil {
-				return errors.Trace(err)
-			}
-			startIdx = endIdx
-		}
+		startIdx = endIdx
 	}
 	return nil
 }
@@ -203,28 +173,14 @@ func (rc *LogClient) loadSchemasMapFromTable(
 	ctx context.Context,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
-
-	var getPitrIDMapSQL string
-	var args []any
-
-	if hasRestoreIDColumn {
-		// new version with restore_id column
-		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-		args = []any{rc.restoreID, restoredTS, rc.upstreamClusterID}
-	} else {
-		// old version without restore_id column
-		log.Info("mysql.tidb_pitr_id_map table does not have restore_id column, using backward compatible mode")
-		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-		args = []any{restoredTS, rc.upstreamClusterID}
-	}
-
+	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
 	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
 		getPitrIDMapSQL,
-		args...,
+		restoredTS,
+		rc.upstreamClusterID,
 	)
 	if errSQL != nil {
 		return nil, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")

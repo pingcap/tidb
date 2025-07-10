@@ -48,8 +48,6 @@ type StmtRecord struct {
 	NormalizedSQL string `json:"normalized_sql"`
 	TableNames    string `json:"table_names"`
 	IsInternal    bool   `json:"is_internal"`
-	BindingSQL    string `json:"binding_sql"`
-	BindingDigest string `json:"binding_digest"`
 	// Basic
 	SampleSQL        string   `json:"sample_sql"`
 	Charset          string   `json:"charset"`
@@ -197,7 +195,6 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	if len(binPlan) > MaxEncodedPlanSizeInBytes {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
-	bindingSQL, bindingDigest := info.LazyInfo.GetBindingSQLAndDigest()
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
@@ -206,8 +203,6 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		NormalizedSQL: info.NormalizedSQL,
 		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
-		BindingSQL:    bindingSQL,
-		BindingDigest: bindingDigest,
 		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
@@ -720,8 +715,4 @@ func (*mockLazyInfo) GetBinaryPlan() string {
 
 func (*mockLazyInfo) GetPlanDigest() string {
 	return ""
-}
-
-func (*mockLazyInfo) GetBindingSQLAndDigest() (sql string, digest string) {
-	return "", ""
 }

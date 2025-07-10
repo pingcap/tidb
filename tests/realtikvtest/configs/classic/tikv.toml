@@ -1,8 +1,0 @@
-[pessimistic-txn]
-pipelined = false
-
-[raftdb]
-max-open-files = 20480
-
-[rocksdb]
-max-open-files = 20480

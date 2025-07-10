@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +34,7 @@ func randomPlanCacheKey() string {
 func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &PhysicalTableScan{}, &PhysicalTableDual{}, &PhysicalTableReader{},
 		&PhysicalTableScan{}, &PhysicalIndexJoin{}, &PhysicalIndexHashJoin{}, &PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
-		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &physicalop.PhysicalLimit{}}
+		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &PhysicalLimit{}}
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &PlanCacheValue{
 		Plan:       plans[random.Int()%len(plans)],
@@ -70,7 +69,7 @@ func TestLRUPCPut(t *testing.T) {
 	}
 
 	// one key corresponding to multi values
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		keys[i] = "key-1"
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -83,7 +82,7 @@ func TestLRUPCPut(t *testing.T) {
 
 	// test for non-existent elements
 	require.Equal(t, dropCnt, 2)
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		bucket, exist := lru.buckets[keys[i]]
 		require.True(t, exist)
 		for element := range bucket {
@@ -141,7 +140,7 @@ func TestLRUPCGet(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
 	}
 	// 5 bucket
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		keys[i] = fmt.Sprintf("key-%v", i%4)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -151,7 +150,7 @@ func TestLRUPCGet(t *testing.T) {
 	}
 
 	// test for non-existent elements
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		opts := pTypes[i]
 		value, exists := lru.Get(keys[i], opts)
 		require.False(t, exists)
@@ -194,7 +193,7 @@ func TestLRUPCDelete(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
 	}
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -230,7 +229,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
 	}
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -242,7 +241,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 	lru.DeleteAll()
 
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		opts := pTypes[i]
 		value, exists := lru.Get(keys[i], opts)
 		require.False(t, exists)
@@ -273,7 +272,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	}
 
 	// one key corresponding to multi values
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		keys[i] = "key-1"
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -289,7 +288,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 
 	// test for non-existent elements
 	require.Equal(t, dropCnt, 2)
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		bucket, exist := lru.buckets[keys[i]]
 		require.True(t, exist)
 		for element := range bucket {
@@ -354,7 +353,7 @@ func TestIssue38244(t *testing.T) {
 	}
 
 	// one key corresponding to multi values
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{ParamTypes: opts}
@@ -379,7 +378,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	}
 	var res int64 = 0
 	// put
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		k := randomPlanCacheKey()
 		v := randomPlanCacheValue(pTypes)
 		opts := pTypes

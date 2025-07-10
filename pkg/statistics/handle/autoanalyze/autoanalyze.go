@@ -413,7 +413,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
 ) bool {
-	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	dbs := infoschema.AllSchemaNames(is)
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404

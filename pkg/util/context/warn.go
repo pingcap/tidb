@@ -85,6 +85,13 @@ type WarnAppender interface {
 	AppendNote(msg error)
 }
 
+// WarnGetterAppender provides a function to add a warning and get all warnings.
+type WarnGetterAppender interface {
+	WarnAppender
+	// GetWarnings gets all warnings. The slice is not copied, so it should not be modified.
+	GetWarnings() []SQLWarn
+}
+
 // WarnHandler provides a handler to append and get warnings.
 type WarnHandler interface {
 	WarnAppender

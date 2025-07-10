@@ -29,7 +29,6 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -920,8 +919,8 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 }
 
 func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
-	prev := issyncer.LoadSchemaDiffVersionGapThreshold
-	issyncer.LoadSchemaDiffVersionGapThreshold = 0
+	prev := domain.LoadSchemaDiffVersionGapThreshold
+	domain.LoadSchemaDiffVersionGapThreshold = 0
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -929,7 +928,7 @@ func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
 	tk.MustExec("drop table test.forcereload")
 	dom.Reload()
 
-	issyncer.LoadSchemaDiffVersionGapThreshold = prev
+	domain.LoadSchemaDiffVersionGapThreshold = prev
 }
 
 func TestRenameWithSmallAutoIDStep(t *testing.T) {

@@ -17,7 +17,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -408,7 +407,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	switch op {
 	case ast.EQ, ast.NE, ast.NullEQ:
 		funcs := make([]expression.Expression, lLen)
-		for i := range lLen {
+		for i := 0; i < lLen; i++ {
 			var err error
 			funcs[i], err = er.constructBinaryOpFunction(expression.GetFuncArg(l, i), expression.GetFuncArg(r, i), op)
 			if err != nil {
@@ -430,12 +429,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		*/
 		resultDNFList := make([]expression.Expression, 0, lLen)
 		// Step 1
-		for i := range lLen {
+		for i := 0; i < lLen; i++ {
 			exprList := make([]expression.Expression, 0, i+1)
 			// Step 1.1 build prefix equal conditions
 			// (l[0], ... , l[i-1], ...) op (r[0], ... , r[i-1], ...) should be convert to
 			// l[0] = r[0] and l[1] = r[1] and ... and l[i-1] = r[i-1]
-			for j := range i {
+			for j := 0; j < i; j++ {
 				jExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, j), expression.GetFuncArg(r, j), ast.EQ)
 				if err != nil {
 					return nil, err
@@ -1382,7 +1381,12 @@ func hasCTEConsumerInSubPlan(p base.LogicalPlan) bool {
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return true
 	}
-	return slices.ContainsFunc(p.Children(), hasCTEConsumerInSubPlan)
+	for _, child := range p.Children() {
+		if hasCTEConsumerInSubPlan(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func initConstantRepertoire(ctx expression.EvalContext, c *expression.Constant) {
@@ -1525,18 +1529,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
-	case *ast.JSONSumCrc32Expr:
-		arg := er.ctxStack[len(er.ctxStack)-1]
-		jsonSumFunction, err := expression.BuildJSONSumCrc32FunctionWithCheck(er.sctx, arg, v.Tp)
-		if err != nil {
-			er.err = err
-			return retNode, false
-		}
-
-		jsonSumFunction.SetCoercibility(expression.CoercibilityNumeric)
-		jsonSumFunction.SetRepertoire(expression.ASCII)
-		er.ctxStack[len(er.ctxStack)-1] = jsonSumFunction
-		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeOrIlikeExpr:
 		er.patternLikeOrIlikeToExpression(v)
 	case *ast.PatternRegexpExpr:
@@ -1645,11 +1637,6 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	}
 	if err != nil {
 		return
-	}
-	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
-		if er.planCtx != nil && er.planCtx.builder != nil {
-			er.planCtx.builder.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
-		}
 	}
 	return
 }
@@ -1900,7 +1887,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := expression.GetRowLen(er.ctxStack[stkLen-lLen-1])
-	for i := range lLen {
+	for i := 0; i < lLen; i++ {
 		if l != expression.GetRowLen(er.ctxStack[stkLen-lLen+i]) {
 			er.err = expression.ErrOperandColumns.GenWithStackByArgs(l)
 			return
@@ -1918,12 +1905,12 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
-				if expression.MaybeOverOptimized4PlanCache(er.sctx, c) {
+				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
 					if c.GetType(er.sctx.GetEvalCtx()).EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
 					er.sctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", c.StringWithCtx(er.sctx.GetEvalCtx(), errors.RedactLogDisable)))
-					if err := expression.RemoveMutableConst(er.sctx, c); err != nil {
+					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
 						er.err = err
 						return
 					}

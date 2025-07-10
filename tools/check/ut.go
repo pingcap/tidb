@@ -37,7 +37,6 @@ import (
 
 	// Set the correct value when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/tools/cover"
 )
 
@@ -68,9 +67,6 @@ ut run $package $test
 
 // run test cases that match a pattern
 ut run $package 'r:$regex'
-
-// run test cases of multiple packages
-ut run-multi $package1 $package2 ...
 
 // build all test package
 ut build
@@ -198,30 +194,6 @@ func cmdBuild(args ...string) bool {
 	return true
 }
 
-func cmdRunMulti(pkgs ...string) bool {
-	var err error
-	if len(pkgs) == 0 {
-		return true
-	}
-
-	// Build tasks
-	var tasks []task
-	start := time.Now()
-	err = buildTestBinaryMulti(pkgs)
-	if err != nil {
-		log.Println("build package error", pkgs, err)
-		return false
-	}
-
-	if tasks, err = listTestCasesForPkgs(pkgs); err != nil {
-		log.Println("run existing test cases error", err)
-		return false
-	}
-
-	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", buildParallel, len(tasks), time.Since(start))
-	return runTestCases(tasks)
-}
-
 func cmdRun(args ...string) bool {
 	var err error
 	pkgs, err := listPackages()
@@ -249,7 +221,7 @@ func cmdRun(args ...string) bool {
 				tasks = listLongTasks(pkg, tasks)
 			}
 		} else {
-			if tasks, err = listTestCasesForPkgs(pkgs); err != nil {
+			if tasks, err = runExistingTestCases(pkgs); err != nil {
 				log.Println("run existing test cases error", err)
 				return false
 			}
@@ -347,10 +319,7 @@ func cmdRun(args ...string) bool {
 	}
 
 	fmt.Printf("building task finish, parallelism=%d, count=%d, takes=%v\n", buildParallel, len(tasks), time.Since(start))
-	return runTestCases(tasks)
-}
 
-func runTestCases(tasks []task) bool {
 	testWorkerCount := p
 	if long {
 		testWorkerCount = longTestWorkerCount
@@ -365,7 +334,7 @@ func runTestCases(tasks []task) bool {
 
 	shuffle(tasks)
 
-	start := time.Now()
+	start = time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
@@ -399,8 +368,8 @@ func runTestCases(tasks []task) bool {
 	return true
 }
 
-func listTestCasesForPkgs(pkgs []string) (tasks []task, err error) {
-	g := new(errgroup.Group)
+func runExistingTestCases(pkgs []string) (tasks []task, err error) {
+	wg := &sync.WaitGroup{}
 	tasksChannel := make(chan []task, len(pkgs))
 	for _, pkg := range pkgs {
 		exist, err := testBinaryExist(pkg)
@@ -412,22 +381,12 @@ func listTestCasesForPkgs(pkgs []string) (tasks []task, err error) {
 			fmt.Println("no test case in ", pkg)
 			continue
 		}
-		pkgCopy := pkg
-		g.Go(func() error {
-			tasks, err := listTestCases(pkgCopy, nil)
-			if err != nil {
-				log.Println("list test cases error", pkgCopy, err)
-				return withTrace(err)
-			}
-			tasksChannel <- tasks
-			return nil
-		})
+
+		wg.Add(1)
+		go listTestCasesConcurrent(wg, pkg, tasksChannel)
 	}
 
-	if err := g.Wait(); err != nil {
-		return nil, withTrace(err)
-	}
-
+	wg.Wait()
 	close(tasksChannel)
 	for t := range tasksChannel {
 		tasks = append(tasks, t...)
@@ -559,8 +518,6 @@ func main() {
 			isSucceed = cmdBuild(os.Args[2:]...)
 		case "run":
 			isSucceed = cmdRun(os.Args[2:]...)
-		case "run-multi":
-			isSucceed = cmdRunMulti(os.Args[2:]...)
 		default:
 			isSucceed = usage()
 		}
@@ -721,7 +678,6 @@ func (b blocksByStart) Less(i, j int) bool {
 	return bi.StartLine < bj.StartLine || bi.StartLine == bj.StartLine && bi.StartCol < bj.StartCol
 }
 
-// listTestCases list all test cases of a package and append to a slice.
 func listTestCases(pkg string, tasks []task) ([]task, error) {
 	newCases, err := listNewTestCases(pkg)
 	if err != nil {
@@ -733,6 +689,20 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 	}
 
 	return tasks, nil
+}
+
+func listTestCasesConcurrent(wg *sync.WaitGroup, pkg string, tasksChannel chan<- []task) {
+	defer wg.Done()
+	newCases, err := listNewTestCases(pkg)
+	if err != nil {
+		log.Println("list test case error", pkg, err)
+		return
+	}
+	tasks := make([]task, 0, len(newCases))
+	for _, c := range newCases {
+		tasks = append(tasks, task{pkg, c})
+	}
+	tasksChannel <- tasks
 }
 
 func filterTestCases(tasks []task, arg1 string) ([]task, error) {
@@ -946,7 +916,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 
 func skipDIR(pkg string) bool {
 	skipDir := []string{"br", "lightning", filepath.Join("pkg", "lightning"),
-		"cmd", "dumpling", "tests", "tools", "build"}
+		"cmd", "dumpling", "tests", filepath.Join("tools", "check"), "build"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -955,21 +925,9 @@ func skipDIR(pkg string) bool {
 	return false
 }
 
-// goTestCmd run "go test --tags=intest[|,nextgen] args.."
-func goTestCmd(args ...string) *exec.Cmd {
-	cmd := exec.Command("go", "test")
-	tags := "--tags=intest"
-	if os.Getenv("NEXT_GEN") == "1" {
-		tags += ",nextgen"
-	}
-	cmd.Args = append(cmd.Args, tags)
-	cmd.Args = append(cmd.Args, args...)
-	return cmd
-}
-
 func buildTestBinary(pkg string) error {
 	// go test -c
-	cmd := goTestCmd("-c", "-vet", "off", "-o", testFileName(pkg))
+	cmd := exec.Command("go", "test", "-c", "-vet", "off", "--tags=intest", "-o", testFileName(pkg))
 	if coverprofile != "" {
 		cmd.Args = append(cmd.Args, "-cover")
 	}
@@ -990,7 +948,7 @@ func buildTestBinary(pkg string) error {
 
 func generateBuildCache() error {
 	// cd cmd/tidb-server && go test -tags intest -exec true -vet off -toolexec=go-compile-without-link
-	cmd := goTestCmd("-exec=true", "-vet=off")
+	cmd := exec.Command("go", "test", "-tags=intest", "-exec=true", "-vet=off")
 	goCompileWithoutLink := fmt.Sprintf("-toolexec=%s", filepath.Join(workDir, "tools", "check", "go-compile-without-link.sh"))
 	cmd.Args = append(cmd.Args, goCompileWithoutLink)
 	cmd.Dir = filepath.Join(workDir, "cmd", "tidb-server")
@@ -1016,7 +974,7 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	var cmd *exec.Cmd
-	cmd = goTestCmd("-p", strconv.Itoa(buildParallel), "--exec", xprogPath, "-vet", "off", "-count", "0")
+	cmd = exec.Command("go", "test", "--tags=intest", "-p", strconv.Itoa(buildParallel), "--exec", xprogPath, "-vet", "off", "-count", "0")
 	if coverprofile != "" {
 		cmd.Args = append(cmd.Args, "-cover")
 	}

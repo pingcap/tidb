@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
@@ -28,13 +27,11 @@ import (
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/metrics"
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	txninfo "github.com/pingcap/tidb/pkg/session/txninfo"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
-	statscache_metrics "github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	statshandler_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
@@ -59,7 +56,8 @@ func RegisterMetrics() error {
 	}
 
 	if kerneltype.IsNextGen() {
-		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
+		registerMetricsForNextGen(cfg.KeyspaceName)
+		return nil
 	}
 
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
@@ -68,62 +66,51 @@ func RegisterMetrics() error {
 	}
 
 	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
-	// Note: for NextGen, we need to use the side effect of `NewClient` to init the metrics' builtin const labels
 	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
+	}, opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
 	defer pdCli.Close()
 
-	if kerneltype.IsNextGen() {
-		registerMetrics(nil) // metrics' const label already set
-	} else {
-		keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
-		if err != nil {
-			return err
-		}
-		registerMetrics(keyspaceMeta)
+	keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
+	if err != nil {
+		return err
 	}
+
+	registerMetrics(keyspaceMeta)
 	return nil
 }
 
 // RegisterMetricsForBR register metrics with const label keyspace_id for BR.
-func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName string) error {
+func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		registerMetrics(nil) // register metrics without label 'keyspace_id'.
 		return nil
 	}
 
 	if kerneltype.IsNextGen() {
-		metricscommon.SetConstLabels("keyspace_name", keyspaceName)
+		registerMetricsForNextGen(keyspaceName)
+		return nil
 	}
 
 	timeoutSec := 10 * time.Second
-	securityOpt := pd.SecurityOption{}
-	if tls.IsEnabled() {
-		securityOpt = tls.ToPDSecurityOption()
-	}
-	// Note: for NextGen, pdCli is created to init the metrics' const labels
-	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
+	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{},
+		opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
 	defer pdCli.Close()
 
-	if kerneltype.IsNextGen() {
-		registerMetrics(nil) // metrics' const label already set
-	} else {
-		keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
-		if err != nil {
-			return err
-		}
-		registerMetrics(keyspaceMeta)
+	keyspaceMeta, err := getKeyspaceMeta(pdCli, keyspaceName)
+	if err != nil {
+		return err
 	}
+
+	registerMetrics(keyspaceMeta)
 	return nil
 }
 
@@ -140,7 +127,6 @@ func initMetrics() {
 	server_metrics.InitMetricsVars()
 	session_metrics.InitMetricsVars()
 	statshandler_metrics.InitMetricsVars()
-	statscache_metrics.InitMetricsVars()
 	topsqlreporter_metrics.InitMetricsVars()
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
@@ -150,9 +136,17 @@ func initMetrics() {
 	}
 }
 
+// registerMetricsForNextGen registers metrics for next gen. Currently we assume keyspace_name equals keyspace_id, and is globally unique.
+func registerMetricsForNextGen(keyspaceName string) {
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		metrics.SetConstLabels("keyspace_id", keyspaceName)
+	}
+	initMetrics()
+}
+
 func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	if keyspaceMeta != nil {
-		metricscommon.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
+		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
 	}
 	initMetrics()
 }

@@ -15,7 +15,6 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/ingest",
-        "//pkg/disttask/framework/testutil",
         "//pkg/meta/model",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

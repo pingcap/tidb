@@ -54,6 +54,7 @@ var (
 	_ functionClass = &isIPv4MappedFunctionClass{}
 	_ functionClass = &isIPv6FunctionClass{}
 	_ functionClass = &isUsedLockFunctionClass{}
+	_ functionClass = &masterPosWaitFunctionClass{}
 	_ functionClass = &nameConstFunctionClass{}
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
@@ -920,11 +921,8 @@ func (b *builtinIsIPv4Sig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
 func (b *builtinIsIPv4Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
-	if err != nil {
-		return 0, false, err
-	}
-	if isNull {
-		return 0, true, nil
+	if err != nil || isNull {
+		return 0, err != nil, err
 	}
 	if isIPv4(val) {
 		return 1, false, nil
@@ -995,11 +993,8 @@ func (b *builtinIsIPv4CompatSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
 func (b *builtinIsIPv4CompatSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
-	if err != nil {
-		return 0, false, err
-	}
-	if isNull {
-		return 0, true, nil
+	if err != nil || isNull {
+		return 0, err != nil, err
 	}
 
 	ipAddress := []byte(val)
@@ -1051,11 +1046,8 @@ func (b *builtinIsIPv4MappedSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 func (b *builtinIsIPv4MappedSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
-	if err != nil {
-		return 0, false, err
-	}
-	if isNull {
-		return 0, true, nil
+	if err != nil || isNull {
+		return 0, err != nil, err
 	}
 
 	ipAddress := []byte(val)
@@ -1107,11 +1099,8 @@ func (b *builtinIsIPv6Sig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
 func (b *builtinIsIPv6Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
-	if err != nil {
-		return 0, false, err
-	}
-	if isNull {
-		return 0, true, nil
+	if err != nil || isNull {
+		return 0, err != nil, err
 	}
 	ip := net.ParseIP(val)
 	if ip != nil && !isIPv4(val) {
@@ -1224,6 +1213,14 @@ func (b *builtinIsUUIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 		return 0, false, nil
 	}
 	return 1, false, nil
+}
+
+type masterPosWaitFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *masterPosWaitFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 
 type nameConstFunctionClass struct {

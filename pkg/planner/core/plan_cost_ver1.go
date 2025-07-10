@@ -24,13 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
 )
 
@@ -89,7 +87,6 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
-	intest.Assert(p.SCtx().GetSessionVars().CostModelVersion != 0)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1019,9 +1016,8 @@ func (p *PhysicalHashAgg) GetPlanCostVer1(taskType property.TaskType, option *op
 	return p.PlanCost, nil
 }
 
-// getCost4PhysicalSort computes the cost of in memory sort.
-func getCost4PhysicalSort(pp base.PhysicalPlan, count float64, schema *expression.Schema) float64 {
-	p := pp.(*physicalop.PhysicalSort)
+// GetCost computes the cost of in memory sort.
+func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
@@ -1042,9 +1038,8 @@ func getCost4PhysicalSort(pp base.PhysicalPlan, count float64, schema *expressio
 	return cpuCost + memoryCost + diskCost
 }
 
-// getPlanCostVer14PhysicalSort calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func getPlanCostVer14PhysicalSort(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
-	p := pp.(*physicalop.PhysicalSort)
+// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalSort) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1061,7 +1056,10 @@ func getPlanCostVer14PhysicalSort(pp base.PhysicalPlan, taskType property.TaskTy
 
 // GetCost computes cost of TopN operator itself.
 func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
-	heapSize := max(float64(p.Offset+p.Count), 2.0)
+	heapSize := float64(p.Offset + p.Count)
+	if heapSize < 2.0 {
+		heapSize = 2.0
+	}
 	sessVars := p.SCtx().GetSessionVars()
 	// Ignore the cost of `doCompaction` in current implementation of `TopNExec`, since it is the
 	// special side-effect of our Chunk format in TiDB layer, which may not exist in coprocessor's
@@ -1194,9 +1192,8 @@ func (p *PointGetPlan) GetAvgRowSize() float64 {
 	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
 }
 
-// getPlanCostVer14PhysicalUnionAll calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func getPlanCostVer14PhysicalUnionAll(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
-	p := pp.(*physicalop.PhysicalUnionAll)
+// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalUnionAll) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil

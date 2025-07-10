@@ -100,7 +100,10 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 
 	w.intestDuringPartialWorkerRun()
 
+	sizeBefore := w.chk.MemoryUsage()
 	w.chk.SwapColumns(chk)
+	w.memTracker.Consume(w.chk.MemoryUsage() - sizeBefore)
+
 	w.giveBackCh <- &HashAggInput{
 		chk:        chk,
 		giveBackCh: w.inputCh,

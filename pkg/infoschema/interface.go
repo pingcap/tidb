@@ -18,7 +18,6 @@ import (
 	stdctx "context"
 
 	"github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
@@ -43,6 +42,5 @@ type InfoSchema interface {
 	// without loading the whole info from storage.
 	// So it's all in memory operation. No need to worry about network or disk cost.
 	TableItemByPartitionID(partitionID int64) (TableItem, bool)
-	GetAutoIDRequirement() autoid.Requirement
 	base() *infoSchema
 }

@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"encoding/binary"
+	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -78,7 +79,11 @@ func i64SliceToBytes(i64s []int64) (b []byte) {
 	if len(i64s) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&i64s[0])), len(i64s)*8)
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	hdr.Len = len(i64s) * 8
+	hdr.Cap = hdr.Len
+	hdr.Data = uintptr(unsafe.Pointer(&i64s[0]))
+	return b
 }
 
 // Decode decodes a Chunk from a byte slice, return the remained unused bytes.
@@ -156,7 +161,11 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 	if len(b) == 0 {
 		return nil
 	}
-	return unsafe.Slice((*int64)(unsafe.Pointer(&b[0])), len(b)/8)
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&i64s))
+	hdr.Len = len(b) / 8
+	hdr.Cap = hdr.Len
+	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
+	return i64s
 }
 
 // VarElemLen indicates this Column is a variable length Column.

@@ -107,9 +107,8 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 	// depend on `sctx` directly.
 	// The context of some tests don't have `DDL`, so make it optional
 	var getDDLOwner func(ctx context.Context) (*infosync.ServerInfo, error)
-	dom := domain.GetDomain(sctx)
-	if dom != nil && dom.DDL() != nil {
-		ddl := dom.DDL()
+	ddl := domain.GetDomain(sctx).DDL()
+	if ddl != nil {
 		ownerManager := ddl.OwnerManager()
 		getDDLOwner = func(ctx context.Context) (*infosync.ServerInfo, error) {
 			ddlOwnerID, err := ownerManager.GetOwnerID(ctx)

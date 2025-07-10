@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -308,7 +309,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
-					path.TableFilters = slices.Delete(path.TableFilters, i, i+1)
+					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
 					corColInAccessConds = true
 					break
 				}
@@ -318,7 +319,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)
-					path.TableFilters = slices.Delete(path.TableFilters, i, i+1)
+					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
 					corColInAccessConds = true
 					break
 				}
@@ -471,7 +472,7 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 					break
 				}
 			}
-			if match && idx.IsEssentialStatsLoaded() {
+			if match {
 				ndv := property.GroupNDV{
 					Cols: idxCols,
 					NDV:  float64(idx.NDV),
@@ -489,11 +490,11 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
-	is := sctx.GetLatestISWithoutSessExt()
+	is := domain.GetDomain(sctx).InfoSchema()
 	var tbl table.Table
 	var partDef *model.PartitionDefinition
 
-	tbl, partDef = infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
+	tbl, partDef = infoschema.FindTableByTblOrPartID(is, id)
 	if tbl == nil || tbl.Meta() == nil {
 		return
 	}

@@ -25,6 +25,7 @@ func buildVectorIndexExtra(
 	distanceMetric tipb.VectorDistanceMetric,
 	topk uint32,
 	columnName string,
+	indexID int64,
 	refVec []byte,
 	column *tipb.ColumnInfo,
 ) *ColumnarIndexExtra {
@@ -38,7 +39,7 @@ func buildVectorIndexExtra(
 					DistanceMetric: distanceMetric,
 					TopK:           topk,
 					ColumnName:     columnName,
-					IndexId:        indexInfo.ID,
+					IndexId:        indexID,
 					RefVecF32:      refVec,
 					Column:         *column,
 				},
@@ -47,15 +48,19 @@ func buildVectorIndexExtra(
 	}
 }
 
-func buildInvertedIndexExtra(indexInfo *model.IndexInfo) *ColumnarIndexExtra {
+func buildInvertedIndexExtra(
+	indexInfo *model.IndexInfo,
+	columnID int64,
+	indexID int64,
+) *ColumnarIndexExtra {
 	return &ColumnarIndexExtra{
 		IndexInfo: indexInfo,
 		QueryInfo: &tipb.ColumnarIndexInfo{
 			IndexType: tipb.ColumnarIndexType_TypeInverted,
 			Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
 				InvertedQueryInfo: &tipb.InvertedQueryInfo{
-					IndexId:  indexInfo.ID,
-					ColumnId: indexInfo.InvertedInfo.ColumnID,
+					IndexId:  indexID,
+					ColumnId: columnID,
 				},
 			},
 		},

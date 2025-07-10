@@ -20,7 +20,6 @@ go_library(
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",
-        "//pkg/table/tables",
         "//pkg/types",
         "//pkg/util/collate",
         "//pkg/util/execdetails",

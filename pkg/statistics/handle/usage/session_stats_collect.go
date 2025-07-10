@@ -124,7 +124,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		)
 		batchStart := time.Now()
 		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {

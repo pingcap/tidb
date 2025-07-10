@@ -3858,9 +3858,8 @@ type DistributeTableStmt struct {
 	dmlNode
 	Table          *TableName
 	PartitionNames []CIStr
-	Rule           string
-	Engine         string
-	Timeout        string
+	Rule           CIStr
+	Engine         CIStr
 }
 
 // Restore implements Node interface.
@@ -3883,19 +3882,14 @@ func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if len(n.Rule) > 0 {
+	if len(n.Rule.L) > 0 {
 		ctx.WriteKeyWord(" RULE = ")
-		ctx.WriteString(n.Rule)
+		ctx.WriteName(n.Rule.String())
 	}
 
-	if len(n.Engine) > 0 {
+	if len(n.Engine.L) > 0 {
 		ctx.WriteKeyWord(" ENGINE = ")
-		ctx.WriteString(n.Engine)
-	}
-
-	if len(n.Timeout) > 0 {
-		ctx.WriteKeyWord(" TIMEOUT = ")
-		ctx.WriteString(n.Timeout)
+		ctx.WriteName(n.Engine.String())
 	}
 	return nil
 }

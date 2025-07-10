@@ -16,7 +16,6 @@ package indexadvisor
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -357,7 +356,7 @@ func (aa *autoAdmin) createMultiColumnIndexes(indexableColsSet s.Set[Column], in
 		tableColsSet := s.ListToSet[Column](columns...)
 		indexColsSet := s.ListToSet[Column](index.Columns...)
 		for _, column := range s.DiffSet(s.AndSet(tableColsSet, indexableColsSet), indexColsSet).ToList() {
-			cols := slices.Clone(index.Columns)
+			cols := append([]Column{}, index.Columns...)
 			cols = append(cols, column)
 			multiColumnCandidates.Add(Index{
 				SchemaName: index.SchemaName,
@@ -437,7 +436,7 @@ func (aa *autoAdmin) selectIndexCandidates(querySet s.Set[Query], potentialIndex
 
 		bestPerQuery := 3 // keep 3 best indexes for each single-query
 		bestQueryIndexes := s.NewSet[Index]()
-		for range bestPerQuery {
+		for i := 0; i < bestPerQuery; i++ {
 			best, err := aa.enumerateCombinations(tmpQuerySet, indexes, 1)
 			if err != nil {
 				return nil, err

@@ -15,7 +15,6 @@
 package metrics
 
 import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -38,28 +37,28 @@ var (
 
 // InitInfoSchemaV2Metrics intializes infoschema v2 related metrics.
 func InitInfoSchemaV2Metrics() {
-	InfoSchemaV2CacheCounter = metricscommon.NewCounterVec(
+	InfoSchemaV2CacheCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
 			Name:      "infoschema_v2_cache",
 			Help:      "infoschema cache v2 hit, evict and miss number",
 		}, []string{LblType})
-	InfoSchemaV2CacheObjCnt = metricscommon.NewGauge(
+	InfoSchemaV2CacheObjCnt = NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
 			Name:      "infoschema_v2_cache_count",
 			Help:      "infoschema cache v2 table count",
 		})
-	InfoSchemaV2CacheMemUsage = metricscommon.NewGauge(
+	InfoSchemaV2CacheMemUsage = NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
 			Name:      "infoschema_v2_cache_size",
 			Help:      "infoschema cache v2 size",
 		})
-	InfoSchemaV2CacheMemLimit = metricscommon.NewGauge(
+	InfoSchemaV2CacheMemLimit = NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
@@ -67,7 +66,7 @@ func InitInfoSchemaV2Metrics() {
 			Help:      "infoschema cache v2 limit",
 		})
 
-	TableByNameDuration = metricscommon.NewHistogramVec(
+	TableByNameDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "infoschema",

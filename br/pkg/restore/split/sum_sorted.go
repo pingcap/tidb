@@ -4,7 +4,6 @@ package split
 import (
 	"bytes"
 	"fmt"
-	"reflect"
 
 	"github.com/google/btree"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -43,14 +42,6 @@ func NewValued(startKey, endKey []byte, value Value) Valued {
 		},
 		Value: value,
 	}
-}
-
-func (v Valued) MemSize() int {
-	return len(v.Key.StartKey) + len(v.Key.EndKey) +
-		// slice header:
-		int(reflect.TypeFor[[]string]().Size())*2 +
-		// value: uint64 * 2
-		8 + 8
 }
 
 func (v Valued) String() string {

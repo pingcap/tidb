@@ -33,7 +33,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func getSortedPhysicalTables(createdTables []*restoreutils.CreatedTable) []*PhysicalTable {
+func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 	physicalTables := make([]*PhysicalTable, 0, len(createdTables))
 	for _, createdTable := range createdTables {
 		physicalTables = append(physicalTables, &PhysicalTable{
@@ -93,7 +93,7 @@ const MergedRangeCountThreshold = 1536
 
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
-	createdTables []*restoreutils.CreatedTable,
+	createdTables []*CreatedTable,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
@@ -258,7 +258,7 @@ type RestoreTablesContext struct {
 	Online         bool
 
 	// data
-	CreatedTables            []*restoreutils.CreatedTable
+	CreatedTables            []*CreatedTable
 	CheckpointSetWithTableID map[int64]map[string]struct{}
 
 	// tool client

@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -712,9 +711,8 @@ type DistributeTable struct {
 	baseSchemaProducer
 	TableInfo      *model.TableInfo
 	PartitionNames []ast.CIStr
-	Engine         string
-	Rule           string
-	Timeout        string
+	Engine         ast.CIStr
+	Rule           ast.CIStr
 }
 
 // SplitRegion represents a split regions plan.
@@ -845,32 +843,27 @@ type Explain struct {
 	TargetPlan       base.Plan
 	Format           string
 	Analyze          bool
-	Explore          bool   // EXPLAIN EXPLORE statement
-	SQLDigest        string // "EXPLAIN EXPLORE <sql_digest>"
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
-	Rows            [][]string
-	BriefBinaryPlan string
+	Rows        [][]string
+	ExplainRows [][]string
 }
 
-// GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
-func GetBriefBinaryPlan(p base.Plan) string {
-	var plan base.Plan = p
-	if plan == nil {
-		return ""
+// GetExplainRowsForPlan get explain rows for plan.
+func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
+	explain := &Explain{
+		TargetPlan: plan,
+		Format:     types.ExplainFormatROW,
+		Analyze:    false,
 	}
-	// If the plan is a prepared statement, get execute.Plan.
-	if exec, ok := p.(*Execute); ok {
-		plan = exec.Plan
+	if plan != nil {
+		explain.SetSCtx(plan.SCtx())
 	}
-	// Get plan context and statement context
-	planCtx := plan.SCtx()
-	if planCtx == nil {
-		return ""
+	if err := explain.RenderResult(); err != nil {
+		return rows
 	}
-	flat := FlattenPhysicalPlan(plan, true)
-	return BinaryPlanStrFromFlatPlan(planCtx, flat, true)
+	return explain.Rows
 }
 
 // GetExplainAnalyzeRowsForPlan get explain rows for plan.
@@ -919,10 +912,6 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
-	case e.Explore:
-		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
-			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
-			"explain_analyze", "binding"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -940,47 +929,8 @@ func (e *Explain) prepareSchema() error {
 	return nil
 }
 
-func (e *Explain) renderResultForExplore() error {
-	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
-	sqlOrDigest := e.SQLDigest
-	if sqlOrDigest == "" {
-		sqlOrDigest = e.ExecStmt.Text()
-	}
-	plans, err := bindingHandle.ExplorePlansForSQL(e.SCtx(), sqlOrDigest, e.Analyze)
-	if err != nil {
-		return err
-	}
-	for _, p := range plans {
-		hintStr, err := p.Binding.Hint.Restore()
-		if err != nil {
-			return err
-		}
-
-		e.Rows = append(e.Rows, []string{
-			p.Binding.OriginalSQL,
-			hintStr,
-			p.Plan,
-			p.PlanDigest,
-			strconv.FormatFloat(p.AvgLatency, 'f', -1, 64),
-			strconv.Itoa(int(p.ExecTimes)),
-			strconv.FormatFloat(p.AvgScanRows, 'f', -1, 64),
-			strconv.FormatFloat(p.AvgReturnedRows, 'f', -1, 64),
-			strconv.FormatFloat(p.LatencyPerReturnRow, 'f', -1, 64),
-			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
-			p.Recommend,
-			p.Reason,
-			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
-			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
-	}
-	return nil
-}
-
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
-	if e.Explore {
-		return e.renderResultForExplore()
-	}
-
 	if e.TargetPlan == nil {
 		return nil
 	}
@@ -1024,23 +974,22 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-	// For explain for connection, we can directly decode the binary plan to get the explain rows.
-	if e.BriefBinaryPlan != "" {
-		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
-			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
+
+	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
+		if pp, ok := e.TargetPlan.(base.PhysicalPlan); ok {
+			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
+			if _, err := getPlanCost(pp, property.RootTaskType,
+				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagTrace)); err != nil {
+				return err
+			}
 		}
-		rows, err := plancodec.DecodeBinaryPlan4Connection(e.BriefBinaryPlan, strings.ToLower(e.Format), false)
-		if err != nil {
-			return err
-		}
-		e.Rows = rows
-		return nil
 	}
+
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
-			e.Rows = ExplainFlatPlanInRowFormat(flat, e.Format, e.Analyze, e.RuntimeStatsColl)
+			e.explainFlatPlanInRowFormat(flat)
 			if e.Analyze &&
 				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
 				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
@@ -1060,7 +1009,7 @@ func (e *Explain) RenderResult() error {
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
 		flat := FlattenPhysicalPlan(e.TargetPlan, false)
-		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat, false)
+		str := BinaryPlanStrFromFlatPlan(e.SCtx(), flat)
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatTiDBJSON:
 		flat := FlattenPhysicalPlan(e.TargetPlan, true)
@@ -1083,29 +1032,23 @@ func (e *Explain) RenderResult() error {
 	return nil
 }
 
-// ExplainFlatPlanInRowFormat returns the explain result in row format.
-func ExplainFlatPlanInRowFormat(flat *FlatPhysicalPlan, format string, analyze bool,
-	runtimeStatsColl *execdetails.RuntimeStatsColl) (rows [][]string) {
+func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
 		return
 	}
 	for _, flatOp := range flat.Main {
-		rows = prepareOperatorInfo(flatOp, format, analyze,
-			runtimeStatsColl, rows)
+		e.explainFlatOpInRowFormat(flatOp)
 	}
 	for _, cte := range flat.CTEs {
 		for _, flatOp := range cte {
-			rows = prepareOperatorInfo(flatOp, format, analyze,
-				runtimeStatsColl, rows)
+			e.explainFlatOpInRowFormat(flatOp)
 		}
 	}
 	for _, subQ := range flat.ScalarSubQueries {
 		for _, flatOp := range subQ {
-			rows = prepareOperatorInfo(flatOp, format, analyze,
-				runtimeStatsColl, rows)
+			e.explainFlatOpInRowFormat(flatOp)
 		}
 	}
-	return
 }
 
 func (e *Explain) explainFlatPlanInJSONFormat(flat *FlatPhysicalPlan) (encodes []*ExplainInfoForEncode) {
@@ -1131,9 +1074,10 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	explainID := flatOp.ExplainID().String() + flatOp.Label.String()
+	explainID := flatOp.Origin.ExplainID().String() + flatOp.Label.String()
+	textTreeExplainID := texttree.PrettyIdentifier(explainID, flatOp.TextTreeIndent, flatOp.IsLastChild)
 
-	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, explainID)
+	cur := e.prepareOperatorInfoForJSONFormat(flatOp.Origin, taskTp, textTreeExplainID, explainID)
 
 	for _, idx := range flatOp.ChildrenIdx {
 		cur.SubOperators = append(cur.SubOperators,
@@ -1142,16 +1086,17 @@ func (e *Explain) explainOpRecursivelyInJSONFormat(flatOp *FlatOperator, flats F
 	return cur
 }
 
-func getExplainIDAndTaskTp(flatOp *FlatOperator) (taskTp, textTreeExplainID string) {
+func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
+	taskTp := ""
 	if flatOp.IsRoot {
 		taskTp = "root"
 	} else {
 		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
 	}
-	textTreeExplainID = texttree.PrettyIdentifier(flatOp.ExplainID().String()+flatOp.Label.String(),
+	textTreeExplainID := texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.Label.String(),
 		flatOp.TextTreeIndent,
 		flatOp.IsLastChild)
-	return
+	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
 }
 
 func getRuntimeInfoStr(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
@@ -1210,47 +1155,44 @@ func getRuntimeInfo(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdet
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, estimated rows, task type, access object and other operator info.
-func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
-	runtimeStatsColl *execdetails.RuntimeStatsColl, rows [][]string) [][]string {
-	p := flatOp.Origin
+func (e *Explain) prepareOperatorInfo(p base.Plan, taskType, id string) {
 	if p.ExplainID().String() == "_0" {
-		return rows
+		return
 	}
-	taskType, id := getExplainIDAndTaskTp(flatOp)
 
-	estRows, estCost, costFormula, accessObject, operatorInfo := getOperatorInfo(p)
+	estRows, estCost, costFormula, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
-	if analyze || runtimeStatsColl != nil {
+	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if format == types.ExplainFormatTrueCardCost || format == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatTrueCardCost || e.Format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(e.SCtx(), p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost ||
-			format == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatVerbose || e.Format == types.ExplainFormatTrueCardCost ||
+			e.Format == types.ExplainFormatCostTrace {
 			row = append(row, estCost)
 		}
-		if format == types.ExplainFormatCostTrace {
+		if e.Format == types.ExplainFormatCostTrace {
 			row = append(row, costFormula)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
-	return append(rows, row)
+	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {
+func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, id string, explainID string) *ExplainInfoForEncode {
 	if p.ExplainID().String() == "_0" {
 		return nil
 	}
 
-	estRows, _, _, accessObject, operatorInfo := getOperatorInfo(p)
+	estRows, _, _, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 	jsonRow := &ExplainInfoForEncode{
 		ID:           explainID,
 		EstRows:      estRows,
@@ -1266,15 +1208,24 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 	return jsonRow
 }
 
-func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
+func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, costFormula, accessObject, operatorInfo string) {
+	// For `explain for connection` statement, `e.ExplainRows` will be set.
+	for _, row := range e.ExplainRows {
+		if len(row) < 5 {
+			panic("should never happen")
+		}
+		if row[0] == id {
+			return row[1], "N/A", "N/A", row[3], row[4]
+		}
+	}
+
 	pp, isPhysicalPlan := p.(base.PhysicalPlan)
 	estRows = "N/A"
 	estCost = "N/A"
 	costFormula = "N/A"
-	sctx := p.SCtx()
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
-		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {
+		if e.SCtx() != nil && e.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.GetCost(), 'f', 2, 64)
 			if costVer2.GetTrace() != nil {
@@ -1288,12 +1239,12 @@ func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, 
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
-	if plan, ok := p.(base.DataAccesser); ok {
+	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
-		if pa, ok := p.(base.PartitionAccesser); ok && sctx != nil {
-			accessObject = pa.AccessObject(sctx).String()
+		if pa, ok := p.(partitionAccesser); ok && e.SCtx() != nil {
+			accessObject = pa.accessObject(e.SCtx()).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}
@@ -1301,8 +1252,8 @@ func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, 
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
-func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool) string {
-	binary := binaryDataFromFlatPlan(explainCtx, flat, briefBinaryPlan)
+func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) string {
+	binary := binaryDataFromFlatPlan(explainCtx, flat)
 	if binary == nil {
 		return ""
 	}
@@ -1314,7 +1265,7 @@ func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPl
 	return str
 }
 
-func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan, briefBinaryPlan bool) *tipb.ExplainData {
+func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
@@ -1332,49 +1283,26 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 			break
 		}
 	}
-	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
+	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main)
 	for _, explainedCTE := range flat.CTEs {
-		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
+		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE))
 	}
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, briefBinaryPlan bool) *tipb.ExplainOperator {
-	operators := make([]tipb.ExplainOperator, len(ops))
-
-	// First phase: Generate all operators with normal processing (including ID suffix)
+func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree) *tipb.ExplainOperator {
+	s := make([]tipb.ExplainOperator, len(ops))
 	for i, op := range ops {
-		binaryOpFromFlatOp(explainCtx, op, &operators[i])
-	}
-
-	// Second phase: If briefBinaryPlan is true, set IgnoreExplainIDSuffix and generate BriefName
-	if briefBinaryPlan && len(ops) > 0 && ops[0].Origin.SCtx() != nil {
-		stmtCtx := ops[0].Origin.SCtx().GetSessionVars().StmtCtx
-		originalIgnore := stmtCtx.IgnoreExplainIDSuffix
-		stmtCtx.IgnoreExplainIDSuffix = true
-
-		for i, op := range ops {
-			operators[i].BriefName = op.ExplainID().String()
-			switch op.Origin.(type) {
-			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalMergeJoin:
-				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
-			}
-		}
-
-		stmtCtx.IgnoreExplainIDSuffix = originalIgnore
-	}
-
-	// Build the tree structure
-	for i, op := range ops {
+		binaryOpFromFlatOp(explainCtx, op, &s[i])
 		for _, idx := range op.ChildrenIdx {
-			operators[i].Children = append(operators[i].Children, &operators[idx])
+			s[i].Children = append(s[i].Children, &s[idx])
 		}
 	}
-	return &operators[0]
+	return &s[0]
 }
 
 func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
-	out.Name = fop.ExplainID().String()
+	out.Name = fop.Origin.ExplainID().String()
 	switch fop.Label {
 	case BuildSide:
 		out.Labels = []tipb.OperatorLabel{tipb.OperatorLabel_buildSide}
@@ -1445,20 +1373,21 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 
 	// Operator info
-	if plan, ok := fop.Origin.(base.DataAccesser); ok {
+	if plan, ok := fop.Origin.(dataAccesser); ok {
 		out.OperatorInfo = plan.OperatorInfo(false)
 	} else {
 		out.OperatorInfo = fop.Origin.ExplainInfo()
 	}
+
 	// Access object
 	switch p := fop.Origin.(type) {
-	case base.DataAccesser:
+	case dataAccesser:
 		ao := p.AccessObject()
 		if ao != nil {
 			ao.SetIntoPB(out)
 		}
-	case base.PartitionAccesser:
-		ao := p.AccessObject(explainCtx)
+	case partitionAccesser:
+		ao := p.accessObject(explainCtx)
 		if ao != nil {
 			ao.SetIntoPB(out)
 		}
@@ -1468,61 +1397,56 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 func (e *Explain) prepareDotInfo(p base.PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "\ndigraph %s {\n", p.ExplainID())
-	e.prepareTaskDot(&pair{p, false}, "root", buffer)
+	e.prepareTaskDot(p, "root", buffer)
 	buffer.WriteString("}\n")
 
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
-type pair struct {
-	physicalPlan base.PhysicalPlan
-	isChildOfINL bool
-}
-
-func (e *Explain) prepareTaskDot(pa *pair, taskTp string, buffer *bytes.Buffer) {
-	fmt.Fprintf(buffer, "subgraph cluster%v{\n", pa.physicalPlan.ID())
+func (e *Explain) prepareTaskDot(p base.PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
+	fmt.Fprintf(buffer, "subgraph cluster%v{\n", p.ID())
 	buffer.WriteString("node [style=filled, color=lightgrey]\n")
 	buffer.WriteString("color=black\n")
 	fmt.Fprintf(buffer, "label = \"%s\"\n", taskTp)
 
-	if len(pa.physicalPlan.Children()) == 0 {
+	if len(p.Children()) == 0 {
 		if taskTp == "cop" {
-			fmt.Fprintf(buffer, "\"%s\"\n}\n", pa.physicalPlan.ExplainID(pa.isChildOfINL))
+			fmt.Fprintf(buffer, "\"%s\"\n}\n", p.ExplainID())
 			return
 		}
-		fmt.Fprintf(buffer, "\"%s\"\n", pa.physicalPlan.ExplainID(pa.isChildOfINL))
+		fmt.Fprintf(buffer, "\"%s\"\n", p.ExplainID())
 	}
-	var copTasks []*pair
+
+	var copTasks []base.PhysicalPlan
 	var pipelines []string
 
-	for planQueue := []*pair{pa}; len(planQueue) > 0; planQueue = planQueue[1:] {
-		curPair := planQueue[0]
-		switch copPlan := curPair.physicalPlan.(type) {
+	for planQueue := []base.PhysicalPlan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
+		curPlan := planQueue[0]
+		switch copPlan := curPlan.(type) {
 		case *PhysicalTableReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan})
+			copTasks = append(copTasks, copPlan.tablePlan)
 		case *PhysicalIndexReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
+			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexLookUpReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
+			copTasks = append(copTasks, copPlan.tablePlan)
+			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexMergeReader:
-			for i := range copPlan.partialPlans {
+			for i := 0; i < len(copPlan.partialPlans); i++ {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.partialPlans[i]})
+				copTasks = append(copTasks, copPlan.partialPlans[i])
 			}
 			if copPlan.tablePlan != nil {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
+				copTasks = append(copTasks, copPlan.tablePlan)
 			}
 		}
-		for _, child := range curPair.physicalPlan.Children() {
-			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPair.physicalPlan.ExplainID(curPair.isChildOfINL), child.ExplainID(curPair.isChildOfINL))
-			// pass current pair isChildOfINL.
-			planQueue = append(planQueue, &pair{physicalPlan: child, isChildOfINL: curPair.isChildOfINL})
+		for _, child := range curPlan.Children() {
+			fmt.Fprintf(buffer, "\"%s\" -> \"%s\"\n", curPlan.ExplainID(), child.ExplainID())
+			planQueue = append(planQueue, child)
 		}
 	}
 	buffer.WriteString("}\n")
