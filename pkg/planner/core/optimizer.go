@@ -309,8 +309,8 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		return nil, nil, 0, err
 	}
 	var (
+		cost     float64
 		physical base.PhysicalPlan
-		cost     = math.MaxFloat64
 	)
 	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
