@@ -653,6 +653,7 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls
 	if err != nil {
 		logutil.BgLogger().Warn("cannot update stats cache for tables", zap.Error(err))
 	}
+	intest.AssertNoError(err)
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
