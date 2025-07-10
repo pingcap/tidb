@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -271,7 +272,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	require.NoError(t, err)
 	var selectPlan base.PhysicalPlan
 	if path == "" {
-		selectPlan = &plannercore.PhysicalSelection{}
+		selectPlan = &physicalop.PhysicalSelection{}
 	}
 	plan, err := importer.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
 		Path:   path,

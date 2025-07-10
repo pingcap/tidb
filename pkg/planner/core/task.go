@@ -129,7 +129,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 	task := tasks[0].ConvertToRootTask(p.SCtx())
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
-	if sel, ok := task.Plan().(*PhysicalSelection); ok {
+	if sel, ok := task.Plan().(*physicalop.PhysicalSelection); ok {
 		if pj, ok := sel.Children()[0].(*PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
 			// shallow clone sel
@@ -700,8 +700,8 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
-		sel.fromDataSource = true
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
+		sel.FromDataSource = true
 		sel.SetChildren(newTask.GetPlan())
 		newTask.SetPlan(sel)
 	}
@@ -1285,7 +1285,7 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *CopTask) (base.T
 	}
 
 	var (
-		selOnTblScan   *PhysicalSelection
+		selOnTblScan   *physicalop.PhysicalSelection
 		selSelectivity float64
 		tblScan        *PhysicalTableScan
 		err            error
@@ -1298,7 +1298,7 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *CopTask) (base.T
 	}
 	finalTblScanPlan := copTsk.tablePlan
 	for len(finalTblScanPlan.Children()) > 0 {
-		selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
+		selOnTblScan, _ = finalTblScanPlan.(*physicalop.PhysicalSelection)
 		finalTblScanPlan = finalTblScanPlan.Children()[0]
 	}
 
@@ -1490,8 +1490,9 @@ func attach2Task4PhysicalUnionAll(pp base.PhysicalPlan, tasks ...base.Task) base
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalSelection implements PhysicalPlan interface.
+func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	sel := pp.(*physicalop.PhysicalSelection)
 	if mppTask, _ := tasks[0].(*MppTask); mppTask != nil { // always push to mpp task.
 		if expression.CanExprsPushDown(util.GetPushDownCtx(sel.SCtx()), sel.Conditions, kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.Copy())
@@ -1512,7 +1513,7 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 	// !isIndexJoin means the childTask only be passed through to indexJoin as an END.
 	if !isIndexJoin && indexJoinInfo != nil {
 		switch p.(type) {
-		case *PhysicalSelection:
+		case *physicalop.PhysicalSelection:
 			// todo: for simplicity, we can just inherit it from child.
 			// scale(1) means a cloned stats information same as the input stats.
 			p.SetStats(stats.Scale(1))

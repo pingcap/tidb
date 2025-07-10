@@ -61,7 +61,7 @@ func (sel *TiDBSelectionImpl) CalcCost(_ float64, children ...memo.Implementatio
 }
 
 // NewTiDBSelectionImpl creates a new TiDBSelectionImpl.
-func NewTiDBSelectionImpl(sel *plannercore.PhysicalSelection) *TiDBSelectionImpl {
+func NewTiDBSelectionImpl(sel *physicalop.PhysicalSelection) *TiDBSelectionImpl {
 	return &TiDBSelectionImpl{baseImpl{plan: sel}}
 }
 
@@ -78,7 +78,7 @@ func (sel *TiKVSelectionImpl) CalcCost(_ float64, children ...memo.Implementatio
 }
 
 // NewTiKVSelectionImpl creates a new TiKVSelectionImpl.
-func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
+func NewTiKVSelectionImpl(sel *physicalop.PhysicalSelection) *TiKVSelectionImpl {
 	return &TiKVSelectionImpl{baseImpl{plan: sel}}
 }
 

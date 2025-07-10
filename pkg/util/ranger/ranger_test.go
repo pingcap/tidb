@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/session"
@@ -1704,7 +1705,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		selection, ok := p.(*plannercore.Update).SelectPlan.(*plannercore.PhysicalSelection)
+		selection, ok := p.(*plannercore.Update).SelectPlan.(*physicalop.PhysicalSelection)
 		require.True(t, ok)
 		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
 		require.True(t, ok)

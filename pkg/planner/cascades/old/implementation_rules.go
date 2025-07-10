@@ -270,7 +270,7 @@ func (*ImplSelection) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (ma
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalSel := expr.ExprNode.(*logicalop.LogicalSelection)
-	physicalSel := plannercore.PhysicalSelection{
+	physicalSel := physicalop.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.QueryBlockOffset(), reqProp.CloneEssentialFields())
 	switch expr.Group.EngineType {

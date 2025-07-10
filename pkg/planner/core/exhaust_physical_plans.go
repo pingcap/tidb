@@ -1615,7 +1615,7 @@ func constructInnerSel(prop *property.PhysicalProperty, sel *logicalop.LogicalSe
 	if sel == nil {
 		return child
 	}
-	physicalSel := PhysicalSelection{
+	physicalSel := physicalop.PhysicalSelection{
 		Conditions: sel.Conditions,
 	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), prop)
 	return physicalSel
@@ -3941,7 +3941,7 @@ func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.P
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
 	newProps = admitIndexJoinProps(newProps, prop)
 	for _, newProp := range newProps {
-		sel := PhysicalSelection{
+		sel := physicalop.PhysicalSelection{
 			Conditions: p.Conditions,
 		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
 		ret = append(ret, sel)

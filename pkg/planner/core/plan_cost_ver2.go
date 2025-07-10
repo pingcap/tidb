@@ -56,9 +56,10 @@ func getPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *optimi
 	return p.GetPlanCostVer1(taskType, option)
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalSelection returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + filter-cost
-func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalSelection(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalSelection)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
