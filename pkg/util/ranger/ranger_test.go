@@ -17,6 +17,7 @@ package ranger_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"strings"
 	"testing"
 
@@ -1704,7 +1705,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		selection, ok := p.(*plannercore.Update).SelectPlan.(*plannercore.PhysicalSelection)
+		selection, ok := p.(*plannercore.Update).SelectPlan.(*physicalop.PhysicalSelection)
 		require.True(t, ok)
 		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
 		require.True(t, ok)

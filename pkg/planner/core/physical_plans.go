@@ -2233,60 +2233,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Ranges[0].IsPointNonNullable(tc)
 }
 
-// PhysicalSelection represents a filter.
-type PhysicalSelection struct {
-	physicalop.BasePhysicalPlan
-
-	Conditions []expression.Expression
-
-	// The flag indicates whether this Selection is from a DataSource.
-	// The flag is only used by cost model for compatibility and will be removed later.
-	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
-	fromDataSource bool
-
-	// todo Since the feature of adding filter operators has not yet been implemented,
-	// the following code for this function will not be used for now.
-	// The flag indicates whether this Selection is used for RuntimeFilter
-	// True: Used for RuntimeFilter
-	// False: Only for normal conditions
-	// hasRFConditions bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalSelection) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalSelection)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalPlan = *base
-	cloned.Conditions = util.CloneExprs(p.Conditions)
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalSelection
-func (p *PhysicalSelection) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfBool
-	for _, expr := range p.Conditions {
-		sum += expr.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	physicalop.BasePhysicalPlan

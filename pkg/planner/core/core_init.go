@@ -77,6 +77,11 @@ func init() {
 	utilfuncp.GetPlanCostVer24PhysicalTopN = getPlanCostVer24PhysicalTopN
 	utilfuncp.Attach2Task4PhysicalTopN = attach2Task4PhysicalTopN
 	utilfuncp.ResolveIndices4PhysicalTopN = resolveIndices4PhysicalTopN
+	// for physical selection.
+	utilfuncp.Attach2Task4PhysicalSelection = attach2Task4PhysicalSelection
+	utilfuncp.ResolveIndices4PhysicalSelection = resolveIndices4PhysicalSelection
+	utilfuncp.GetPlanCostVer24PhysicalSelection = getPlanCostVer24PhysicalSelection
+	utilfuncp.GetPlanCostVer14PhysicalSelection = getPlanCostVer14PhysicalSelection
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.IsSingleScan = isSingleScan
@@ -87,6 +92,7 @@ func init() {
 	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
+	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
