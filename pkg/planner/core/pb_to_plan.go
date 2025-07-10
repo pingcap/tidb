@@ -196,7 +196,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 		}
 		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
 	}
-	p := PhysicalTopN{
+	p := physicalop.PhysicalTopN{
 		ByItems: byItems,
 		Count:   topN.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})

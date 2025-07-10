@@ -8,6 +8,7 @@ go_library(
         "physical_limit.go",
         "physical_schema_producer.go",
         "physical_sort.go",
+        "physical_topn.go",
         "physical_union_all.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",

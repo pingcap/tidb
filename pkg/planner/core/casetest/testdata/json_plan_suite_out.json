@@ -101,7 +101,7 @@
         "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
         "JSONPlan": [
           {
-            "id": "MergeJoin_9",
+            "id": "MergeJoin_10",
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",

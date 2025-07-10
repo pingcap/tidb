@@ -85,7 +85,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		return res
 	}
 	switch pp := p.(type) {
-	case *physicalop.PhysicalLimit, *PhysicalTopN:
+	case *physicalop.PhysicalLimit, *physicalop.PhysicalTopN:
 		if storeType == kv.TiKV {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,

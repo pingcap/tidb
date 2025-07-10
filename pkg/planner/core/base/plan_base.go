@@ -280,6 +280,7 @@ type LogicalPlan interface {
 	RollBackTaskMap(TS uint64)
 
 	// CanPushToCop check if we might push this plan to a specific store.
+	// Deprecated: don't depend subtree based push check, see CanSelfBeingPushedToCopImpl based op-self push check.
 	CanPushToCop(store kv.StoreType) bool
 
 	// ExtractFD derive the FDSet from the tree bottom up.

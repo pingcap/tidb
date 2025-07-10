@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -107,8 +108,7 @@ func (opt *optimizerImpl) TableColumns(schema, table string) ([]Column, error) {
 func (opt *optimizerImpl) PossibleColumns(schema, colName string) ([]Column, error) {
 	// filtering system schema
 	schema = strings.ToLower(schema)
-	if schema == "information_schema" || schema == "metrics_schema" ||
-		schema == "performance_schema" || schema == "mysql" {
+	if metadef.IsMemDB(schema) || metadef.IsSystemDB(schema) {
 		return nil, nil
 	}
 

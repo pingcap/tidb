@@ -71,7 +71,7 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *physicalop.PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		plan = InjectProjBelowSort(p, p.ByItems)
 	case *physicalop.NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)

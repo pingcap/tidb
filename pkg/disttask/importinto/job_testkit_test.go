@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -35,12 +36,22 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 )
 
+func switchTaskStep(
+	ctx context.Context, t *testing.T,
+	manager *storage.TaskManager, taskID int64, step proto.Step,
+) {
+	task, err := manager.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.NoError(t, manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, step, nil))
+}
+
 func TestSubmitTaskNextgen(t *testing.T) {
-	t.Skip("to run this test, we need DXF service ready")
 	if kerneltype.IsClassic() {
 		t.Skip("This test is only for nextgen")
 	}
@@ -66,28 +77,34 @@ func TestSubmitTaskNextgen(t *testing.T) {
 
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
-	manuallyInitFn := func(t *testing.T, store kv.Storage) {
+	manuallyInitFn := func(t *testing.T, currKSStore, sysKSStore kv.Storage) {
 		t.Helper()
 		// as we have disabled the dist task in domain, we need init the task manager
 		// and framework meta manually.
-		pool := pools.NewResourcePool(func() (pools.Resource, error) {
-			return testkit.NewTestKit(t, store).Session(), nil
-		}, 1, 1, time.Second)
-		t.Cleanup(func() {
-			pool.Close()
-		})
-		taskMgr := storage.NewTaskManager(pool)
+		getPoolFn := func(store kv.Storage) tidbutil.SessionPool {
+			pool := pools.NewResourcePool(func() (pools.Resource, error) {
+				return testkit.NewTestKit(t, store).Session(), nil
+			}, 1, 1, time.Second)
+			t.Cleanup(func() {
+				pool.Close()
+			})
+			return pool
+		}
+		taskMgr := storage.NewTaskManager(getPoolFn(currKSStore))
 		storage.SetTaskManager(taskMgr)
-		require.NoError(t, taskMgr.InitMeta(ctx, "tidb", "dxf_service"))
+		sysKSTaskMgr := taskMgr
+		if keyspace.IsRunningOnUser() {
+			sysKSTaskMgr = storage.NewTaskManager(getPoolFn(sysKSStore))
+			storage.SetDXFSvcTaskMgr(sysKSTaskMgr)
+		}
+		require.NoError(t, sysKSTaskMgr.InitMeta(ctx, "tidb", "dxf_service"))
 	}
-	// the second test requires the node initialized in dist_framework_meta.
-	manuallyInitFn(t, sysKSStore)
 
 	t.Run("submit task in system keyspace", func(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = keyspace.System
 		})
-		manuallyInitFn(t, sysKSStore)
+		manuallyInitFn(t, sysKSStore, sysKSStore)
 		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
 			TableInfo:  &model.TableInfo{},
 			Parameters: &importer.ImportParameters{},
@@ -107,7 +124,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = "ks"
 		})
-		manuallyInitFn(t, userKSStore)
+		manuallyInitFn(t, userKSStore, sysKSStore)
 		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
 			TableInfo:  &model.TableInfo{},
 			Parameters: &importer.ImportParameters{},
@@ -145,27 +162,24 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
-	importStepMetas := []*importinto.ImportStepMeta{
+	importStepSummaries := []*execute.SubtaskSummary{
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 1,
-			},
+			RowCnt: *atomic.NewInt64(1),
 		},
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 2,
-			},
+			RowCnt: *atomic.NewInt64(2),
 		},
 	}
-	for _, m := range importStepMetas {
-		bytes, err := json.Marshal(m)
-		require.NoError(t, err)
-		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepImport,
-			"", bytes, proto.ImportInto, 11)
+	for _, m := range importStepSummaries {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepImport,
+			"", nil, m, proto.SubtaskStatePending, proto.ImportInto, 11)
 	}
+
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepImport)
+
 	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, 111)
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), runInfo.ImportRows)
+	require.EqualValues(t, 3, runInfo.ImportRows)
 
 	// global sort
 	taskMeta = importinto.TaskMeta{
@@ -177,25 +191,21 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
-	ingestStepMetas := []*importinto.WriteIngestStepMeta{
+	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 11,
-			},
+			RowCnt: *atomic.NewInt64(11),
 		},
 		{
-			Result: importinto.Result{
-				LoadedRowCnt: 22,
-			},
+			RowCnt: *atomic.NewInt64(22),
 		},
 	}
-	for _, m := range ingestStepMetas {
-		bytes, err := json.Marshal(m)
-		require.NoError(t, err)
-		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepWriteAndIngest,
-			"", bytes, proto.ImportInto, 11)
+	for _, m := range ingestStepSummaries {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepWriteAndIngest,
+			"", bytes, m, proto.SubtaskStatePending, proto.ImportInto, 11)
 	}
+
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, 222)
 	require.NoError(t, err)
-	require.Equal(t, uint64(33), runInfo.ImportRows)
+	require.EqualValues(t, 33, runInfo.ImportRows)
 }

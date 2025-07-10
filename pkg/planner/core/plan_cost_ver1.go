@@ -1059,28 +1059,9 @@ func getPlanCostVer14PhysicalSort(pp base.PhysicalPlan, taskType property.TaskTy
 	return p.PlanCost, nil
 }
 
-// GetCost computes cost of TopN operator itself.
-func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
-	heapSize := max(float64(p.Offset+p.Count), 2.0)
-	sessVars := p.SCtx().GetSessionVars()
-	// Ignore the cost of `doCompaction` in current implementation of `TopNExec`, since it is the
-	// special side-effect of our Chunk format in TiDB layer, which may not exist in coprocessor's
-	// implementation, or may be removed in the future if we change data format.
-	// Note that we are using worst complexity to compute CPU cost, because it is simpler compared with
-	// considering probabilities of average complexity, i.e, we may not need adjust heap for each input
-	// row.
-	var cpuCost float64
-	if isRoot {
-		cpuCost = count * math.Log2(heapSize) * sessVars.GetCPUFactor()
-	} else {
-		cpuCost = count * math.Log2(heapSize) * sessVars.GetCopCPUFactor()
-	}
-	memoryCost := heapSize * sessVars.GetMemoryFactor()
-	return cpuCost + memoryCost
-}
-
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTopN) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalTopN)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil

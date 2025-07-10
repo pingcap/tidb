@@ -800,7 +800,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalStreamAgg{},
 		&physicalop.PhysicalLimit{},
 		&physicalop.PhysicalSort{},
-		&plannercore.PhysicalTopN{},
+		&physicalop.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},
 		&plannercore.PhysicalMaxOneRow{},

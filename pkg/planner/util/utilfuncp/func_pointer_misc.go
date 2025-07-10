@@ -206,6 +206,20 @@ var ResolveIndices4PhysicalLimit func(pp base.PhysicalPlan) (err error)
 // Attach2Task4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
 var Attach2Task4PhysicalLimit func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// GetPlanCostVer14PhysicalTopN will be called by PhysicalLimit in physicalOp pkg.
+var GetPlanCostVer14PhysicalTopN func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalTopN will be called by PhysicalLimit in physicalOp pkg.
+var GetPlanCostVer24PhysicalTopN func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
+var Attach2Task4PhysicalTopN func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// ResolveIndices4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
+var ResolveIndices4PhysicalTopN func(pp base.PhysicalPlan) (err error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
