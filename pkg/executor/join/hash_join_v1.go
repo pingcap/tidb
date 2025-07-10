@@ -46,7 +46,7 @@ import (
 )
 
 // IsChildCloseCalledForTest is used for test
-var IsChildCloseCalledForTest bool = false
+var IsChildCloseCalledForTest = false
 
 var (
 	_ exec.Executor = &HashJoinV1Exec{}
