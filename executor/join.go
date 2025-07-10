@@ -41,6 +41,9 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
+// IsChildCloseCalledForTest is used for test
+var IsChildCloseCalledForTest = false
+
 var (
 	_ Executor = &HashJoinExec{}
 	_ Executor = &NestedLoopApplyExec{}
@@ -147,7 +150,11 @@ type hashjoinWorkerResult struct {
 }
 
 // Close implements the Executor Close interface.
+<<<<<<< HEAD:executor/join.go
 func (e *HashJoinExec) Close() error {
+=======
+func (e *HashJoinV1Exec) Close() (err error) {
+>>>>>>> af367b8a5ae (executor: replace `Call` with `CallWithRecover` in the close of hash join v1 (#61868)):pkg/executor/join/hash_join_v1.go
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -170,9 +177,19 @@ func (e *HashJoinExec) Close() error {
 			close(e.probeWorkers[i].joinChkResourceCh)
 			channel.Clear(e.probeWorkers[i].joinChkResourceCh)
 		}
+<<<<<<< HEAD:executor/join.go
 		e.probeSideTupleFetcher.probeChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
 		e.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.rowContainer.ActionSpill())
+=======
+		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
+		util.WithRecovery(func() { err = e.RowContainer.Close() }, func(r any) {
+			if r != nil {
+				err = errors.Errorf("%v", r)
+			}
+		})
+		e.HashJoinCtxV1.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
+>>>>>>> af367b8a5ae (executor: replace `Call` with `CallWithRecover` in the close of hash join v1 (#61868)):pkg/executor/join/hash_join_v1.go
 		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
@@ -192,7 +209,16 @@ func (e *HashJoinExec) Close() error {
 	if e.stats != nil {
 		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
+<<<<<<< HEAD:executor/join.go
 	err := e.baseExecutor.Close()
+=======
+
+	IsChildCloseCalledForTest = true
+	childErr := e.BaseExecutor.Close()
+	if childErr != nil {
+		return childErr
+	}
+>>>>>>> af367b8a5ae (executor: replace `Call` with `CallWithRecover` in the close of hash join v1 (#61868)):pkg/executor/join/hash_join_v1.go
 	return err
 }
 
