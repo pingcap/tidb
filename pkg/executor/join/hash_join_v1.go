@@ -119,7 +119,7 @@ type HashJoinV1Exec struct {
 }
 
 // Close implements the Executor Close interface.
-func (e *HashJoinV1Exec) Close() (err error) {
+func (e *HashJoinV1Exec) Close() error {
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -173,11 +173,7 @@ func (e *HashJoinV1Exec) Close() (err error) {
 	}
 
 	IsChildCloseCalledForTest = true
-	childErr := e.BaseExecutor.Close()
-	if childErr != nil {
-		return childErr
-	}
-	return err
+	return e.BaseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
