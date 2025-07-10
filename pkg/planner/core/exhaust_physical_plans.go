@@ -540,12 +540,10 @@ func constructIndexHashJoinStatic(
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	indexJoinProp *property.IndexJoinRuntimeProp,
-	selfStats *property.StatsInfo,
-	selfSchema *expression.Schema,
 	outerStats *property.StatsInfo,
 ) []base.PhysicalPlan {
 	// new one index join with the same index join prop pushed down.
-	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinProp, selfStats, selfSchema, outerStats)
+	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinProp, outerStats)
 	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -578,8 +576,6 @@ func constructIndexJoinStatic(
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	indexJoinProp *property.IndexJoinRuntimeProp,
-	selfStats *property.StatsInfo,
-	selfSchema *expression.Schema,
 	outerStats *property.StatsInfo,
 ) []base.PhysicalPlan {
 	joinType := p.JoinType
@@ -606,7 +602,7 @@ func constructIndexJoinStatic(
 	// Record the variable usage for explain explore.
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 	outerRowCount := outerStats.RowCount
-	estimatedRowCount := selfStats.RowCount
+	estimatedRowCount := p.StatsInfo().RowCount
 	if (prop.ExpectedCnt < estimatedRowCount) ||
 		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
 		// Apply the orderRatio to recognize that a large outer table scan may
@@ -652,8 +648,8 @@ func constructIndexJoinStatic(
 		// for static enumeration here, we just pass down the original equal condition for condition adjustment rather
 		// depend on the original logical join node.
 		EqualConditions: p.EqualConditions,
-	}.Init(p.SCtx(), selfStats.ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
-	join.SetSchema(selfSchema)
+	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
+	join.SetSchema(p.Schema())
 	return []base.PhysicalPlan{join}
 }
 
@@ -1076,10 +1072,10 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 		AvgInnerRowCnt:  avgInnerRowCnt,
 		TableRangeScan:  false,
 	}
-	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropTS, p.StatsInfo(), p.Schema(), outerStats)
-	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS, p.StatsInfo(), p.Schema(), outerStats)...)
-	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropTS, p.StatsInfo(), p.Schema(), outerStats)...)
-	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropIS, p.StatsInfo(), p.Schema(), outerStats)...)
+	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)
+	indexJoins = append(indexJoins, constructIndexJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
+	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)...)
+	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
 	return indexJoins
 }
 
