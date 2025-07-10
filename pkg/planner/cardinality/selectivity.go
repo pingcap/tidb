@@ -1112,11 +1112,7 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 
 // outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
 // and the searched value does not appear in the topN
-func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {
-	// If the table hasn't been modified, it's safe to return 0.
-	if modifyCount == 0 {
-		return 0
-	}
+func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64) (result float64) {
 	// Calculate "newly added rows" using original row count. We do NOT use notNullCount here
 	// because that can always be less than realtimeRowCount if NULLs exist
 	newRows := realtimeRowCount - origRowCount
