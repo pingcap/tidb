@@ -45,6 +45,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+var IsChildCloseCalledForTest bool = false
+
 var (
 	_ exec.Executor = &HashJoinV1Exec{}
 	_ exec.Executor = &NestedLoopApplyExec{}
@@ -163,6 +165,8 @@ func (e *HashJoinV1Exec) Close() (err error) {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+
+	IsChildCloseCalledForTest = true
 	childErr := e.BaseExecutor.Close()
 	if childErr != nil {
 		return childErr
