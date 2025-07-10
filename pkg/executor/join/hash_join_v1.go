@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+// IsChildCloseCalledForTest is used for test
 var IsChildCloseCalledForTest bool = false
 
 var (
