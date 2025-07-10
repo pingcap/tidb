@@ -333,7 +333,9 @@ func BuildHistAndTopN(
 	}
 	curCnt := float64(0)
 	// sampleNDV is the number of distinct values in the samples, which may differ from the real NDV due to sampling.
-	sampleNDV := int64(0)
+	// Initialize to 1 because the first time in the loop we don't increment the sampleNDV - we increment upon change
+	// of value, and the first value is always new.
+	sampleNDV := int64(1)
 	var corrXYSum float64
 
 	// Iterate through the samples
@@ -351,11 +353,6 @@ func BuildHistAndTopN(
 		// case 1, this value is equal to the last one: current count++
 		if bytes.Equal(cur, sampleBytes) {
 			curCnt++
-			//if i == sampleNum || i == 0 {
-			if i == 0 {
-				// If this is the first or last sample, we need to ensure we count this value.
-				sampleNDV++
-			}
 			continue
 		}
 		sampleNDV++
@@ -420,7 +417,7 @@ func BuildHistAndTopN(
 		}
 	}
 
-	if allowPruning && sampleNDV > 0 && sampleFactor > 1 && ndv > sampleNDV && len(topNList) >= int(sampleNDV) {
+	if allowPruning && sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(topNList) >= int(sampleNDV) {
 		// If we're sampling, and TopN contains everything in the sample - trim TopN so that buckets will be
 		// built. This can help address issues in optimizer cardinality estimation if TopN contains all values
 		// in the sample, but the length of the TopN is less than the true column/index NDV.
@@ -437,7 +434,7 @@ func BuildHistAndTopN(
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
 
-	haveAllNDV := sampleNDV == lenTopN && sampleNDV > 0
+	haveAllNDV := sampleNDV == lenTopN && lenTopN > 0
 
 	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
 	lenSamples := int64(len(samples))
