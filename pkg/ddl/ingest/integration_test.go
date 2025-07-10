@@ -376,3 +376,42 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 		tk.MustExec("admin check table t;")
 	}
 }
+
+func TestAddIndexGetChunkCancel(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
+	}
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	tk.MustExec("split table t between (0) and (1000000) regions 10;")
+	jobID := int64(0)
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if jobID != 0 {
+			return
+		}
+		if job.Type == model.ActionAddIndex {
+			jobID = job.ID
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	cancelled := false
+	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeGetChunk", func() {
+		if !cancelled {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobID))
+			cancelled = true
+		}
+	})
+	require.NoError(t, err)
+	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
+	require.True(t, cancelled)
+	tk.MustExec("admin check table t;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeGetChunk"))
+}
