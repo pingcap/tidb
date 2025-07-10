@@ -681,7 +681,7 @@ func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMet
 	for {
 		stream, retry, err = c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta, Bo: bo.TiKVBackoffer()})
 		if retry {
-			logutil.BgLogger().Warn("establish mpp connection meets error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+			logutil.BgLogger().Warn("establish mpp connection meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
 			continue
 		}
 		break
