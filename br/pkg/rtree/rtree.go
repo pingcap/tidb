@@ -278,7 +278,9 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 	if len(startKey) != 0 && bytes.Equal(startKey, endKey) {
 		return []Range{}
 	}
-	incomplete := make([]Range, 0, 64)
+	// Don't use a large buffer, because it will cause memory issue.
+	// And the number of missing ranges is usually small.
+	incomplete := make([]Range, 0, 1)
 	requestRange := Range{StartKey: startKey, EndKey: endKey}
 	lastEndKey := startKey
 	pviot := &Range{StartKey: startKey}
