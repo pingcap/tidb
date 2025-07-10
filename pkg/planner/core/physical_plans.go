@@ -58,7 +58,7 @@ import (
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
 
 var (
-	_ base.PhysicalPlan = &PhysicalSelection{}
+	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
 	_ base.PhysicalPlan = &PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}

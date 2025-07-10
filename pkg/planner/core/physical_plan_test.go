@@ -473,13 +473,13 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	p, ok := info.Plan.(base.Plan)
 	require.True(t, ok)
 
-	var findSelection func(p base.Plan) *core.PhysicalSelection
-	findSelection = func(p base.Plan) *core.PhysicalSelection {
+	var findSelection func(p base.Plan) *physicalop.PhysicalSelection
+	findSelection = func(p base.Plan) *physicalop.PhysicalSelection {
 		if p == nil {
 			return nil
 		}
 		switch v := p.(type) {
-		case *core.PhysicalSelection:
+		case *physicalop.PhysicalSelection:
 			if len(v.Children()) == 1 {
 				if ts, ok := v.Children()[0].(*core.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
 					return v

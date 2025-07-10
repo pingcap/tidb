@@ -805,7 +805,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalCTETable{},
 		&plannercore.PhysicalMaxOneRow{},
 		&plannercore.PhysicalProjection{},
-		&plannercore.PhysicalSelection{},
+		&physicalop.PhysicalSelection{},
 		&plannercore.PhysicalTableDual{},
 		&plannercore.PhysicalWindow{},
 		&plannercore.PhysicalShuffle{},
