@@ -124,15 +124,15 @@ func TestConvertColumnInfo(t *testing.T) {
 		ftb.SetType(tp).SetFlen(types.UnspecifiedLength)
 		resultField = resolve.ResultField{
 			Column: &model.ColumnInfo{
-				Name:      ast.NewCIStr("a"),
+				Name:      pmodel.NewCIStr("a"),
 				ID:        0,
 				Offset:    0,
 				FieldType: ftb.Build(),
 				Comment:   "column a is the first column in table dual",
 			},
-			ColumnAsName: ast.NewCIStr("a"),
-			TableAsName:  ast.NewCIStr("dual"),
-			DBName:       ast.NewCIStr("test"),
+			ColumnAsName: pmodel.NewCIStr("a"),
+			TableAsName:  pmodel.NewCIStr("dual"),
+			DBName:       pmodel.NewCIStr("test"),
 		}
 		colInfo = column.ConvertColumnInfo(&resultField)
 		expectedLen, _ := mysql.GetDefaultFieldLengthAndDecimal(tp)
