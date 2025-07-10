@@ -606,6 +606,9 @@ func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocat
 	return nil
 }
 
+// MockDMLExecutionBeforeScan is only used for test.
+var MockDMLExecutionBeforeScan func()
+
 var backfillTaskChanSize = 128
 
 // SetBackfillTaskChanSizeForTest is only used for test.
@@ -652,6 +655,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	sessCtx := newReorgSessCtx(reorgInfo.d.store)
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(dc.ctx)
+
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
 
 	scheduler, err := newBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, sessCtx, jc)
 	if err != nil {
