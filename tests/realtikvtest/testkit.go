@@ -127,7 +127,7 @@ func CreateMockStoreAndSetup(t *testing.T, opts ...RealTiKVStoreOption) kv.Stora
 	return store
 }
 
-// Setup initializes a kv.Storage and a domain.Domain.
+// CreateMockStoreAndDomainAndSetup initializes a kv.Storage and a domain.Domain.
 func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	//nolint: errcheck
 	_ = kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
