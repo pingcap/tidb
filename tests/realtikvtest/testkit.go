@@ -104,16 +104,17 @@ type realtikvStoreOption struct {
 	keyspace   string
 }
 
+// RealTiKVStoreOption is the config option for creating a real TiKV store.
 type RealTiKVStoreOption func(opt *realtikvStoreOption)
 
-// WithRetainData allows the mock store to retain old data when creating a new store.
+// WithRetainData allows the store to retain old data when creating a new store.
 func WithRetainData() RealTiKVStoreOption {
 	return func(opt *realtikvStoreOption) {
 		opt.retainData = true
 	}
 }
 
-// WithKeyspaceName allows the mock store to use a specific keyspace name.
+// WithKeyspaceName allows the store to use a specific keyspace name.
 func WithKeyspaceName(name string) RealTiKVStoreOption {
 	return func(opt *realtikvStoreOption) {
 		opt.keyspace = name
