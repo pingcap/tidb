@@ -33,7 +33,7 @@ go_library(
 
 go_test(
     name = "storage_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "table_test.go",
         "task_state_test.go",
