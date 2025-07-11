@@ -1273,6 +1273,9 @@ func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, 
 	costFormula = "N/A"
 	sctx := p.SCtx()
 	if isPhysicalPlan {
+		if !e.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
 		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
 		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {
 			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
