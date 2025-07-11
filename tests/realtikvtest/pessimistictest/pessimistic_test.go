@@ -32,12 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -283,7 +283,7 @@ func TestSingleStatementRollback(t *testing.T) {
 
 	dom := domain.GetDomain(tk1.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("single_statement"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("single_statement"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -1615,9 +1615,9 @@ func TestGenerateColPointGet(t *testing.T) {
 	tk.MustExec("use test")
 
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
+		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", vardef.DefTiDBRowFormatV2))
 	}()
-	tests2 := []int{variable.DefTiDBRowFormatV1, variable.DefTiDBRowFormatV2}
+	tests2 := []int{vardef.DefTiDBRowFormatV1, vardef.DefTiDBRowFormatV2}
 	for _, rowFormat := range tests2 {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", rowFormat))
 		tk.MustExec("drop table if exists tu")

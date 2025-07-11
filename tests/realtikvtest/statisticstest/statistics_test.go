@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -128,51 +128,28 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("explain select * from t where a = 'aaa'")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
-	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows())
+	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 0 3 1 \x00A \x00A\x00A\x00A 0",
+		"test t  a 0 1 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00B 0",
+		"test t  a 0 2 9 1 \x00B \x00B\x00B 0",
+		"test t  a 0 3 12 1 \x00B\x00B\x00B \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
+		"test t  a 0 4 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
+		"test t  ia 1 0 3 1 \x00A \x00A\x00A\x00A 0",
+		"test t  ia 1 1 6 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B \x00A\x00B 0",
+		"test t  ia 1 2 9 1 \x00B \x00B\x00B 0",
+		"test t  ia 1 3 12 1 \x00B\x00B\x00B \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 0",
+		"test t  ia 1 4 14 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 0",
+		"test t  ia10 1 0 3 1 \x00A \x00A\x00A\x00A 0",
+		"test t  ia10 1 1 6 1 \x00A\x00B \x00B\x00A 0",
+		"test t  ia10 1 2 9 1 \x00B\x00B \x00B\x00B\x00B\x00B 0",
+		"test t  ia10 1 3 10 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D 0",
+	))
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
-		"test t  a 0 \x00A 1",
-		"test t  a 0 \x00A\x00A 1",
-		"test t  a 0 \x00A\x00A\x00A 1",
 		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
-		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 1",
-		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 1",
-		"test t  a 0 \x00A\x00B 1",
-		"test t  a 0 \x00B 1",
-		"test t  a 0 \x00B\x00A 1",
-		"test t  a 0 \x00B\x00B 1",
-		"test t  a 0 \x00B\x00B\x00B 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 1",
-		"test t  a 0 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 1",
-		"test t  ia 1 \x00A 1",
-		"test t  ia 1 \x00A\x00A 1",
-		"test t  ia 1 \x00A\x00A\x00A 1",
 		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
-		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B 1",
-		"test t  ia 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00C\x00C\x00C 1",
-		"test t  ia 1 \x00A\x00B 1",
-		"test t  ia 1 \x00B 1",
-		"test t  ia 1 \x00B\x00A 1",
-		"test t  ia 1 \x00B\x00B 1",
-		"test t  ia 1 \x00B\x00B\x00B 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R\x00R\x00R 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00R 1",
-		"test t  ia 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D\x00D\x00D 1",
-		"test t  ia10 1 \x00A 1",
-		"test t  ia10 1 \x00A\x00A 1",
-		"test t  ia10 1 \x00A\x00A\x00A 1",
 		"test t  ia10 1 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A 2",
 		"test t  ia10 1 \x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00B\x00B\x00B 2",
-		"test t  ia10 1 \x00A\x00B 1",
-		"test t  ia10 1 \x00B 1",
-		"test t  ia10 1 \x00B\x00A 1",
-		"test t  ia10 1 \x00B\x00B 1",
-		"test t  ia10 1 \x00B\x00B\x00B 1",
-		"test t  ia10 1 \x00B\x00B\x00B\x00B 1",
 		"test t  ia10 1 \x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B\x00B 2",
-		"test t  ia10 1 \x00B\x00B\x00B\x00B\x00B\x00D\x00D\x00D\x00D\x00D 1",
 		"test t  ia3 1 \x00A 1",
 		"test t  ia3 1 \x00A\x00A 1",
 		"test t  ia3 1 \x00A\x00A\x00A 5",
@@ -254,7 +231,7 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	// 4. Try to select some data from this table by ID, it would trigger an async load.
 	tk.MustExec("set tidb_opt_objective='determinate';")
 	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	checkTableIDInItems(t, table.Meta().ID)
 }

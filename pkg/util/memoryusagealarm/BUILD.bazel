@@ -7,11 +7,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
+        "//pkg/types",
         "//pkg/util",
         "//pkg/util/disk",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/plancodec",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
@@ -26,7 +28,6 @@ go_test(
     race = "on",
     deps = [
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/memory",
         "@com_github_stretchr_testify//assert",

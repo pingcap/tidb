@@ -32,15 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"go.uber.org/zap"
@@ -581,7 +581,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		partitions = tblInfo.GetPartitionInfo().Definitions
 	}
-	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions)
+	var scatterScope string
+	if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
+	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, scatterScope)
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -896,8 +900,8 @@ func checkAndRenameTables(t *meta.Mutator, job *model.Job, tblInfo *model.TableI
 func adjustForeignKeyChildTableInfoAfterRenameTable(
 	infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job,
 	fkh *foreignKeyHelper, tblInfo *model.TableInfo,
-	oldSchemaName, oldTableName, newTableName pmodel.CIStr, newSchemaID int64) error {
-	if !variable.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
+	oldSchemaName, oldTableName, newTableName ast.CIStr, newSchemaID int64) error {
+	if !vardef.EnableForeignKey.Load() || newTableName.L == oldTableName.L {
 		return nil
 	}
 	is := infoCache.GetLatest()
@@ -927,7 +931,7 @@ func adjustForeignKeyChildTableInfoAfterRenameTable(
 		childFKInfo.RefTable = newTableName
 	}
 	for _, info := range fkh.loaded {
-		err := updateTable(t, info.schemaID, info.tblInfo)
+		err := updateTable(t, info.schemaID, info.tblInfo, false)
 		if err != nil {
 			return err
 		}
@@ -1090,7 +1094,7 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 	}
 
 	// Ban setting replica count for tables in system database.
-	if tidbutil.IsMemOrSysDB(job.SchemaName) {
+	if metadef.IsMemOrSysDB(job.SchemaName) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
@@ -1277,7 +1281,7 @@ func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64,
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	if is.TableExists(schema.Name, pmodel.NewCIStr(tableName)) {
+	if is.TableExists(schema.Name, ast.NewCIStr(tableName)) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tableName)
 	}
 	return nil
@@ -1323,12 +1327,19 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 		}
 	}
 
-	err = updateTable(jobCtx.metaMut, job.SchemaID, tblInfo)
+	needUpdateTs := tblInfo.State == model.StatePublic &&
+		job.Type != model.ActionTruncateTable &&
+		job.Type != model.ActionTruncateTablePartition &&
+		job.Type != model.ActionRenameTable &&
+		job.Type != model.ActionRenameTables &&
+		job.Type != model.ActionExchangeTablePartition
+
+	err = updateTable(jobCtx.metaMut, job.SchemaID, tblInfo, needUpdateTs)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	for _, info := range multiInfos {
-		err = updateTable(jobCtx.metaMut, info.schemaID, info.tblInfo)
+		err = updateTable(jobCtx.metaMut, info.schemaID, info.tblInfo, needUpdateTs)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1336,8 +1347,8 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 	return ver, nil
 }
 
-func updateTable(t *meta.Mutator, schemaID int64, tblInfo *model.TableInfo) error {
-	if tblInfo.State == model.StatePublic {
+func updateTable(t *meta.Mutator, schemaID int64, tblInfo *model.TableInfo, needUpdateTs bool) error {
+	if needUpdateTs {
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return t.UpdateTable(schemaID, tblInfo)
@@ -1575,10 +1586,9 @@ func onAlterTablePlacement(jobCtx *jobContext, job *model.Job) (ver int64, err e
 	return ver, nil
 }
 
-func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (string, []string, []string, map[string]*label.Rule, error) {
-	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
-	oldRuleIDs := []string{tableRuleID}
-	var partRuleIDs []string
+func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (tableRuleID string, partRuleIDs, oldRuleIDs []string, oldRules map[string]*label.Rule, err error) {
+	tableRuleID = fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
+	oldRuleIDs = []string{tableRuleID}
 	if tblInfo.GetPartitionInfo() != nil {
 		for _, def := range tblInfo.GetPartitionInfo().Definitions {
 			partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
@@ -1586,7 +1596,7 @@ func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName stri
 	}
 
 	oldRuleIDs = append(oldRuleIDs, partRuleIDs...)
-	oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
+	oldRules, err = infosync.GetLabelRules(context.TODO(), oldRuleIDs)
 	return tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err
 }
 
@@ -1692,4 +1702,20 @@ func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err err
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("alter table no cache", tbInfo.TableCacheStatusType.String())
 	}
 	return ver, err
+}
+
+func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, err = model.GetRefreshMetaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	// update schema version
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	return ver, nil
 }

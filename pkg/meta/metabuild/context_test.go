@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/stretchr/testify/require"
@@ -90,9 +91,9 @@ func TestMetaBuildContext(t *testing.T) {
 			},
 			checkDefault: defVars.EnableClusteredIndex,
 			option: func(val any) metabuild.Option {
-				return metabuild.WithClusteredIndexDefMode(val.(variable.ClusteredIndexDefMode))
+				return metabuild.WithClusteredIndexDefMode(val.(vardef.ClusteredIndexDefMode))
 			},
-			testVals: []any{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff},
+			testVals: []any{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff},
 		},
 		{
 			name: "shardRowIDBits",

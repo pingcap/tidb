@@ -58,7 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -70,7 +70,8 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -286,6 +287,8 @@ type ControllerParam struct {
 	TaskType string
 }
 
+var componentName = caller.Component("lightning-importer")
+
 // NewImportController creates a new Controller instance.
 func NewImportController(
 	ctx context.Context,
@@ -363,7 +366,7 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithContext(ctx, addrs, tls.ToPDSecurityOption())
+		pdCli, err = pd.NewClientWithContext(ctx, componentName, addrs, tls.ToPDSecurityOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -400,7 +403,7 @@ func NewImportControllerWithPauser(
 
 		taskType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, db)
 		if err != nil {
-			return nil, errors.Annotatef(err, "get system variable '%s' failed", variable.TiDBExplicitRequestSourceType)
+			return nil, errors.Annotatef(err, "get system variable '%s' failed", vardef.TiDBExplicitRequestSourceType)
 		}
 		if taskType == "" {
 			taskType = kvutil.ExplicitTypeLightning
@@ -1178,7 +1181,7 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, componentName, addrs, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1191,7 +1194,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		paused    bool
 	)
 	// Try to get the minimum safe point across all services as our GC safe point.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i > 0 {
 			time.Sleep(time.Second * 3)
 		}
@@ -1348,7 +1351,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			u = strings.TrimPrefix(u, "https://")
 			urlsWithoutScheme = append(urlsWithoutScheme, u)
 		}
-		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
+		kvStore, err = (&driver.TiKVDriver{}).OpenWithOptions(
 			fmt.Sprintf(
 				"tikv://%s?disableGC=true&keyspaceName=%s",
 				strings.Join(urlsWithoutScheme, ","), rc.keyspaceName,
@@ -1371,6 +1374,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		// it's nil when checksum=off
+		if manager != nil {
+			defer manager.Close()
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
@@ -1438,7 +1445,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
+	for range rc.cfg.App.IndexConcurrency {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
@@ -1541,7 +1548,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	postProgress = func() error {
 		close(postProcessTaskChan)
 		// otherwise, we should run all tasks in the post-process task chan
-		for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
+		for range rc.cfg.App.TableConcurrency {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -1870,6 +1877,15 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 		}
 
+		pdEnableFollowerHandleRegion, err := common.GetPDEnableFollowerHandleRegion(ctx, rc.db)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+		err = pdController.SetFollowerHandle(pdEnableFollowerHandleRegion)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+
 		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
@@ -2004,6 +2020,7 @@ func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *che
 			Key:               chunk.Key,
 			Checksum:          chunk.Checksum,
 			Pos:               chunk.Chunk.Offset,
+			RealPos:           chunk.Chunk.RealOffset,
 			RowID:             chunk.Chunk.PrevRowIDMax,
 			ColumnPermutation: chunk.ColumnPermutation,
 			EndOffset:         chunk.Chunk.EndOffset,

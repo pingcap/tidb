@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -96,7 +97,7 @@ func InitLogger(cfg *Config, _ string) error {
 				"github.com/pingcap/tidb/br/",
 				"/lightning/",
 				"main.main",
-				"github.com/tikv/pd/client/http",
+				"github.com/tikv/pd/client",
 			)
 		}))
 	}
@@ -197,11 +198,7 @@ func IsContextCanceledError(err error) bool {
 	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
 	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
 	if v, ok := err.(awserr.BatchedErrors); ok {
-		for _, origErr := range v.OrigErrs() {
-			if IsContextCanceledError(origErr) {
-				return true
-			}
-		}
+		return slices.ContainsFunc(v.OrigErrs(), IsContextCanceledError)
 	}
 	return false
 }

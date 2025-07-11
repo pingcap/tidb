@@ -83,7 +83,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.HandleCols.NumCols(); i++ {
+	for i := range p.HandleCols.NumCols() {
 		parentUsedCols = append(parentUsedCols, p.HandleCols.GetCol(i))
 	}
 	for _, col := range p.Schema().Columns {
@@ -122,6 +122,11 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+func (p *LogicalUnionScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	// ref exhaustPhysicalPlans4LogicalUnionScan: it will push down the sort prop directly.
+	// in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
+	return p.Children()[0].PreparePossibleProperties(schema, childrenProperties...)
+}
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalUnionScan) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

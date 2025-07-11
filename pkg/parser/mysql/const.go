@@ -196,7 +196,7 @@ const (
 	AuthLDAPSASL            = "authentication_ldap_sasl"
 )
 
-// MySQL database and tables.
+// System database and tables that mostly inherited from MySQL.
 const (
 	// SystemDB is the name of system database.
 	SystemDB = "mysql"
@@ -225,6 +225,8 @@ const (
 	DefaultRoleTable = "default_roles"
 	// PasswordHistoryTable is the table in system db contains password history.
 	PasswordHistoryTable = "password_history"
+	// WorkloadSchema is the name of workload repository database.
+	WorkloadSchema = "workload_schema"
 )
 
 // MySQL type maximum length.

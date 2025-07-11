@@ -44,6 +44,13 @@ func getCheckJobInterval() time.Duration {
 	return jobManagerLoopTickerInterval
 }
 
+func getHeartbeatInterval() time.Duration {
+	failpoint.Inject("heartbeat-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return jobManagerLoopTickerInterval
+}
+
 func getJobManagerLoopSyncTimerInterval() time.Duration {
 	failpoint.Inject("sync-timer", func(val failpoint.Value) time.Duration {
 		return time.Duration(val.(int))
@@ -86,11 +93,11 @@ func getTaskManagerLoopTickerInterval() time.Duration {
 	return taskManagerLoopTickerInterval
 }
 
-func getTaskManagerHeartBeatExpireInterval() time.Duration {
-	failpoint.Inject("task-manager-heartbeat-expire-interval", func(val failpoint.Value) time.Duration {
+func getTaskManagerHeartBeatInterval() time.Duration {
+	failpoint.Inject("task-manager-heartbeat-interval", func(val failpoint.Value) time.Duration {
 		return time.Duration(val.(int))
 	})
-	return 2 * ttlTaskHeartBeatTickerInterval
+	return ttlTaskHeartBeatTickerInterval
 }
 
 func getCheckJobTriggeredInterval() time.Duration {
@@ -98,6 +105,13 @@ func getCheckJobTriggeredInterval() time.Duration {
 		return time.Duration(val.(int))
 	})
 	return 2 * time.Second
+}
+
+func getTTLGCInterval() time.Duration {
+	failpoint.Inject("gc-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return ttlGCInterval
 }
 
 func getScanSplitCnt(store kv.Storage) int {

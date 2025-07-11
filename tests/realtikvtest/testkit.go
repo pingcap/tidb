@@ -26,11 +26,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -93,6 +97,7 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		// the resolveFlushedLocks goroutine runs in the background to commit or rollback locks.
 		goleak.IgnoreAnyFunction("github.com/tikv/client-go/v2/txnkv/transaction.(*twoPhaseCommitter).resolveFlushedLocks.func1"),
+		goleak.Cleanup(testutil.CheckIngestLeakageForTest),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -110,6 +115,17 @@ func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption
 
 // CreateMockStoreAndDomainAndSetup return a new kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	if kerneltype.IsNextGen() && *KeyspaceName == "" {
+		// in nextgen kernel, SYSTEM keyspace must be bootstrapped first, if we
+		// don't specify a keyspace which normally is not specified, we use SYSTEM
+		// keyspace as default to make sure test cases can run correctly.
+		*KeyspaceName = keyspace.System
+	}
+	return Setup(t, *KeyspaceName, opts...)
+}
+
+// Setup initializes a kv.Storage and a domain.Domain.
+func Setup(t *testing.T, ks string, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff.Store(500)
@@ -121,27 +137,35 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	session.SetSchemaLease(500 * time.Millisecond)
 
 	if *WithRealTiKV {
+		path := *TiKVPath
+		if len(ks) > 0 {
+			path += "&keyspaceName=" + ks
+		}
 		var d driver.TiKVDriver
-		storeBak := config.GetGlobalConfig().Store
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
-			conf.KeyspaceName = *KeyspaceName
+			conf.KeyspaceName = ks
 			conf.Store = config.StoreTypeTiKV
 		})
-		store, err = d.Open(*TiKVPath)
+		store, err = d.Open(path)
 		require.NoError(t, err)
+		if kerneltype.IsNextGen() && ks != keyspace.System {
+			sysPath := *TiKVPath + "&keyspaceName=" + keyspace.System
+			sysStore, err := d.Open(sysPath)
+			require.NoError(t, err)
+			kvstore.SetSystemStorage(sysStore)
+			t.Cleanup(func() {
+				require.NoError(t, sysStore.Close())
+			})
+		}
 		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
-		// TestGetTSFailDirtyState depends on the dirty state to work, i.e. some
-		// special branch on uni-store, else it causes DATA RACE, so we need to switch
-		// back to make sure it works, see https://github.com/pingcap/tidb/issues/57221
-		config.GetGlobalConfig().Store = storeBak
 		sm := testkit.MockSessionManager{}
 		dom.InfoSyncer().SetSessionManager(&sm)
 		tk := testkit.NewTestKit(t, store)
 		// set it to default value.
-		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
+		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", vardef.DefInnodbLockWaitTimeout))
 		tk.MustExec("use test")
 		if !RetainOldData {
 			rs := tk.MustQuery("show tables")

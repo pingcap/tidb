@@ -20,12 +20,13 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	_ "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -44,14 +45,14 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key auto_increment, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	variable.EnableMDL.Store(true)
+	vardef.EnableMDL.Store(true)
 
 	// Pre-create data to be inserted
 	records := make([][]types.Datum, batchSize)
-	for j := 0; j < batchSize; j++ {
+	for j := range batchSize {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
@@ -70,7 +71,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 		require.True(b, txn.IsPipelined())
 
 		b.StartTimer()
-		for j := 0; j < batchSize; j++ {
+		for j := range batchSize {
 			_, err := tb.AddRecord(ctx.GetTableCtx(), txn, records[j], table.DupKeyCheckLazy)
 			if err != nil {
 				b.Fatal(err)
@@ -98,20 +99,20 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key clustered, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	variable.EnableMDL.Store(true)
+	vardef.EnableMDL.Store(true)
 
 	// Pre-create and add initial records
 	records := make([][]types.Datum, batchSize)
-	for j := 0; j < batchSize; j++ {
+	for j := range batchSize {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
 	// Add initial records
 	se := tk.Session()
-	for j := 0; j < batchSize; j++ {
+	for j := range batchSize {
 		tk.MustExec("INSERT INTO test.t VALUES (?, ?)", j, "test")
 	}
 
@@ -128,7 +129,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		require.True(b, txn.IsPipelined())
 
 		b.StartTimer()
-		for j := 0; j < batchSize; j++ {
+		for j := range batchSize {
 			// Remove record
 			handle := kv.IntHandle(j)
 			err := tb.RemoveRecord(se.GetTableCtx(), txn, handle, records[j])
@@ -159,24 +160,24 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		"CREATE TABLE IF NOT EXISTS test.t (a int primary key clustered, b varchar(255))",
 	)
 	require.NoError(b, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
 	// Pre-create data to be inserted and then updated
 	records := make([][]types.Datum, batchSize)
-	for j := 0; j < batchSize; j++ {
+	for j := range batchSize {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
 	// Pre-create new data
 	newData := make([][]types.Datum, batchSize)
-	for j := 0; j < batchSize; j++ {
+	for j := range batchSize {
 		newData[j] = types.MakeDatums(j, "updated")
 	}
 
 	// Add initial records
 	se := tk.Session()
-	for j := 0; j < batchSize; j++ {
+	for j := range batchSize {
 		tk.MustExec("INSERT INTO test.t VALUES (?, ?)", j, "test")
 	}
 
@@ -196,7 +197,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		require.True(b, txn.IsPipelined())
 
 		b.StartTimer()
-		for j := 0; j < batchSize; j++ {
+		for j := range batchSize {
 			// Update record
 			handle := kv.IntHandle(j)
 			err := tb.UpdateRecord(se.GetTableCtx(), txn, handle, records[j], newData[j], touched, table.WithCtx(context.TODO()))
@@ -214,4 +215,12 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	totalRecords := batchSize * b.N
 	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
 	b.ReportMetric(avgTimePerRecord, "ns/record")
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkAddRecordInPipelinedDML,
+		BenchmarkRemoveRecordInPipelinedDML,
+		BenchmarkUpdateRecordInPipelinedDML,
+	)
 }

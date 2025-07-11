@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -62,18 +62,18 @@ func TestTableSplit(t *testing.T) {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
 	require.NotNil(t, infoSchema)
-	tbl, err := infoSchema.TableByName(context.Background(), model.NewCIStr("mysql"), model.NewCIStr("tidb"))
+	tbl, err := infoSchema.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb"))
 	require.NoError(t, err)
 	checkRegionStartWithTableID(t, tbl.Meta().ID, store.(kvStore))
 
-	tbl, err = infoSchema.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_part"))
+	tbl, err = infoSchema.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_part"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
 	require.NotNil(t, pi)
 	for _, def := range pi.Definitions {
 		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
 	}
-	tbl, err = infoSchema.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_part_2"))
+	tbl, err = infoSchema.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_part_2"))
 	require.NoError(t, err)
 	pi = tbl.Meta().GetPartitionInfo()
 	require.NotNil(t, pi)

@@ -49,6 +49,7 @@ type Sieve[K comparable, V any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	mu     sync.Mutex
+	count  uint64
 	size   uint64
 	// capacity can be set to zero for disabling infoschema v2
 	capacity uint64
@@ -63,7 +64,7 @@ type sieveStatusHook interface {
 	onHit()
 	onMiss()
 	onEvict()
-	onUpdateSize(size uint64)
+	onUpdate(size uint64, count uint64)
 	onUpdateLimit(limit uint64)
 }
 
@@ -75,7 +76,7 @@ func (e *emptySieveStatusHook) onMiss() {}
 
 func (e *emptySieveStatusHook) onEvict() {}
 
-func (e *emptySieveStatusHook) onUpdateSize(_ uint64) {}
+func (e *emptySieveStatusHook) onUpdate(_, _ uint64) {}
 
 func (e *emptySieveStatusHook) onUpdateLimit(_ uint64) {}
 
@@ -145,7 +146,8 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 		value: value,
 	}
 	s.size += e.Size() // calculate the size first without putting to the list.
-	s.hook.onUpdateSize(s.size)
+	s.count += 1
+	s.hook.onUpdate(s.size, s.count)
 	e.element = s.ll.PushFront(key)
 
 	s.items[key] = e
@@ -239,7 +241,8 @@ func (s *Sieve[K, V]) removeEntry(e *entry[K, V]) {
 	s.ll.Remove(e.element)
 	delete(s.items, e.key)
 	s.size -= e.Size()
-	s.hook.onUpdateSize(s.size)
+	s.count -= 1
+	s.hook.onUpdate(s.size, s.count)
 }
 
 func (s *Sieve[K, V]) evict() {

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -41,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -115,10 +114,10 @@ func createPlannerSuite() (s *plannerSuite) {
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := domain.NewMockDomain()
-	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	domain.BindDomain(ctx, do)
+	ctx.BindDomainAndSchValidator(do, nil)
 	ctx.SetInfoSchema(s.is)
 	s.ctx = ctx
 	s.sctx = ctx
@@ -146,7 +145,7 @@ func TestPredicatePushDown(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -331,7 +330,7 @@ func TestAntiSemiJoinConstFalse(t *testing.T) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
+			best:     "Join{DataScan(t1)->Dual}(test.t.a,test.t.a)->Projection",
 			joinType: "anti semi join",
 		},
 	}
@@ -508,31 +507,31 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
-			Name:     pmodel.NewCIStr("p1"),
+			Name:     ast.NewCIStr("p1"),
 			LessThan: []string{"16"},
 		},
 		{
 			ID:       42,
-			Name:     pmodel.NewCIStr("p2"),
+			Name:     ast.NewCIStr("p2"),
 			LessThan: []string{"32"},
 		},
 		{
 			ID:       43,
-			Name:     pmodel.NewCIStr("p3"),
+			Name:     ast.NewCIStr("p3"),
 			LessThan: []string{"64"},
 		},
 		{
 			ID:       44,
-			Name:     pmodel.NewCIStr("p4"),
+			Name:     ast.NewCIStr("p4"),
 			LessThan: []string{"128"},
 		},
 		{
 			ID:       45,
-			Name:     pmodel.NewCIStr("p5"),
+			Name:     ast.NewCIStr("p5"),
 			LessThan: []string{"maxvalue"},
 		},
 	}
@@ -1128,7 +1127,7 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -1407,7 +1406,7 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", "", nil, false, nil, false},
+				{mysql.AllPrivMask & (^mysql.CreateTMPTablePriv), "test", "ttt", "", nil, false, nil, false},
 			},
 		},
 		{
@@ -1601,7 +1600,7 @@ func checkVisitInfo(t *testing.T, v1, v2 []visitInfo, comment string) {
 	v2 = unique(v2)
 
 	require.Equal(t, len(v2), len(v1), comment)
-	for i := 0; i < len(v1); i++ {
+	for i := range v1 {
 		// loose compare errors for code match
 		require.True(t, terror.ErrorEqual(v1[i].err, v2[i].err), fmt.Sprintf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
 		// compare remainder
@@ -1828,8 +1827,8 @@ func TestWindowFunction(t *testing.T) {
 	defer s.plannerSuite.Close()
 
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "1",
-		variable.TiDBCostModelVersion:  "1",
+		vardef.TiDBWindowConcurrency: "1",
+		vardef.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -1850,8 +1849,8 @@ func TestWindowParallelFunction(t *testing.T) {
 	s.plannerSuite = createPlannerSuite()
 	defer s.plannerSuite.Close()
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "4",
-		variable.TiDBCostModelVersion:  "1",
+		vardef.TiDBWindowConcurrency: "4",
+		vardef.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -2028,11 +2027,11 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 or g = 5",
-			result: "PRIMARY_KEY,[g,b_global]",
+			result: "PRIMARY_KEY,[b_global,g]",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "b_c_global", // will prune `b_c`
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -2068,7 +2067,7 @@ func TestSkylinePruning(t *testing.T) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		lp := p.(base.LogicalPlan)
-		_, err = lp.RecursiveDeriveStats(nil)
+		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
 		var ds *logicalop.DataSource
 		var byItems []*util.ByItems
@@ -2357,7 +2356,7 @@ func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 	iterations := 100
 	s := createPlannerSuite()
 	defer s.Close()
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		nodeW := resolve.NewNodeW(stmt)
@@ -2538,7 +2537,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
 			for _, colsLayout := range deletePlan.TblColPosInfos {
 				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
-				if colsLayout.ExtraPartialRowOption.IndexesRowLayout == nil {
+				if colsLayout.IndexesRowLayout == nil {
 					sb.Reset()
 					fmt.Fprintf(&sb, "no column-pruning happened")
 					innerRet = append(innerRet, sb.String())
@@ -2550,7 +2549,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 				innerRet = append(innerRet, sb.String())
 				sb.Reset()
 				fmt.Fprintf(&sb, "handle cols: %s:", colsLayout.HandleCols.StringWithCtx(s.sctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
-				for i := 0; i < colsLayout.HandleCols.NumCols(); i++ {
+				for i := range colsLayout.HandleCols.NumCols() {
 					if i > 0 {
 						sb.WriteString(", ")
 					}

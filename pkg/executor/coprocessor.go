@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -44,7 +43,7 @@ func copHandlerCtx(ctx context.Context, req *coprocessor.Request) context.Contex
 		return ctx
 	}
 
-	traceInfo := &model.TraceInfo{
+	traceInfo := &tracing.TraceInfo{
 		ConnectionID: source.ConnectionId,
 		SessionAlias: source.SessionAlias,
 	}
@@ -200,7 +199,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *copro
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is)
+	b := newExecutorBuilder(h.sctx, is, nil)
 	return b.build(plan), nil
 }
 
@@ -278,7 +277,7 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 	requestedRow := make([]byte, 0)
 	chunks := []tipb.Chunk{}
 	errCtx := stmtCtx.ErrCtx()
-	for i := 0; i < chk.NumRows(); i++ {
+	for i := range chk.NumRows() {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {

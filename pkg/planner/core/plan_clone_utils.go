@@ -140,6 +140,9 @@ func cloneConstantsForPlanCache(constants, cloned []*expression.Constant) []*exp
 	}
 	allSafe := true
 	for _, c := range constants {
+		if c == nil {
+			continue
+		}
 		if !c.SafeToShareAcrossSession() {
 			allSafe = false
 			break

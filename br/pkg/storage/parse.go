@@ -86,11 +86,12 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
-		if options == nil {
-			options = &BackendOptions{S3: S3BackendOptions{ForcePathStyle: true}}
+		var s3Options S3BackendOptions = S3BackendOptions{ForcePathStyle: true}
+		if options != nil {
+			s3Options = options.S3
 		}
-		ExtractQueryParameters(u, &options.S3)
-		if err := options.S3.Apply(s3); err != nil {
+		ExtractQueryParameters(u, &s3Options)
+		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if u.Scheme == "ks3" {
@@ -104,11 +105,12 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		prefix := strings.Trim(u.Path, "/")
 		gcs := &backuppb.GCS{Bucket: u.Host, Prefix: prefix}
-		if options == nil {
-			options = &BackendOptions{}
+		var gcsOptions GCSBackendOptions
+		if options != nil {
+			gcsOptions = options.GCS
 		}
-		ExtractQueryParameters(u, &options.GCS)
-		if err := options.GCS.apply(gcs); err != nil {
+		ExtractQueryParameters(u, &gcsOptions)
+		if err := gcsOptions.apply(gcs); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Gcs{Gcs: gcs}}, nil
@@ -119,11 +121,12 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		prefix := strings.Trim(u.Path, "/")
 		azblob := &backuppb.AzureBlobStorage{Bucket: u.Host, Prefix: prefix}
-		if options == nil {
-			options = &BackendOptions{}
+		var azblobOptions AzblobBackendOptions
+		if options != nil {
+			azblobOptions = options.Azblob
 		}
-		ExtractQueryParameters(u, &options.Azblob)
-		if err := options.Azblob.apply(azblob); err != nil {
+		ExtractQueryParameters(u, &azblobOptions)
+		if err := azblobOptions.apply(azblob); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_AzureBlobStorage{AzureBlobStorage: azblob}}, nil
@@ -151,7 +154,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 	ty := o.Type()
 	numFields := ty.NumField()
 	tagToField := make(map[string]field, numFields)
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		f := ty.Field(i)
 		tag := f.Tag.Get("json")
 		tagToField[tag] = field{index: i, kind: f.Type.Kind()}
@@ -222,4 +225,9 @@ func IsLocalPath(p string) (bool, error) {
 // IsLocal returns true if the URL is a local file path.
 func IsLocal(u *url.URL) bool {
 	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
+}
+
+// IsS3 returns true if the URL is an S3 URL.
+func IsS3(u *url.URL) bool {
+	return u.Scheme == "s3"
 }

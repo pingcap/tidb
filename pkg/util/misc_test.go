@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -156,7 +156,7 @@ func TestBasicFuncRandomBuf(t *testing.T) {
 func TestToPB(t *testing.T) {
 	column := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),
@@ -166,7 +166,7 @@ func TestToPB(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           1,
-		Name:         pmodel.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),

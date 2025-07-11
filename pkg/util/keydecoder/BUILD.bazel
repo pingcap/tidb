@@ -28,7 +28,7 @@ go_test(
     deps = [
         "//pkg/infoschema",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/planner/core",
         "//pkg/sessionctx/stmtctx",
         "//pkg/table",

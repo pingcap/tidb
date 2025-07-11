@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -37,7 +36,7 @@ func evalBuiltinFuncConcurrent(f builtinFunc, ctx EvalContext, row chunk.Row) (d
 	concurrency := 10
 	var lock sync.Mutex
 	err = nil
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		wg.Run(func() {
 			di, erri := evalBuiltinFunc(f, ctx, chunk.Row{})
 			lock.Lock()
@@ -92,12 +91,12 @@ func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Dat
 func tblToDtbl(i any) []map[string][]types.Datum {
 	l := reflect.ValueOf(i).Len()
 	tbl := make([]map[string][]types.Datum, l)
-	for j := 0; j < l; j++ {
+	for j := range l {
 		v := reflect.ValueOf(i).Index(j).Interface()
 		val := reflect.ValueOf(v)
 		t := reflect.TypeOf(v)
 		item := make(map[string][]types.Datum, val.NumField())
-		for k := 0; k < val.NumField(); k++ {
+		for k := range val.NumField() {
 			tmp := val.Field(k).Interface()
 			item[t.Field(k).Name] = makeDatums(tmp)
 		}
@@ -114,7 +113,7 @@ func makeDatums(i any) []types.Datum {
 		case reflect.Slice:
 			l := val.Len()
 			res := make([]types.Datum, l)
-			for j := 0; j < l; j++ {
+			for j := range l {
 				res[j] = types.NewDatum(val.Index(j).Interface())
 			}
 			return res
@@ -178,7 +177,7 @@ func TestBuiltinFuncCacheConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	concurrency := 8
 	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			v, err := cache.getOrInitCache(ctx, construct)
@@ -272,7 +271,7 @@ func newFunctionForTest(ctx BuildContext, funcName string, args ...Expression) (
 		return nil, err
 	}
 	return &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: ast.NewCIStr(funcName),
 		RetType:  f.getRetTp(),
 		Function: f,
 	}, nil

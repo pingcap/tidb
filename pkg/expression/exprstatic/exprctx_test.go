@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
@@ -68,9 +69,9 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *ExprContext) {
 	require.Equal(t, charsetName, cs.Name)
 	require.Equal(t, cs.DefaultCollation, collation)
 	require.Equal(t, mysql.DefaultCollationName, ctx.GetDefaultCollationForUTF8MB4())
-	require.Equal(t, variable.DefBlockEncryptionMode, ctx.GetBlockEncryptionMode())
-	require.Equal(t, variable.DefSysdateIsNow, ctx.GetSysdateIsNow())
-	require.Equal(t, variable.TiDBOptOnOffWarn(variable.DefTiDBEnableNoopFuncs), ctx.GetNoopFuncsMode())
+	require.Equal(t, vardef.DefBlockEncryptionMode, ctx.GetBlockEncryptionMode())
+	require.Equal(t, vardef.DefSysdateIsNow, ctx.GetSysdateIsNow())
+	require.Equal(t, variable.TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs), ctx.GetNoopFuncsMode())
 	require.NotNil(t, ctx.Rng())
 	require.True(t, ctx.IsUseCache())
 	require.NotNil(t, ctx.columnIDAllocator)
@@ -78,7 +79,7 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *ExprContext) {
 	require.True(t, ok)
 	require.Equal(t, uint64(0), ctx.ConnectionID())
 	require.Equal(t, true, ctx.GetWindowingUseHighPrecision())
-	require.Equal(t, variable.DefGroupConcatMaxLen, ctx.GetGroupConcatMaxLen())
+	require.Equal(t, vardef.DefGroupConcatMaxLen, ctx.GetGroupConcatMaxLen())
 }
 
 type exprCtxOptionsTestState struct {
@@ -263,7 +264,7 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 			field: "$.blockEncryptionMode",
 			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
 				require.Equal(t, "aes-256-cbc", ctx.GetBlockEncryptionMode())
-				blockMode, _ := vars.GetSystemVar(variable.BlockEncryptionMode)
+				blockMode, _ := vars.GetSystemVar(vardef.BlockEncryptionMode)
 				require.Equal(t, blockMode, ctx.GetBlockEncryptionMode())
 			},
 		},

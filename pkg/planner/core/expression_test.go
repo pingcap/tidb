@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -386,7 +385,7 @@ func TestBuildExpression(t *testing.T) {
 	tbl := &model.TableInfo{
 		Columns: []*model.ColumnInfo{
 			{
-				Name:          pmodel.NewCIStr("id"),
+				Name:          ast.NewCIStr("id"),
 				Offset:        0,
 				State:         model.StatePublic,
 				FieldType:     *types.NewFieldType(mysql.TypeString),
@@ -394,13 +393,13 @@ func TestBuildExpression(t *testing.T) {
 				DefaultValue:  "uuid()",
 			},
 			{
-				Name:      pmodel.NewCIStr("a"),
+				Name:      ast.NewCIStr("a"),
 				Offset:    1,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 			{
-				Name:         pmodel.NewCIStr("b"),
+				Name:         ast.NewCIStr("b"),
 				Offset:       2,
 				State:        model.StatePublic,
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
@@ -411,7 +410,7 @@ func TestBuildExpression(t *testing.T) {
 
 	ctx := exprstatic.NewExprContext()
 	evalCtx := ctx.GetStaticEvalCtx()
-	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, pmodel.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
+	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, ast.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
 	require.NoError(t, err)
 	schema := expression.NewSchema(cols...)
 

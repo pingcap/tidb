@@ -117,6 +117,20 @@ func (mr *MockStepExecutorMockRecorder) RealtimeSummary() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RealtimeSummary", reflect.TypeOf((*MockStepExecutor)(nil).RealtimeSummary))
 }
 
+// ResourceModified mocks base method.
+func (m *MockStepExecutor) ResourceModified(arg0 context.Context, arg1 *proto.StepResource) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResourceModified", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResourceModified indicates an expected call of ResourceModified.
+func (mr *MockStepExecutorMockRecorder) ResourceModified(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResourceModified", reflect.TypeOf((*MockStepExecutor)(nil).ResourceModified), arg0, arg1)
+}
+
 // RunSubtask mocks base method.
 func (m *MockStepExecutor) RunSubtask(arg0 context.Context, arg1 *proto.Subtask) error {
 	m.ctrl.T.Helper()
@@ -129,6 +143,32 @@ func (m *MockStepExecutor) RunSubtask(arg0 context.Context, arg1 *proto.Subtask)
 func (mr *MockStepExecutorMockRecorder) RunSubtask(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunSubtask", reflect.TypeOf((*MockStepExecutor)(nil).RunSubtask), arg0, arg1)
+}
+
+// SetResource mocks base method.
+func (m *MockStepExecutor) SetResource(arg0 *proto.StepResource) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetResource", arg0)
+}
+
+// SetResource indicates an expected call of SetResource.
+func (mr *MockStepExecutorMockRecorder) SetResource(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetResource", reflect.TypeOf((*MockStepExecutor)(nil).SetResource), arg0)
+}
+
+// TaskMetaModified mocks base method.
+func (m *MockStepExecutor) TaskMetaModified(arg0 context.Context, arg1 []byte) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TaskMetaModified", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// TaskMetaModified indicates an expected call of TaskMetaModified.
+func (mr *MockStepExecutorMockRecorder) TaskMetaModified(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TaskMetaModified", reflect.TypeOf((*MockStepExecutor)(nil).TaskMetaModified), arg0, arg1)
 }
 
 // restricted mocks base method.

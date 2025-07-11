@@ -18,6 +18,7 @@ go_library(
         "//pkg/util/tiflash",
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//kv",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 
@@ -29,6 +30,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/errctx",
+        "//pkg/executor/join/joinversion",
         "//pkg/kv",
         "//pkg/parser/mysql",
         "//pkg/util/context",
@@ -40,5 +42,6 @@ go_test(
         "//pkg/util/tiflash",
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//kv",
+        "@org_uber_go_atomic//:atomic",
     ],
 )

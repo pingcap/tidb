@@ -35,24 +35,31 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var (
-
-	// the base exponential backoff time
-	// the variable is only changed in unit test for running test faster.
-	splitRegionBaseBackOffTime = time.Second
-)
-
 // splitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
 func (local *Backend) splitAndScatterRegionInBatches(
 	ctx context.Context,
 	splitKeys [][]byte,
 	batchCnt int,
+	maxCntPerSec float64,
 ) error {
+	var limiter *rate.Limiter
+	if maxCntPerSec > 0 {
+		eventLimit := max(1, int(maxCntPerSec*ratePerSecMultiplier))
+		burstPerSec := getRateBurst(maxCntPerSec)
+		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
+		batchCnt = min(batchCnt, burstPerSec)
+	}
 	for i := 0; i < len(splitKeys); i += batchCnt {
 		batch := splitKeys[i:]
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
+		}
+		if limiter != nil {
+			err := limiter.WaitN(ctx, len(batch)*ratePerSecMultiplier)
+			if err != nil {
+				return err
+			}
 		}
 		if err := local.splitAndScatterRegionByRanges(ctx, batch); err != nil {
 			return errors.Trace(err)
@@ -96,14 +103,6 @@ func (local *Backend) splitAndScatterRegionByRanges(
 			zap.Error(err))
 	}
 	return nil
-}
-
-func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
-	regionInfo, err := local.splitCli.GetRegionByID(ctx, regionID)
-	if err != nil {
-		return false, err
-	}
-	return regionInfo != nil, nil
 }
 
 func beforeEnd(key []byte, end []byte) bool {

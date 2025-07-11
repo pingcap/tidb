@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -212,7 +212,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	tk.MustExec("drop table if exists tai")
 	tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	_, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tai"))
+	_, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tai"))
 	require.NoError(b, err)
 	condition := "(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s') OR" +
@@ -255,7 +255,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 		"(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s')"
 	addresses := make([]any, 0, 90)
-	for i := 0; i < 80; i++ {
+	for range 80 {
 		addresses = append(addresses, "0x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC51")
 	}
 	condition = fmt.Sprintf(condition, addresses...)

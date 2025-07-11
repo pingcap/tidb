@@ -16,21 +16,24 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
+
+const unlimitedRURate = uint64(math.MaxInt32)
 
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
-	ExecElapsedTimeMs uint64                  `json:"exec_elapsed_time_ms"`
-	ProcessedKeys     int64                   `json:"processed_keys"`
-	RequestUnit       int64                   `json:"request_unit"`
-	Action            model.RunawayActionType `json:"action"`
-	SwitchGroupName   string                  `json:"switch_group_name"`
-	WatchType         model.RunawayWatchType  `json:"watch_type"`
-	WatchDurationMs   int64                   `json:"watch_duration_ms"`
+	ExecElapsedTimeMs uint64                `json:"exec_elapsed_time_ms"`
+	ProcessedKeys     int64                 `json:"processed_keys"`
+	RequestUnit       int64                 `json:"request_unit"`
+	Action            ast.RunawayActionType `json:"action"`
+	SwitchGroupName   string                `json:"switch_group_name"`
+	WatchType         ast.RunawayWatchType  `json:"watch_type"`
+	WatchDurationMs   int64                 `json:"watch_duration_ms"`
 }
 
 // ResourceGroupBackgroundSettings is the background settings of the resource group.
@@ -51,11 +54,19 @@ type ResourceGroupSettings struct {
 	Background       *ResourceGroupBackgroundSettings `json:"background"`
 }
 
+// GetBurstLimitAdjusted returns the burst limit of the resource group after adjustment.
+func (p *ResourceGroupSettings) GetBurstLimitAdjusted() int64 {
+	if p.RURate == unlimitedRURate {
+		return -1
+	}
+	return p.BurstLimit
+}
+
 // NewResourceGroupSettings creates a new ResourceGroupSettings.
 func NewResourceGroupSettings() *ResourceGroupSettings {
 	return &ResourceGroupSettings{
 		RURate:           0,
-		Priority:         model.MediumPriorityValue,
+		Priority:         ast.MediumPriorityValue,
 		CPULimiter:       "",
 		IOReadBandwidth:  "",
 		IOWriteBandwidth: "",
@@ -72,7 +83,7 @@ func (p *ResourceGroupSettings) String() string {
 	if p.RURate != 0 {
 		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate, separatorFn)
 	}
-	writeSettingItemToBuilder(sb, "PRIORITY="+model.PriorityValueToName(p.Priority), separatorFn)
+	writeSettingItemToBuilder(sb, "PRIORITY="+ast.PriorityValueToName(p.Priority), separatorFn)
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter, separatorFn)
 	}
@@ -82,9 +93,14 @@ func (p *ResourceGroupSettings) String() string {
 	if len(p.IOWriteBandwidth) > 0 {
 		writeSettingStringToBuilder(sb, "IO_WRITE_BANDWIDTH", p.IOWriteBandwidth, separatorFn)
 	}
-	// Once burst limit is negative, meaning allow burst with unlimit.
-	if p.BurstLimit < 0 {
-		writeSettingItemToBuilder(sb, "BURSTABLE", separatorFn)
+	// If BurstLimit is -2, it means the resource group is burstable.
+	// If BurstLimit is -1, it means the resource group is unlimited.
+	switch p.BurstLimit {
+	case -2:
+		writeSettingItemToBuilder(sb, "BURSTABLE(MODERATED)", separatorFn)
+	case -1:
+		writeSettingItemToBuilder(sb, "BURSTABLE(UNLIMITED)", separatorFn)
+	default:
 	}
 	if p.Runaway != nil {
 		fmt.Fprintf(sb, ", QUERY_LIMIT=(")
@@ -108,12 +124,12 @@ func (p *ResourceGroupSettings) String() string {
 			fmt.Fprintf(sb, "RU=%d", p.Runaway.RequestUnit)
 		}
 		// action settings
-		if p.Runaway.Action == model.RunawayActionSwitchGroup {
+		if p.Runaway.Action == ast.RunawayActionSwitchGroup {
 			writeSettingItemToBuilder(sb, fmt.Sprintf("ACTION=%s(%s)", p.Runaway.Action.String(), p.Runaway.SwitchGroupName))
 		} else {
 			writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
 		}
-		if p.Runaway.WatchType != model.WatchNone {
+		if p.Runaway.WatchType != ast.WatchNone {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
 			if p.Runaway.WatchDurationMs > 0 {
 				writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
@@ -145,7 +161,10 @@ func (p *ResourceGroupSettings) String() string {
 // Adjust adjusts the resource group settings.
 func (p *ResourceGroupSettings) Adjust() {
 	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec except burstable.
-	if p.BurstLimit >= 0 {
+	// Note: If BurstLimit is -2, it means the resource group is burstable.
+	// If BurstLimit is -1, it means the resource group is unlimited.
+	// If ru_per_sec is set to math.MaxInt32, it means the resource group is unlimited and we should not change BurstLimit.
+	if p.RURate != unlimitedRURate && p.BurstLimit >= 0 {
 		p.BurstLimit = int64(p.RURate)
 	}
 }
@@ -160,7 +179,7 @@ func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 type ResourceGroupInfo struct {
 	*ResourceGroupSettings
 	ID    int64       `json:"id"`
-	Name  model.CIStr `json:"name"`
+	Name  ast.CIStr   `json:"name"`
 	State SchemaState `json:"state"`
 }
 

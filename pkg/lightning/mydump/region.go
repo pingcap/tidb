@@ -430,10 +430,7 @@ func SplitLargeCSV(
 			columns = parser.Columns()
 		}
 		startOffset, _ = parser.Pos()
-		endOffset = startOffset + maxRegionSize
-		if endOffset > dataFile.FileMeta.FileSize {
-			endOffset = dataFile.FileMeta.FileSize
-		}
+		endOffset = min(startOffset+maxRegionSize, dataFile.FileMeta.FileSize)
 		_ = parser.Close()
 	}
 	divisor := int64(cfg.ColumnCnt)
@@ -467,7 +464,7 @@ func SplitLargeCSV(
 				}
 				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
-					zap.String("terminator", cfg.CSV.Terminator))
+					zap.String("terminator", cfg.CSV.LinesTerminatedBy))
 				pos = dataFile.FileMeta.FileSize
 			}
 			endOffset = pos

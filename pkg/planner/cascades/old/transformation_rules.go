@@ -16,6 +16,7 @@ package old
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -32,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 // Transformation defines the interface for the transformation rules.
@@ -547,10 +548,8 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	proj := old.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
 	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return nil, false, false, nil
-		}
+	if slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc) {
+		return nil, false, false, nil
 	}
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
@@ -776,12 +775,7 @@ func NewRulePushLimitDownProjection() Transformation {
 // Match implements Transformation interface.
 func (*PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
 	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc)
 }
 
 // OnTransform implements Transformation interface.
@@ -876,7 +870,7 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond)
+		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond...)
 		// Return table dual when filter is constant false or null.
 		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {
@@ -1183,7 +1177,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
 		ruleutil.ResolveExprAndReplace(newExpr, replace)
-		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
+		newProj.Exprs[i] = ruleutil.ReplaceColumnOfExpr(newExpr, child.Exprs, childGroup.Prop.Schema)
 	}
 
 	newProjExpr := memo.NewGroupExpr(newProj)
@@ -1294,12 +1288,7 @@ func NewRulePushTopNDownProjection() Transformation {
 // Match implements Transformation interface.
 func (*PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
 	proj := expr.Children[0].GetExpr().ExprNode.(*logicalop.LogicalProjection)
-	for _, expr := range proj.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc)
 }
 
 // OnTransform implements Transformation interface.
@@ -1463,7 +1452,7 @@ func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 	if len(child.ByItems) < len(topN.ByItems) {
 		return false
 	}
-	for i := 0; i < len(topN.ByItems); i++ {
+	for i := range topN.ByItems {
 		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx().GetEvalCtx(), child.ByItems[i]) {
 			return false
 		}
@@ -1876,7 +1865,7 @@ func (r *PushLimitDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExpr
 type outerJoinEliminator struct {
 }
 
-func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs set.Int64Set) {
+func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExpr) (ok bool, innerChildIdx int, outerGroup *memo.Group, innerGroup *memo.Group, outerUniqueIDs intset.FastIntSet) {
 	join := joinExpr.ExprNode.(*logicalop.LogicalJoin)
 
 	switch join.JoinType {
@@ -1891,9 +1880,9 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 	outerGroup = joinExpr.Children[1^innerChildIdx]
 	innerGroup = joinExpr.Children[innerChildIdx]
 
-	outerUniqueIDs = set.NewInt64Set()
+	outerUniqueIDs = intset.NewFastIntSet()
 	for _, outerCol := range outerGroup.Prop.Schema.Columns {
-		outerUniqueIDs.Insert(outerCol.UniqueID)
+		outerUniqueIDs.Insert(int(outerCol.UniqueID))
 	}
 
 	ok = true
@@ -1956,11 +1945,11 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 	}
 
 	// only when agg only use the columns from outer table can eliminate outer join.
-	if !plannercore.IsColsAllFromOuterTable(agg.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(agg.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions.
-	_, aggCols := plannercore.GetDupAgnosticAggCols(agg, nil)
+	_, aggCols := logicalop.GetDupAgnosticAggCols(agg, nil)
 	if len(aggCols) > 0 {
 		newAggExpr := memo.NewGroupExpr(agg)
 		newAggExpr.SetChildren(outerGroup)
@@ -2018,7 +2007,7 @@ func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (new
 	}
 
 	// only when proj only use the columns from outer table can eliminate outer join.
-	if !plannercore.IsColsAllFromOuterTable(proj.GetUsedCols(), outerUniqueIDs) {
+	if !ruleutil.IsColsAllFromOuterTable(proj.GetUsedCols(), &outerUniqueIDs) {
 		return nil, false, false, nil
 	}
 

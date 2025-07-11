@@ -643,8 +643,9 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// so fetching index and getting table data can run concurrently.
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
 	e.pool = &workerPool{
-		TolerablePendingTasks: 1,
-		MaxWorkers:            int32(max(1, e.indexLookupConcurrency)),
+		needSpawn: func(workers, tasks uint32) bool {
+			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
+		},
 	}
 	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
 		return err
@@ -732,6 +733,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
+		growWorkerStack16K()
 		worker := &indexWorker{
 			idxLookup:       e,
 			finished:        e.finished,
@@ -742,29 +744,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
 		}
-		var builder distsql.RequestBuilder
-		builder.SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetTxnScope(e.txnScope).
-			SetReadReplicaScope(e.readReplicaScope).
-			SetIsStaleness(e.isStaleness).
-			SetFromSessionVars(e.dctx).
-			SetFromInfoSchema(e.infoSchema).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-			SetMemTracker(tracker).
-			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
-		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-			builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-			if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-				builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-			}
-		}
+
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			// check if executor is closed
@@ -776,6 +757,28 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			if finished {
 				break
+			}
+			var builder distsql.RequestBuilder
+			builder.SetDAGRequest(e.dagPB).
+				SetStartTS(e.startTS).
+				SetDesc(e.desc).
+				SetKeepOrder(e.keepOrder).
+				SetTxnScope(e.txnScope).
+				SetReadReplicaScope(e.readReplicaScope).
+				SetIsStaleness(e.isStaleness).
+				SetFromSessionVars(e.dctx).
+				SetFromInfoSchema(e.infoSchema).
+				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+				SetMemTracker(tracker).
+				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+
+			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+				}
 			}
 
 			// init kvReq, result and worker for this partition
@@ -867,7 +870,9 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		}
 		return nil, err
 	}
 	return tableReader, nil
@@ -1090,6 +1095,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 				case <-e.finished:
 					return
 				default:
+					growWorkerStack16K()
 					execTableTask(e, task)
 				}
 			})
@@ -1149,7 +1155,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		if handles == nil {
 			handles = make([]kv.Handle, 0, chk.NumRows())
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		for i := range chk.NumRows() {
 			w.scannedKeys++
 			if checkLimit {
 				if w.scannedKeys <= w.PushedLimit.Offset {
@@ -1512,7 +1518,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 	datumRow := make([]types.Datum, 0, r.Chunk().NumCols())
-	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
+	for colIdx := range r.Chunk().NumCols() {
 		if colIdx >= len(fields) {
 			break
 		}
@@ -1528,7 +1534,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
 	task.buildDoneTime = time.Now()
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		}
 		return err
 	}
 	defer func() { terror.Log(exec.Close(tableReader)) }()
@@ -1559,7 +1567,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		chk := exec.TryNewCacheChunk(tableReader)
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
-			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			if ctx.Err() != context.Canceled {
+				logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			}
 			return err
 		}
 		if chk.NumRows() == 0 {

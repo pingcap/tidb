@@ -16,7 +16,9 @@ go_library(
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/base/cascadesctx",
         "//pkg/planner/cascades/memo",
+        "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/rule",
+        "//pkg/planner/cascades/rule/ruleset",
         "//pkg/planner/cascades/util",
     ],
 )

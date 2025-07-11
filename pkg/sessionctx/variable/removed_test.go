@@ -17,12 +17,13 @@ package variable
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRemovedOpt(t *testing.T) {
-	require.NoError(t, CheckSysVarIsRemoved(TiDBEnable1PC))
-	require.False(t, IsRemovedSysVar(TiDBEnable1PC))
+	require.NoError(t, CheckSysVarIsRemoved(vardef.TiDBEnable1PC))
+	require.False(t, IsRemovedSysVar(vardef.TiDBEnable1PC))
 	require.Error(t, CheckSysVarIsRemoved(tiDBEnableAlterPlacement))
 	require.True(t, IsRemovedSysVar(tiDBEnableAlterPlacement))
 }

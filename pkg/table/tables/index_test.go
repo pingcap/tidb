@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -324,7 +323,7 @@ func TestTableOperationsInDDLDropIndexWriteOnly(t *testing.T) {
 	for {
 		time.Sleep(20 * time.Millisecond)
 		// wait the DDL state change to `StateWriteOnly`
-		tblInfo, err := do.InfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tblInfo, err := do.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		if state := tblInfo.Indices[0].State; state != model.StatePublic {
 			require.Equal(t, model.StateWriteOnly, state)
@@ -347,7 +346,7 @@ func TestTableOperationsInDDLDropIndexWriteOnly(t *testing.T) {
 	// update some rows: 1 in storage, 1 in memory buffer.
 	tk2.MustExec("update t set a = a + 10 where a in (2, 6)")
 	// should be tested in `StateWriteOnly` state.
-	tblInfo, err := tk2.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err := tk2.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, model.StateWriteOnly, tblInfo.Indices[0].State)
 	// commit should success without any assertion fail.

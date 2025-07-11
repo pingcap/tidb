@@ -107,6 +107,7 @@ func TestScalarFunction(t *testing.T) {
 	sf = NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)
 	require.True(t, ok)
+	require.True(t, sf.Equal(ctx, newSf))
 	require.Equal(t, "values", newSf.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, newSf.RetType.GetType())
 	require.Equal(t, sf.Coercibility(), newSf.Coercibility())
@@ -184,4 +185,16 @@ func TestScalarFunctionHash64Equals(t *testing.T) {
 	sf4.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, sf0.Equals(sf4))
+}
+
+// To test that when argument number is 0, unix_timestamp can not be pushed down to tikv
+func TestForbidUnixTimestampPushdown(t *testing.T) {
+	ctx := mock.NewContext()
+	fc := &unixTimestampFunctionClass{baseFunctionClass{ast.UnixTimestamp, 0, 1}}
+	bt, err := fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	sf := &ScalarFunction{
+		Function: bt,
+	}
+	require.False(t, scalarExprSupportedByTiKV(ctx, sf))
 }

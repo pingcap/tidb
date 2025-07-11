@@ -5,7 +5,9 @@ package split
 import (
 	"bytes"
 	"context"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,7 +19,9 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
@@ -142,7 +146,7 @@ func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResp
 	}, nil
 }
 
-func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
+func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*RegionInfo, error) {
 	if c.InjectErr && c.InjectTimes > 0 {
 		c.InjectTimes -= 1
 		return nil, status.Error(codes.Unavailable, "not leader")
@@ -190,6 +194,7 @@ type MockPDClientForSplit struct {
 	scatterRegions struct {
 		notImplemented bool
 		regionCount    int
+		failedCount    int
 	}
 	getOperator struct {
 		responses map[uint64][]*pdpb.GetOperatorResponse
@@ -248,8 +253,8 @@ func (c *MockPDClientForSplit) ScanRegions(
 	_ context.Context,
 	key, endKey []byte,
 	limit int,
-	_ ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
+	_ ...opt.GetRegionOption,
+) ([]*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -264,9 +269,9 @@ func (c *MockPDClientForSplit) ScanRegions(
 	}
 
 	regions := c.Regions.ScanRange(key, endKey, limit)
-	ret := make([]*pd.Region, 0, len(regions))
+	ret := make([]*router.Region, 0, len(regions))
 	for _, r := range regions {
-		ret = append(ret, &pd.Region{
+		ret = append(ret, &router.Region{
 			Meta:   r.Meta,
 			Leader: r.Leader,
 		})
@@ -276,10 +281,10 @@ func (c *MockPDClientForSplit) ScanRegions(
 
 func (c *MockPDClientForSplit) BatchScanRegions(
 	_ context.Context,
-	keyRanges []pd.KeyRange,
+	keyRanges []router.KeyRange,
 	limit int,
-	_ ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
+	_ ...opt.GetRegionOption,
+) ([]*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -293,7 +298,7 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 		c.scanRegions.beforeHook()
 	}
 
-	regions := make([]*pd.Region, 0, len(keyRanges))
+	regions := make([]*router.Region, 0, len(keyRanges))
 	var lastRegion *pdtypes.Region
 	for _, keyRange := range keyRanges {
 		if lastRegion != nil {
@@ -307,7 +312,7 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 		rs := c.Regions.ScanRange(keyRange.StartKey, keyRange.EndKey, limit)
 		for _, r := range rs {
 			lastRegion = r
-			regions = append(regions, &pd.Region{
+			regions = append(regions, &router.Region{
 				Meta:   r.Meta,
 				Leader: r.Leader,
 			})
@@ -316,13 +321,13 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 	return regions, nil
 }
 
-func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...opt.GetRegionOption) (*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for _, r := range c.Regions.Regions {
 		if r.Meta.Id == regionID {
-			return &pd.Region{
+			return &router.Region{
 				Meta:   r.Meta,
 				Leader: r.Leader,
 			}, nil
@@ -370,12 +375,19 @@ func (c *MockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64)
 	return newRegionNotFullyReplicatedErr(regionID)
 }
 
-func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...opt.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.scatterRegions.notImplemented {
 		return nil, status.Error(codes.Unimplemented, "Ah, yep")
+	}
+	if c.scatterRegions.failedCount > 0 {
+		c.scatterRegions.failedCount--
+		return &pdpb.ScatterRegionResponse{
+			FinishedPercentage: 0,
+			FailedRegionsId:    regionIDs[:],
+		}, nil
 	}
 	c.scatterRegions.regionCount += len(regionIDs)
 	return &pdpb.ScatterRegionResponse{}, nil
@@ -471,9 +483,7 @@ func (fpdh *FakePDHTTPClient) SetSchedulerDelay(_ context.Context, key string, d
 }
 
 func (fpdh *FakePDHTTPClient) SetConfig(_ context.Context, config map[string]any, ttl ...float64) error {
-	for key, value := range config {
-		fpdh.cfgs[key] = value
-	}
+	maps.Copy(fpdh.cfgs, config)
 	return nil
 }
 
@@ -517,7 +527,7 @@ func (fpdh *FakePDHTTPClient) DeletePlacementRule(_ context.Context, groupID str
 type FakePDClient struct {
 	pd.Client
 	stores  []*metapb.Store
-	regions []*pd.Region
+	regions []*router.Region
 
 	notLeader  bool
 	retryTimes *int
@@ -540,21 +550,21 @@ func NewFakePDClient(stores []*metapb.Store, notLeader bool, retryTime *int) *Fa
 	}
 }
 
-func (fpdc *FakePDClient) SetRegions(regions []*pd.Region) {
+func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 	fpdc.regions = regions
 }
 
-func (fpdc *FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, fpdc.stores...), nil
+func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
+	return slices.Clone(fpdc.stores), nil
 }
 
 func (fpdc *FakePDClient) ScanRegions(
 	ctx context.Context,
 	key, endKey []byte,
 	limit int,
-	opts ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
-	regions := make([]*pd.Region, 0, len(fpdc.regions))
+	opts ...opt.GetRegionOption,
+) ([]*router.Region, error) {
+	regions := make([]*router.Region, 0, len(fpdc.regions))
 	fpdc.peerStoreId = fpdc.peerStoreId + 1
 	peerStoreId := (fpdc.peerStoreId + 1) / 2
 	for _, region := range fpdc.regions {
@@ -572,11 +582,11 @@ func (fpdc *FakePDClient) ScanRegions(
 
 func (fpdc *FakePDClient) BatchScanRegions(
 	ctx context.Context,
-	ranges []pd.KeyRange,
+	ranges []router.KeyRange,
 	limit int,
-	opts ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
-	regions := make([]*pd.Region, 0, len(fpdc.regions))
+	opts ...opt.GetRegionOption,
+) ([]*router.Region, error) {
+	regions := make([]*router.Region, 0, len(fpdc.regions))
 	fpdc.peerStoreId = fpdc.peerStoreId + 1
 	peerStoreId := (fpdc.peerStoreId + 1) / 2
 	for _, region := range fpdc.regions {
@@ -633,7 +643,7 @@ func (f *FakeSplitClient) AppendRegion(startKey, endKey []byte) {
 	})
 }
 
-func (f *FakeSplitClient) AppendPdRegion(region *pd.Region) {
+func (f *FakeSplitClient) AppendPdRegion(region *router.Region) {
 	f.regions = append(f.regions, &RegionInfo{
 		Region: region.Meta,
 		Leader: region.Leader,
@@ -644,6 +654,7 @@ func (f *FakeSplitClient) ScanRegions(
 	ctx context.Context,
 	startKey, endKey []byte,
 	limit int,
+	_ ...opt.GetRegionOption,
 ) ([]*RegionInfo, error) {
 	result := make([]*RegionInfo, 0)
 	count := 0

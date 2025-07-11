@@ -254,7 +254,7 @@ func TestJoin2(t *testing.T) {
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int)")
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk.MustExec("insert into t value(1)")
 	}
 	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
@@ -295,7 +295,7 @@ func TestJoinLeak(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("begin")
-	for i := 0; i < 1002; i++ {
+	for range 1002 {
 		tk.MustExec("insert t values (1)")
 	}
 	tk.MustExec("commit")
@@ -777,13 +777,21 @@ func TestIssue30211(t *testing.T) {
 	}()
 	tk.MustExec("insert into t1 values(1),(2);")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
-	tk.MustExec("set @@tidb_mem_quota_query=8000;")
+
+	// the memory used in planner stage is less than the memory used in executor stage, so we have to use
+	// the Plan Cache so that the query will not be canceled during compilation.
+	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustExec("prepare stmt2 from 'select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+
+	tk.MustExec("set @@tidb_mem_quota_query=1000;")
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err := tk.QueryToErr("execute stmt1")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err = tk.QueryToErr("execute stmt2")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 

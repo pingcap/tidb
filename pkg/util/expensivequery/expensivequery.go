@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -48,8 +48,8 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
-	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	txnThreshold := atomic.LoadUint64(&variable.ExpensiveTxnTimeThreshold)
+	threshold := atomic.LoadUint64(&vardef.ExpensiveQueryTimeThreshold)
+	txnThreshold := atomic.LoadUint64(&vardef.ExpensiveTxnTimeThreshold)
 	ongoingTxnDurationHistogramInternal := metrics.OngoingTxnDurationHistogram.WithLabelValues(metrics.LblInternal)
 	ongoingTxnDurationHistogramGeneral := metrics.OngoingTxnDurationHistogram.WithLabelValues(metrics.LblGeneral)
 	lastMetricTime := time.Time{}
@@ -99,7 +99,7 @@ func (eqh *Handle) Run() {
 					sm.Kill(info.ID, true, true, false)
 				}
 				if statsutil.GlobalAutoAnalyzeProcessList.Contains(info.ID) {
-					maxAutoAnalyzeTime := variable.MaxAutoAnalyzeTime.Load()
+					maxAutoAnalyzeTime := vardef.MaxAutoAnalyzeTime.Load()
 					if maxAutoAnalyzeTime > 0 && costTime > time.Duration(maxAutoAnalyzeTime)*time.Second {
 						logutil.BgLogger().Warn("auto analyze timeout, kill it", zap.Duration("costTime", costTime),
 							zap.Duration("maxAutoAnalyzeTime", time.Duration(maxAutoAnalyzeTime)*time.Second), zap.String("processInfo", info.String()))
@@ -114,8 +114,8 @@ func (eqh *Handle) Run() {
 					}
 				}
 			}
-			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-			txnThreshold = atomic.LoadUint64(&variable.ExpensiveTxnTimeThreshold)
+			threshold = atomic.LoadUint64(&vardef.ExpensiveQueryTimeThreshold)
+			txnThreshold = atomic.LoadUint64(&vardef.ExpensiveTxnTimeThreshold)
 		case <-eqh.exitCh:
 			return
 		}

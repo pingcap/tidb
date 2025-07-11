@@ -70,7 +70,7 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 }
 
 // AddEvicted is used add an evicted record to stmtSummaryByDigestEvicted
-func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
+func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *StmtDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
 	if evictedValue == nil {
 		return
 	}
@@ -152,7 +152,7 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 }
 
 // add an evicted record to stmtSummaryByDigestEvictedElement
-func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
+func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *StmtDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
 		seElement.count++
 		addInfo(seElement.otherSummary, digestValue)
@@ -169,7 +169,7 @@ const (
 // if matches, it will add the digest and return enum match
 // if digest too old, it will return enum tooOld and do nothing
 // if digest too young, it will return enum tooYoung and do nothing
-func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) (statement int) {
+func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *StmtDigestKey, digestValue *stmtSummaryByDigestElement) (statement int) {
 	if seElement == nil || digestValue == nil {
 		return isTooYoung
 	}

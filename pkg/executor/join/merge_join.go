@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -101,7 +101,7 @@ func (t *MergeJoinTable) init(executor *MergeJoinExec) {
 		t.rowContainer.GetMemTracker().SetLabel(memory.LabelForInnerTable)
 		t.rowContainer.GetDiskTracker().AttachTo(executor.diskTracker)
 		t.rowContainer.GetDiskTracker().SetLabel(memory.LabelForInnerTable)
-		if variable.EnableTmpStorageOnOOM.Load() {
+		if vardef.EnableTmpStorageOnOOM.Load() {
 			actionSpill := t.rowContainer.ActionSpill()
 			failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
 				if val.(bool) {

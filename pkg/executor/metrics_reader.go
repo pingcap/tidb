@@ -27,13 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -100,7 +100,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 
 	// Add retry to avoid network error.
 	var prometheusAddr string
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
 		prometheusAddr, err = infosync.GetPrometheusAddr()
 		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
@@ -123,7 +123,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	promQL := e.tblDef.GenPromQL(sctx.GetSessionVars().MetricSchemaRangeDuration, e.extractor.LabelConditions, quantile)
 
 	// Add retry to avoid network error.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		result, _, err = promQLAPI.QueryRange(ctx, promQL, queryRange)
 		if err == nil {
 			break
@@ -231,10 +231,10 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 				qs = []string{"0.99"}
 			}
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),quantile from `%[2]s`.`%[1]s` %[3]s and quantile in (%[4]s) group by quantile order by quantile",
-				name, util.MetricSchemaName.L, condition, strings.Join(qs, ","))
+				name, metadef.MetricSchemaName.L, condition, strings.Join(qs, ","))
 		} else {
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%[2]s`.`%[1]s` %[3]s",
-				name, util.MetricSchemaName.L, condition)
+				name, metadef.MetricSchemaName.L, condition)
 		}
 
 		exec := sctx.GetRestrictedSQLExecutor()
@@ -314,10 +314,10 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 		var sql string
 		if len(cols) > 0 {
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value),`%s` from `%s`.`%s` %s group by `%[1]s` order by `%[1]s`",
-				strings.Join(cols, "`,`"), util.MetricSchemaName.L, name, cond)
+				strings.Join(cols, "`,`"), metadef.MetricSchemaName.L, name, cond)
 		} else {
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%s`.`%s` %s",
-				util.MetricSchemaName.L, name, cond)
+				metadef.MetricSchemaName.L, name, cond)
 		}
 		exec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)

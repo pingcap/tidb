@@ -42,6 +42,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -93,10 +94,6 @@ func WithPDClientConfig(client config.PDClient) Option {
 	}
 }
 
-func getKVStore(path string, tls config.Security) (kv.Storage, error) {
-	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))
-}
-
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
 	pdConfig        config.PDClient
@@ -107,7 +104,7 @@ type TiKVDriver struct {
 
 // Open opens or creates an TiKV storage with given path using global config.
 // Path example: tikv://etcd-node1:port,etcd-node2:port?cluster=1&disableGC=false
-func (d TiKVDriver) Open(path string) (kv.Storage, error) {
+func (d *TiKVDriver) Open(path string) (kv.Storage, error) {
 	return d.OpenWithOptions(path)
 }
 
@@ -124,7 +121,7 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
 // unspecified options will be set to global config
-func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
+func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
@@ -154,12 +151,18 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		}
 	}()
 
-	pdCli, err = pd.NewClient(etcdAddrs, pd.SecurityOption{
-		CAPath:   d.security.ClusterSSLCA,
-		CertPath: d.security.ClusterSSLCert,
-		KeyPath:  d.security.ClusterSSLKey,
-	},
-		pd.WithGRPCDialOptions(
+	var apiCtx = pd.NewAPIContextV1()
+	if len(keyspaceName) > 0 {
+		apiCtx = pd.NewAPIContextV2(keyspaceName)
+	}
+
+	pdCli, err = pd.NewClientWithAPIContext(context.Background(), apiCtx, "tidb-tikv-driver", etcdAddrs,
+		pd.SecurityOption{
+			CAPath:   d.security.ClusterSSLCA,
+			CertPath: d.security.ClusterSSLCert,
+			KeyPath:  d.security.ClusterSSLKey,
+		},
+		opt.WithGRPCDialOptions(
 			// keep the same with etcd, see
 			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
@@ -168,15 +171,16 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		),
-		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
-		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
+		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
+		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	pdCli = util.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
-	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
+	clusterID := pdCli.GetClusterID(context.TODO())
+	uuid := fmt.Sprintf("tikv-%v/%s", clusterID, keyspaceName)
 	if store, ok := mc.cache[uuid]; ok {
 		pdCli.Close()
 		return store, nil
@@ -239,6 +243,8 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		enableGC:  !disableGC,
 		coprStore: coprStore,
 		codec:     codec,
+		clusterID: clusterID,
+		keyspace:  keyspaceName,
 	}
 
 	mc.cache[uuid] = store
@@ -255,6 +261,8 @@ type tikvStore struct {
 	coprStore *copr.Store
 	codec     tikv.Codec
 	opts      sync.Map
+	clusterID uint64
+	keyspace  string
 }
 
 // GetOption wraps around sync.Map.
@@ -314,7 +322,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			}
 			continue
 		}
-		for _, member := range members {
+		for _, member := range members.GetMembers() {
 			if len(member.ClientUrls) > 0 {
 				u, err := url.Parse(member.ClientUrls[0])
 				if err != nil {
@@ -423,6 +431,14 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 
 func (s *tikvStore) GetCodec() tikv.Codec {
 	return s.codec
+}
+
+func (s *tikvStore) GetClusterID() uint64 {
+	return s.clusterID
+}
+
+func (s *tikvStore) GetKeyspace() string {
+	return s.keyspace
 }
 
 // injectTraceClient injects trace info to the tikv request

@@ -80,3 +80,11 @@ alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0
 alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));
 drop table if exists t;
 
+# TestUnsupportedEngineAttribute
+drop table if exists t;
+-- error 3981
+create table t (a int) ENGINE_ATTRIBUTE = '{"key": "value"}';
+create table t (a int);
+-- error 3981
+alter table t ENGINE_ATTRIBUTE = '{"key": "value"}';
+drop table if exists t;

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -62,7 +62,7 @@ func getIndex(id int64, columnsName []string) *model.IndexInfo {
 	columns := make([]*model.IndexColumn, 0, len(columnsName))
 	for _, columnName := range columnsName {
 		columns = append(columns, &model.IndexColumn{
-			Name: pmodel.CIStr{
+			Name: ast.CIStr{
 				O: columnName,
 				L: columnName,
 			},
@@ -70,7 +70,7 @@ func getIndex(id int64, columnsName []string) *model.IndexInfo {
 	}
 	return &model.IndexInfo{
 		ID: id,
-		Name: pmodel.CIStr{
+		Name: ast.CIStr{
 			O: columnsName[0],
 			L: columnsName[0], // noused
 		},
@@ -120,22 +120,22 @@ func TestAddIngestRecorder(t *testing.T) {
 	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
-			Name:  pmodel.NewCIStr(SchemaName),
+			Name:  ast.NewCIStr(SchemaName),
 			State: model.StatePublic,
 		}
 		err := m.CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		tblInfo := &model.TableInfo{
 			ID:   TableID,
-			Name: pmodel.NewCIStr(TableName),
+			Name: ast.NewCIStr(TableName),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   pmodel.NewCIStr("x"),
+					Name:   ast.NewCIStr("x"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
 				{
-					Name:   pmodel.NewCIStr("y"),
+					Name:   ast.NewCIStr("y"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
@@ -143,22 +143,22 @@ func TestAddIngestRecorder(t *testing.T) {
 			Indices: []*model.IndexInfo{
 				{
 					ID:    1,
-					Name:  pmodel.NewCIStr("x"),
-					Table: pmodel.NewCIStr(TableName),
+					Name:  ast.NewCIStr("x"),
+					Table: ast.NewCIStr(TableName),
 					Columns: []*model.IndexColumn{
 						{
-							Name:   pmodel.NewCIStr("x"),
+							Name:   ast.NewCIStr("x"),
 							Offset: 0,
 							Length: -1,
 						},
 						{
-							Name:   pmodel.NewCIStr("y"),
+							Name:   ast.NewCIStr("y"),
 							Offset: 1,
 							Length: -1,
 						},
 					},
 					Comment: "123",
-					Tp:      pmodel.IndexTypeBtree,
+					Tp:      ast.IndexTypeBtree,
 					State:   model.StatePublic,
 				},
 			},
@@ -303,28 +303,28 @@ func TestIndexesKind(t *testing.T) {
 	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
-			Name:  pmodel.NewCIStr(SchemaName),
+			Name:  ast.NewCIStr(SchemaName),
 			State: model.StatePublic,
 		}
 		err := m.CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		tblInfo := &model.TableInfo{
 			ID:   TableID,
-			Name: pmodel.NewCIStr(TableName),
+			Name: ast.NewCIStr(TableName),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   pmodel.NewCIStr("x"),
+					Name:   ast.NewCIStr("x"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
 				{
-					Name:                pmodel.NewCIStr("_V$_x_0"),
+					Name:                ast.NewCIStr("_V$_x_0"),
 					Hidden:              true,
 					GeneratedExprString: "`x` * 2",
 					State:               model.StatePublic,
 				},
 				{
-					Name:   pmodel.NewCIStr("z"),
+					Name:   ast.NewCIStr("z"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
@@ -332,27 +332,27 @@ func TestIndexesKind(t *testing.T) {
 			Indices: []*model.IndexInfo{
 				{
 					ID:    1,
-					Name:  pmodel.NewCIStr("x"),
-					Table: pmodel.NewCIStr(TableName),
+					Name:  ast.NewCIStr("x"),
+					Table: ast.NewCIStr(TableName),
 					Columns: []*model.IndexColumn{
 						{
-							Name:   pmodel.NewCIStr("x"),
+							Name:   ast.NewCIStr("x"),
 							Offset: 0,
 							Length: -1,
 						},
 						{
-							Name:   pmodel.NewCIStr("_V$_x_0"),
+							Name:   ast.NewCIStr("_V$_x_0"),
 							Offset: 1,
 							Length: -1,
 						},
 						{
-							Name:   pmodel.NewCIStr("z"),
+							Name:   ast.NewCIStr("z"),
 							Offset: 2,
 							Length: 4,
 						},
 					},
 					Comment:   "123",
-					Tp:        pmodel.IndexTypeHash,
+					Tp:        ast.IndexTypeHash,
 					Invisible: true,
 					State:     model.StatePublic,
 				},
@@ -396,7 +396,7 @@ func TestIndexesKind(t *testing.T) {
 	require.Equal(t, 1, count)
 	require.Equal(t, TableID, tableID)
 	require.Equal(t, int64(1), indexID)
-	require.Equal(t, pmodel.NewCIStr(SchemaName), info.SchemaName)
+	require.Equal(t, ast.NewCIStr(SchemaName), info.SchemaName)
 	require.Equal(t, "%n,(`x` * 2),%n(4)", info.ColumnList)
 	require.Equal(t, []any{"x", "z"}, info.ColumnArgs)
 	require.Equal(t, TableName, info.IndexInfo.Table.O)
@@ -412,22 +412,22 @@ func TestRewriteTableID(t *testing.T) {
 	createMeta(t, store, func(m *meta.Mutator) {
 		dbInfo := &model.DBInfo{
 			ID:    1,
-			Name:  pmodel.NewCIStr(SchemaName),
+			Name:  ast.NewCIStr(SchemaName),
 			State: model.StatePublic,
 		}
 		err := m.CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		tblInfo := &model.TableInfo{
 			ID:   TableID,
-			Name: pmodel.NewCIStr(TableName),
+			Name: ast.NewCIStr(TableName),
 			Columns: []*model.ColumnInfo{
 				{
-					Name:   pmodel.NewCIStr("x"),
+					Name:   ast.NewCIStr("x"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
 				{
-					Name:   pmodel.NewCIStr("y"),
+					Name:   ast.NewCIStr("y"),
 					Hidden: false,
 					State:  model.StatePublic,
 				},
@@ -435,22 +435,22 @@ func TestRewriteTableID(t *testing.T) {
 			Indices: []*model.IndexInfo{
 				{
 					ID:    1,
-					Name:  pmodel.NewCIStr("x"),
-					Table: pmodel.NewCIStr(TableName),
+					Name:  ast.NewCIStr("x"),
+					Table: ast.NewCIStr(TableName),
 					Columns: []*model.IndexColumn{
 						{
-							Name:   pmodel.NewCIStr("x"),
+							Name:   ast.NewCIStr("x"),
 							Offset: 0,
 							Length: -1,
 						},
 						{
-							Name:   pmodel.NewCIStr("y"),
+							Name:   ast.NewCIStr("y"),
 							Offset: 1,
 							Length: -1,
 						},
 					},
 					Comment: "123",
-					Tp:      pmodel.IndexTypeBtree,
+					Tp:      ast.IndexTypeBtree,
 					State:   model.StatePublic,
 				},
 			},

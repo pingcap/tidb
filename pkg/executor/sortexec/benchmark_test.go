@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
@@ -107,9 +107,9 @@ func BenchmarkSortExec(b *testing.B) {
 }
 
 func BenchmarkSortExecSpillToDisk(b *testing.B) {
-	enableTmpStorageOnOOMCurrentVal := variable.EnableTmpStorageOnOOM.Load()
-	variable.EnableTmpStorageOnOOM.Store(true)
-	defer variable.EnableTmpStorageOnOOM.Store(enableTmpStorageOnOOMCurrentVal)
+	enableTmpStorageOnOOMCurrentVal := vardef.EnableTmpStorageOnOOM.Load()
+	vardef.EnableTmpStorageOnOOM.Store(true)
+	defer vardef.EnableTmpStorageOnOOM.Store(enableTmpStorageOnOOMCurrentVal)
 
 	b.ReportAllocs()
 	cas := testutil.SortTestCaseWithMemoryLimit(mock.NewContext(), 1)

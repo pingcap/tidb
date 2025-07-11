@@ -65,7 +65,7 @@ func TestTick(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		cp := c.advanceCheckpoints()
 		require.NoError(t, adv.OnTick(ctx))
 		require.Equal(t, env.getCheckpoint(), cp)
@@ -129,7 +129,7 @@ func TestCollectorFailure(t *testing.T) {
 	}
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 10000)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		splitKeys = append(splitKeys, fmt.Sprintf("%04d", i))
 	}
 	c.splitAndScatter(splitKeys...)
@@ -169,7 +169,7 @@ func TestOneStoreFailure(t *testing.T) {
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		splitKeys = append(splitKeys, fmt.Sprintf("%04d", i))
 	}
 	c.splitAndScatter(splitKeys...)
@@ -181,7 +181,7 @@ func TestOneStoreFailure(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.onGetClient = oneStoreFailure()
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		c.advanceCheckpoints()
 		c.flushAll()
 		require.ErrorContains(t, adv.OnTick(ctx), "the warm lamplight")
@@ -474,7 +474,7 @@ func TestRemoveTaskAndFlush(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription-handler-loop"))
 	require.Eventually(t, func() bool {
-		return !adv.HasSubscribion()
+		return !adv.HasSubscriptions()
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -510,7 +510,7 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	adv.StartTaskListener(ctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		c.advanceClusterTimeBy(30 * time.Second)
 		c.advanceCheckpointBy(20 * time.Second)
 		require.NoError(t, adv.OnTick(ctx))
@@ -559,7 +559,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	adv2.OnStart(ctx2)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		c.advanceClusterTimeBy(2 * time.Minute)
 		c.advanceCheckpointBy(2 * time.Minute)
 		require.NoError(t, adv.OnTick(ctx1))
@@ -578,7 +578,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	require.NoError(t, adv2.OnTick(ctx2))
 
 	// advancer2 should take over and tick normally
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		c.advanceClusterTimeBy(2 * time.Minute)
 		c.advanceCheckpointBy(2 * time.Minute)
 		require.NoError(t, adv2.OnTick(ctx2))
@@ -918,6 +918,9 @@ func TestOwnershipLost(t *testing.T) {
 	c.flushAll()
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "pause")
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs", "return(500)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs"))
+	}()
 	wg := new(sync.WaitGroup)
 	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
 	cancel()
@@ -939,6 +942,9 @@ func TestSubscriptionPanic(t *testing.T) {
 
 	require.NoError(t, adv.OnTick(ctx))
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend"))
+	}()
 	ckpt := c.advanceCheckpoints()
 	c.flushAll()
 	cnt := 0
@@ -1007,7 +1013,8 @@ func TestRedactBackend(t *testing.T) {
 	}
 
 	redacted := redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"12abCD!@#[]{}?/\\\\\" secret_access_key:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_Gcs{
@@ -1020,7 +1027,8 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_AzureBlobStorage{
@@ -1038,5 +1046,6 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<[REDACTED]> > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<encryption_key:\"[REDACTED]\" > > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"12abCD!@#[]{}?/\\\\\" access_sig:\"12abCD!@#[]{}?/\\\\\" encryption_key:<encryption_key:\"12abCD!@#[]{}?/\\\\\" encryption_key_sha256:\"12abCD!@#[]{}?/\\\\\" > > > name:\"test\" ")
 }

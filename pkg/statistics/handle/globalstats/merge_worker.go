@@ -125,7 +125,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 				// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
 				// 1. Check the topN first.
 				// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
-				for j := 0; j < partNum; j++ {
+				for j := range partNum {
 					if err := worker.killer.HandleSignal(); err != nil {
 						resp.Err = err
 						worker.respCh <- resp
@@ -150,7 +150,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, v
 					count, _ := allHists[j].EqualRowCount(nil, datum, isIndex)
 					if count != 0 {
 						// Remove the value corresponding to encodedVal from the histogram.
-						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(&datum, int64(count))
 					}
 					worker.shardMutex[j].Unlock()
 					if count != 0 {

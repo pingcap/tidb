@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -45,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -55,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -109,11 +111,12 @@ type InfoSyncer struct {
 	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
 	unprefixedEtcdCli *clientv3.Client
 	pdHTTPCli         pdhttp.Client
-	info              *ServerInfo
-	serverInfoPath    string
-	minStartTS        uint64
-	minStartTSPath    string
-	managerMu         struct {
+	info              atomic.Pointer[ServerInfo]
+
+	serverInfoPath string
+	minStartTS     uint64
+	minStartTSPath string
+	managerMu      struct {
 		mu sync.RWMutex
 		util2.SessionManager
 	}
@@ -127,25 +130,24 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
+	tikvCodec             tikv.Codec
 }
 
-// ServerInfo is server static information.
-// It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
+// ServerInfo represents the server's basic information.
+// It consists of two sections: static and dynamic.
+// The static information is generated during the startup of the TiDB server and should never be modified while the TiDB server is running.
+// The dynamic information can be updated while the TiDB server is running and should be synchronized with PD's etcd.
 type ServerInfo struct {
-	ServerVersionInfo
-	ID             string            `json:"ddl_id"`
-	IP             string            `json:"ip"`
-	Port           uint              `json:"listening_port"`
-	StatusPort     uint              `json:"status_port"`
-	Lease          string            `json:"lease"`
-	StartTimestamp int64             `json:"start_timestamp"`
-	Labels         map[string]string `json:"labels"`
-	// ServerID is a function, to always retrieve latest serverID from `Domain`,
-	// which will be changed on occasions such as connection to PD is restored after broken.
-	ServerIDGetter func() uint64 `json:"-"`
+	StaticServerInfo
+	DynamicServerInfo
+}
 
-	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
-	JSONServerID uint64 `json:"server_id"`
+// clone the ServerInfo.
+func (info *ServerInfo) clone() *ServerInfo {
+	return &ServerInfo{
+		StaticServerInfo:  info.StaticServerInfo,
+		DynamicServerInfo: *info.DynamicServerInfo.clone(),
+	}
 }
 
 // Marshal `ServerInfo` into bytes.
@@ -167,6 +169,40 @@ func (info *ServerInfo) Unmarshal(v []byte) error {
 		return info.JSONServerID
 	}
 	return nil
+}
+
+// StaticServerInfo is server static information.
+// It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
+// DO NOT edit it after tidb-server started.
+type StaticServerInfo struct {
+	ServerVersionInfo
+	ID             string `json:"ddl_id"`
+	IP             string `json:"ip"`
+	Port           uint   `json:"listening_port"`
+	StatusPort     uint   `json:"status_port"`
+	Lease          string `json:"lease"`
+	StartTimestamp int64  `json:"start_timestamp"`
+	// ServerID is a function, to always retrieve latest serverID from `Domain`,
+	// which will be changed on occasions such as connection to PD is restored after broken.
+	ServerIDGetter func() uint64 `json:"-"`
+
+	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
+	JSONServerID uint64 `json:"server_id"`
+}
+
+// DynamicServerInfo represents the dynamic information of the server.
+// Please note that it may change when TiDB is running.
+// To update the dynamic server information, use `InfoSyncer.cloneDynamicServerInfo` to obtain a copy of the dynamic server info.
+// After making modifications, use `InfoSyncer.setDynamicServerInfo` to update the dynamic server information.
+type DynamicServerInfo struct {
+	Labels map[string]string `json:"labels"`
+}
+
+// clone the DynamicServerInfo.
+func (d *DynamicServerInfo) clone() *DynamicServerInfo {
+	return &DynamicServerInfo{
+		Labels: maps.Clone(d.Labels),
+	}
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -227,11 +263,12 @@ func GlobalInfoSyncerInit(
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
 		pdHTTPCli:         pdHTTPCli,
-		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 		infoCache:         infoCache,
+		tikvCodec:         codec,
 	}
+	is.info.Store(getServerInfo(id, serverIDGetter))
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
@@ -290,7 +327,7 @@ func (is *InfoSyncer) initPlacementManager() {
 func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
 	var cli pd.ResourceManagerClient = pdCli
 	if pdCli == nil {
-		cli = NewMockResourceManagerClient()
+		cli = NewMockResourceManagerClient(constants.NullKeyspaceID)
 	}
 	failpoint.Inject("managerAlreadyCreateSomeGroups", func(val failpoint.Value) {
 		if val.(bool) {
@@ -330,7 +367,7 @@ func (is *InfoSyncer) initTiFlashReplicaManager(codec tikv.Codec) {
 		is.tiflashReplicaManager = &mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager")
+	logutil.BgLogger().Info("init TiFlashReplicaManager")
 	is.tiflashReplicaManager = &TiFlashReplicaManagerCtx{pdHTTPCli: is.pdHTTPCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
@@ -380,7 +417,7 @@ func GetServerInfo() (*ServerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is.info, nil
+	return is.info.Load(), nil
 }
 
 // GetServerInfoByID gets specified server static information from etcd.
@@ -393,8 +430,9 @@ func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 }
 
 func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
-	if is.etcdCli == nil || id == is.info.ID {
-		return is.info, nil
+	localInfo := is.info.Load()
+	if is.etcdCli == nil || id == localInfo.ID {
+		return localInfo, nil
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
 	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
@@ -432,27 +470,31 @@ func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	selfInfo, err := is.getServerInfoByID(ctx, is.info.ID)
-	if err != nil {
-		return err
-	}
+	dynamicInfo := is.cloneDynamicServerInfo()
 	changed := false
 	for k, v := range labels {
-		if selfInfo.Labels[k] != v {
+		if dynamicInfo.Labels[k] != v {
 			changed = true
-			selfInfo.Labels[k] = v
+			dynamicInfo.Labels[k] = v
 		}
 	}
 	if !changed {
 		return nil
 	}
-	infoBuf, err := selfInfo.Marshal()
+	info := is.getLocalServerInfo().clone()
+	info.DynamicServerInfo = *dynamicInfo
+	infoBuf, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
-	return err
+	if err != nil {
+		return err
+	}
+	// update the dynamic info in the global info syncer after put etcd success.
+	is.setDynamicServerInfo(dynamicInfo)
+	return nil
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
@@ -651,7 +693,8 @@ func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bu
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
+		info := is.info.Load()
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -666,7 +709,8 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	infoBuf, err := is.info.Marshal()
+	info := is.info.Load()
+	infoBuf, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -696,7 +740,7 @@ type TopologyInfo struct {
 	Labels         map[string]string `json:"labels"`
 }
 
-func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
+func (info *ServerInfo) asTopologyInfo() TopologyInfo {
 	s, err := os.Executable()
 	if err != nil {
 		s = ""
@@ -705,28 +749,29 @@ func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
 	return TopologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
-			GitHash: is.info.ServerVersionInfo.GitHash,
+			GitHash: info.ServerVersionInfo.GitHash,
 		},
-		IP:             is.info.IP,
-		StatusPort:     is.info.StatusPort,
+		IP:             info.IP,
+		StatusPort:     info.StatusPort,
 		DeployPath:     dir,
-		StartTimestamp: is.info.StartTimestamp,
-		Labels:         is.info.Labels,
+		StartTimestamp: info.StartTimestamp,
+		Labels:         info.Labels,
 	}
 }
 
-// StoreTopologyInfo  stores the topology of tidb to etcd.
+// StoreTopologyInfo stores the topology of tidb to etcd.
 func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	topologyInfo := is.getTopologyInfo()
+	info := is.info.Load()
+	topologyInfo := info.asTopologyInfo()
 	infoBuf, err := json.Marshal(topologyInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	// Note: no lease is required here.
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
 	if err != nil {
@@ -742,22 +787,39 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 	return is.minStartTS
 }
 
+func (is *InfoSyncer) getEtcdClientForMinStartTS() *clientv3.Client {
+	// Note: this is a temporary implementation.
+	// In our future refactor plan, the SafePointKV and TiDB min start ts will be completely removed.
+
+	// Ignore nil tikvCodec, which may happen in some tests.
+	if is.tikvCodec == nil {
+		return is.unprefixedEtcdCli
+	}
+
+	if pd.IsKeyspaceUsingKeyspaceLevelGC(is.tikvCodec.GetKeyspaceMeta()) {
+		return is.etcdCli
+	}
+	return is.unprefixedEtcdCli
+}
+
 // storeMinStartTS stores self server min start timestamp to etcd.
 func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
-	if is.unprefixedEtcdCli == nil {
+	cli := is.getEtcdClientForMinStartTS()
+	if cli == nil {
 		return nil
 	}
-	return util.PutKVToEtcd(ctx, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
+	return util.PutKVToEtcd(ctx, cli, keyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
 }
 
 // RemoveMinStartTS removes self server min start timestamp from etcd.
 func (is *InfoSyncer) RemoveMinStartTS() {
-	if is.unprefixedEtcdCli == nil {
+	cli := is.getEtcdClientForMinStartTS()
+	if cli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.minStartTSPath, cli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
 	}
@@ -780,7 +842,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
 	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, vardef.GCMaxWaitTime.Load()*1000)
 	minStartTS := oracle.GoTimeToTS(now)
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
@@ -854,6 +916,9 @@ func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
 // GetAllTiDBTopology gets all tidb topology
 func (is *InfoSyncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error) {
 	topos := make([]*TopologyInfo, 0)
+	if is.etcdCli == nil {
+		return topos, nil
+	}
 	response, err := is.etcdCli.Get(ctx, TopologyInformationPath, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
@@ -891,7 +956,8 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	if is.etcdCli == nil {
 		return nil
 	}
-	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	info := is.getLocalServerInfo()
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
@@ -906,10 +972,28 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	info := is.getLocalServerInfo()
+	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
+}
+
+// RemoveTopologyInfo remove self server topology information from etcd.
+func (is *InfoSyncer) RemoveTopologyInfo() {
+	if is.etcdCli == nil {
+		return
+	}
+	info := is.info.Load()
+	prefix := fmt.Sprintf(
+		"%s/%s",
+		TopologyInformationPath,
+		net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))),
+	)
+	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("remove topology info failed", zap.Error(err))
+	}
 }
 
 // GetPrometheusAddr gets prometheus Address
@@ -1003,7 +1087,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*ServerInfo)
-	for i := 0; i < retryCnt; i++ {
+	for range retryCnt {
 		select {
 		case <-ctx.Done():
 			err = errors.Trace(ctx.Err())
@@ -1037,14 +1121,18 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
-		ID:             id,
-		IP:             cfg.AdvertiseAddress,
-		Port:           cfg.Port,
-		StatusPort:     cfg.Status.StatusPort,
-		Lease:          cfg.Lease,
-		StartTimestamp: time.Now().Unix(),
-		Labels:         cfg.Labels,
-		ServerIDGetter: serverIDGetter,
+		StaticServerInfo: StaticServerInfo{
+			ID:             id,
+			IP:             cfg.AdvertiseAddress,
+			Port:           cfg.Port,
+			StatusPort:     cfg.Status.StatusPort,
+			Lease:          cfg.Lease,
+			StartTimestamp: time.Now().Unix(),
+			ServerIDGetter: serverIDGetter,
+		},
+		DynamicServerInfo: DynamicServerInfo{
+			Labels: maps.Clone(cfg.Labels),
+		},
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
@@ -1236,6 +1324,16 @@ func GetTiFlashRegionCountFromPD(ctx context.Context, tableID int64, regionCount
 	return is.tiflashReplicaManager.GetRegionCountFromPD(ctx, tableID, regionCount)
 }
 
+// GetPlacementRule is a helper function to get placement rule by table id.
+func GetPlacementRule(ctx context.Context, tableID int64) (*pdhttp.Rule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	return is.tiflashReplicaManager.GetPlacementRule(ctx, tableID)
+}
+
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
 func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 	is, err := getGlobalInfoSyncer()
@@ -1323,7 +1421,25 @@ func DeleteInternalSession(se any) {
 	sm.DeleteInternalSession(se)
 }
 
+// ContainsInternalSessionForTest is the entry function for check whether an internal session is in SessionManager.
+// It is only used for test.
+func ContainsInternalSessionForTest(se any) bool {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return false
+	}
+
+	return sm.ContainsInternalSession(se)
+}
+
 // SetEtcdClient is only used for test.
+// SetEtcdClient is not thread-safe and may cause data race with the initialization of the domain.
+// Because this usage is test-only, we don't need to introduce a lock or atomic variable for it.
+// Use it after the domain initialization is done.
 func SetEtcdClient(etcdCli *clientv3.Client) {
 	is, err := getGlobalInfoSyncer()
 
@@ -1394,7 +1510,7 @@ func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiP
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*TiProxyServerInfo)
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+	for range keyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}
@@ -1455,7 +1571,7 @@ func (is *InfoSyncer) getTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, err
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make([]*TiCDCInfo, 0)
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+	for range keyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}
@@ -1490,4 +1606,24 @@ func (is *InfoSyncer) getTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, err
 		return allInfo, nil
 	}
 	return nil, errors.Trace(err)
+}
+
+// getLocalServerInfo returns the local server info.
+func (is *InfoSyncer) getLocalServerInfo() *ServerInfo {
+	return is.info.Load()
+}
+
+// cloneDynamicServerInfo returns a clone of the dynamic server info.
+func (is *InfoSyncer) cloneDynamicServerInfo() *DynamicServerInfo {
+	return is.info.Load().DynamicServerInfo.clone()
+}
+
+// setDynamicServerInfo updates the dynamic server info.
+func (is *InfoSyncer) setDynamicServerInfo(ds *DynamicServerInfo) {
+	staticInfo := is.info.Load()
+	newInfo := &ServerInfo{
+		StaticServerInfo:  staticInfo.StaticServerInfo,
+		DynamicServerInfo: *ds,
+	}
+	is.info.Store(newInfo)
 }

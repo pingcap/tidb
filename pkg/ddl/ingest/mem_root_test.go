@@ -22,7 +22,7 @@ import (
 )
 
 func TestMemoryRoot(t *testing.T) {
-	memRoot := ingest.MemRoot(ingest.NewMemRootImpl(1024, nil))
+	memRoot := ingest.MemRoot(ingest.NewMemRootImpl(1024))
 	require.Equal(t, int64(1024), memRoot.MaxMemoryQuota())
 	require.Equal(t, int64(0), memRoot.CurrentUsage())
 

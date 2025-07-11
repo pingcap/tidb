@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -58,11 +59,11 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(ctx, createTable1)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
-	require.Equal(t, pmodel.NewCIStr("p0"), p0.Name)
+	require.Equal(t, ast.NewCIStr("p0"), p0.Name)
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
@@ -109,7 +110,7 @@ PARTITION BY RANGE ( id ) (
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	txn, err = tk.Session().Txn(true)
 	require.NoError(t, err)
-	tb, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(22))
 	require.NoError(t, err)
@@ -123,7 +124,7 @@ PARTITION BY RANGE ( id ) (
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	txn, err = tk.Session().Txn(true)
 	require.NoError(t, err)
-	tb, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
@@ -141,7 +142,7 @@ PARTITION BY RANGE ( id ) (
 	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	txn, err = tk.Session().Txn(true)
 	require.NoError(t, err)
-	tb, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(1, 11))
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
@@ -156,7 +157,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
@@ -193,10 +194,10 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	// Test for partition expression is negative number.
 	_, err = tk.Session().Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
 	require.NoError(t, err)
-	tb, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbInfo = tb.Meta()
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		txn, err = tk.Session().Txn(true)
 		require.NoError(t, err)
@@ -227,7 +228,7 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), createTable1)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	ps := tbInfo.GetPartitionInfo()
@@ -253,7 +254,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 							partition p3 values less than maxvalue)`)
 	require.NoError(t, err)
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
@@ -307,7 +308,7 @@ func TestLocatePartition(t *testing.T) {
 			exec(tk)
 		})
 	}
-	for i := 0; i < len(tks); i++ {
+	for i := range tks {
 		run(i)
 	}
 	wg.Wait()
@@ -359,14 +360,14 @@ func TestIssue31629(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
-		tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("Issue31629"), pmodel.NewCIStr("t1"))
+		tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("Issue31629"), ast.NewCIStr("t1"))
 		require.NoError(t, err)
 		tbp, ok := tb.(table.PartitionedTable)
 		require.Truef(t, ok, "test %d does not generate a table.PartitionedTable: %s (%T, %+v)", i, createTable, tb, tb)
 		colNames := tbp.GetPartitionColumnNames()
-		checkNames := []pmodel.CIStr{pmodel.NewCIStr(tt.cols[0])}
+		checkNames := []ast.CIStr{ast.NewCIStr(tt.cols[0])}
 		for i := 1; i < len(tt.cols); i++ {
-			checkNames = append(checkNames, pmodel.NewCIStr(tt.cols[i]))
+			checkNames = append(checkNames, ast.NewCIStr(tt.cols[i]))
 		}
 		require.ElementsMatchf(t, colNames, checkNames, "test %d %s", i, createTable)
 		tk.MustExec("drop table t1")
@@ -2076,7 +2077,8 @@ func TestPruneModeWarningInfo(t *testing.T) {
 
 func TestPartitionByIntListExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntListExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2190,7 +2192,8 @@ func getInt7ValuesFunc() func(string, bool, *rand.Rand) string {
 
 func TestPartitionByIntExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2415,7 +2418,8 @@ func getIntValuesUniqueFunc() func(string, bool, *rand.Rand) string {
 
 func TestPartitionByExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2521,7 +2525,8 @@ func TestPartitionByExtensivePart(t *testing.T) {
 }
 
 func TestReorgPartExtensivePart(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2635,7 +2640,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	pkMap := make(map[string]struct{}, rows)
 	pkArray := make([]string, 0, len(pkMap))
 	// Generate a start set:
-	for i := 0; i < rows; i++ {
+	for range rows {
 		pk := getNewPK(pkMap, "-o", reorgRand)
 		pkArray = append(pkArray, pk)
 		values := getValues(pk, false, reorgRand)
@@ -2671,7 +2676,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	transitions := 0
 	var currTbl table.Table
 	currSchema := sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
-	prevTbl, err := currSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	prevTbl, err := currSchema.TableByName(context.Background(), ast.NewCIStr(schemaName), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	var hookErr error
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
@@ -2719,7 +2724,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
 			tk2.MustQuery(`select count(*) from (select a from t2 except select a from t) a`).Check(testkit.Rows("0"))
 			currSchema = sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
-			currTbl, hookErr = currSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+			currTbl, hookErr = currSchema.TableByName(context.Background(), ast.NewCIStr(schemaName), ast.NewCIStr("t"))
 
 			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
 			// Now using previous schema version
@@ -2981,8 +2986,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				idx := len(pkArray) - len(insPK) + insIdx
-				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				insPK = slices.Delete(insPK, insIdx, insIdx+1)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete0", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3013,8 +3018,8 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				idx := len(pkArray) - len(insPK) + insIdx
-				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				insPK = slices.Delete(insPK, insIdx, insIdx+1)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete1", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3045,7 +3050,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete2", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3075,7 +3080,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				oldPK := pkArray[idx]
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
-				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
+				pkArray = slices.Delete(pkArray, idx, idx+1)
 				logutil.BgLogger().Debug("delete3", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
@@ -3142,7 +3147,7 @@ var runes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 func randStr(n int, r *rand.Rand) string {
 	var sb strings.Builder
 	sb.Grow(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		_, _ = sb.WriteRune(runes[r.Intn(len(runes))])
 	}
 	return sb.String()

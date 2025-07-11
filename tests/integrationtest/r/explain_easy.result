@@ -65,9 +65,9 @@ explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 gr
 id	estRows	task	access object	operator info
 Projection	9990.00	root		Column#7
 └─HashJoin	9990.00	root		inner join, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
-  ├─HashAgg(Build)	7992.00	root		group by:explain_easy.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
+  ├─HashAgg(Build)	7992.00	root		group by:explain_easy.t2.c2, funcs:count(Column#10)->Column#8, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
   │ └─TableReader	7992.00	root		data:HashAgg
-  │   └─HashAgg	7992.00	cop[tikv]		group by:explain_easy.t2.c2, funcs:count(explain_easy.t2.c2)->Column#9
+  │   └─HashAgg	7992.00	cop[tikv]		group by:explain_easy.t2.c2, funcs:count(explain_easy.t2.c2)->Column#10
   │     └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t2.c2))
   │       └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -86,7 +86,7 @@ IndexLookUp	11.08	root
   └─TableRowIDScan	33.33	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
-Selection	0.33	root		gt(explain_easy.t1.c2, 1)
+Selection	1.00	root		gt(explain_easy.t1.c2, 1)
 └─Point_Get	1.00	root	table:t1	handle:1
 explain format = 'brief' select sum(t1.c1 in (select c1 from t2)) from t1;
 id	estRows	task	access object	operator info
@@ -130,11 +130,12 @@ Projection	10000.00	root		eq(explain_easy.t1.c2, explain_easy.t2.c2)->Column#11
 └─Apply	10000.00	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection(Probe)	10000.00	root		explain_easy.t2.c1, explain_easy.t2.c2
-    └─IndexLookUp	10000.00	root		limit embedded(offset:0, count:1)
-      ├─Limit(Build)	10000.00	cop[tikv]		offset:0, count:1
-      │ └─IndexRangeScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(explain_easy.t1.c1, explain_easy.t2.c1)], keep order:true, stats:pseudo
-      └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection(Probe)	10000.00	root		explain_easy.t2.c2
+    └─Projection	10000.00	root		explain_easy.t2.c1, explain_easy.t2.c2
+      └─IndexLookUp	10000.00	root		limit embedded(offset:0, count:1)
+        ├─Limit(Build)	10000.00	cop[tikv]		offset:0, count:1
+        │ └─IndexRangeScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(explain_easy.t1.c1, explain_easy.t2.c1)], keep order:true, stats:pseudo
+        └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
@@ -145,11 +146,11 @@ explain format = 'brief' select * from t4 use index(idx) where a > 1 and b > 1 a
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─IndexLookUp	1.00	root		
-  ├─Selection(Build)	3.00	cop[tikv]		gt(explain_easy.t4.b, 1)
-  │ └─IndexRangeScan	9.00	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf], keep order:false, stats:pseudo
+  ├─Selection(Build)	2.88	cop[tikv]		gt(explain_easy.t4.b, 1)
+  │ └─IndexRangeScan	8.63	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf], keep order:false, stats:pseudo
   └─Limit(Probe)	1.00	cop[tikv]		offset:0, count:1
     └─Selection	1.00	cop[tikv]		gt(explain_easy.t4.c, 1)
-      └─TableRowIDScan	3.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+      └─TableRowIDScan	2.88	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select * from t4 where a > 1 and c > 1 limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
@@ -260,57 +261,57 @@ StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
 explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
 dot contents
 
-digraph StreamAgg_10 {
-subgraph cluster10{
+digraph StreamAgg_15 {
+subgraph cluster15{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"StreamAgg_10" -> "Projection_21"
-"Projection_21" -> "HashJoin_20"
-"HashJoin_20" -> "TableReader_13"
-"HashJoin_20" -> "IndexReader_19"
+"StreamAgg_15" -> "Projection_42"
+"Projection_42" -> "HashJoin_40"
+"HashJoin_40" -> "TableReader_25"
+"HashJoin_40" -> "IndexReader_31"
 }
-subgraph cluster12{
+subgraph cluster24{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_12"
+"TableFullScan_24"
 }
-subgraph cluster18{
+subgraph cluster30{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexFullScan_18"
+"IndexFullScan_30"
 }
-"TableReader_13" -> "TableFullScan_12"
-"IndexReader_19" -> "IndexFullScan_18"
+"TableReader_25" -> "TableFullScan_24"
+"IndexReader_31" -> "IndexFullScan_30"
 }
 
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_8 {
-subgraph cluster8{
+digraph HashJoin_16 {
+subgraph cluster16{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_8" -> "TableReader_10"
-"HashJoin_8" -> "TableReader_14"
+"HashJoin_16" -> "TableReader_18"
+"HashJoin_16" -> "TableReader_22"
 }
-subgraph cluster9{
+subgraph cluster17{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_9"
+"TableFullScan_17"
 }
-subgraph cluster13{
+subgraph cluster21{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_13"
+"TableFullScan_21"
 }
-"TableReader_10" -> "TableFullScan_9"
-"TableReader_14" -> "TableFullScan_13"
+"TableReader_18" -> "TableFullScan_17"
+"TableReader_22" -> "TableFullScan_21"
 }
 
 drop table if exists t1, t2, t3, t4;
@@ -437,10 +438,10 @@ id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	estRows	task	access object	operator info
-Projection	0.00	root		explain_easy.t.a, explain_easy.t.b, explain_easy.t.a, explain_easy.t.b
-└─HashJoin	0.00	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
-  ├─TableReader(Build)	0.00	root		data:Selection
-  │ └─Selection	0.00	cop[tikv]		isnull(explain_easy.t.b), not(isnull(explain_easy.t.b))
+Projection	1.25	root		explain_easy.t.a, explain_easy.t.b, explain_easy.t.a, explain_easy.t.b
+└─HashJoin	1.25	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
+  ├─TableReader(Build)	1.00	root		data:Selection
+  │ └─Selection	1.00	cop[tikv]		isnull(explain_easy.t.b), not(isnull(explain_easy.t.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	9990.00	root		data:Selection
     └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.b))
@@ -513,10 +514,11 @@ StreamAgg	1.00	root		funcs:count(1)->Column#22
       │   │ └─HashAgg	1.00	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(1)->Column#38
       │   │   └─TableDual	0.00	root		rows:0
       │   └─Projection	1.00	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
-      │     └─HashAgg	1.00	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(1)->Column#39
-      │       └─TableReader	0.01	root		data:Selection
-      │         └─Selection	0.01	cop[tikv]		eq(explain_easy.test01.period, 1), ge(explain_easy.test01.stat_date, 20191202), gt(cast(explain_easy.test01.registration_num, decimal(20,0) BINARY), 0), le(explain_easy.test01.stat_date, 20191202)
-      │           └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
+      │     └─HashAgg	1.00	root		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:firstrow(explain_easy.test01.stat_date)->Column#33, funcs:firstrow(explain_easy.test01.show_date)->Column#34, funcs:firstrow(explain_easy.test01.region_id)->Column#35, funcs:firstrow(explain_easy.test01.stat_date)->Column#14, funcs:firstrow(explain_easy.test01.show_date)->Column#15, funcs:firstrow(explain_easy.test01.region_id)->Column#16, funcs:count(Column#46)->Column#39
+      │       └─TableReader	1.00	root		data:HashAgg
+      │         └─HashAgg	1.00	cop[tikv]		group by:explain_easy.test01.region_id, explain_easy.test01.show_date, explain_easy.test01.stat_date, funcs:count(1)->Column#46
+      │           └─Selection	1.00	cop[tikv]		eq(explain_easy.test01.period, 1), ge(explain_easy.test01.stat_date, 20191202), gt(cast(explain_easy.test01.registration_num, decimal(20,0) BINARY), 0), le(explain_easy.test01.stat_date, 20191202)
+      │             └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
       └─TableReader(Probe)	2.00	root		data:TableRangeScan
         └─TableRangeScan	2.00	cop[tikv]	table:b	range: decided by [Column#16], keep order:false, stats:pseudo
 drop table if exists t;
@@ -566,10 +568,10 @@ explain format = 'brief' select * from t ta left outer join t tb on ta.nb = tb.n
 id	estRows	task	access object	operator info
 HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)], left cond:[gt(explain_easy.t.a, 1)]
 ├─TableReader(Build)	8000.00	root		data:Selection
-│ └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
+│ └─Selection	8000.00	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
 │   └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
@@ -578,7 +580,7 @@ HashJoin	8000.00	root		right outer join, left side:TableReader, equal:[eq(explai
 │ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY), gt(explain_easy.t.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
@@ -587,7 +589,7 @@ HashJoin	3333.33	root		inner join, equal:[eq(explain_easy.t.nb, explain_easy.t.n
 │ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY), gt(explain_easy.t.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
@@ -767,37 +769,38 @@ create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 dot contents
 
-digraph TableReader_7 {
-subgraph cluster7{
+digraph TableReader_8 {
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"TableReader_7"
+"TableReader_8"
 }
-subgraph cluster6{
+subgraph cluster7{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_6" -> "TableFullScan_5"
+"Selection_7" -> "TableFullScan_6"
 }
-"TableReader_7" -> "Selection_6"
+"TableReader_8" -> "Selection_7"
 }
 
 drop table if exists t;
 create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
 explain format = 'brief' select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
-IndexLookUp	0.10	root		
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	1.25	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─IndexLookUp	0.10	root		
-  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexLookUp	1.25	root		
+  ├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t, index:a(a, b)	range:["\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb","\xfa4\xe1\t<\xb4(HW4\xe3\x91\x7f\x00\x00\x00" "xb"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
+analyze table t;
 explain format = 'brief' select (select count(n.a) from t) from t n;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#11->Column#12

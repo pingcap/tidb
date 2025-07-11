@@ -127,10 +127,10 @@ func (ctx *MutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool
 
 // UpdatePhysicalTableDelta implements the StatisticsSupport interface.
 func (ctx *MutateContext) UpdatePhysicalTableDelta(
-	physicalTableID int64, delta int64, count int64, cols variable.DeltaCols,
+	physicalTableID int64, delta int64, count int64,
 ) {
 	if txnCtx := ctx.vars().TxnCtx; txnCtx != nil {
-		txnCtx.UpdateDeltaForTable(physicalTableID, delta, count, cols)
+		txnCtx.UpdateDeltaForTable(physicalTableID, delta, count)
 	}
 }
 
@@ -163,7 +163,7 @@ func (ctx *MutateContext) GetTemporaryTableSupport() (tblctx.TemporaryTableSuppo
 
 // GetInfoSchemaToCheckExchangeConstraint implements the ExchangePartitionDMLSupport interface.
 func (ctx *MutateContext) GetInfoSchemaToCheckExchangeConstraint() infoschema.MetaOnlyInfoSchema {
-	return ctx.Context.GetDomainInfoSchema()
+	return ctx.Context.GetLatestInfoSchema()
 }
 
 // GetExchangePartitionDMLSupport implements the MutateContext interface.

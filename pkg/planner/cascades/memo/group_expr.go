@@ -15,6 +15,8 @@
 package memo
 
 import (
+	"unsafe"
+
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -22,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -120,18 +123,6 @@ func (e *GroupExpression) Equals(other any) bool {
 	return true
 }
 
-// NewGroupExpression creates a new GroupExpression with the given logical plan and children.
-func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
-	return &GroupExpression{
-		group:       nil,
-		Inputs:      inputs,
-		LogicalPlan: lp,
-		hash64:      0,
-		// todo: add rule set length
-		mask: bitset.New(1),
-	}
-}
-
 // Init initializes the GroupExpression with the given group and hasher.
 func (e *GroupExpression) Init(h base2.Hasher) {
 	e.Hash64(h)
@@ -158,6 +149,28 @@ func (e *GroupExpression) SetAbandoned() {
 	e.abandoned = true
 }
 
+// mergeTo will migrate the src GE state to dst GE and remove src GE from its group.
+func (e *GroupExpression) mergeTo(target *GroupExpression) {
+	e.GetGroup().Delete(e)
+	// rule mask | OR
+	target.mask.InPlaceUnion(e.mask)
+	// clear parentGE refs work
+	for _, childG := range e.Inputs {
+		childG.removeParentGEs(e)
+	}
+	e.Inputs = e.Inputs[:0]
+	e.group = nil
+}
+
+func (e *GroupExpression) addr() unsafe.Pointer {
+	return unsafe.Pointer(e)
+}
+
+// GetWrappedLogicalPlan overrides the logical plan interface implemented by BaseLogicalPlan.
+func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
+	return e.LogicalPlan
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -175,26 +188,26 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	}
 	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
 	// currently the schemaProducer side logical op is still useful for group schema.
-	// just add this mock for a mocked logical-plan which is with the id less than 0.
-	//  todo: functional dependency
+	tmpFD := e.LogicalPlan.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).FDs()
 	tmpSchema := e.LogicalPlan.Schema()
 	tmpStats := e.LogicalPlan.StatsInfo()
-	// only for those new created logical op from XForm, we should rebuild their stats;
-	// in memo init phase, all logical ops has maintained their stats already, just use them.
-	if tmpStats == nil {
-		skipDeriveStats := false
-		failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
-			skipDeriveStats = val.(bool)
-		})
-		if !skipDeriveStats {
-			// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-			tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
-			if err != nil {
-				return err
-			}
+	// the leaves node may have already had their stats in join reorder est phase, while
+	// their group ndv signal is passed in CollectPredicateColumnsPoint which is applied
+	// behind join reorder rule, we should build their group ndv again (implied in DeriveStats).
+	skipDeriveStats := false
+	failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+		skipDeriveStats = val.(bool)
+	})
+	if !skipDeriveStats {
+		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
+		tmpStats, _, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
+		if err != nil {
+			return err
 		}
+		tmpFD = e.LogicalPlan.ExtractFD()
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
 	e.GetGroup().GetLogicalProperty().Stats = tmpStats
+	e.GetGroup().GetLogicalProperty().FD = tmpFD
 	return nil
 }

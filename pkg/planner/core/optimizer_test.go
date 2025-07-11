@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -124,10 +125,10 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
-	partialSort := &PhysicalSort{
+	partialSort := &physicalop.PhysicalSort{
 		IsPartialSort: true,
 	}
-	sort := &PhysicalSort{}
+	sort := &physicalop.PhysicalSort{}
 	recv := &PhysicalExchangeReceiver{}
 	passSender := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -166,6 +167,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	const expStreamCount int64 = 8
 	sctx := MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -207,7 +209,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
-	partialSort1 := &PhysicalSort{
+	partialSort1 := &physicalop.PhysicalSort{
 		IsPartialSort: true,
 	}
 	tableReader.tablePlan = passSender
@@ -223,7 +225,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	// Window <- Sort <- Window(x) <- Sort <- ExchangeReceiver <- ExchangeSender(x)
 	// Fine-grained shuffle is disabled because Window is not hash partition.
 	nonPartWindow := &PhysicalWindow{}
-	partialSort1 = &PhysicalSort{
+	partialSort1 = &physicalop.PhysicalSort{
 		IsPartialSort: true,
 	}
 	tableReader.tablePlan = passSender
@@ -401,4 +403,54 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
 	start(hashJoin, 0, 3, 0)
 	require.NoError(t, failpoint.Disable(fpName2))
+}
+
+func TestCanTiFlashUseHashJoinV2(t *testing.T) {
+	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	col0 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col0)
+	require.True(t, err == nil)
+	sf, isSF := cond.(*expression.ScalarFunction)
+	require.True(t, isSF)
+	hashJoin := &PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can use hash join v2
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionOptimized
+	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can not use hash join v2 due to enabling join spill
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 1
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can use hash join v2 due to TiFlashMaxQueryMemoryPerNode * TiFlashQuerySpillRatio = 0
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 1
+	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can not use hash join v2 due to enabling join spill
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0.7
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
+	hashJoin = &PhysicalHashJoin{}
+	// can not use hash join v2 due to cross join
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+
+	hashJoin = &PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+	hashJoin.IsNullEQ = append(hashJoin.IsNullEQ, true)
+	// can not use hash join v2 due to null eq
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
 }

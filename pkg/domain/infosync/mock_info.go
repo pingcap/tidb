@@ -15,7 +15,9 @@
 package infosync
 
 import (
-	"fmt"
+	"net"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -51,7 +53,7 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	if idx >= len(m.infos) || idx < 0 {
 		return errors.New("server idx out of bound")
 	}
-	m.infos = append(m.infos[:idx], m.infos[idx+1:]...)
+	m.infos = slices.Delete(m.infos, idx, idx+1)
 	return nil
 }
 
@@ -59,10 +61,10 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 func (m *MockGlobalServerInfoManager) DeleteByExecID(execID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := 0; i < len(m.infos); i++ {
-		name := fmt.Sprintf("%s:%d", m.infos[i].IP, m.infos[i].Port)
+	for i := range m.infos {
+		name := net.JoinHostPort(m.infos[i].IP, strconv.FormatUint(uint64(m.infos[i].Port), 10))
 		if name == execID {
-			m.infos = append(m.infos[:i], m.infos[i+1:]...)
+			m.infos = slices.Delete(m.infos, i, i+1)
 			break
 		}
 	}
@@ -85,14 +87,18 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 
 	// TODO: each mock server can have different config
 	info := &ServerInfo{
-		ID:             id,
-		IP:             cfg.AdvertiseAddress,
-		Port:           m.mockServerPort,
-		StatusPort:     cfg.Status.StatusPort,
-		Lease:          cfg.Lease,
-		StartTimestamp: time.Now().Unix(),
-		Labels:         cfg.Labels,
-		ServerIDGetter: serverIDGetter,
+		StaticServerInfo: StaticServerInfo{
+			ID:             id,
+			IP:             cfg.AdvertiseAddress,
+			Port:           m.mockServerPort,
+			StatusPort:     cfg.Status.StatusPort,
+			Lease:          cfg.Lease,
+			StartTimestamp: time.Now().Unix(),
+			ServerIDGetter: serverIDGetter,
+		},
+		DynamicServerInfo: DynamicServerInfo{
+			Labels: cfg.Labels,
+		},
 	}
 
 	m.mockServerPort++

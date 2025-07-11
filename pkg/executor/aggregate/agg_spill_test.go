@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -56,7 +56,7 @@ func getRandString() string {
 
 func generateData(rowNum int, ndv int) ([]string, []float64) {
 	keys := make([]string, 0)
-	for i := 0; i < ndv; i++ {
+	for range ndv {
 		keys = append(keys, getRandString())
 	}
 
@@ -64,7 +64,7 @@ func generateData(rowNum int, ndv int) ([]string, []float64) {
 	col1Data := make([]float64, 0)
 
 	// Generate data
-	for i := 0; i < rowNum; i++ {
+	for range rowNum {
 		key := keys[rand.Intn(ndv)]
 		col0Data = append(col0Data, key)
 		col1Data = append(col1Data, float64(rand.Intn(10000000)))
@@ -94,7 +94,7 @@ func buildMockDataSource(opt testutil.MockDataSourceParameters, col0Data []strin
 		mockDatasource.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(mockDatasource), maxChunkSize)
 	}
 
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		chkIdx := i / maxChunkSize
 		mockDatasource.GenData[chkIdx].AppendString(0, col0Data[i])
 		mockDatasource.GenData[chkIdx].AppendFloat64(1, col1Data[i])
@@ -146,10 +146,11 @@ func generateResult(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDa
 		}
 
 		rowNum := chk.NumRows()
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			resultRows = append(resultRows, chk.GetRow(i))
 		}
 	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 	aggExec.Close()
 
 	require.False(t, aggExec.IsSpillTriggeredForTest())
@@ -190,10 +191,10 @@ func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSource
 }
 
 func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -285,7 +286,7 @@ func checkResult(expectResult []chunk.Row, actualResult []chunk.Row, retTypes []
 	}
 
 	rowNum := len(expectResult)
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		if expectResult[i].ToString(retTypes) != actualResult[i].ToString(retTypes) {
 			return false
 		}
@@ -311,10 +312,11 @@ func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate
 		}
 
 		rowNum := chk.NumRows()
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			resultRows = append(resultRows, chk.GetRow(i))
 		}
 	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 	aggExec.Close()
 
 	require.True(t, aggExec.IsSpillTriggeredForTest())
@@ -351,6 +353,7 @@ func fallBackActionTest(t *testing.T) {
 		}
 		chk.Reset()
 	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 	aggExec.Close()
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
@@ -373,6 +376,7 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	go func() {
 		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
 		once.Do(func() {
+			require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 			aggExec.Close()
 		})
 		goRoutineWaiter.Done()
@@ -382,6 +386,7 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 		err := aggExec.Next(tmpCtx, chk)
 		if err != nil {
 			once.Do(func() {
+				require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 				err = aggExec.Close()
 				require.Equal(t, nil, err)
 			})
@@ -393,6 +398,7 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 		chk.Reset()
 	}
 	once.Do(func() {
+		require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 		aggExec.Close()
 	})
 }
@@ -435,7 +441,7 @@ func TestGetCorrectResult(t *testing.T) {
 	}()
 
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		executeCorrecResultTest(t, ctx, nil, dataSource, result)
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
 	}
@@ -445,7 +451,7 @@ func TestGetCorrectResult(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		fallBackActionTest(t)
 	}
 }
@@ -485,7 +491,7 @@ func TestRandomFail(t *testing.T) {
 
 	// Test is successful when all sqls are not hung
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		randomFailTest(t, ctx, nil, dataSource)
 		randomFailTest(t, ctx, aggExec, dataSource)
 	}

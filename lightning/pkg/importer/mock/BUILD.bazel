@@ -11,7 +11,7 @@ go_library(
         "//pkg/errno",
         "//pkg/lightning/mydump",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/util/dbterror",
         "//pkg/util/filter",
         "@com_github_docker_go_units//:go-units",
@@ -29,7 +29,7 @@ go_test(
     deps = [
         "//lightning/pkg/importer",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "@com_github_stretchr_testify//require",
     ],
 )

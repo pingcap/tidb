@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -26,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	mmodel "github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -92,7 +93,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 		if e.updatedRowKeys[content.Start] == nil {
 			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
-		handle, err := content.HandleCols.BuildHandleByDatums(row)
+		handle, err := content.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, row)
 		if err != nil {
 			return err
 		}
@@ -166,7 +167,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 				}
 			}
 		} else {
-			mergedData = append([]types.Datum{}, newTableData...)
+			mergedData = slices.Clone(newTableData)
 		}
 
 		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
@@ -424,7 +425,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 			}
 		}
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+		for rowIdx := range chk.NumRows() {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
 			// precomputes handles
@@ -458,7 +459,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
+func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}

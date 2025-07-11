@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -110,7 +109,7 @@ func TestColumnHashCode(t *testing.T) {
 
 func TestColumn2Expr(t *testing.T) {
 	cols := make([]*Column, 0, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		cols = append(cols, &Column{UniqueID: int64(i)})
 	}
 
@@ -135,9 +134,9 @@ func TestColInfo2Col(t *testing.T) {
 func TestIndexInfo2Cols(t *testing.T) {
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: pmodel.NewCIStr("0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: pmodel.NewCIStr("0")}, &model.IndexColumn{Name: pmodel.NewCIStr("1")}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: ast.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: ast.NewCIStr("0")}, &model.IndexColumn{Name: ast.NewCIStr("1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
@@ -169,7 +168,7 @@ func TestColHybird(t *testing.T) {
 	ft := types.NewFieldType(mysql.TypeBit)
 	col := &Column{RetType: ft, Index: 0}
 	input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		num, err := types.ParseBitStr(fmt.Sprintf("0b%b", i))
 		require.NoError(t, err)
 		input.AppendBytes(0, num)
@@ -197,7 +196,7 @@ func TestColHybird(t *testing.T) {
 	ft = types.NewFieldType(mysql.TypeEnum)
 	col.RetType = ft
 	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		input.AppendEnum(0, types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
 	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
@@ -214,7 +213,7 @@ func TestColHybird(t *testing.T) {
 	ft = types.NewFieldType(mysql.TypeSet)
 	col.RetType = ft
 	input = chunk.New([]*types.FieldType{ft}, 1024, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		input.AppendSet(0, types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
 	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)

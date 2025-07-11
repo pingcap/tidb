@@ -23,13 +23,11 @@ import (
 
 func TestDomainCtx(t *testing.T) {
 	ctx := mock.NewContext()
-	require.NotEqual(t, "", domainKey.String())
-
-	BindDomain(ctx, nil)
+	ctx.BindDomainAndSchValidator(nil, nil)
 	v := GetDomain(ctx)
 	require.Nil(t, v)
 
-	ctx.ClearValue(domainKey)
+	ctx.BindDomainAndSchValidator(&Domain{}, nil)
 	v = GetDomain(ctx)
-	require.Nil(t, v)
+	require.NotNil(t, v)
 }

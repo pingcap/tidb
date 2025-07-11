@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -99,7 +99,7 @@ func generateTableSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 func TestLimitAndTableScan(t *testing.T) {
 	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit := createChunkSizeControlKit(t, "create table t (a int, primary key (a))")
-	tbl, err := kit.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := kit.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 
@@ -130,7 +130,7 @@ func TestLimitAndTableScan(t *testing.T) {
 func TestLimitAndIndexScan(t *testing.T) {
 	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit := createChunkSizeControlKit(t, "create table t (a int, index idx_a(a))")
-	tbl, err := kit.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := kit.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 	idx := tbl.Meta().Indices[0].ID

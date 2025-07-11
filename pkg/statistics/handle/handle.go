@@ -15,6 +15,7 @@
 package handle
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +48,18 @@ const (
 	// StatsPrompt is the prompt for stats owner manager.
 	StatsPrompt = "stats"
 )
+
+// AttachStatsCollector attaches the stats collector for the session.
+// this function is registered in BootstrapSession in pkg/session/session.go
+var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
+
+// DetachStatsCollector removes the stats collector for the session
+// this function is registered in BootstrapSession in pkg/session/session.go
+var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
 
 // Handle can update stats info periodically.
 type Handle struct {
@@ -111,11 +125,10 @@ func (h *Handle) Clear() {
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(
-	_, /* ctx, keep it for feature usage */
+	ctx context.Context,
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	is infoschema.InfoSchema,
-	pool pkgutil.SessionPool,
+	pool pkgutil.DestroyableSessionPool,
 	tracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
@@ -140,8 +153,8 @@ func NewHandle(
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker, ddlNotifier)
-	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
+	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
@@ -198,6 +211,33 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 				})
 			}
 			return tbl
+		}
+		return nil
+	}
+	return tbl
+}
+
+// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+func (h *Handle) GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
+	return h.getPartitionStatsByID(is, pid)
+}
+
+func (h *Handle) getPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table {
+	var statsTbl *statistics.Table
+	intest.Assert(h != nil, "stats handle is nil")
+	tbl, ok := h.Get(pid)
+	if !ok {
+		tbl, ok := h.TableInfoByID(is, pid)
+		if !ok {
+			return nil
+		}
+		// TODO: it's possible don't rely on the full table meta to do it here.
+		statsTbl = statistics.PseudoTable(tbl.Meta(), false, true)
+		statsTbl.PhysicalID = pid
+		if tbl.Meta().GetPartitionInfo() == nil || h.Len() < 64 {
+			h.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{statsTbl},
+			})
 		}
 		return nil
 	}

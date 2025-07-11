@@ -5,7 +5,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -39,16 +39,16 @@ func (cx migrateToCtx) printErr(errs []error, msg string) {
 	}
 }
 
-func (cx migrateToCtx) askForContinue(targetMig *backuppb.Migration) bool {
+func (cx migrateToCtx) askForContinue(ctx context.Context, targetMig *backup.Migration) bool {
 	tbl := cx.console.CreateTable()
-	stream.AddMigrationToTable(targetMig, tbl)
+	cx.est.AddMigrationToTable(ctx, targetMig, tbl)
 	cx.console.Println("The migration going to be executed will be like: ")
 	tbl.Print()
 
 	return cx.console.PromptBool("Continue? ")
 }
 
-func (cx migrateToCtx) dryRun(f func(stream.MigrationExt) stream.MergeAndMigratedTo) error {
+func (cx migrateToCtx) dryRun(ctx context.Context, f func(stream.MigrationExt) stream.MergeAndMigratedTo) error {
 	var (
 		est     = cx.est
 		console = cx.console
@@ -60,7 +60,7 @@ func (cx migrateToCtx) dryRun(f func(stream.MigrationExt) stream.MergeAndMigrate
 	})
 
 	tbl := console.CreateTable()
-	stream.AddMigrationToTable(estBase.NewBase, tbl)
+	cx.est.AddMigrationToTable(ctx, estBase.NewBase, tbl)
 	console.Println("The new BASE migration will be like: ")
 	tbl.Print()
 	file, err := storage.SaveJSONEffectsToTmp(effects)
@@ -90,7 +90,7 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 
 	console := glue.ConsoleOperations{ConsoleGlue: glue.StdIOGlue{}}
 
-	est := stream.MigerationExtension(st)
+	est := stream.MigrationExtension(st)
 	est.Hooks = stream.NewProgressBarHooks(console)
 	migs, err := est.Load(ctx)
 	if err != nil {
@@ -120,12 +120,14 @@ func RunMigrateTo(ctx context.Context, cfg MigrateToConfig) error {
 		return nil
 	}
 	if cfg.DryRun {
-		run = cx.dryRun
+		run = func(f func(stream.MigrationExt) stream.MergeAndMigratedTo) error {
+			return cx.dryRun(ctx, f)
+		}
 	}
 
 	return run(func(est stream.MigrationExt) stream.MergeAndMigratedTo {
-		return est.MergeAndMigrateTo(ctx, targetVersion, stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
-			return cfg.Yes || cx.askForContinue(m)
+		return est.MergeAndMigrateTo(ctx, targetVersion, stream.MMOptInteractiveCheck(func(ctx context.Context, m *backup.Migration) bool {
+			return cfg.Yes || cx.askForContinue(ctx, m)
 		}))
 	})
 }

@@ -39,8 +39,6 @@ type MemRoot interface {
 }
 
 var (
-	// structSizeBackendCtx is the size of litBackendCtx.
-	structSizeBackendCtx int64
 	// structSizeEngineInfo is the size of engineInfo.
 	structSizeEngineInfo int64
 	// structSizeWriterCtx is the size of writerContext.
@@ -48,27 +46,24 @@ var (
 )
 
 func init() {
-	structSizeBackendCtx = int64(unsafe.Sizeof(litBackendCtx{}))
 	structSizeEngineInfo = int64(unsafe.Sizeof(engineInfo{}))
 	structSizeWriterCtx = int64(unsafe.Sizeof(writerContext{}))
 }
 
 // memRootImpl is an implementation of MemRoot.
 type memRootImpl struct {
-	maxLimit      int64
-	currUsage     int64
-	structSize    map[string]int64
-	backendCtxMgr *litBackendCtxMgr
-	mu            sync.RWMutex
+	maxLimit   int64
+	currUsage  int64
+	structSize map[string]int64
+	mu         sync.RWMutex
 }
 
 // NewMemRootImpl creates a new memRootImpl.
-func NewMemRootImpl(maxQuota int64, bcCtxMgr *litBackendCtxMgr) *memRootImpl {
+func NewMemRootImpl(maxQuota int64) *memRootImpl {
 	return &memRootImpl{
-		maxLimit:      maxQuota,
-		currUsage:     0,
-		structSize:    make(map[string]int64, 10),
-		backendCtxMgr: bcCtxMgr,
+		maxLimit:   maxQuota,
+		currUsage:  0,
+		structSize: make(map[string]int64, 10),
 	}
 }
 
@@ -142,6 +137,6 @@ func (m *memRootImpl) ReleaseWithTag(tag string) {
 }
 
 // RefreshConsumption implements MemRoot.
-func (m *memRootImpl) RefreshConsumption() {
-	m.backendCtxMgr.UpdateMemoryUsage()
+func (*memRootImpl) RefreshConsumption() {
+	// TODO(tagnenta): find a better solution that don't rely on backendCtxMgr.
 }

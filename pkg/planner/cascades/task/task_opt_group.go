@@ -31,7 +31,7 @@ type OptGroupTask struct {
 }
 
 // NewOptGroupTask returns a new optimizing group task.
-func NewOptGroupTask(ctx cascadesctx.CascadesContext, g *memo.Group) base.Task {
+func NewOptGroupTask(ctx cascadesctx.Context, g *memo.Group) base.Task {
 	return &OptGroupTask{BaseTask: BaseTask{
 		ctx: ctx,
 	}, group: g}

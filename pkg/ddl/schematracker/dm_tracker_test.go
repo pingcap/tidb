@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -65,13 +64,13 @@ func TestNoNumLimit(t *testing.T) {
 	execCreate(t, tracker, sql)
 
 	sql = "create table test.t_too_many_indexes ("
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i != 0 {
 			sql += ","
 		}
 		sql += fmt.Sprintf("c%d int", i)
 	}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sql += ","
 		sql += fmt.Sprintf("key k%d(c%d)", i, i)
 	}
@@ -105,7 +104,7 @@ func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 }
 
 func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, table string) *model.TableInfo {
-	tblInfo, err := tracker.TableByName(context.Background(), pmodel.NewCIStr(schema), pmodel.NewCIStr(table))
+	tblInfo, err := tracker.TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
 	require.NoError(t, err)
 	return tblInfo
 }
@@ -165,14 +164,6 @@ func TestDropColumn(t *testing.T) {
 	require.Equal(t, 1, len(tblInfo.Columns))
 }
 
-func TestFullTextIndex(t *testing.T) {
-	sql := "create table test.t (a text, fulltext key (a))"
-
-	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB(nil)
-	execCreate(t, tracker, sql)
-}
-
 func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected string) {
 	sctx := mock.NewContext()
 
@@ -202,7 +193,7 @@ func TestIndexLength(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 
-	err := tracker.DeleteTable(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	err := tracker.DeleteTable(ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	sql = "create table test.t(a text, b text charset ascii, c blob);"

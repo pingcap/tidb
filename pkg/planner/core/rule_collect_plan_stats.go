@@ -26,9 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -40,19 +41,20 @@ type CollectPredicateColumnsPoint struct{}
 // Optimize implements LogicalOptRule.<0th> interface.
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return plan, planChanged, nil
-	}
+	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL, "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
-	histNeeded := syncWait > 0
-	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan, histNeeded)
+	syncLoadEnabled := syncWait > 0
+	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
+	// opNum is collected via the common stats load rule, some operators may be cleaned like proj for later rule.
+	// so opNum is not that accurate, but it's enough for the memo hashmap's init capacity.
+	plan.SCtx().GetSessionVars().StmtCtx.OperatorNum = opNum
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
 	// stats loading for the determinate mode.
-	is := plan.SCtx().GetDomainInfoSchema()
+	is := plan.SCtx().GetLatestInfoSchema()
 	tblID2TblInfo := make(map[int64]*model.TableInfo)
 	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
 		tblInfo, _ := is.TableInfoByID(int64(physicalTblID))
@@ -62,10 +64,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		tblID2TblInfo[int64(physicalTblID)] = tblInfo
 	})
 
-	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, histNeeded)
-	if !histNeeded {
-		return plan, planChanged, nil
-	}
+	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, syncLoadEnabled)
 	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
 	for item, fullLoad := range predicateColumns {
 		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
@@ -79,10 +78,19 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 
 	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
+	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
-	if len(histNeededItems) > 0 {
+	if len(histNeededItems) == 0 {
+		return plan, planChanged, nil
+	}
+	if syncLoadEnabled {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, planChanged, err
+	}
+	// We are loading some unnecessary items here since the static pruning hasn't happened yet.
+	// It's not easy to solve the problem and the static pruning is being deprecated, so we just leave it here.
+	for _, item := range histNeededItems {
+		asyncload.AsyncLoadHistogramNeededItems.Insert(item.TableItemID, item.FullLoad)
 	}
 	return plan, planChanged, nil
 }
@@ -186,7 +194,7 @@ func (CollectPredicateColumnsPoint) expandStatsNeededColumnsForStaticPruning(
 	tid2pids map[int64][]int64,
 ) []model.StatsLoadItem {
 	curLen := len(histNeededItems)
-	for i := 0; i < curLen; i++ {
+	for i := range curLen {
 		partitionIDs := tid2pids[histNeededItems[i].TableID]
 		if len(partitionIDs) == 0 {
 			continue
@@ -216,9 +224,7 @@ type SyncWaitStatsLoadPoint struct{}
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return plan, planChanged, nil
-	}
+	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL, "SyncWaitStatsLoadPoint should not be called in restricted SQL mode")
 	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
 		return plan, planChanged, nil
 	}
@@ -249,12 +255,12 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
-		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+		if vardef.StatsLoadPseudoTimeout.Load() {
+			logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+		logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -269,12 +275,12 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
-		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
+		if vardef.StatsLoadPseudoTimeout.Load() {
+			logutil.ErrVerboseLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
+		logutil.ErrVerboseLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -434,7 +440,7 @@ func recordTableRuntimeStats(sctx base.PlanContext, tbls map[int64]struct{}) {
 func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *statistics.Table, skip bool, err error) {
 	dom := domain.GetDomain(sctx)
 	statsHandle := dom.StatsHandle()
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tblID)
 	if !ok {
 		return nil, false, nil

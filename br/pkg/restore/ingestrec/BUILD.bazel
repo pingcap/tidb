@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
@@ -27,7 +27,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/store/mockstore",
         "@com_github_pingcap_errors//:errors",

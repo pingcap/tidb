@@ -10,6 +10,6 @@ go_library(
         "//pkg/util/engine",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
     ],
 )

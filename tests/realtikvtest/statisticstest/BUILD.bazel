@@ -10,7 +10,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/statistics/asyncload",
         "//pkg/testkit",
         "//tests/realtikvtest",

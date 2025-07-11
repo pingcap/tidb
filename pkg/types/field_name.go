@@ -15,20 +15,19 @@
 package types
 
 import (
-	"strings"
+	"bytes"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // FieldName records the names used for mysql protocol.
 type FieldName struct {
-	OrigTblName model.CIStr
-	OrigColName model.CIStr
-	DBName      model.CIStr
-	TblName     model.CIStr
-	ColName     model.CIStr
+	OrigTblName ast.CIStr
+	OrigColName ast.CIStr
+	DBName      ast.CIStr
+	TblName     ast.CIStr
+	ColName     ast.CIStr
 
 	Hidden bool
 
@@ -44,10 +43,11 @@ const emptyName = "EMPTY_NAME"
 
 // String implements Stringer interface.
 func (name *FieldName) String() string {
-	builder := strings.Builder{}
 	if name.Hidden {
 		return emptyName
 	}
+	bs := make([]byte, 0, len(name.DBName.L)+1+len(name.TblName.L)+1+len(name.ColName.L))
+	builder := bytes.NewBuffer(bs)
 	if name.DBName.L != "" {
 		builder.WriteString(name.DBName.L + ".")
 	}
