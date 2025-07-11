@@ -1820,11 +1820,14 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		isColumnarIndex := false
+		isColumnarIndex, isFullTextIndex := false, false
 		indexIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
 			if indexInfo.IsColumnarIndex() {
 				isColumnarIndex = true
+			}
+			if indexInfo.FullTextInfo != nil {
+				isFullTextIndex = true
 			}
 			indexInfo.State = model.StateNone
 			// Set column index flag.
@@ -1847,9 +1850,18 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 
 		if isColumnarIndex {
-			// Send sync schema notification to TiFlash.
-			if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
-				logutil.DDLLogger().Warn("run drop column index but syncing TiFlash schema failed", zap.Error(err))
+			if isFullTextIndex {
+				// Send sync schema notification to TiCI.
+				for _, indexID := range indexIDs {
+					if err := infosync.DropFullTextIndex(jobCtx.stepCtx, tblInfo.ID, indexID); err != nil {
+						logutil.DDLLogger().Warn("run drop column index but droping index on TiCI failed", zap.Error(err))
+					}
+				}
+			} else {
+				// Send sync schema notification to TiFlash.
+				if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
+					logutil.DDLLogger().Warn("run drop column index but syncing TiFlash schema failed", zap.Error(err))
+				}
 			}
 		}
 
