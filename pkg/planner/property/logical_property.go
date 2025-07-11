@@ -35,3 +35,9 @@ func NewLogicalProp() *LogicalProperty {
 }
 
 // todo: ScalarProperty: usedColumns in current scalar expr, null reject, cor-related, subq contained and so on
+
+// PossibleProp is used to store the possible properties of child logical plan.
+type PossibleProp struct {
+	OrderCols   [][]*expression.Column
+	TiFlashable bool
+}
