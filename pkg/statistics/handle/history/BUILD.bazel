@@ -8,7 +8,11 @@ go_library(
     deps = [
         "//pkg/parser/model",
         "//pkg/sessionctx",
+<<<<<<< HEAD
         "//pkg/statistics/handle/cache",
+=======
+        "//pkg/statistics/handle/logutil",
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",

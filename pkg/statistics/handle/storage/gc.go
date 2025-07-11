@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -277,7 +276,11 @@ func gcTableStats(sctx sessionctx.Context,
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		cache.TableRowStatsCache.Invalidate(physicalID)
+=======
+		return nil
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
 	}
 	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
 	if !ok {
