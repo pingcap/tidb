@@ -48,6 +48,8 @@ type AccessPath struct {
 	// Case CorrCountAfterAccess > 0 : we use the exponential backoff to estimate the row count (such as we don't have a full index statistics)
 	// Default CorrCountAfterAccess = 0 : we use index of table estimate row coun directly (such as table full scan, point get etc)
 	CorrCountAfterAccess float64
+	// MinCountAfterAccess is the CountAfterAcces is row count assuming indepence of the access conditions.
+	MinCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
 	AccessConds     []expression.Expression
@@ -140,6 +142,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		Ranges:                       CloneRanges(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
 		CorrCountAfterAccess:         path.CorrCountAfterAccess,
+		MinCountAfterAccess:          path.MinCountAfterAccess,
 		CountAfterIndex:              path.CountAfterIndex,
 		AccessConds:                  CloneExprs(path.AccessConds),
 		EqCondCount:                  path.EqCondCount,

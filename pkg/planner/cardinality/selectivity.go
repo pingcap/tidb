@@ -203,12 +203,13 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, corrCnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
+			cnt, corrCnt, minCount, err := GetRowCountByIndexRanges(ctx, coll, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
 			selectivity := cnt / float64(coll.RealtimeCount)
 			corrSelectivity := corrCnt / float64(coll.RealtimeCount)
+			minSelectivity := minCount / float64(coll.RealtimeCount)
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,
 				ID:                       id,
@@ -217,6 +218,7 @@ func Selectivity(
 				numCols:                  len(idxStats.Info.Columns),
 				Selectivity:              selectivity,
 				CorrSelectivity:          corrSelectivity,
+				MinSelectivity:           minSelectivity,
 				partCover:                partCover,
 				minAccessCondsForDNFCond: minAccessCondsForDNFCond,
 			})
@@ -558,6 +560,8 @@ type StatsNode struct {
 	// That is - it is the selectivity assuming the most filtering index column only, and all other
 	// columns are correlated with this column.
 	CorrSelectivity float64
+	// MinSelectivity indicates the minimum selectivity of this index - assuming selectivity independence.
+	MinSelectivity float64
 	// numCols is the number of columns contained in the index or column(which is always 1).
 	numCols int
 	// partCover indicates whether the bit in the mask is for a full cover or partial cover. It is only true
