@@ -38,7 +38,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+=======
+	"github.com/pingcap/tidb/pkg/util/intest"
+>>>>>>> 01c2af36e93 (executor: fix the issue during analyze when first col is virtual col (#62333))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -145,17 +149,37 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Base().Samples {
+<<<<<<< HEAD
 		for i := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {
 				continue
 			}
 			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
+=======
+		for i, columns := range sample.Columns {
+			// Virtual columns will be decoded as null first.
+			_, err := decoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
+>>>>>>> 01c2af36e93 (executor: fix the issue during analyze when first col is virtual col (#62333))
 			if err != nil {
 				return err
 			}
 		}
 	}
+<<<<<<< HEAD
 	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx, chk)
+=======
+	intest.AssertFunc(func() bool {
+		// Ensure all columns in the chunk have the same number of rows.
+		// Checking for virtual columns.
+		for i := 1; i < chk.NumCols(); i++ {
+			if chk.Column(i).Rows() != chk.Column(0).Rows() {
+				return false
+			}
+		}
+		return true
+	}, "all columns in chunk should have the same number of rows")
+	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), chk)
+>>>>>>> 01c2af36e93 (executor: fix the issue during analyze when first col is virtual col (#62333))
 	if err != nil {
 		return err
 	}
