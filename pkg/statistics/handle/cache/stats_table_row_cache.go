@@ -17,6 +17,7 @@
 package cache
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -76,15 +77,8 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, ids ...int64) e
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-<<<<<<< HEAD
-	c.tableRows[id] = tableRows[id]
-	for k, v := range colLength {
-		c.colLength[k] = v
-	}
-=======
 	maps.Copy(c.tableRows, tableRows)
 	maps.Copy(c.colLength, colLength)
->>>>>>> a7c824dfe0a (executor: update stats table row cache in batch (#62042))
 	return nil
 }
 
