@@ -674,7 +674,7 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 	if c.task == nil || c.isPaused.Load() {
-		log.Info("No tasks yet, skipping advancing.")
+		log.Debug("No tasks yet, skipping advancing.")
 		return nil
 	}
 
