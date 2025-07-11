@@ -210,6 +210,34 @@ var ResolveIndices4PhysicalLimit func(pp base.PhysicalPlan) (err error)
 // Attach2Task4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
 var Attach2Task4PhysicalLimit func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// GetPlanCostVer14PhysicalTopN will be called by PhysicalLimit in physicalOp pkg.
+var GetPlanCostVer14PhysicalTopN func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalTopN will be called by PhysicalLimit in physicalOp pkg.
+var GetPlanCostVer24PhysicalTopN func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
+var Attach2Task4PhysicalTopN func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// ResolveIndices4PhysicalTopN will be called by PhysicalTopN in physicalOp pkg.
+var ResolveIndices4PhysicalTopN func(pp base.PhysicalPlan) (err error)
+
+// GetPlanCostVer24PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
+var GetPlanCostVer24PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// ResolveIndices4PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
+var ResolveIndices4PhysicalSelection func(pp base.PhysicalPlan) (err error)
+
+// Attach2Task4PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
+var Attach2Task4PhysicalSelection func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer14PhysicalSelection will be called by PhysicalSelection in physicalOp pkg.
+var GetPlanCostVer14PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -225,6 +253,11 @@ var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (fl
 // CompareTaskCost export the compareTaskCost from core pkg for cascades usage.
 var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (
 	curIsBetter bool, err error)
+
+// **************************************** plan clone related ********************************************
+
+// CloneExpressionsForPlanCache is used to clone expressions for plan cache.
+var CloneExpressionsForPlanCache func(exprs, cloned []expression.Expression) []expression.Expression
 
 // ****************************************** optimize portal *********************************************
 

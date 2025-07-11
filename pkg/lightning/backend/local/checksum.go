@@ -48,6 +48,7 @@ const (
 	maxErrorRetryCount              = 3
 	defaultGCLifeTime               = 100 * time.Hour
 	lightningServicePrefix          = "lightning"
+	importIntoServicePrefix         = "import-into"
 )
 
 var (
@@ -299,6 +300,19 @@ func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 	}
 }
 
+// NewTiKVChecksumManagerForImportInto return a new tikv checksum manager
+func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName string) *TiKVChecksumManager {
+	prefix := fmt.Sprintf("%s-%d", importIntoServicePrefix, taskID)
+	return &TiKVChecksumManager{
+		client:                    store.GetClient(),
+		manager:                   newGCTTLManager(store.(kv.StorageWithPD).GetPDClient(), prefix),
+		distSQLScanConcurrency:    distSQLScanConcurrency,
+		backoffWeight:             backoffWeight,
+		resourceGroupName:         resourceGroupName,
+		explicitRequestSourceType: importIntoServicePrefix,
+	}
+}
+
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
@@ -312,6 +326,10 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 
 	distSQLScanConcurrency := int(e.distSQLScanConcurrency)
 	for i := range maxErrorRetryCount {
+		log.FromContext(ctx).Info("checksum table",
+			zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name),
+			zap.Int("distSQLConcurrency", distSQLScanConcurrency),
+			zap.Int("backoffWeight", e.backoffWeight))
 		_ = executor.Each(func(request *kv.Request) error {
 			request.Concurrency = distSQLScanConcurrency
 			return nil

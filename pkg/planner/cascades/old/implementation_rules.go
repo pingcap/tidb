@@ -270,7 +270,7 @@ func (*ImplSelection) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (ma
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalSel := expr.ExprNode.(*logicalop.LogicalSelection)
-	physicalSel := plannercore.PhysicalSelection{
+	physicalSel := physicalop.PhysicalSelection{
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.QueryBlockOffset(), reqProp.CloneEssentialFields())
 	switch expr.Group.EngineType {
@@ -384,7 +384,7 @@ func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 func (*ImplTopN) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	lt := expr.ExprNode.(*logicalop.LogicalTopN)
 	resultProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	topN := plannercore.PhysicalTopN{
+	topN := physicalop.PhysicalTopN{
 		ByItems: lt.ByItems,
 		Count:   lt.Count,
 		Offset:  lt.Offset,

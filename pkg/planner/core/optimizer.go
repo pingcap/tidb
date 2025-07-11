@@ -439,10 +439,10 @@ func refineCETrace(sctx base.PlanContext) {
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
 func mergeContinuousSelections(p base.PhysicalPlan) {
-	if sel, ok := p.(*PhysicalSelection); ok {
+	if sel, ok := p.(*physicalop.PhysicalSelection); ok {
 		for {
 			childSel := sel.Children()[0]
-			tmp, ok := childSel.(*PhysicalSelection)
+			tmp, ok := childSel.(*physicalop.PhysicalSelection)
 			if !ok {
 				break
 			}
@@ -849,7 +849,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			helper.clear()
 		}
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalProjection:
