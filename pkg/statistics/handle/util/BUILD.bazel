@@ -41,11 +41,18 @@ go_library(
 go_test(
     name = "util_test",
     timeout = "short",
-    srcs = ["ddl_event_test.go"],
+    srcs = [
+        "ddl_event_test.go",
+        "util_test.go",
+    ],
     embed = [":util"],
     flaky = True,
     deps = [
+        "//pkg/domain/infosync",
         "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )
