@@ -56,6 +56,7 @@ const (
 	s3ProviderOption     = "s3.provider"
 	s3RoleARNOption      = "s3.role-arn"
 	s3ExternalIDOption   = "s3." + S3ExternalID
+	s3ProfileOption      = "s3.profile"
 	notFound             = "NotFound"
 	// number of retries to make of operations.
 	maxRetries = 7
@@ -180,6 +181,7 @@ type S3BackendOptions struct {
 	UseAccelerateEndpoint bool   `json:"use-accelerate-endpoint" toml:"use-accelerate-endpoint"`
 	RoleARN               string `json:"role-arn" toml:"role-arn"`
 	ExternalID            string `json:"external-id" toml:"external-id"`
+	Profile               string `json:"profile" toml:"profile"`
 	ObjectLockEnabled     bool   `json:"object-lock-enabled" toml:"object-lock-enabled"`
 }
 
@@ -203,11 +205,14 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 		options.UseAccelerateEndpoint {
 		options.ForcePathStyle = false
 	}
-	if options.AccessKey == "" && options.SecretAccessKey != "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "access_key not found")
-	}
-	if options.AccessKey != "" && options.SecretAccessKey == "" {
-		return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+	// When not using a profile, if either key is provided, both must be provided
+	if options.Profile == "" {
+		if options.AccessKey == "" && options.SecretAccessKey != "" {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "access_key not found")
+		}
+		if options.AccessKey != "" && options.SecretAccessKey == "" {
+			return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
+		}
 	}
 
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
@@ -224,6 +229,8 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.RoleArn = options.RoleARN
 	s3.ExternalId = options.ExternalID
 	s3.Provider = options.Provider
+	s3.Profile = options.Profile
+
 	return nil
 }
 
@@ -241,6 +248,8 @@ func defineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
 	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")
 	flags.String(s3ExternalIDOption, "", "(experimental) Set the external ID when assuming the role to access AWS S3")
+	flags.String(s3ProfileOption, "", "(experimental) Set the AWS profile to use for AWS S3 authentication. "+
+		"Command line options take precedence over profile settings")
 }
 
 // parseFromFlags parse S3BackendOptions from command line flags.
@@ -284,6 +293,11 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	options.Profile, err = flags.GetString(s3ProfileOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -362,16 +376,25 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
 	}
-	cred, err := autoNewCred(&qs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if cred != nil {
-		awsConfig.WithCredentials(cred)
+	// When using a profile, let AWS SDK handle credentials through the profile
+	// Don't call autoNewCred as it interferes with profile-based authentication
+	if qs.Profile == "" {
+		cred, err := autoNewCred(&qs)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if cred != nil {
+			awsConfig.WithCredentials(cred)
+		}
 	}
 	// awsConfig.WithLogLevel(aws.LogDebugWithSigning)
 	awsSessionOpts := session.Options{
 		Config: *awsConfig,
+	}
+	if qs.Profile != "" {
+		awsSessionOpts.Profile = qs.Profile
+		// Use default credential chain when profile is specified
+		awsSessionOpts.SharedConfigState = session.SharedConfigEnable
 	}
 	ses, err := session.NewSessionWithOptions(awsSessionOpts)
 	if err != nil {
