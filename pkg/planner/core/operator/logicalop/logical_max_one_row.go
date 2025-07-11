@@ -52,10 +52,10 @@ func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	// MaxOneRow forbids any condition to push down.
-	p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return predicates, p
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+	return predicates, p, err
 }
 
 // PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.

@@ -76,15 +76,18 @@ func (p LogicalExpand) Init(ctx base.PlanContext, offset int) *LogicalExpand {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
 	// condition related with grouping column shouldn't be pushed down through it.
 	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
 	// 		1. agg function related filters. (these condition is always above aggregate)
 	// 		2. group-by item related filters. (there condition is always related with grouping sets columns, which can't be pushed down)
 	// As a whole, we banned all the predicates pushing-down logic here that remained in Expand OP, and constructing a new selection above it if any.
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-	return append(remained, predicates...), child
+	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(remained, predicates...), child, nil
 }
 
 // PruneColumns implement the base.LogicalPlan.<2nd> interface.
