@@ -2448,7 +2448,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		result.AppendUint64(8, uint64(runInfo.ImportRows))
 	} else if info.Status == importer.JobStatusFinished {
 		// successful import job
-		result.AppendUint64(8, uint64(info.Summary.RowCnt))
+		result.AppendUint64(8, uint64(info.Summary.ImportedRows))
 	} else {
 		// failed import job
 		result.AppendNull(8)
@@ -2493,7 +2493,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 }
 
 func handleImportJobInfo(
-	ctx context.Context, sctx sessionctx.Context,
+	ctx context.Context, location *time.Location,
 	info *importer.JobInfo, result *chunk.Chunk,
 ) error {
 	var (
@@ -2503,7 +2503,7 @@ func handleImportJobInfo(
 
 	if info.Status == importer.JobStatusRunning {
 		// need to get more info from distributed framework for running jobs
-		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, sctx, info.ID)
+		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, location, info.ID)
 		if err != nil {
 			return err
 		}
@@ -2637,6 +2637,8 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	loc := sctx.GetSessionVars().Location()
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
@@ -2647,7 +2649,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(ctx, sctx, info, e.result)
+		return handleImportJobInfo(ctx, loc, info, e.result)
 	}
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
@@ -2659,7 +2661,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return err
 	}
 	for _, info := range infos {
-		if err2 := handleImportJobInfo(ctx, sctx, info, e.result); err2 != nil {
+		if err2 := handleImportJobInfo(ctx, loc, info, e.result); err2 != nil {
 			return err2
 		}
 	}

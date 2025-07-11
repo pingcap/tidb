@@ -25,6 +25,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mockSummary(rowCnt int64) *importer.Summary {
+	return &importer.Summary{
+		ImportedRows: rowCnt,
+	}
+}
+
 func jobInfoEqual(t *testing.T, expected, got *importer.JobInfo) {
 	cloned := *expected
 	cloned.CreateTime = got.CreateTime
@@ -48,7 +54,7 @@ func TestJobHappyPath(t *testing.T) {
 	}{
 		{
 			action: func(jobID int64) {
-				require.NoError(t, importer.FinishJob(ctx, conn, jobID, importer.MockSummary(111)))
+				require.NoError(t, importer.FinishJob(ctx, conn, jobID, mockSummary(111)))
 			},
 			expectStatus:   "finished",
 			expectStep:     "",
@@ -56,7 +62,7 @@ func TestJobHappyPath(t *testing.T) {
 		},
 		{
 			action: func(jobID int64) {
-				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error", importer.MockSummary(111)))
+				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error", mockSummary(111)))
 			},
 			expectStatus:   "failed",
 			expectStep:     importer.JobStepValidating,
@@ -133,7 +139,7 @@ func TestJobHappyPath(t *testing.T) {
 		require.False(t, gotJobInfo.EndTime.IsZero())
 		jobInfo.Status = c.expectStatus
 		jobInfo.Step = c.expectStep
-		jobInfo.Summary = importer.MockSummary(c.expectedRowCnt)
+		jobInfo.Summary = mockSummary(c.expectedRowCnt)
 		jobInfo.ErrorMessage = c.expectedErrMsg
 		jobInfoEqual(t, jobInfo, gotJobInfo)
 		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
@@ -307,7 +313,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
-	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", importer.MockSummary(0)))
+	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", mockSummary(0)))
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
 		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
@@ -319,7 +325,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobInfo.Status = "failed"
 	jobInfo.Step = importer.JobStepImporting
 	jobInfo.ErrorMessage = "failed"
-	jobInfo.Summary = importer.MockSummary(0)
+	jobInfo.Summary = mockSummary(0)
 	jobInfoEqual(t, jobInfo, gotJobInfos[0])
 	require.False(t, gotJobInfos[0].StartTime.IsZero())
 	require.False(t, gotJobInfos[0].EndTime.IsZero())

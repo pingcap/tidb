@@ -65,7 +65,7 @@ func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row 
 	if jobInfo.Summary == nil {
 		s.Equal("<nil>", row[fmap["ImportedRows"]].(string))
 	} else {
-		s.Equal(strconv.Itoa(int(jobInfo.Summary.RowCnt)), row[fmap["ImportedRows"]])
+		s.Equal(strconv.Itoa(int(jobInfo.Summary.ImportedRows)), row[fmap["ImportedRows"]])
 	}
 	s.Regexp(jobInfo.ErrorMessage, row[fmap["ResultMessage"]])
 	s.Equal(jobInfo.CreatedBy, row[fmap["CreatedBy"]])
@@ -127,7 +127,7 @@ func (s *mockGCSSuite) TestShowJob() {
 		Status:         "finished",
 		Step:           "",
 		Summary: &importer.Summary{
-			RowCnt: 2,
+			ImportedRows: 2,
 		},
 		ErrorMessage: "",
 	}
@@ -207,7 +207,7 @@ func (s *mockGCSSuite) TestShowJob() {
 					Status:         "running",
 					Step:           "importing",
 					Summary: &importer.Summary{
-						RowCnt: 2,
+						ImportedRows: 2,
 					},
 					ErrorMessage: "",
 				}
@@ -233,7 +233,7 @@ func (s *mockGCSSuite) TestShowJob() {
 			} else if newVal == 2 {
 				rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 				s.Len(rows, 1)
-				jobInfo.Summary.RowCnt = 4
+				jobInfo.Summary.ImportedRows = 4
 				s.compareJobInfoWithoutTime(jobInfo, rows[0])
 				// resume the taskexecutor, need disable failpoint first, otherwise the post-process subtask will be blocked
 				s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish"))
@@ -297,7 +297,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.Len(rows, 1)
 	jobInfo.Status = "finished"
 	jobInfo.Summary = &importer.Summary{
-		RowCnt: 2,
+		ImportedRows: 2,
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 	s.tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))

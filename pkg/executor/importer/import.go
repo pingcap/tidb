@@ -308,6 +308,7 @@ type ASTArgs struct {
 }
 
 // StepSummary records the number of data involved in each step.
+// The data stored might be inaccurate, such as the number of rows in encode step,
 type StepSummary struct {
 	Bytes  int64 `json:"input-bytes,omitempty"`
 	RowCnt int64 `json:"input-rows,omitempty"`
@@ -324,14 +325,8 @@ type Summary struct {
 
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
 
-	RowCnt int64 `json:"row-count,omitempty"`
-}
-
-// MockSummary creates a mock summary for testing.
-func MockSummary(rowCnt int64) *Summary {
-	return &Summary{
-		RowCnt: rowCnt,
-	}
+	// ImportedRows is the number of rows imported into TiKV.
+	ImportedRows int64 `json:"row-count,omitempty"`
 }
 
 // LoadDataController load data controller.

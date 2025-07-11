@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -57,8 +56,6 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	jobID, err := strconv.Atoi(rs[0][0].(string))
 	require.NoError(s.T(), err)
 
-	time.Sleep(time.Second)
-
 	// Check the result
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 
@@ -71,7 +68,7 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	// since we don't know the exact number of rows before encoding.
 	require.EqualValues(s.T(), 10000, summaries.MergeSummary.RowCnt)
 	require.EqualValues(s.T(), 10000, summaries.IngestSummary.RowCnt)
-	require.EqualValues(s.T(), 10000, summaries.RowCnt)
+	require.EqualValues(s.T(), 10000, summaries.ImportedRows)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))
@@ -129,7 +126,7 @@ func (s *mockGCSSuite) TestLocallSortSummary() {
 	require.NoError(s.T(), json.Unmarshal([]byte(rs[0][0].(string)), &summaries))
 
 	require.EqualValues(s.T(), 0, summaries.MergeSummary.RowCnt)
-	require.EqualValues(s.T(), 10000, summaries.RowCnt)
+	require.EqualValues(s.T(), 10000, summaries.ImportedRows)
 
 	rs = s.tk.MustQuery("show import jobs where Job_ID = ?", jobID).Rows()
 	importedRows, err := strconv.Atoi(rs[0][fmap["ImportedRows"]].(string))

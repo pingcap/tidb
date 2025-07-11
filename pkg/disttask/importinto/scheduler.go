@@ -541,13 +541,13 @@ func updateTaskSummary(
 	case proto.ImportStepWriteAndIngest:
 		importSummary.IngestSummary = p.summary
 	case proto.ImportStepPostProcess:
-		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, currStep)
+		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		for _, subtaskSummary := range subtaskSummaries {
-			importSummary.RowCnt += subtaskSummary.RowCnt.Load()
+			importSummary.ImportedRows += subtaskSummary.RowCnt.Load()
 		}
 	}
 
@@ -616,14 +616,12 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 		}
 	}
 
-	// we have already switch import-mode when switch to post-process step.
-	sch.unregisterTask(ctx, task)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, summary.RowCnt); err != nil {
+				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, summary.ImportedRows); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()

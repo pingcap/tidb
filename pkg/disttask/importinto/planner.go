@@ -334,9 +334,9 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 			},
 			Plan: p.Plan,
 		}
+		p.summary.Bytes = p.Plan.TotalFileSize
 		for _, chunk := range chunks {
 			p.summary.RowCnt = max(p.summary.RowCnt, chunk.RowIDMax)
-			p.summary.Bytes += chunk.FileSize
 		}
 		importSpecs = append(importSpecs, importSpec)
 	}

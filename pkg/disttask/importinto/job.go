@@ -166,11 +166,13 @@ type RuntimeInfo struct {
 	Total      int64
 }
 
+var notAvailable = "N/A"
+
 // Percent returns the progress percentage of the current step.
 func (ri *RuntimeInfo) Percent() string {
 	// Currently, we can't track the progress of post process
 	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit {
-		return "N/A"
+		return notAvailable
 	}
 
 	percentage := 0.0
@@ -200,7 +202,7 @@ func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
 		s = ri.Processed / duration
 	}
 
-	remainTime := "N/A"
+	remainTime := notAvailable
 	if s > 0 && ri.Total > 0 {
 		remainSecond := max((ri.Total-ri.Processed)/s, 0)
 		remainTime = formatSecondToTime(remainSecond)
@@ -234,7 +236,8 @@ func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
 
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
 func GetRuntimeInfoForJob(
-	ctx context.Context, sctx sessionctx.Context,
+	ctx context.Context,
+	location *time.Location,
 	jobID int64,
 ) (*RuntimeInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
@@ -289,7 +292,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	if task.Step == proto.ImportStepPostProcess {
-		ri.ImportRows = taskSummary.RowCnt
+		ri.ImportRows = taskSummary.ImportedRows
 	} else if task.Step != proto.ImportStepWriteAndIngest && task.Step != proto.ImportStepImport {
 		ri.ImportRows = 0
 	}
@@ -304,7 +307,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	if !latestTime.IsZero() {
-		ri.UpdateTime, err = convertToMySQLTime(latestTime, sctx.GetSessionVars().Location())
+		ri.UpdateTime, err = convertToMySQLTime(latestTime, location)
 		if err != nil {
 			return nil, err
 		}

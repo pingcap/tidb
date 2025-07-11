@@ -143,6 +143,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 }
 
 func TestGetTaskImportedRows(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -195,7 +196,9 @@ func TestGetTaskImportedRows(t *testing.T) {
 
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepImport)
 
-	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, tk.Session(), 111)
+	loc := tk.Session().GetSessionVars().Location()
+
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, loc, 111)
 	require.NoError(t, err)
 	require.EqualValues(t, 700, runInfo.ImportRows)
 	require.Equal(t, "80", runInfo.Percent())
@@ -236,13 +239,14 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
-	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, tk.Session(), 222)
+	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, tk.Session().GetSessionVars().Location(), 222)
 	require.NoError(t, err)
 	require.EqualValues(t, 300, runInfo.ImportRows)
 	require.Equal(t, "30", runInfo.Percent())
 }
 
 func TestShowImportProgress(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	fmap := plannercore.ImportIntoFieldMap
 
 	store := testkit.CreateMockStore(t)
@@ -270,7 +274,7 @@ func TestShowImportProgress(t *testing.T) {
 		EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
 		MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
 		IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-		RowCnt:        100,
+		ImportedRows:  100,
 	}
 
 	taskMeta.TaskResult, err = json.Marshal(taskSummary)
@@ -327,7 +331,9 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, tk.Session(), jobID)
+	loc := tk.Session().GetSessionVars().Location()
+
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, loc, jobID)
 	require.NoError(t, err)
 	require.EqualValues(t, 1000, runInfo.Total)
 	require.EqualValues(t, 500, runInfo.Processed)
@@ -336,7 +342,7 @@ func TestShowImportProgress(t *testing.T) {
 	// Merge step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
 
-	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, tk.Session(), jobID)
+	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, loc, jobID)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, runInfo.Total)
 	require.EqualValues(t, 0, runInfo.Processed)

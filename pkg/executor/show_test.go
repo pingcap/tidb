@@ -64,7 +64,7 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	require.True(t, c.GetRow(1).IsNull(startIdx))
 	require.True(t, c.GetRow(1).IsNull(endIdx))
 
-	jobInfo.Summary = &importer.Summary{RowCnt: 123}
+	jobInfo.Summary = &importer.Summary{ImportedRows: 123}
 	jobInfo.StartTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	jobInfo.EndTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	executor.FillOneImportJobInfo(c, jobInfo, nil)
@@ -80,7 +80,7 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 		StartTime:  types.NewTime(types.FromGoTime(ti), mysql.TypeTimestamp, 0),
 		UpdateTime: types.NewTime(types.FromGoTime(ti.Add(time.Second*5)), mysql.TypeTimestamp, 0),
 	}
-	jobInfo.Summary = &importer.Summary{RowCnt: 0}
+	jobInfo.Summary = &importer.Summary{ImportedRows: 0}
 	executor.FillOneImportJobInfo(c, jobInfo, ri)
 	require.Equal(t, "10B", c.GetRow(3).GetString(fmap["CurStepProcessedSize"]))
 	require.Equal(t, "100kB", c.GetRow(3).GetString(fmap["CurStepTotalSize"]))
