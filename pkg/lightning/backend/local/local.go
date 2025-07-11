@@ -60,15 +60,8 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-<<<<<<< HEAD
 	"github.com/tikv/pd/client/retry"
-=======
-	"github.com/tikv/pd/client/opt"
-	"github.com/tikv/pd/client/pkg/caller"
-	"github.com/tikv/pd/client/pkg/retry"
-	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/atomic"
->>>>>>> 86ed1cab628 (backend/local: add rate limiter for split region and ingest data (#61555))
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -503,20 +496,12 @@ type Backend struct {
 	supportMultiIngest  bool
 	importClientFactory ImportClientFactory
 
-<<<<<<< HEAD
-	metrics      *metric.Common
-	writeLimiter StoreWriteLimiter
-	logger       log.Logger
-	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
-	mu sync.Mutex
-=======
 	metrics       *metric.Common
 	writeLimiter  StoreWriteLimiter
 	ingestLimiter atomic.Pointer[ingestLimiter]
 	logger        log.Logger
-
-	nextgenHTTPCli *http.Client
->>>>>>> 86ed1cab628 (backend/local: add rate limiter for split region and ingest data (#61555))
+	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
+	mu sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)

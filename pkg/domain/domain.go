@@ -54,11 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	lcom "github.com/pingcap/tidb/pkg/lightning/common"
->>>>>>> 86ed1cab628 (backend/local: add rate limiter for split region and ingest data (#61555))
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"

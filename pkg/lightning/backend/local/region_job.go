@@ -856,12 +856,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			}
 			resp, err = cli.Ingest(ctx, req)
 		}
-<<<<<<< HEAD
-		if resp.GetError() != nil || err != nil {
-=======
 		limiter.Release(leader.StoreId, weight)
-		if err != nil || resp.GetError() != nil {
->>>>>>> 86ed1cab628 (backend/local: add rate limiter for split region and ingest data (#61555))
+		if resp.GetError() != nil || err != nil {
 			// remove finished sstMetas
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
 			return resp, errors.Trace(err)
