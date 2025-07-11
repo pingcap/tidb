@@ -168,10 +168,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 						}
 					}
 					if hasPriv {
-						sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
 						// if we are in a txn, should update the txn resource name to let the txn
 						// commit with the hint resource group.
 						if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+							sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
 							kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
 						}
 					} else {
