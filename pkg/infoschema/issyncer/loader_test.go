@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +35,7 @@ func TestLoadFromTS(t *testing.T) {
 	l := &Loader{
 		store:     store,
 		infoCache: infoschema.NewCache(nil, 1),
+		logger:    logutil.BgLogger(),
 	}
 	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
@@ -74,6 +76,7 @@ func TestLoadFromTS(t *testing.T) {
 	l = &Loader{
 		store:     store,
 		infoCache: infoschema.NewCache(nil, 1),
+		logger:    logutil.BgLogger(),
 	}
 	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)

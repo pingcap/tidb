@@ -100,10 +100,13 @@ func New(
 		},
 	}
 	do.schemaValidator = isvalidator.New(schemaLease)
+	mode := LoadModeAuto
 	do.loader = &Loader{
+		mode:      mode,
 		store:     store,
 		infoCache: infoCache,
 		deferFn:   &do.deferFn,
+		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 
 	return do
@@ -479,7 +482,8 @@ func (s *Syncer) GetSchemaValidator() validatorapi.Validator {
 
 // FetchAllSchemasWithTables fetches all schemas with their tables.
 func (s *Syncer) FetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
-	return s.loader.fetchAllSchemasWithTables(m)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	return s.loader.fetchAllSchemasWithTables(m, schemaCacheSize)
 }
 
 // ChangeSchemaCacheSize changes the schema cache size.
