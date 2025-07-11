@@ -51,6 +51,7 @@ type LogicalAggregation struct {
 	PossibleProperties [][]*expression.Column `hash64-equals:"true" shallow-ref:"true"`
 	InputCount         float64                // InputCount is the input count of this plan.
 
+	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
 	NoCopPushDown bool

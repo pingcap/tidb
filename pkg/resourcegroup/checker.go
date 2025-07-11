@@ -39,3 +39,10 @@ type RunawayChecker interface {
 	// CheckRuleKillAction checks whether the query should be killed according to the group settings.
 	CheckRuleKillAction() (string, bool)
 }
+
+// ConsumptionReporter is used to report raw resource consumptions.
+type ConsumptionReporter interface {
+	// ReportConsumption report the consumption directly, it's used at
+	// scenarios that the `ResourceGroupKVInterceptor` is not available.
+	ReportConsumption(resourceGroupName string, consumption *rmpb.Consumption)
+}

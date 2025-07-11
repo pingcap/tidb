@@ -124,11 +124,6 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	return lp, nil
 }
 
-// partitionTable is for those tables which implement partition.
-type partitionTable interface {
-	PartitionExpr() *tables.PartitionExpr
-}
-
 func generateHashPartitionExpr(ctx base.PlanContext, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
 	schema := expression.NewSchema(columns...)
 	// Increase the PlanID to make sure some tests will pass. The old implementation to rewrite AST builds a `TableDual`
@@ -282,7 +277,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 	tbl table.Table, partitionNames []ast.CIStr, columns []*expression.Column,
 	conds []expression.Expression, _ types.NameSlice) ([]int, error) {
 	pi := tbl.Meta().Partition
-	partExpr := tbl.(partitionTable).PartitionExpr()
+	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
 	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
@@ -819,7 +814,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl table.Table, partitionNames []ast.CIStr,
 	conds []expression.Expression, columns []*expression.Column) ([]int, error) {
 	pi := tbl.Meta().Partition
-	partExpr := tbl.(partitionTable).PartitionExpr()
+	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 
 	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, partExpr.ForListPruning, columns)
 	var used map[int]struct{}
@@ -1032,7 +1027,7 @@ func intersectionRange(start, end, newStart, newEnd int) (s int, e int) {
 
 func (s *PartitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
 	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
-	partExpr := tbl.(partitionTable).PartitionExpr()
+	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {

@@ -115,6 +115,8 @@ type stmtSummaryByDigest struct {
 	normalizedSQL string
 	tableNames    string
 	isInternal    bool
+	bindingSQL    string
+	bindingDigest string
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -287,6 +289,7 @@ type StmtExecLazyInfo interface {
 	GetEncodedPlan() (string, string, any)
 	GetBinaryPlan() string
 	GetPlanDigest() string
+	GetBindingSQLAndDigest() (string, string)
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -558,6 +561,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.tableNames = tableNames
 	ssbd.history = list.New()
 	ssbd.initialized = true
+	ssbd.bindingSQL, ssbd.bindingDigest = sei.LazyInfo.GetBindingSQLAndDigest()
 }
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {

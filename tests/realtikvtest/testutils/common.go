@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -596,6 +598,8 @@ func UpdateTiDBConfig() {
 		conf.Path = "127.0.0.1:2379"
 		if kerneltype.IsNextGen() {
 			conf.TiKVWorkerURL = "localhost:19000"
+			conf.KeyspaceName = keyspace.System
+			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
 		}
 	})
 }

@@ -85,7 +85,7 @@ func TestTraceCE(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		nodeW := resolve.NewNodeW(stmt)
-		_, _, err = plannercore.OptimizeAstNode(context.Background(), sctx, nodeW, is)
+		_, _, err = plannercore.OptimizeAstNodeNoCache(context.Background(), sctx, nodeW, is)
 		require.NoError(t, err)
 
 		traceResult := sctx.GetSessionVars().StmtCtx.OptimizerCETrace

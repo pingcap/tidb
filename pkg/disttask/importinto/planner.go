@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -415,15 +414,14 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		}, nil)
 	})
 
-	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
+	ver, err := planCtx.Store.CurrentVersion(tidbkv.GlobalTxnScope)
 	if err != nil {
 		return nil, err
 	}
-	ts := oracle.ComposeTS(pTS, lTS)
 
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
-		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ts)
+		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ver.Ver)
 		if err3 != nil {
 			return nil, err3
 		}

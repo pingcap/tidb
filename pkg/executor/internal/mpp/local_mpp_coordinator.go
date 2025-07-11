@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -502,7 +503,7 @@ func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {
 // Currently, return true if there is a limit operator in the path from current TableReader to root
 func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, foundLimit bool) bool {
 	switch x := plan.(type) {
-	case *plannercore.PhysicalLimit:
+	case *physicalop.PhysicalLimit:
 		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
 	case *plannercore.PhysicalTableReader:
 		if foundLimit {

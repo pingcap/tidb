@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -115,6 +117,10 @@ type SessionExecutor interface {
 type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
+
+	// GetPreviousSubtaskSummary gets previous subtask summaries.
+	GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
+
 	SessionExecutor
 }
 
@@ -126,6 +132,10 @@ type TaskManager struct {
 var _ SessionExecutor = &TaskManager{}
 
 var taskManagerInstance atomic.Pointer[TaskManager]
+
+// this one is only used on nextgen, and it's only initialized in user ks and
+// point to SYSTEM KS
+var dxfSvcTaskMgr atomic.Pointer[TaskManager]
 
 var (
 	// TestLastTaskID is used for test to set the last task ID.
@@ -140,6 +150,11 @@ func NewTaskManager(sePool util.SessionPool) *TaskManager {
 }
 
 // GetTaskManager gets the task manager.
+// this task manager always point to the storage of this TiDB instance, not only
+// DXF uses it, add-index and import-into also use this manager to access internal
+// sessions.
+// in nextgen, DXF service only runs on SYSTEM ks, to access it, use GetDXFSvcTaskMgr
+// instead.
 func GetTaskManager() (*TaskManager, error) {
 	v := taskManagerInstance.Load()
 	if v == nil {
@@ -151,6 +166,23 @@ func GetTaskManager() (*TaskManager, error) {
 // SetTaskManager sets the task manager.
 func SetTaskManager(is *TaskManager) {
 	taskManagerInstance.Store(is)
+}
+
+// GetDXFSvcTaskMgr returns the task manager to access DXF service.
+func GetDXFSvcTaskMgr() (*TaskManager, error) {
+	if keyspace.IsRunningOnUser() {
+		v := dxfSvcTaskMgr.Load()
+		if v == nil {
+			return nil, errors.New("DXF service task manager is not initialized")
+		}
+		return v, nil
+	}
+	return GetTaskManager()
+}
+
+// SetDXFSvcTaskMgr sets the task manager for DXF service.
+func SetDXFSvcTaskMgr(mgr *TaskManager) {
+	dxfSvcTaskMgr.Store(mgr)
 }
 
 // WithNewSession executes the function with a new session.
@@ -583,6 +615,35 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 		subtasks = append(subtasks, Row2SubTask(r))
 	}
 	return subtasks, nil
+}
+
+// GetAllSubtaskSummaryByStep gets the subtask summaries by step
+// Since it's only used for running jobs, we don't need to read from history table.
+func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
+	ctx context.Context, taskID int64, step proto.Step,
+) ([]*execute.SubtaskSummary, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select summary from mysql.tidb_background_subtask
+		where task_key = %? and step = %?`,
+		taskID, step)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
+	for _, r := range rs {
+		summary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal(hack.Slice(r.GetJSON(0).String()), summary); err != nil {
+			return nil, errors.Trace(err)
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
 }
 
 // GetSubtaskRowCount gets the subtask row count.

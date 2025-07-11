@@ -759,7 +759,7 @@ func TestSchemaValidator(t *testing.T) {
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	is := dom.InfoSchema()
-	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil, true)
+	schemaChecker := domain.NewSchemaChecker(dom.GetSchemaValidator(), is.SchemaMetaVersion(), nil, true)
 	// Make sure it will retry one time and doesn't take a long time.
 	domain.SchemaOutOfDateRetryTimes.Store(1)
 	domain.SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)
@@ -1351,4 +1351,18 @@ func TestGetAllTableInfos(t *testing.T) {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
 		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
+}
+
+func TestGetVersionFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	// Simulate the failure of getting the current version twice.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)")
+
+	tk.MustExec("alter table t add column b int")
 }

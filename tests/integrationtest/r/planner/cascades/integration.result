@@ -425,8 +425,8 @@ count(case when a <= 0 or a > 1000 then null else b end)
 4
 explain format="brief" select count(distinct case when a > 0 and a <= 1000 then b end) from t;
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		funcs:count(distinct Column#4)->Column#3
-└─Projection	10000.00	root		case(and(gt(planner__cascades__integration.t.a, 0), le(planner__cascades__integration.t.a, 1000)), planner__cascades__integration.t.b)->Column#4
+HashAgg	1.00	root		funcs:count(distinct Column#6)->Column#3
+└─Projection	10000.00	root		case(and(gt(planner__cascades__integration.t.a, 0), le(planner__cascades__integration.t.a, 1000)), planner__cascades__integration.t.b)->Column#6
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct case when a > 0 and a <= 1000 then b end) from t;
@@ -595,8 +595,8 @@ a	count(distinct a)
 explain format="brief" select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#5, planner__cascades__integration.t.c, Column#5, Column#6, Column#7, Column#8, Column#9
-└─HashAgg	8000.00	root		group by:Column#14, funcs:avg(Column#10)->Column#5, funcs:count(distinct Column#11, Column#12)->Column#6, funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:firstrow(Column#16)->planner__cascades__integration.t.c
-  └─Projection	10000.00	root		cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#10, planner__cascades__integration.t.a->Column#11, planner__cascades__integration.t.b->Column#12, planner__cascades__integration.t.a->Column#13, planner__cascades__integration.t.c->Column#14, cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#15, planner__cascades__integration.t.c->Column#16
+└─HashAgg	8000.00	root		group by:Column#18, funcs:avg(Column#14)->Column#5, funcs:count(distinct Column#15, Column#16)->Column#6, funcs:count(distinct Column#17)->Column#7, funcs:count(distinct Column#18)->Column#8, funcs:sum(Column#19)->Column#9, funcs:firstrow(Column#20)->planner__cascades__integration.t.c
+  └─Projection	10000.00	root		cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#14, planner__cascades__integration.t.a->Column#15, planner__cascades__integration.t.b->Column#16, planner__cascades__integration.t.a->Column#17, planner__cascades__integration.t.c->Column#18, cast(planner__cascades__integration.t.b, decimal(10,0) BINARY)->Column#19, planner__cascades__integration.t.c->Column#20
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;

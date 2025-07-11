@@ -21,6 +21,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -652,8 +653,8 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 	tk.MustExec("analyze table t")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/table/mockQueryBytesMaxUint64", `return(100000)`))
 	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
-		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
+		"IndexReader_7 1.00 root  index:IndexRangeScan_6",
+		"└─IndexRangeScan_6 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/table/mockQueryBytesMaxUint64"))
 
 	// Test issue 22466
@@ -665,9 +666,9 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 	tk.MustQuery("select * from t2 where b=2")
 	tk.MustExec("analyze table t2 index b")
 	tk.MustQuery("explain select * from t2 where b=2").Check(testkit.Rows(
-		"TableReader_7 1.00 root  data:Selection_6",
-		"└─Selection_6 1.00 cop[tikv]  eq(test.t2.b, 2)",
-		"  └─TableFullScan_5 5.00 cop[tikv] table:t2 keep order:false"))
+		"TableReader_8 1.00 root  data:Selection_7",
+		"└─Selection_7 1.00 cop[tikv]  eq(test.t2.b, 2)",
+		"  └─TableFullScan_6 5.00 cop[tikv] table:t2 keep order:false"))
 }
 
 func TestRangeStepOverflow(t *testing.T) {
@@ -1286,6 +1287,45 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 	}
 }
 
+func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, index ibc(b, c))")
+	testKit.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	testKit.MustExec("insert into t select a,b,c from t")
+	testKit.MustExec("analyze table t")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+
+	// Discourage merge join and hash join to encourage index join, and discourage topn to encourage limit.
+	testKit.MustExec("set @@session.tidb_opt_merge_join_cost_factor = 1000")
+	testKit.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 1000")
+	testKit.MustExec("set @@session.tidb_opt_topn_cost_factor = 1000")
+	// Disable idx_selectivity_ratio using -1 and 0 - both should have no effect.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = -1")
+	rs := testKit.MustQuery("explain format=verbose select t1.* from t t1 use index (ibc) join t t2 on t1.b=t2.b where t2.c=5 order by t1.b limit 2").Rows()
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
+	rs = testKit.MustQuery("explain format=verbose select t1.* from t t1 use index (ibc) join t t2 on t1.b=t2.b where t2.c=5 order by t1.b limit 2").Rows()
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	require.Equal(t, planCost1, planCost2)
+	// Increasing the ratio should increase the cost of index join, so the plan cost should increase.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	rs = testKit.MustQuery("explain format=verbose select t1.* from t t1 use index (ibc) join t t2 on t1.b=t2.b where t2.c=5 order by t1.b limit 2").Rows()
+	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	require.Less(t, planCost2, planCost3)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
+	rs = testKit.MustQuery("explain format=verbose select t1.* from t t1 use index (ibc) join t t2 on t1.b=t2.b where t2.c=5 order by t1.b limit 2").Rows()
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	require.Less(t, planCost3, planCost4)
+}
 func TestCrossValidationSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1324,18 +1364,18 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// From the real-time stats, we are able to know the total count is 11.
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_7 1.00 root  data:Selection_6",
-		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"TableReader_8 1.00 root  data:Selection_7",
+		"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_6 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// 1-2. ignore real-time stats.
 	// Use pseudo stats table. The total row count is 10000.
 	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_7 3.33 root  data:Selection_6",
-		"└─Selection_6 3.33 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"TableReader_8 3.33 root  data:Selection_7",
+		"└─Selection_7 3.33 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// 2. After ANALYZE.
@@ -1344,9 +1384,9 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// The execution plans are the same no matter we ignore the real-time stats or not.
 	analyzedPlan := []string{
-		"TableReader_7 2.73 root  data:Selection_6",
-		"└─Selection_6 2.73 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_5 11.00 cop[tikv] table:t keep order:false",
+		"TableReader_8 2.73 root  data:Selection_7",
+		"└─Selection_7 2.73 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_6 11.00 cop[tikv] table:t keep order:false",
 	}
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
@@ -1363,9 +1403,9 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// Selectivity is not changed: 15 * (2.73 / 11) = 3.72
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_7 3.72 root  data:Selection_6",
-		"└─Selection_6 3.72 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_5 15.00 cop[tikv] table:t keep order:false",
+		"TableReader_8 3.72 root  data:Selection_7",
+		"└─Selection_7 3.72 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan_6 15.00 cop[tikv] table:t keep order:false",
 	))
 
 	// 3-2. ignore real-time stats.
@@ -1494,17 +1534,16 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
-	require.Equal(t, float64(1.8), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	// Result should be approx 3.4, but due to floating point - result can be flaky
-	require.Less(t, float64(3.3), count)
-	require.Greater(t, float64(3.5), count)
+	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	require.Equal(t, float64(5), count)
+	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err3)
+	// Result of count3 should be larger because the risk ratio is higher
+	require.Less(t, count2, count3)
 	// reset skew ratio to 0
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 	// Collect 1 topn to ensure that test will not find value in topn.
@@ -1515,16 +1554,80 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	statsTbl = h.GetTableStats(tb.Meta())
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
-	require.Equal(t, float64(1.25), count)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
-	require.NoError(t, err)
-	// Result should be approx 1.625, but due to floating point - result can be flaky
-	require.Less(t, float64(1.6), count)
-	require.Greater(t, float64(1.7), count)
+	count2, _, err2 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count3, _, err3 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err3)
+	// Result of count3 should be larger than count because the risk ratio is higher
+	require.Less(t, count2, count3)
+	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
+	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = 0.5")
+	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err4)
+	require.Less(t, count2, count4)
+	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
+	// variable and be less than count3.
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = default")
+	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err4)
+	require.Less(t, count4, count3)
+	// Reset global variable to default.
+	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = default")
+}
+
+func TestRiskRangeSkewRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, index idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	require.Equal(t, float64(2), count)
-	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	tblInfo := tb.Meta()
+
+	// Insert enough rows to produce skewed distribution.
+	testKit.MustExec("insert into t values (1), (1), (1), (1), (2), (2), (3), (4), (5), (5)")
+	// Do not collect topn and only collect 1 bucket to ensure later queries will be within a bucket.
+	testKit.MustExec(`analyze table t with 0 topn, 1 buckets`)
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	sctx := testKit.Session()
+	idxID := tblInfo.Indices[0].ID
+	statsTbl := h.GetTableStats(tb.Meta())
+	// Search for the range from 2 to 3, since there is only one bucket it will be a query within
+	// a bucket.
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
+	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
+	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err3)
+	// Result of count3 should be larger because the risk ratio is higher
+	require.Less(t, count2, count3)
+	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
+	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = 0.5")
+	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err4)
+	require.Less(t, count2, count4)
+	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
+	// variable and be less than count3.
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
+	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err4)
+	require.Less(t, count4, count3)
+	// Reset global variable to default.
+	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = default")
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
 }

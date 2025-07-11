@@ -18,6 +18,8 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 )
 
@@ -37,4 +39,32 @@ func DeleteTrueExprs(buildCtx expression.BuildContext, stmtCtx *stmtctx.Statemen
 		isTrue, err := con.Value.ToBool(stmtCtx.TypeCtx())
 		return err == nil && isTrue == 1
 	})
+}
+
+// DeleteTrueExprsBySchema delete true expressions such as not(isnull(not null column)).
+// It is used in the predicate pushdown optimization to remove unnecessary conditions which will be pushed down to child operators.
+func DeleteTrueExprsBySchema(ctx expression.EvalContext, schema *expression.Schema, conds []expression.Expression) []expression.Expression {
+	return slices.DeleteFunc(conds, func(item expression.Expression) bool {
+		if expr, ok := item.(*expression.ScalarFunction); ok && expr.FuncName.L == ast.UnaryNot {
+			if args := expr.GetArgs(); len(args) == 1 {
+				// If the expression is `not(isnull(not null column))`, we can remove it.
+				return isNullWithNotNullColumn(ctx, schema, args[0])
+			}
+		}
+		return false
+	})
+}
+
+// isNullWithNotNullColumn checks if the expression is `isnull(not null column)`.
+func isNullWithNotNullColumn(ctx expression.EvalContext, schema *expression.Schema, expr expression.Expression) bool {
+	if e, ok := expr.(*expression.ScalarFunction); ok && e.FuncName.L == ast.IsNull {
+		if args := e.GetArgs(); len(args) == 1 {
+			if col, ok := args[0].(*expression.Column); ok {
+				if retrieveColumn := schema.RetrieveColumn(col); retrieveColumn != nil {
+					return mysql.HasNotNullFlag(retrieveColumn.GetType(ctx).GetFlag())
+				}
+			}
+		}
+	}
+	return false
 }

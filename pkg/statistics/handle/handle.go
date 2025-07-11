@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -47,6 +48,18 @@ const (
 	// StatsPrompt is the prompt for stats owner manager.
 	StatsPrompt = "stats"
 )
+
+// AttachStatsCollector attaches the stats collector for the session.
+// this function is registered in BootstrapSession in pkg/session/session.go
+var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
+
+// DetachStatsCollector removes the stats collector for the session
+// this function is registered in BootstrapSession in pkg/session/session.go
+var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
 
 // Handle can update stats info periodically.
 type Handle struct {

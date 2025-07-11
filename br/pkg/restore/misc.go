@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -305,7 +306,7 @@ func AssertUserDBsEmpty(dom *domain.Domain) error {
 LISTDBS:
 	for _, db := range databases {
 		dbName := db.Name.L
-		if tidbutil.IsMemOrSysDB(dbName) {
+		if metadef.IsMemOrSysDB(dbName) {
 			continue
 		}
 		tables, err := m.ListSimpleTables(db.ID)

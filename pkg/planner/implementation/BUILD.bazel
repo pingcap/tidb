@@ -20,6 +20,7 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/memo",
         "//pkg/statistics",
     ],
@@ -37,6 +38,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/planner/core",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/memo",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

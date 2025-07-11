@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -49,6 +50,9 @@ type Loader struct {
 	infoCache *infoschema.InfoCache
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn *deferFn
+	// if true, it means the loader is used for cross keyspace, we only allow
+	// loading system tables
+	crossKS bool
 
 	// below fields are set when running background routines
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -56,6 +60,16 @@ type Loader struct {
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
+}
+
+// NewLoaderForCrossKS creates a new Loader instance.
+func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loader {
+	return &Loader{
+		store:     store,
+		infoCache: infoCache,
+		deferFn:   &deferFn{},
+		crossKS:   true,
+	}
 }
 
 // initFields initializes some fields of the Loader.
@@ -310,6 +324,16 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, erro
 	if err != nil {
 		return nil, err
 	}
+	if l.crossKS {
+		filteredSchemas := make([]*model.DBInfo, 0, 1)
+		for _, di := range allSchemas {
+			if metadef.IsSystemDB(di.Name.L) {
+				filteredSchemas = append(filteredSchemas, di)
+				break
+			}
+		}
+		allSchemas = filteredSchemas
+	}
 	if len(allSchemas) == 0 {
 		return nil, nil
 	}
@@ -367,8 +391,8 @@ func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 			if domainutil.RepairInfo.InRepairMode() && len(domainutil.RepairInfo.GetRepairTableList()) > 0 {
-				mustLoadReapirTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
-				for _, id := range mustLoadReapirTableIDs {
+				mustLoadRepairTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
+				for _, id := range mustLoadRepairTableIDs {
 					tblInfo, err := m.GetTable(di.ID, id)
 					if err != nil {
 						return err

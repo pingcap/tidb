@@ -50,8 +50,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -60,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -83,7 +86,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/store"
+	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -104,7 +108,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/workloadlearning"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -149,7 +152,6 @@ type Domain struct {
 	info            *infosync.InfoSyncer
 	isSyncer        *issyncer.Syncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
-	m               syncutil.Mutex
 	schemaLease     time.Duration
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 	// some misuse of the session to avoid potential bugs.
@@ -219,7 +221,13 @@ type Domain struct {
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 
 	statsOwner owner.Manager
+
+	// only used for nextgen
+	crossKSSessMgr           *crossks.Manager
+	crossKSSessFactoryGetter func(targetKS string) pools.Factory
 }
+
+var _ sqlsvrapi.Server = (*Domain)(nil)
 
 // InfoCache export for test.
 func (do *Domain) InfoCache() *infoschema.InfoCache {
@@ -559,6 +567,8 @@ func (do *Domain) Close() {
 		handle.Close()
 	}
 
+	do.crossKSSessMgr.Close()
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -566,11 +576,19 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
-	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil)
+	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil, nil)
 }
 
 // NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
-func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, etcdClient *clientv3.Client) *Domain {
+func NewDomainWithEtcdClient(
+	store kv.Storage,
+	schemaLease time.Duration,
+	statsLease time.Duration,
+	dumpFileGcLease time.Duration,
+	factory pools.Factory,
+	crossKSSessFactoryGetter func(targetKS string) pools.Factory,
+	etcdClient *clientv3.Client,
+) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
@@ -601,6 +619,8 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
+
+		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
@@ -632,6 +652,8 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		do.sysSessionPool,
 	)
 	do.initDomainSysVars()
+
+	do.crossKSSessMgr = crossks.NewManager()
 	return do
 }
 
@@ -645,12 +667,12 @@ func (do *Domain) Init(
 ) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
-	etcdStore, addrs, err := store.GetEtcdAddrs(do.store)
+	etcdStore, addrs, err := kvstore.GetEtcdAddrs(do.store)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if len(addrs) > 0 {
-		cli, err2 := store.NewEtcdCliWithAddrs(addrs, etcdStore)
+		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -660,7 +682,7 @@ func (do *Domain) Init(
 
 		do.autoidClient = autoid.NewClientDiscover(cli)
 
-		unprefixedEtcdCli, err2 := store.NewEtcdCliWithAddrs(addrs, etcdStore)
+		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -800,7 +822,8 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
-	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
+	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
@@ -818,7 +841,52 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		return err
 	}
 
+	// right now we only allow access system keyspace info schema after fully bootstrap.
+	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
+		if err = do.loadSysKSInfoSchema(); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// TODO: we should sync the system keyspace info schema, not just load it,
+// currently, we assume there is no upgrade, so we only load the info schema of
+// system keyspace once, and it will not change during the lifetime of the domain,
+// it's not right, but it's enough to push subtasks which depends on it forward,
+// we will fix it in the future.
+func (do *Domain) loadSysKSInfoSchema() error {
+	logutil.BgLogger().Info("loading system keyspace info schema")
+	_, err := do.GetKSStore(keyspace.System)
+	return err
+}
+
+// GetKSStore returns the kv.Storage for the given keyspace.
+func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.Store(), nil
+}
+
+// GetKSInfoCache returns the system keyspace info cache.
+func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.InfoCache(), nil
+}
+
+// GetKSSessPool returns the session pool for the given keyspace.
+func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.SessPool(), nil
 }
 
 // GetSchemaLease return the schema lease.
@@ -1001,6 +1069,21 @@ func (do *Domain) InitDistTaskLoop() error {
 	})
 
 	taskManager := storage.NewTaskManager(do.sysSessionPool)
+	storage.SetTaskManager(taskManager)
+
+	if keyspace.IsRunningOnUser() {
+		sp, err := do.GetKSSessPool(keyspace.System)
+		if err != nil {
+			return err
+		}
+		storage.SetDXFSvcTaskMgr(storage.NewTaskManager(sp))
+
+		// in nextgen, DXF runs as a service on SYSTEM ks and are shared by all
+		// user keyspace
+		logutil.BgLogger().Info("skip running DXF in user keyspace")
+		return nil
+	}
+
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()
@@ -1027,7 +1110,6 @@ func (do *Domain) InitDistTaskLoop() error {
 		return err
 	}
 
-	storage.SetTaskManager(taskManager)
 	if err = executorManager.InitMeta(); err != nil {
 		// executor manager loop will try to recover meta repeatedly, so we can
 		// just log the error here.
@@ -1039,6 +1121,13 @@ func (do *Domain) InitDistTaskLoop() error {
 		}()
 		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID, nodeRes)
 	}, "distTaskFrameworkLoop")
+	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		logger := logutil.BgLogger()
+		return local.InitializeRateLimiterParam(m, logger)
+	}); err != nil {
+		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+	}
 	return nil
 }
 
@@ -1511,6 +1600,40 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
+}
+
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := telemetry.InitialRun(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+	}
+
+	reportTicker := time.NewTicker(telemetry.ReportInterval)
+	subWindowTicker := time.NewTicker(telemetry.SubWindowSize)
+
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
+
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-reportTicker.C:
+				err := telemetry.ReportUsageData(ctx)
+				if err != nil {
+					logutil.BgLogger().Warn("TelemetryLoop retports usaged data failed", zap.Error(err))
+				}
+			case <-subWindowTicker.C:
+				telemetry.RotateSubWindow()
+			}
+		}
+	}, "TelemetryLoop")
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
@@ -2013,6 +2136,13 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		// We should wait for statistics owner to close on exit.
+		// Otherwise, the goroutine leak detection may fail.
+		<-ch
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
@@ -2112,7 +2242,12 @@ func (do *Domain) deltaUpdateTickerWorker() {
 	lease := do.statsLease
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
 	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	updateDuration := 20*lease + randDuration
+	failpoint.Inject("deltaUpdateDuration", func() {
+		updateDuration = 20 * time.Second
+	})
+
+	deltaUpdateTicker := time.NewTicker(updateDuration)
 	statsHandle := do.StatsHandle()
 	for {
 		select {
@@ -2795,6 +2930,9 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle,
 
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (

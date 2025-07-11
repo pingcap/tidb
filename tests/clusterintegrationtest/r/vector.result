@@ -10,10 +10,10 @@ vec
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select vec from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 vec
 [1,2,1]
@@ -21,10 +21,10 @@ vec
 explain select vec from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select sleep(10);
 sleep(10)
 0
@@ -94,10 +94,10 @@ vec
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select vec from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 vec
 [1,2,1]
@@ -105,10 +105,10 @@ vec
 explain select vec from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select sleep(5);
 sleep(5)
 0
@@ -179,10 +179,10 @@ id
 explain select id from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#4, offset:0, count:2
-└─TableReader_15	2.00	root		data:TopN_14
-  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_13	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_16	2.00	root		data:TopN_15
+  └─TopN_15	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_14	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
+      └─TableFullScan_13	3.00	cop[tikv]	table:t	keep order:false
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	vec
 3	[1,2,1]
@@ -190,10 +190,10 @@ id	vec
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
 select sleep(5);
 sleep(5)
 0
@@ -263,10 +263,10 @@ id
 explain select id from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#4, offset:0, count:2
-└─TableReader_15	2.00	root		data:TopN_14
-  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_13	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_16	2.00	root		data:TopN_15
+  └─TopN_15	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_14	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
+      └─TableFullScan_13	3.00	cop[tikv]	table:t	keep order:false
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	vec
 3	[1,2,1]
@@ -274,10 +274,10 @@ id	vec
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
 select sleep(5);
 sleep(5)
 0
@@ -306,10 +306,10 @@ id
 explain select id from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#4, offset:0, count:2
-└─TableReader_17	2.00	root		data:TopN_16
-  └─TopN_16	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_15	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_18	2.00	root		data:TopN_17
+  └─TopN_17	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_16	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
+      └─TableFullScan_13	3.00	cop[tikv]	table:t	keep order:false
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	vec
 3	[1,2,1]
@@ -317,10 +317,10 @@ id	vec
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_16	2.00	root		data:TopN_15
-  └─TopN_15	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_14	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_17	2.00	root		data:TopN_16
+  └─TopN_16	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_15	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
 drop table t;
 // small dataset, fixed vector, clustered char PK, indexed
 create table t(id varchar(40) primary key CLUSTERED, vec vector(3), vector index ((vec_l2_distance(vec))));
@@ -333,10 +333,10 @@ id1
 explain select id from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#4, offset:0, count:2
-└─TableReader_15	2.00	root		data:TopN_14
-  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_13	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_16	2.00	root		data:TopN_15
+  └─TopN_15	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_14	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
+      └─TableFullScan_13	3.00	cop[tikv]	table:t	keep order:false
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	vec
 id3	[1,2,1]
@@ -344,10 +344,10 @@ id1	[1,2,3]
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#3
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
 select sleep(5);
 sleep(5)
 0
@@ -405,10 +405,10 @@ id1
 explain select id from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#5, offset:0, count:2
-└─TableReader_15	2.00	root		data:TopN_14
-  └─TopN_14	2.00	cop[tikv]		Column#5, offset:0, count:2
-    └─Projection_13	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#5
-      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_16	2.00	root		data:TopN_15
+  └─TopN_15	2.00	cop[tikv]		Column#5, offset:0, count:2
+    └─Projection_14	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [0,0,0])->Column#5
+      └─TableFullScan_13	3.00	cop[tikv]	table:t	keep order:false
 select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	vec
 id3	[1,2,1]
@@ -416,10 +416,10 @@ id1	[1,2,3]
 explain select * from t order by vec_l2_distance(vec, '[0,0,0]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#4, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
-      └─TableFullScan_11	3.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [0,0,0])->Column#4
+      └─TableFullScan_12	3.00	cop[tikv]	table:t	keep order:false
 select sleep(5);
 sleep(5)
 0
@@ -477,10 +477,10 @@ vec
 explain select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 vec
 [201,201,201]
@@ -488,10 +488,10 @@ vec
 explain select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select sleep(5);
 sleep(5)
 0
@@ -561,10 +561,10 @@ id	vec
 explain select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
 select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id
 201
@@ -572,10 +572,10 @@ id
 explain select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#4, offset:0, count:2
-└─TableReader_15	2.00	root		data:TopN_14
-  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_13	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
-      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_16	2.00	root		data:TopN_15
+  └─TopN_15	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_14	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
+      └─TableFullScan_13	500.00	cop[tikv]	table:t	keep order:false
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 vec
 [201,201,201]
@@ -583,10 +583,10 @@ vec
 explain select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
 select sleep(5);
 sleep(5)
 0
@@ -656,10 +656,10 @@ id200	[200,200,200]
 explain select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
 select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id
 id201
@@ -667,10 +667,10 @@ id200
 explain select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#4, offset:0, count:2
-└─TableReader_15	2.00	root		data:TopN_14
-  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_13	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
-      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_16	2.00	root		data:TopN_15
+  └─TopN_15	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_14	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
+      └─TableFullScan_13	500.00	cop[tikv]	table:t	keep order:false
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 vec
 [201,201,201]
@@ -678,10 +678,10 @@ vec
 explain select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#3, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#3, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#3, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#3
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
 select sleep(5);
 sleep(5)
 0
@@ -775,10 +775,10 @@ id200	[200,200,200]
 explain select * from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#4, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.id, vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
 select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id
 id201
@@ -786,10 +786,10 @@ id200
 explain select id from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_8	2.00	root		Column#5, offset:0, count:2
-└─TableReader_15	2.00	root		data:TopN_14
-  └─TopN_14	2.00	cop[tikv]		Column#5, offset:0, count:2
-    └─Projection_13	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#5
-      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_16	2.00	root		data:TopN_15
+  └─TopN_15	2.00	cop[tikv]		Column#5, offset:0, count:2
+    └─Projection_14	2.00	cop[tikv]		vector.t.id, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#5
+      └─TableFullScan_13	500.00	cop[tikv]	table:t	keep order:false
 select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 vec
 [201,201,201]
@@ -797,10 +797,10 @@ vec
 explain select vec from t order by vec_l2_distance(vec, '[200.8,200.8,200.8]') limit 2;
 id	estRows	task	access object	operator info
 TopN_7	2.00	root		Column#4, offset:0, count:2
-└─TableReader_14	2.00	root		data:TopN_13
-  └─TopN_13	2.00	cop[tikv]		Column#4, offset:0, count:2
-    └─Projection_12	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
-      └─TableFullScan_11	500.00	cop[tikv]	table:t	keep order:false
+└─TableReader_15	2.00	root		data:TopN_14
+  └─TopN_14	2.00	cop[tikv]		Column#4, offset:0, count:2
+    └─Projection_13	2.00	cop[tikv]		vector.t.vec, vec_l2_distance(vector.t.vec, [2e+02,2e+02,2e+02])->Column#4
+      └─TableFullScan_12	500.00	cop[tikv]	table:t	keep order:false
 select sleep(5);
 sleep(5)
 0

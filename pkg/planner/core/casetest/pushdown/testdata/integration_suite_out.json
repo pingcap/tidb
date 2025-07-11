@@ -124,33 +124,28 @@
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#18)->Column#14",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#19)->Column#18",
-          "      └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#19",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#16)->Column#14",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(plus(test.t.id, 1))->Column#16",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#17)->Column#14",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#17",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#15)->Column#14",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#15",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#18)->Column#14",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#18",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#19",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:sum(Column#16)->Column#14",
+          "└─TableReader 1.00 root  data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:sum(plus(test.t.id, 1))->Column#16",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {

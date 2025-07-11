@@ -97,6 +97,12 @@ var (
 	mMetaDataLock        = []byte("metadataLock")
 	mSchemaCacheSize     = []byte("SchemaCacheSize")
 	mRequestUnitStats    = []byte("RequestUnitStats")
+
+	mIngestMaxBatchSplitRangesKey  = []byte("IngestMaxBatchSplitRanges")
+	mIngestMaxSplitRangesPerSecKey = []byte("IngestMaxSplitRangesPerSec")
+	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
+	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
+
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1519,40 +1525,14 @@ func (m *Mutator) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 }
 
 // DDL job structure
-//	DDLJobList: list jobs
 //	DDLJobHistory: hash
-//	DDLJobReorg: hash
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobListKey    = []byte("DDLJobList")
-	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 )
-
-// JobListKeyType is a key type of the DDL job queue.
-type JobListKeyType []byte
-
-func (m *Mutator) getDDLJob(key []byte, index int64) (*model.Job, error) {
-	value, err := m.txn.LIndex(key, index)
-	if err != nil || value == nil {
-		return nil, errors.Trace(err)
-	}
-
-	job := &model.Job{
-		// For compatibility, if the job is enqueued by old version TiDB and Priority field is omitted,
-		// set the default priority to kv.PriorityLow.
-		Priority: kv.PriorityLow,
-	}
-	err = job.Decode(value)
-	// Check if the job.Priority is valid.
-	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
-		job.Priority = kv.PriorityLow
-	}
-	return job, errors.Trace(err)
-}
 
 func (*Mutator) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
@@ -1595,6 +1575,78 @@ func (m *Mutator) GetHistoryDDLJob(id int64) (*model.Job, error) {
 // GetHistoryDDLCount the count of all history DDL jobs.
 func (m *Mutator) GetHistoryDDLCount() (uint64, error) {
 	return m.txn.HGetLen(mDDLJobHistoryKey)
+}
+
+// SetIngestMaxBatchSplitRanges sets the ingest max_batch_split_ranges.
+func (m *Mutator) SetIngestMaxBatchSplitRanges(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxBatchSplitRanges gets the ingest max_batch_split_ranges.
+func (m *Mutator) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxBatchSplitRangesKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxSplitRangesPerSec sets the max_split_ranges_per_sec.
+func (m *Mutator) SetIngestMaxSplitRangesPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxSplitRangesPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
+}
+
+// GetIngestMaxSplitRangesPerSec gets the max_split_ranges_per_sec.
+func (m *Mutator) GetIngestMaxSplitRangesPerSec() (val float64, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxSplitRangesPerSecKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.ParseFloat(string(sVal), 64)
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxInflight sets the max_ingest_concurrency.
+func (m *Mutator) SetIngestMaxInflight(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxInflightKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxInflight gets the max_ingest_concurrency.
+func (m *Mutator) GetIngestMaxInflight() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxInflightKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxPerSec sets the max_ingest_per_sec.
+func (m *Mutator) SetIngestMaxPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
+}
+
+// GetIngestMaxPerSec gets the max_ingest_per_sec.
+func (m *Mutator) GetIngestMaxPerSec() (val float64, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxPerSecKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.ParseFloat(string(sVal), 64)
+	return val, false, errors.Trace(err)
 }
 
 // LastJobIterator is the iterator for gets latest history.

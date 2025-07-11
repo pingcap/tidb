@@ -90,23 +90,6 @@ type engineMeta struct {
 	TotalSize atomic.Int64 `json:"total_size"`
 }
 
-type syncedRanges struct {
-	sync.Mutex
-	ranges []engineapi.Range
-}
-
-func (r *syncedRanges) add(g engineapi.Range) {
-	r.Lock()
-	r.ranges = append(r.ranges, g)
-	r.Unlock()
-}
-
-func (r *syncedRanges) reset() {
-	r.Lock()
-	r.ranges = r.ranges[:0]
-	r.Unlock()
-}
-
 // Engine is a local engine.
 type Engine struct {
 	engineMeta

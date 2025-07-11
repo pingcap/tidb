@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -260,6 +261,11 @@ func (r *Checker) CheckRuleKillAction() (string, bool) {
 
 func (r *Checker) markQuarantine(now *time.Time, exceedCause string) {
 	if r.settings == nil || r.settings.Watch == nil {
+		return
+	}
+	// If the latest group settings have been changed, do not mark quarantine.
+	group, err := r.manager.ResourceGroupCtl.GetResourceGroup(r.resourceGroupName)
+	if err != nil || group == nil || !proto.Equal(r.settings, group.RunawaySettings) {
 		return
 	}
 	ttl := time.Duration(r.settings.Watch.LastingDurationMs) * time.Millisecond

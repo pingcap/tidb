@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -215,8 +216,11 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 		return true
 	}
 	rewriteTss := make([]uint64, 0)
+	var mu sync.Mutex
 	cleanErr := func(rewriteTs uint64) {
+		mu.Lock()
 		rewriteTss = append(rewriteTss, rewriteTs)
+		mu.Unlock()
 	}
 	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300, tableNameByTableId, dbNameByDbId, checkTableIDLost, checkTableIDLost, cleanErr)
 	require.Error(t, err)

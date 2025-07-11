@@ -15,6 +15,7 @@ go_library(
         "//pkg/extension",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/metrics",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",

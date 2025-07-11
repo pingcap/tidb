@@ -234,7 +234,7 @@ func initFlagSet() *flag.FlagSet {
 	metricsInterval = fset.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
 	// subcommand collect-log
-	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs, if `./tidb-server --redact=xxx collect-log <input> <output>` subcommand is used")
+	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs when using collect-log subcommand, e.g. ./tidb-server --redact=xxx collect-log <input> <output>")
 
 	// PROXY Protocol
 	proxyProtocolNetworks = fset.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
@@ -287,6 +287,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is not supported for classic TiDB")
 		os.Exit(0)
 	}
+
+	signal.SetupUSR1Handler()
 	registerStores()
 	err := metricsutil.RegisterMetrics()
 	terror.MustNil(err)
@@ -925,7 +927,7 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
-	if kerneltype.IsNextGen() && keyspace.IsRunningOnUser() {
+	if keyspace.IsRunningOnUser() {
 		err = kvstore.GetSystemStorage().Close()
 		terror.Log(errors.Annotate(err, "close system storage"))
 	}

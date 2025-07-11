@@ -17,6 +17,7 @@
       "select * from t1 where a=1",
       "select * from t1 where a>1",
       "select a from t1 where a=1",
+      "select a from t1 where a=1 and b = 1 and c =1",
       "select max(a) from t1 where a=1",
       "select sum(b) from t1 where a=1",
       "select a from t1 where a=1 order by b",

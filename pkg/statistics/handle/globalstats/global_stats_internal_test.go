@@ -405,6 +405,8 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("set tidb_cost_model_version=2")
+	// Disable auto analyze to ensure that stats are not automatically collected
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 
 	// hash and range and list partition
 	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
@@ -439,8 +441,6 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
-	// Disable auto analyze to ensure that stats are not automatically collected
-	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	// before analyzing, the planner will choose TableScan to access the 1% of records
 	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")

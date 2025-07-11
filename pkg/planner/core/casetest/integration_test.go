@@ -507,14 +507,14 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 	tk.MustExec(`set tidb_analyze_version=2;`)
 	tk.MustExec(`analyze table t all columns;`)
 	tk.MustQuery("explain select * from t use index (iad) where a = 1;").Check(testkit.Rows(
-		"TableReader_7 1.00 root  data:Selection_6",
-		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
-		"  └─TableFullScan_5 2.00 cop[tikv] table:t keep order:false",
+		"TableReader_8 1.00 root  data:Selection_7",
+		"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1)",
+		"  └─TableFullScan_6 2.00 cop[tikv] table:t keep order:false",
 	))
 	tk.MustQuery("explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
-		"IndexMerge_7 1.00 root  type: union",
-		"├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-		"└─TableRowIDScan_6(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+		"IndexMerge_8 1.00 root  type: union",
+		"├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
+		"└─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
 	))
 }
 

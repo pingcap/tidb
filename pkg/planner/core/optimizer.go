@@ -66,6 +66,9 @@ import (
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
 
+// OptimizeAstNodeNoCache bypasses the plan cache and generates a physical plan directly.
+var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
+
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 
@@ -448,10 +451,10 @@ func refineCETrace(sctx base.PlanContext) {
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
 func mergeContinuousSelections(p base.PhysicalPlan) {
-	if sel, ok := p.(*PhysicalSelection); ok {
+	if sel, ok := p.(*physicalop.PhysicalSelection); ok {
 		for {
 			childSel := sel.Children()[0]
-			tmp, ok := childSel.(*PhysicalSelection)
+			tmp, ok := childSel.(*physicalop.PhysicalSelection)
 			if !ok {
 				break
 			}
@@ -849,7 +852,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// which will break data partition.
 		helper.updateTarget(window, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
 			helper.plans = append(helper.plans, &x.BasePhysicalPlan)
@@ -858,7 +861,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			helper.clear()
 		}
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalProjection:
@@ -1187,7 +1190,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 // avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
 func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
-		x, ok := p.(*PhysicalUnionAll)
+		x, ok := p.(*physicalop.PhysicalUnionAll)
 		if ok {
 			for _, child := range x.Children() {
 				if proj, ok := child.(*PhysicalProjection); ok {

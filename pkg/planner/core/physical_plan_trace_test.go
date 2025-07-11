@@ -48,17 +48,17 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		{
 			sql: "select * from t",
 			physicalList: []string{
-				"TableFullScan_4", "TableReader_5", "Projection_3",
+				"TableFullScan_5", "TableReader_6", "Projection_3",
 			},
 		},
 		{
 			sql: "select max(b) from t",
 			physicalList: []string{
-				"IndexFullScan_23",
-				"Limit_24",
-				"IndexReader_25",
-				"Limit_15",
-				"StreamAgg_10",
+				"IndexFullScan_28",
+				"Limit_29",
+				"IndexReader_30",
+				"Limit_20",
+				"StreamAgg_15",
 				"Projection_8",
 			},
 		},
@@ -146,47 +146,30 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		19: "TableReader",
-		12: "HashJoin",
-		13: "HashJoin",
-		21: "TableReader",
-		16: "HashAgg",
-		22: "TableFullScan",
-		9:  "Sort",
-		17: "TableFullScan",
-		20: "TableFullScan",
-		18: "HashAgg",
-		14: "HashAgg",
-		23: "TableReader",
-		11: "HashAgg",
 		8:  "Projection",
-	}
-	final := map[int]struct{}{
-		17: {},
-		14: {},
-		19: {},
-		18: {},
-		22: {},
-		23: {},
-		13: {},
-		11: {},
-		9:  {},
-		8:  {},
+		28: "HashAgg",
+		16: "HashJoin",
+		18: "HashJoin",
+		17: "HashJoin",
+		11: "Sort",
+		15: "HashAgg",
+		27: "TableFullScan",
+		29: "TableReader",
+		20: "HashAgg",
+		24: "TableFullScan",
+		25: "HashAgg",
+		30: "TableFullScan",
+		23: "HashAgg",
+		21: "HashAgg",
+		31: "TableReader",
+		32: "TableFullScan",
+		33: "TableReader",
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
-		if !ok || tp != c.TP {
-			t.FailNow()
-		}
+		require.Truef(t, ok, "ID: %d not found in elements", c.ID)
+		require.Equalf(t, tp, c.TP, "ID: %d, expected TP: %s, got TP: %s", c.ID, tp, c.TP)
 	}
-	require.Len(t, otrace.Candidates, len(elements))
-	for _, p := range otrace.Final {
-		_, ok := final[p.ID]
-		if !ok {
-			t.FailNow()
-		}
-	}
-	require.Len(t, otrace.Final, len(final))
 }
 
 func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {

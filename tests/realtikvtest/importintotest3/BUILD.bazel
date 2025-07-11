@@ -4,6 +4,7 @@ go_test(
     name = "importintotest3_test",
     timeout = "moderate",
     srcs = [
+        "cross_ks_test.go",
         "file_compression_test.go",
         "from_server_test.go",
         "main_test.go",
@@ -11,11 +12,13 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",
         "//pkg/kv",
         "//pkg/lightning/mydump",
+        "//pkg/store",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "//tests/realtikvtest/testutils",
