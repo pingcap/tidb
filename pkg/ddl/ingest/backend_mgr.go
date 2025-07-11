@@ -52,6 +52,11 @@ type BackendCtxMgr interface {
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
+<<<<<<< HEAD
+=======
+		importConc int,
+		initTS uint64,
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// Load returns the registered BackendCtx with the given jobID.
@@ -123,6 +128,11 @@ func (m *litBackendCtxMgr) Register(
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
+<<<<<<< HEAD
+=======
+	concurrency int,
+	initTS uint64,
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -153,7 +163,11 @@ func (m *litBackendCtxMgr) Register(
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
+=======
+	bcCtx := newBackendContext(ctx, jobID, bd, cfg, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient, initTS)
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 	m.backends.m[jobID] = bcCtx
 	m.memRoot.Consume(StructSizeBackendCtx)
 	m.backends.mu.Unlock()
@@ -266,6 +280,7 @@ func newBackendContext(
 	memRoot MemRoot,
 	diskRoot DiskRoot,
 	etcdClient *clientv3.Client,
+	initTS uint64,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
@@ -279,6 +294,7 @@ func newBackendContext(
 		diskRoot:       diskRoot,
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
+		initTS:         initTS,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx

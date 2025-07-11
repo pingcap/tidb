@@ -73,3 +73,42 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 		require.Equal(t, 19, size)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestBackendCtxConcurrentUnregister(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1, 0)
+	require.NoError(t, err)
+	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
+	uniques := make([]bool, 0, len(idxIDs))
+	for range idxIDs {
+		uniques = append(uniques, false)
+	}
+	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, tables.MockTableFromMeta(&model.TableInfo{}))
+	require.NoError(t, err)
+
+	wg := sync.WaitGroup{}
+	wg.Add(3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			err := bCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
+			require.NoError(t, err)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+	ingest.LitBackCtxMgr.Unregister(1)
+}
+
+func TestMockMemoryUsedUp(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(100)")
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (c int, c2 int, c3 int, c4 int);")
+	tk.MustExec("insert into t values (1,1,1,1), (2,2,2,2), (3,3,3,3);")
+	tk.MustGetErrMsg("alter table t add index i(c), add index i2(c2);", "[ddl:8247]Ingest failed: memory used up")
+}
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))

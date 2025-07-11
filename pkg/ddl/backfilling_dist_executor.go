@@ -141,7 +141,19 @@ func (s *backfillDistExecutor) getBackendCtx(ctx context.Context) (ingest.Backen
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
+<<<<<<< HEAD
 	return ingest.LitBackCtxMgr.Register(ctx, job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+=======
+	return ingest.LitBackCtxMgr.Register(
+		s.BaseTaskExecutor.Ctx(),
+		job.ID, hasUnique,
+		ddlObj.etcdCli,
+		discovery,
+		job.ReorgMeta.ResourceGroupName,
+		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+		job.RealStartTS,
+	)
+>>>>>>> c403cd555d3 (ddl/ingest: set `minCommitTS` when detect remote duplicate keys (#55588))
 }
 
 func decodeIndexUniqueness(job *model.Job) (bool, error) {
