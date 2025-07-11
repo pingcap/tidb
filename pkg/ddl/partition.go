@@ -217,11 +217,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
-		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
-			scatterScope = val
-		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions, scatterScope)
+		preSplitAndScatter(jobCtx.store, tblInfo, addingDefinitions, job)
 
 		tblInfo.Partition.DDLState = model.StateNone
 		tblInfo.Partition.DDLAction = model.ActionNone
@@ -2554,11 +2550,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
-			scatterScope = val
-		}
-		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
+		preSplitAndScatter(jobCtx.store, tblInfo, newDefinitions, job)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
@@ -3311,7 +3303,12 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		if s, ok := jobCtx.store.(kv.SplittableStore); ok && s != nil {
 			// 1. partInfo only contains the AddingPartitions
 			// 2. ScatterTable control all new split region need waiting for scatter region finish at table level.
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, vardef.ScatterTable)
+			timeoutSecond := uint64(vardef.DefWaitSplitRegionTimeout)
+			if val, ok := model.GetSessionVarFromJob[uint64](job, vardef.TiDBWaitSplitRegionTimeout); ok {
+				timeoutSecond = val
+			}
+			timeout := time.Duration(timeoutSecond) * time.Second
+			splitPartitionTableRegion(s, tblInfo, partInfo.Definitions, vardef.ScatterTable, timeout)
 		}
 
 		if job.Type == model.ActionReorganizePartition {

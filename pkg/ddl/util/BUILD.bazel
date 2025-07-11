@@ -18,7 +18,6 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/table/tables",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
