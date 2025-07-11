@@ -84,9 +84,13 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalSelection = getPlanCostVer14PhysicalSelection
 
 	utilfuncp.DoOptimize = doOptimize
+	utilfuncp.GetPlanCost = getPlanCost
 	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
 	utilfuncp.AttachPlan2Task = attachPlan2Task
+	utilfuncp.GetTaskPlanCost = getTaskPlanCost
+	utilfuncp.CompareTaskCost = compareTaskCost
+
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
 	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
