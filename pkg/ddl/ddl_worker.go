@@ -1338,6 +1338,12 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		}
 	})
 
+	// If we failed to get the current version, caller will retry after one second again.
+	if err != nil {
+		logutil.Logger(d.ctx).Warn("get current version failed", zap.Int64("jobID", job.ID), zap.Error(err))
+		return err
+	}
+
 	snapshot := d.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
