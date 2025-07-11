@@ -2,7 +2,7 @@
 options:
   no_parent_owners: true
 filters:
-  "(OWNERS|bootstrap\\.go)$":
+  "(OWNERS|bootstrap\\.go|upgrade\\.go)$":
     approvers:
       - sig-critical-approvers-tidb-server
 

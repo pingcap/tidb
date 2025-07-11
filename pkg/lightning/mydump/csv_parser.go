@@ -629,8 +629,6 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
-	parser.beginRowLenCheck()
-	defer parser.endRowLenCheck()
 	row := &parser.lastRow
 	row.Length = 0
 	row.RowID++
@@ -643,6 +641,9 @@ func (parser *CSVParser) ReadRow() error {
 		}
 		parser.shouldParseHeader = false
 	}
+
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 
 	fields, err := parser.readRecord(parser.lastRecord)
 	if err != nil {

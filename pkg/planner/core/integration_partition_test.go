@@ -47,7 +47,7 @@ func TestListPartitionOrderLimit(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	vals := ""
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		if vals != "" {
 			vals += ", "
 		}
@@ -104,7 +104,7 @@ func TestListPartitionAgg(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	vals := ""
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		if vals != "" {
 			vals += ", "
 		}
@@ -116,7 +116,7 @@ func TestListPartitionAgg(t *testing.T) {
 
 	for _, aggFunc := range []string{"min", "max", "sum", "count"} {
 		c1, c2 := "a", "b"
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			rs := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tnormal group by %v`, c1, aggFunc, c2, c1)).Sort()
 
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -154,7 +154,7 @@ func TestListPartitionView(t *testing.T) {
 	tk.MustExec(`create definer='root'@'localhost' view vlist as select a*2 as a2, a+b as ab from tlist`)
 	tk.MustExec(`create table tnormal (a int, b int)`)
 	tk.MustExec(`create definer='root'@'localhost' view vnormal as select a*2 as a2, a+b as ab from tnormal`)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		a, b := rand.Intn(15), rand.Intn(100)
 		tk.MustExec(fmt.Sprintf(`insert into tlist values (%v, %v)`, a, b))
 		tk.MustExec(fmt.Sprintf(`insert into tnormal values (%v, %v)`, a, b))
@@ -170,7 +170,7 @@ func TestListPartitionView(t *testing.T) {
     partition p2 values in (10, 11, 12, 13, 14))`)
 	tk.MustExec(`create definer='root'@'localhost' view vcollist as select a*2 as a2, a+b as ab from tcollist`)
 	tk.MustExec(`truncate tnormal`)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		a, b := rand.Intn(15), rand.Intn(100)
 		tk.MustExec(fmt.Sprintf(`insert into tcollist values (%v, %v)`, a, b))
 		tk.MustExec(fmt.Sprintf(`insert into tnormal values (%v, %v)`, a, b))
@@ -204,7 +204,7 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	inTrans := false
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		switch rand.Intn(4) {
 		case 0: // begin
 			if inTrans {

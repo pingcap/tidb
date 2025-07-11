@@ -17,9 +17,10 @@ package execute
 import (
 	"context"
 	"reflect"
-	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"go.uber.org/atomic"
 )
 
 // StepExecutor defines the executor for subtasks of a task step.
@@ -63,9 +64,40 @@ type StepExecutor interface {
 	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
-// SubtaskSummary contains the summary of a subtask.
+// SubtaskSummary contains the summary of a subtask
+// These fields represent the number of data/rows inputed to the subtask.
 type SubtaskSummary struct {
-	RowCount int64
+	RowCnt     atomic.Int64 `json:"row_count,omitempty"`
+	Bytes      atomic.Int64 `json:"bytes,omitempty"`
+	UpdateTime time.Time    `json:"update_time,omitempty"`
+}
+
+// Reset resets the summary to the given row count and bytes.
+func (s *SubtaskSummary) Reset() {
+	s.RowCnt.Store(0)
+	s.Bytes.Store(0)
+}
+
+// Collector is the interface for collecting subtask metrics.
+type Collector interface {
+	// Add is used collects metrics.
+	// `bytes` is the number of bytes processed, and `rows` is the number of rows processed.
+	// The meaning of `bytes` may vary by scenario, for example:
+	//   - During encoding, it represents the number of bytes read from the source data file.
+	//   - During merge sort, it represents the number of bytes merged.
+	Add(bytes, rows int64)
+}
+
+// TestCollector is an implementation used for test.
+type TestCollector struct {
+	Bytes atomic.Int64
+	Rows  atomic.Int64
+}
+
+// Add implements Collector.Add
+func (c *TestCollector) Add(bytes, rows int64) {
+	c.Bytes.Add(bytes)
+	c.Rows.Add(rows)
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the

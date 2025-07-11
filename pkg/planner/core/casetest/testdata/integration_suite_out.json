@@ -32,10 +32,10 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3",
         "Plan": [
-          "StreamAgg_20 1.00 102.69 root  funcs:count(Column#9)->Column#4",
-          "└─IndexReader_21 1.00 52.79 root  index:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 760.20 cop[tikv]  funcs:count(1)->Column#9",
-          "    └─IndexFullScan_19 3.00 610.50 cop[tikv] table:t3, index:c(b) keep order:false"
+          "StreamAgg_22 1.00 102.69 root  funcs:count(Column#9)->Column#4",
+          "└─IndexReader_23 1.00 52.79 root  index:StreamAgg_10",
+          "  └─StreamAgg_10 1.00 760.20 cop[tikv]  funcs:count(1)->Column#9",
+          "    └─IndexFullScan_21 3.00 610.50 cop[tikv] table:t3, index:c(b) keep order:false"
         ]
       },
       {
@@ -51,34 +51,34 @@
         "SQL": "explain format = 'verbose' select * from t3 order by a",
         "Plan": [
           "Sort_4 3.00 318.27 root  test.t3.a",
-          "└─TableReader_8 3.00 70.81 root  data:TableFullScan_7",
-          "  └─TableFullScan_7 3.00 681.92 cop[tikv] table:t3 keep order:false"
+          "└─TableReader_9 3.00 70.81 root  data:TableFullScan_8",
+          "  └─TableFullScan_8 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by b",
         "Plan": [
           "Sort_4 3.00 318.27 root  test.t3.b",
-          "└─TableReader_8 3.00 70.81 root  data:TableFullScan_7",
-          "  └─TableFullScan_7 3.00 681.92 cop[tikv] table:t3 keep order:false"
+          "└─TableReader_9 3.00 70.81 root  data:TableFullScan_8",
+          "  └─TableFullScan_8 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by a limit 1",
         "Plan": [
-          "TopN_7 1.00 53.10 root  test.t3.a, offset:0, count:1",
-          "└─TableReader_16 1.00 49.90 root  data:TopN_15",
-          "  └─TopN_15 1.00 685.12 cop[tikv]  test.t3.a, offset:0, count:1",
-          "    └─TableFullScan_14 3.00 681.92 cop[tikv] table:t3 keep order:false"
+          "TopN_8 1.00 53.10 root  test.t3.a, offset:0, count:1",
+          "└─TableReader_17 1.00 49.90 root  data:TopN_16",
+          "  └─TopN_16 1.00 685.12 cop[tikv]  test.t3.a, offset:0, count:1",
+          "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select * from t3 order by b limit 1",
         "Plan": [
-          "TopN_7 1.00 53.10 root  test.t3.b, offset:0, count:1",
-          "└─TableReader_16 1.00 49.90 root  data:TopN_15",
-          "  └─TopN_15 1.00 685.12 cop[tikv]  test.t3.b, offset:0, count:1",
-          "    └─TableFullScan_14 3.00 681.92 cop[tikv] table:t3 keep order:false"
+          "TopN_8 1.00 53.10 root  test.t3.b, offset:0, count:1",
+          "└─TableReader_17 1.00 49.90 root  data:TopN_16",
+          "  └─TopN_16 1.00 685.12 cop[tikv]  test.t3.b, offset:0, count:1",
+          "    └─TableFullScan_15 3.00 681.92 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
@@ -92,18 +92,18 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3 where b = 0",
         "Plan": [
-          "StreamAgg_10 1.00 64.98 root  funcs:count(1)->Column#4",
-          "└─IndexReader_15 1.00 15.08 root  index:IndexRangeScan_14",
-          "  └─IndexRangeScan_14 1.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
+          "StreamAgg_12 1.00 64.98 root  funcs:count(1)->Column#4",
+          "└─IndexReader_17 1.00 15.08 root  index:IndexRangeScan_16",
+          "  └─IndexRangeScan_16 1.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
         "Plan": [
-          "StreamAgg_10 1.00 2001.63 root  funcs:count(test.t3.a)->Column#4",
-          "└─IndexLookUp_17 1.00 1951.73 root  ",
-          "  ├─IndexRangeScan_15(Build) 1.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
-          "  └─TableRowIDScan_16(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
+          "StreamAgg_12 1.00 2001.63 root  funcs:count(test.t3.a)->Column#4",
+          "└─IndexLookUp_19 1.00 1951.73 root  ",
+          "  ├─IndexRangeScan_17(Build) 1.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
+          "  └─TableRowIDScan_18(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
@@ -118,61 +118,61 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
         "Plan": [
-          "StreamAgg_10 1.00 2128.93 root  funcs:count(1)->Column#7",
-          "└─HashJoin_40 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
-          "  ├─IndexReader_28(Build) 3.00 45.23 root  index:IndexFullScan_27",
-          "  │ └─IndexFullScan_27 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
-          "  └─TableReader_26(Probe) 3.00 68.11 root  data:Selection_25",
-          "    └─Selection_25 3.00 831.62 cop[tikv]  not(isnull(test.t3.a))",
-          "      └─TableFullScan_24 3.00 681.92 cop[tikv] table:t keep order:false"
+          "StreamAgg_15 1.00 2128.93 root  funcs:count(1)->Column#7",
+          "└─HashJoin_53 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "  ├─IndexReader_38(Build) 3.00 45.23 root  index:IndexFullScan_37",
+          "  │ └─IndexFullScan_37 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
+          "  └─TableReader_33(Probe) 3.00 68.11 root  data:Selection_32",
+          "    └─Selection_32 3.00 831.62 cop[tikv]  not(isnull(test.t3.a))",
+          "      └─TableFullScan_31 3.00 681.92 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
           "StreamAgg_15 1.00 62049.70 root  funcs:count(1)->Column#7",
-          "└─TableReader_46 3.00 61900.00 root  MppVersion: 3, data:ExchangeSender_45",
-          "  └─ExchangeSender_45 3.00 928447.21 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection_44 3.00 928447.21 mpp[tiflash]  test.t1.a",
-          "      └─HashJoin_41 3.00 928447.20 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "        ├─ExchangeReceiver_22(Build) 3.00 464290.40 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_21 3.00 464146.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection_20 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
-          "        │     └─TableFullScan_19 3.00 464139.20 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
-          "        └─Selection_24(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "          └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false"
+          "└─TableReader_70 3.00 61900.00 root  MppVersion: 3, data:ExchangeSender_69",
+          "  └─ExchangeSender_69 3.00 928447.21 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection_68 3.00 928447.21 mpp[tiflash]  test.t1.a",
+          "      └─HashJoin_53 3.00 928447.20 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "        ├─ExchangeReceiver_34(Build) 3.00 464290.40 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_33 3.00 464146.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─Selection_32 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
+          "        │     └─TableFullScan_31 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
+          "        └─Selection_36(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "          └─TableFullScan_35 3.00 464139.20 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "StreamAgg_15 1.00 71701.80 root  funcs:count(1)->Column#10",
-          "└─HashJoin_63 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
-          "  ├─TableReader_40(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_39",
-          "  │ └─ExchangeSender_39 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─Projection_38 3.00 1044634.01 mpp[tiflash]  test.t1.b",
-          "  │     └─HashJoin_29 3.00 1044634.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  │       ├─ExchangeReceiver_35(Build) 3.00 580476.40 mpp[tiflash]  ",
-          "  │       │ └─ExchangeSender_34 3.00 580188.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "  │       │   └─Selection_33 3.00 580188.40 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │       │     └─TableFullScan_32 3.00 580174.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false",
-          "  │       └─Selection_37(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "  │         └─TableFullScan_36 3.00 464139.20 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
-          "  └─IndexReader_50(Probe) 3.00 45.23 root  index:IndexFullScan_49",
-          "    └─IndexFullScan_49 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
+          "StreamAgg_20 1.00 71701.80 root  funcs:count(1)->Column#10",
+          "└─HashJoin_92 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "  ├─TableReader_63(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_62",
+          "  │ └─ExchangeSender_62 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Projection_61 3.00 1044634.01 mpp[tiflash]  test.t1.b",
+          "  │     └─HashJoin_46 3.00 1044634.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  │       ├─ExchangeReceiver_40(Build) 3.00 580476.40 mpp[tiflash]  ",
+          "  │       │ └─ExchangeSender_39 3.00 580188.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "  │       │   └─Selection_38 3.00 580188.40 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "  │       │     └─TableFullScan_37 3.00 580174.00 mpp[tiflash] table:t1 keep order:false",
+          "  │       └─Selection_42(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "  │         └─TableFullScan_41 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
+          "  └─IndexReader_76(Probe) 3.00 45.23 root  index:IndexFullScan_75",
+          "    └─IndexFullScan_75 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
         "Plan": [
-          "HashJoin_17 3.00 32781.07 root  CARTESIAN left outer semi join, left side:IndexReader_21",
-          "├─Selection_22(Build) 0.80 31149.25 root  eq(2, Column#18)",
-          "│ └─StreamAgg_29 1.00 31099.35 root  funcs:count(1)->Column#18",
-          "│   └─TableReader_41 3.00 30949.65 root  MppVersion: 3, data:ExchangeSender_40",
-          "│     └─ExchangeSender_40 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
-          "│       └─TableFullScan_39 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
-          "└─IndexReader_21(Probe) 3.00 53.37 root  index:IndexFullScan_20",
-          "  └─IndexFullScan_20 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
+          "HashJoin_25 3.00 32781.07 root  CARTESIAN left outer semi join, left side:IndexReader_29",
+          "├─Selection_42(Build) 0.80 31149.25 root  eq(2, Column#18)",
+          "│ └─StreamAgg_49 1.00 31099.35 root  funcs:count(1)->Column#18",
+          "│   └─TableReader_61 3.00 30949.65 root  MppVersion: 3, data:ExchangeSender_60",
+          "│     └─ExchangeSender_60 3.00 464139.20 mpp[tiflash]  ExchangeType: PassThrough",
+          "│       └─TableFullScan_59 3.00 464139.20 mpp[tiflash] table:t1 keep order:false",
+          "└─IndexReader_29(Probe) 3.00 53.37 root  index:IndexFullScan_28",
+          "  └─IndexFullScan_28 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
         ]
       },
       {
@@ -184,12 +184,12 @@
           "  │ └─TableReader_26 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_25",
           "  │   └─ExchangeSender_25 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
           "  │     └─Selection_24 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "  │       └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 pushed down filter:empty, keep order:false",
+          "  │       └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
           "  └─Sort_22(Probe) 3.00 31197.00 root  test.t1.a",
           "    └─TableReader_21 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_20",
           "      └─ExchangeSender_20 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Selection_19 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
-          "          └─TableFullScan_18 3.00 464139.20 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false"
+          "          └─TableFullScan_18 3.00 464139.20 mpp[tiflash] table:t1 keep order:false"
         ]
       }
     ]
@@ -261,9 +261,9 @@
           "          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "          │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.ts.col_varchar_64))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:table2 pushed down filter:empty, keep order:false, stats:pseudo",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:table2 keep order:false, stats:pseudo",
           "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.ts.col_varchar_key))",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:SUBQUERY3_t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:SUBQUERY3_t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1020,7 +1020,7 @@
           "TableReader 20.00 root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 20.00 mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:rp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
       {
@@ -1029,7 +1029,7 @@
           "TableReader 20.00 root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 20.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:hp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
       {
@@ -1040,7 +1040,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#4",
           "      └─Selection 20.00 mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:rp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
       {
@@ -1051,7 +1051,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#4",
           "      └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:hp_t pushed down filter:empty, keep order:false, stats:pseudo, PartitionTableScan:true"
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       }
     ]
@@ -1164,7 +1164,7 @@
           "                  └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                    └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#9, funcs:firstrow(test.t1.c2)->Column#10",
           "                      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
-          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader 2666.67 root  MppVersion: 3, data:ExchangeSender",
@@ -1180,7 +1180,7 @@
           "                  └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                    └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#9, funcs:firstrow(test.t1.c2)->Column#10",
           "                      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, ?)",
-          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1199,7 +1199,7 @@
           "                  └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary]",
           "                    └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#9, funcs:firstrow(test.t1.c1)->Column#10",
           "                      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c2, 10)",
-          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader 2666.67 root  MppVersion: 3, data:ExchangeSender",
@@ -1215,7 +1215,7 @@
           "                  └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary]",
           "                    └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#9, funcs:firstrow(test.t1.c1)->Column#10",
           "                      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c2, ?)",
-          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1233,9 +1233,9 @@
           "                ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "                │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "                │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.c1))",
-          "                │     └─TableFullScan 10000.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false, stats:pseudo",
+          "                │     └─TableFullScan 10000.00 mpp[tiflash] table:a keep order:false, stats:pseudo",
           "                └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.c2))",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false, stats:pseudo"
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:b keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader 12487.50 root  MppVersion: 3, data:ExchangeSender",
@@ -1250,9 +1250,9 @@
           "                ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "                │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "                │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.c1))",
-          "                │     └─TableFullScan 10000.00 mpp[tiflash] table:a pushed down filter:empty, keep order:false, stats:pseudo",
+          "                │     └─TableFullScan 10000.00 mpp[tiflash] table:a keep order:false, stats:pseudo",
           "                └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.c2))",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:b pushed down filter:empty, keep order:false, stats:pseudo"
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:b keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1266,7 +1266,7 @@
           "        └─ExchangeReceiver 3323.33 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "            └─Selection 3323.33 mpp[tiflash]  lt(test.t1.c1, 100)",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader 3323.33 root  MppVersion: 3, data:ExchangeSender",
@@ -1277,7 +1277,7 @@
           "        └─ExchangeReceiver 3323.33 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "            └─Selection 3323.33 mpp[tiflash]  lt(test.t1.c1, ?)",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1330,7 +1330,7 @@
           "              └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#9, funcs:firstrow(test.t1.c2)->Column#11",
           "                  └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader 2666.67 root  MppVersion: 3, data:ExchangeSender",
@@ -1344,7 +1344,7 @@
           "              └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#9, funcs:firstrow(test.t1.c2)->Column#11",
           "                  └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, ?)",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1363,7 +1363,7 @@
           "      │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection 8000.00 mpp[tiflash]  test.t1.c1",
           "      │     └─Selection 8000.00 mpp[tiflash]  gt(mul(test.t1.c1, test.t1.c1), plus(test.t1.c2, 10))",
-          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:ta pushed down filter:empty, keep order:false, stats:pseudo",
+          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:ta keep order:false, stats:pseudo",
           "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:tb keep order:false, stats:pseudo"
         ]
       },
@@ -1379,7 +1379,7 @@
           "          ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
           "          │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "          │   └─Selection 8000.00 mpp[tiflash]  gt(mul(test.t1.c1, test.t1.c1), plus(test.t1.c2, 10))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:ta pushed down filter:empty, keep order:false, stats:pseudo",
+          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:ta keep order:false, stats:pseudo",
           "          └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:tb keep order:false, stats:pseudo"
         ]
       }

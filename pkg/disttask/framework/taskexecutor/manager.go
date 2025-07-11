@@ -48,10 +48,6 @@ var (
 	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
-	unfinishedSubtaskStates = []proto.SubtaskState{
-		proto.SubtaskStatePending,
-		proto.SubtaskStateRunning,
-	}
 )
 
 // Manager monitors the task table and manages the taskExecutors.
@@ -171,7 +167,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		m.logErr(err)
+		m.logger.Error("failed to get executable task", zap.Error(err))
 		return
 	}
 
@@ -184,11 +180,11 @@ func (m *Manager) handleTasks() {
 			}
 		case proto.TaskStatePausing:
 			if err := m.handlePausingTask(task.ID); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to handle task in pausing state", zap.Error(err))
 			}
 		case proto.TaskStateReverting:
 			if err := m.handleRevertingTask(task.ID); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to handle task in reverting state", zap.Error(err))
 			}
 		}
 	}
@@ -270,7 +266,7 @@ func (m *Manager) recoverMetaLoop() {
 			return
 		case <-ticker.C:
 			if err := m.recoverMeta(); err != nil {
-				m.logErr(err)
+				m.logger.Error("failed to recover node meta", zap.Error(err))
 				continue
 			}
 		}
@@ -369,24 +365,20 @@ func (m *Manager) isExecutorStarted(taskID int64) bool {
 	return ok
 }
 
-func (m *Manager) logErr(err error) {
-	m.logger.Error("task manager met error", zap.Error(err), zap.Stack("stack"))
-}
-
 func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor) {
-	m.logErr(err)
+	m.logger.Error("update one subtask as failed", zap.Error(err))
 	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
 	// some code in Init that need retry, remove it after it's decoupled.
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
-		m.logger.Error("met retryable err", zap.Error(err), zap.Stack("stack"))
+		m.logger.Error("met retryable err", zap.Error(err))
 		return
 	}
 	err1 := m.runWithRetry(func() error {
 		return m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	}, "update to subtask failed")
 	if err1 == nil {
-		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID),
-			zap.Error(err1), zap.Stack("stack"))
+		m.logger.Info("update error to subtask success", zap.Int64("task-id", taskID),
+			zap.Error(err))
 	}
 }
 
