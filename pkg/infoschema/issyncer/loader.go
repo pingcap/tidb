@@ -97,7 +97,7 @@ func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loa
 		infoCache: infoCache,
 		deferFn:   &deferFn{},
 		crossKS:   true,
-		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)),
+		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)).Named("infoschema"),
 	}
 }
 

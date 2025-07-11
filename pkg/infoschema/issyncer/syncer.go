@@ -100,11 +100,13 @@ func New(
 		},
 	}
 	do.schemaValidator = isvalidator.New(schemaLease)
+	mode := LoadModeAuto
 	do.loader = &Loader{
+		mode:      mode,
 		store:     store,
 		infoCache: infoCache,
 		deferFn:   &do.deferFn,
-		logger:    logutil.BgLogger().With(zap.Stringer("mode", LoadModeAuto)),
+		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 
 	return do
