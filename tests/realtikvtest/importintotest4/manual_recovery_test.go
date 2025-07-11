@@ -24,9 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/tikv/client-go/v2/util"
 )
+
+var fmap = plannercore.ImportIntoFieldMap
 
 func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, int64, *proto.Task) {
 	s.T().Helper()
@@ -55,8 +58,8 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, int64, *proto.
 	s.NoError(err)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID)).Rows()
 	s.Len(rows, 1)
-	s.EqualValues("awaiting-resolution", rows[0][5])
-	s.Contains(rows[0][8].(string), "incorrect DOUBLE value")
+	s.EqualValues("awaiting-resolution", rows[0][fmap["Status"]])
+	s.Contains(rows[0][fmap["ResultMessage"]].(string), "incorrect DOUBLE value")
 	return ctx, int64(jobID), task
 }
 
