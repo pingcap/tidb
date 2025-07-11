@@ -111,6 +111,7 @@ func openParser(
 		if err != nil {
 			return nil, err
 		}
+		parser.SetScannedPos(chunk.Chunk.RealOffset)
 	default:
 		return nil, errors.Errorf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String())
 	}
@@ -498,11 +499,7 @@ func (cr *chunkProcessor) encodeLoop(
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				m.RowReadBytesHistogram.Observe(float64(newScannedOffset - scannedOffset))
-			} else {
-				m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
-			}
+			m.RowReadBytesHistogram.Observe(float64(newScannedOffset - scannedOffset))
 		}
 
 		if len(kvPacket) != 0 {
@@ -707,29 +704,16 @@ func (cr *chunkProcessor) deliverLoop(
 			// comes from chunk.Chunk.Offset. so it shouldn't happen that currOffset - startOffset < 0.
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
-			var lowOffset, highOffset int64
-			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
-				lowOffset, highOffset = startRealOffset, currRealOffset
-			} else {
-				lowOffset, highOffset = startOffset, currOffset
-			}
-			delta := highOffset - lowOffset
+			delta := currRealOffset - startRealOffset
 			if delta >= 0 {
-				if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
-					if currRealOffset > startRealOffset {
-						m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(currRealOffset - startRealOffset))
-					}
-					m.RowsCounter.WithLabelValues(metric.StateRestored, t.tableName).Add(float64(delta))
-				} else {
-					m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
-					m.RowsCounter.WithLabelValues(metric.StateRestored, t.tableName).Add(float64(dataChecksum.SumKVS()))
-				}
+				m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
+				m.RowsCounter.WithLabelValues(metric.StateRestored, t.tableName).Add(float64(dataChecksum.SumKVS()))
 				if rc.status != nil && rc.status.backend == config.BackendTiDB {
 					rc.status.FinishedFileSize.Add(delta)
 				}
 			} else {
-				deliverLogger.Error("offset go back", zap.Int64("curr", highOffset),
-					zap.Int64("start", lowOffset))
+				deliverLogger.Error("offset go back", zap.Int64("curr", currRealOffset),
+					zap.Int64("start", startRealOffset))
 			}
 		}
 
