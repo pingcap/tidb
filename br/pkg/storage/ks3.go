@@ -446,6 +446,7 @@ func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (E
 		storage:      rs,
 		name:         path,
 		reader:       reader,
+		pos:          r.Start,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
 	}, nil
