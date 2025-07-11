@@ -7,12 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
-<<<<<<< HEAD
-        "//pkg/planner/core/base",
-=======
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
->>>>>>> 0bf7afe5cdf (planner: constant folding to isnull(not null column) (#62046))
+        "//pkg/planner/core/base",
     ],
 )

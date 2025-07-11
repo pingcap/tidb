@@ -15,14 +15,12 @@
 package constraint
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-=======
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
->>>>>>> 0bf7afe5cdf (planner: constant folding to isnull(not null column) (#62046))
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 // DeleteTrueExprs deletes the surely true expressions
