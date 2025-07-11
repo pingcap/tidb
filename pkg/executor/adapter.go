@@ -530,6 +530,27 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
+<<<<<<< HEAD
+=======
+	// must set plan according to the `Execute` plan before getting planDigest
+	a.inheritContextFromExecuteStmt()
+	if rm := domain.GetDomain(sctx).RunawayManager(); vardef.EnableResourceControl.Load() && rm != nil {
+		sessionVars := sctx.GetSessionVars()
+		stmtCtx := sessionVars.StmtCtx
+		_, planDigest := GetPlanDigest(stmtCtx)
+		_, sqlDigest := stmtCtx.SQLDigest()
+		stmtCtx.RunawayChecker = rm.DeriveChecker(stmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, sqlDigest.String(), planDigest.String(), sessionVars.StartTime)
+		switchGroupName, err := stmtCtx.RunawayChecker.BeforeExecutor()
+		if err != nil {
+			return nil, err
+		}
+		if len(switchGroupName) > 0 {
+			stmtCtx.ResourceGroupName = switchGroupName
+		}
+	}
+	ctx = a.observeStmtBeginForTopSQL(ctx)
+
+>>>>>>> ea52376d91c (runaway: fix the issue where COOLDOWN/SWITCH_GROUP can't be triggered (#60457))
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
