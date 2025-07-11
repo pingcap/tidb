@@ -392,3 +392,27 @@ explain select a from t;
 id	estRows	task	access object	operator info
 IndexReader_7	10000.00	root		index:IndexFullScan_6
 └─IndexFullScan_6	10000.00	cop[tikv]	table:t, index:hypo_a(a)	keep order:false, stats:pseudo
+drop table if exists t1;
+drop table if exists t2;
+CREATE TABLE `t1`(`c1` bigint(20) NOT NULL DEFAULT '-2312745469307452950', `c2` datetime DEFAULT '5316-02-03 06:54:49', `c3` tinyblob DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+CREATE TABLE `t2`(`c1` set('kn8pu','7et','vekx6','v3','liwrh','q14','1met','nnd5i','5o0','8cz','l') DEFAULT '7et,vekx6,liwrh,q14,1met', `c2` float DEFAULT '1.683167', KEY `k1` (`c2`,`c1`), KEY `k2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
+(select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;
+r0	r1
+explain format='brief' (select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;
+id	estRows	task	access object	operator info
+TopN	273.00	root		Column#9, offset:0, count:273
+└─Union	546.00	root		
+  ├─Projection	273.00	root		cast(Column#4, longblob BINARY)->Column#9, planner__core__plan.t1.c3->Column#10
+  │ └─Projection	273.00	root		locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3)->Column#4, planner__core__plan.t1.c3
+  │   └─Projection	273.00	root		planner__core__plan.t1.c3
+  │     └─TopN	273.00	root		Column#11, offset:0, count:273
+  │       └─Projection	10000.00	root		planner__core__plan.t1.c3, cast(locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3), longblob BINARY)->Column#11
+  │         └─TableReader	10000.00	root		data:TableFullScan
+  │           └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Projection	273.00	root		cast(to_binary(Column#8), longblob BINARY)->Column#9, cast(planner__core__plan.t2.c1, tinyblob BINARY)->Column#10
+    └─Projection	273.00	root		concat_ws(,, cast(planner__core__plan.t2.c2, var_string(5)), planner__core__plan.t2.c1)->Column#8, planner__core__plan.t2.c1
+      └─Projection	273.00	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2
+        └─TopN	273.00	root		Column#12, offset:0, count:273
+          └─Projection	10000.00	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2, cast(to_binary(concat_ws(,, cast(planner__core__plan.t2.c2, var_string(5)), planner__core__plan.t2.c1)), longblob BINARY)->Column#12
+            └─IndexReader	10000.00	root		index:IndexFullScan
+              └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:k1(c2, c1)	keep order:false, stats:pseudo

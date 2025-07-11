@@ -40,6 +40,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/generatedexpr",
         "//pkg/util/hack",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mock",
         "//pkg/util/ranger",
