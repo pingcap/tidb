@@ -130,16 +130,26 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	}
 	log.ReplaceGlobals(gl, props)
 
-	// init dedicated logger for slow query log
-	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	// init dedicated logger for slow query log,
+	// we should use same writeSyncer when filenames are equal.
+	if cfg.SlowQueryFile != "" && cfg.SlowQueryFile != cfg.File.Filename {
+		SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		SlowQueryLogger = newSlowQueryLoggerFromZapLogger(gl, props)
 	}
 
-	// init dedicated logger for general log
-	GeneralLogger, _, err = newGeneralLogger(cfg)
-	if err != nil {
-		return errors.Trace(err)
+	// init dedicated logger for general log,
+	// we should use same writeSyncer when filenames are equal.
+	if cfg.GeneralLogFile != "" && cfg.GeneralLogFile != cfg.File.Filename {
+		GeneralLogger, _, err = newGeneralLogger(cfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		GeneralLogger = gl
 	}
 
 	initGRPCLogger(gl)
