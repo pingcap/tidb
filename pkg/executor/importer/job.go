@@ -368,7 +368,7 @@ func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, grou
 		whereClause = append(whereClause, "GROUP_KEY is not NULL")
 	}
 	if len(whereClause) > 0 {
-		sql += " WHERE " + strings.Join(whereClause, " AND ")
+		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
 	}
 
 	rs, err := conn.ExecuteInternal(ctx, sql, args...)
