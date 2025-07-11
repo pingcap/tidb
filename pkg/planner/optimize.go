@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,6 +156,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	defer func() {
 		if retErr == nil {
 			// Override the resource group if the hint is set.
+			// resource group name is case-insensitive. so we need to convert it to lower case.
+			lowerRgName := strings.ToLower(sessVars.StmtCtx.StmtHints.ResourceGroup)
 			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
 				if vardef.EnableResourceControl.Load() {
 					hasPriv := true
@@ -168,7 +171,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 						}
 					}
 					if hasPriv {
-						sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+						sessVars.StmtCtx.ResourceGroupName = lowerRgName
 						// if we are in a txn, should update the txn resource name to let the txn
 						// commit with the hint resource group.
 						if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
