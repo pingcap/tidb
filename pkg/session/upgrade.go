@@ -477,7 +477,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version250
+var currentBootstrapVersion int64 = version251
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -2019,6 +2019,6 @@ func upgradeToVer250(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer251(s sessiontypes.Session, ver int64) {
+func upgradeToVer251(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(300) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
 }
