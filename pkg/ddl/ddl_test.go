@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -240,7 +240,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	keyRanges := getTableDataKeyRanges([]int64{})
 	require.Len(t, keyRanges, 1)
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
-	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 2, insert a execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3})
@@ -248,7 +248,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
 	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
 	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
-	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 3, insert some execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3, 5, 9})
@@ -260,7 +260,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
 	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
 	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
-	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 }
 
 func TestMergeContinuousKeyRanges(t *testing.T) {
