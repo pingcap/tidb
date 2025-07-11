@@ -111,11 +111,12 @@ type JobInfo struct {
 	Parameters     ImportParameters
 	SourceFileSize int64
 	Status         string
-	// in SHOW IMPORT JOB, we name it as phase.
-	// here, we use the same name as in distributed framework.
+	// Step corresponds to the `phase` field in `SHOW IMPORT JOB`
+	// Here we just use the same name as in distributed framework.
 	Step string
-	// the summary info of the job, it's updated only when the job is finished.
-	// for running job, we should query the progress from the distributed framework.
+	// The summary of the job, it will store info for each step of the import and
+	// will be updated when switching to a new step.
+	// If the ingest step is finished, the number of ingested rows will also stored in it.
 	Summary      *Summary
 	ErrorMessage string
 }
