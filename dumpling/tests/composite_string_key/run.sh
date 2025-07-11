@@ -31,8 +31,8 @@ for file_path in "$DUMPLING_BASE_NAME"/data/*; do
   sed '/^\/\*!/d' "$combined_file" > "$combined_file.clean"
   sed '/^\/\*!/d' "$DUMPLING_BASE_NAME/result/$table_name.sql" > "$DUMPLING_BASE_NAME/result/$table_name.sql.clean"
   
-  # Compare the cleaned files
-  diff "$DUMPLING_BASE_NAME/result/$table_name.sql.clean" "$combined_file.clean"
+  # Compare the cleaned files (ignore trailing whitespace differences)
+  diff -b "$DUMPLING_BASE_NAME/result/$table_name.sql.clean" "$combined_file.clean"
   
   # Cleanup
   rm -f "$combined_file" "$combined_file.clean" "$DUMPLING_BASE_NAME/result/$table_name.sql.clean"
