@@ -145,24 +145,17 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		8:  "Projection",
-		28: "HashAgg",
+		12: "TableReader",
+		13: "TableFullScan",
+		9:  "HashJoin",
+		10: "HashJoin",
+		15: "HashJoin",
 		16: "HashJoin",
-		18: "HashJoin",
-		17: "HashJoin",
-		11: "Sort",
-		15: "HashAgg",
-		27: "TableFullScan",
-		29: "TableReader",
-		20: "HashAgg",
-		24: "TableFullScan",
-		25: "HashAgg",
-		30: "TableFullScan",
-		23: "HashAgg",
-		21: "HashAgg",
-		31: "TableReader",
-		32: "TableFullScan",
-		33: "TableReader",
+		11: "TableFullScan",
+		14: "TableReader",
+		7:  "HashAgg",
+		8:  "StreamAgg",
+		6:  "Projection",
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
