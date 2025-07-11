@@ -2105,11 +2105,10 @@ func TestSelectForUpdateWaitSeconds(t *testing.T) {
 }
 
 func TestSelectForUpdateConflictRetry(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
+	})()
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -2153,11 +2152,10 @@ func TestAsyncCommitWithSchemaChange(t *testing.T) {
 		t.Skip("This test is unstable as depending on time.Sleep")
 	}
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
+	})()
 	require.NoError(t, failpoint.Enable("tikvclient/asyncCommitDoNothing", "return"))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/asyncCommitDoNothing")) }()
 
@@ -2336,11 +2334,10 @@ func TestPlanCacheSchemaChange(t *testing.T) {
 }
 
 func TestAsyncCommitCalTSFail(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
+	})()
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -2366,11 +2363,10 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 }
 
 func TestAsyncCommitAndForeignKey(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
+	})()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := createAsyncCommitTestKit(t, store)
 	tk.MustExec("drop table if exists t_parent, t_child")

@@ -353,10 +353,9 @@ func TestIndexJoin31494(t *testing.T) {
 
 // Details at https://github.com/pingcap/tidb/issues/31038
 func TestFix31038(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Instance.EnableCollectExecutionInfo.Store(false)
-	})
+	})()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
