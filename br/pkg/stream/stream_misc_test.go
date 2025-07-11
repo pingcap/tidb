@@ -77,3 +77,96 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
 }
+
+func TestFilterPath(t *testing.T) {
+	type args struct {
+		path         string
+		shiftStartTS uint64
+		restoreTS    uint64
+	}
+	tests := []struct {
+		name     string
+		args     args
+		expected string
+	}{
+		{
+			name: "normal: minDefaultTs < minTs",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-000000000000001e.meta", // flush=10, minDefault=5, min=10, max=30
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "normal: minDefaultTs == minTs",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-000000000000000a-000000000000000a-000000000000001e.meta", // all = 10
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-000000000000000a-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "fallback: minDefaultTs == 0",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta", // minDefault=0, min=10
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "fallback: minDefaultTs > minTs, should fallback to minTs",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
+				shiftStartTS: 5,
+				restoreTS:    11, // fallback to 10, 11>10
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "restoreTS < fallback minTs, should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // fallback to min=10
+				shiftStartTS: 5,
+				restoreTS:    9, // 9 < 10, should be filtered
+			},
+			expected: "",
+		},
+		{
+			name: "maxTs < shiftStartTS, should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-0000000000000004.meta", // max=4 < 5
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "",
+		},
+		{
+			name: "invalid: minDefaultTs > minTs, fallback, but restoreTS < fallback",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+				shiftStartTS: 5,
+				restoreTS:    8, // fallback to 10, 8 < 10
+			},
+			expected: "",
+		},
+		{
+			name: "non-matching file name format, preserved for compatibility",
+			args: args{
+				path:         "v1/backupmeta/unexpected_format.meta",
+				shiftStartTS: 10,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/unexpected_format.meta",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stream.FilterPathByTs(tt.args.path, tt.args.shiftStartTS, tt.args.restoreTS)
+			require.Equal(t, tt.expected, got)
+		})
+	}
+}
