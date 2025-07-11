@@ -146,7 +146,7 @@ func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResp
 	}, nil
 }
 
-func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
+func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*RegionInfo, error) {
 	if c.InjectErr && c.InjectTimes > 0 {
 		c.InjectTimes -= 1
 		return nil, status.Error(codes.Unavailable, "not leader")
@@ -194,6 +194,7 @@ type MockPDClientForSplit struct {
 	scatterRegions struct {
 		notImplemented bool
 		regionCount    int
+		failedCount    int
 	}
 	getOperator struct {
 		responses map[uint64][]*pdpb.GetOperatorResponse
@@ -380,6 +381,13 @@ func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uin
 
 	if c.scatterRegions.notImplemented {
 		return nil, status.Error(codes.Unimplemented, "Ah, yep")
+	}
+	if c.scatterRegions.failedCount > 0 {
+		c.scatterRegions.failedCount--
+		return &pdpb.ScatterRegionResponse{
+			FinishedPercentage: 0,
+			FailedRegionsId:    regionIDs[:],
+		}, nil
 	}
 	c.scatterRegions.regionCount += len(regionIDs)
 	return &pdpb.ScatterRegionResponse{}, nil
@@ -646,6 +654,7 @@ func (f *FakeSplitClient) ScanRegions(
 	ctx context.Context,
 	startKey, endKey []byte,
 	limit int,
+	_ ...opt.GetRegionOption,
 ) ([]*RegionInfo, error) {
 	result := make([]*RegionInfo, 0)
 	count := 0

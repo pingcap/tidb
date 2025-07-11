@@ -64,7 +64,7 @@ const (
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
-// Function f should have two return value. The first one is an bool which indicate if the err if retryable.
+// Function f should have two return value. The first one is an bool which indicate if the err is retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
 	for i := 1; i <= retryCnt; i++ {
@@ -178,49 +178,6 @@ func SyntaxWarn(err error) error {
 	}
 
 	return parser.ErrParse.FastGenByArgs(SyntaxErrorPrefix, err.Error())
-}
-
-var (
-	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = ast.NewCIStr("INFORMATION_SCHEMA")
-	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = ast.NewCIStr("PERFORMANCE_SCHEMA")
-	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = ast.NewCIStr("METRICS_SCHEMA")
-	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
-	ClusterTableInstanceColumnName = "INSTANCE"
-)
-
-// IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
-func IsMemOrSysDB(dbLowerName string) bool {
-	return IsMemDB(dbLowerName) || IsSysDB(dbLowerName)
-}
-
-// IsMemDB checks whether dbLowerName is memory database.
-func IsMemDB(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
-}
-
-// IsSysDB checks whether dbLowerName is system database.
-func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB || dbLowerName == mysql.WorkloadSchema
-}
-
-// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
-func IsSystemView(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
 }
 
 // X509NameOnline prints pkix.Name into old X509_NAME_oneline format.

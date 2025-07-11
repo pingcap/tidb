@@ -763,45 +763,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
 		}
-		var builder distsql.RequestBuilder
-		builder.SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetTxnScope(e.txnScope).
-			SetReadReplicaScope(e.readReplicaScope).
-			SetIsStaleness(e.isStaleness).
-			SetFromSessionVars(e.dctx).
-			SetFromInfoSchema(e.infoSchema).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-			SetMemTracker(tracker).
-			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-			SetAllowBatchCop(e.batchCop).
-			SetStoreType(e.storeType)
-		if e.index.IsFulltextIndex() {
-			builder.SetPaging(false)
-			builder.SetFullText(true)
-			builder.FullTextInfo.TableID = e.table.Meta().ID
-			builder.FullTextInfo.IndexID = e.index.ID
-			builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
-
-			id := e.Table().Meta().ID
-			startKey := tablecodec.EncodeTablePrefix(id)
-			endKey := tablecodec.EncodeTablePrefix(id + 1)
-			kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
-			kvRanges = kvRanges[:0]
-			kvRanges = append(kvRanges, []kv.KeyRange{kvRange})
-		}
-
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
-		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-			builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-			if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-				builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-			}
-		}
+
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			// check if executor is closed
@@ -813,6 +776,44 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			if finished {
 				break
+			}
+			var builder distsql.RequestBuilder
+			builder.SetDAGRequest(e.dagPB).
+				SetStartTS(e.startTS).
+				SetDesc(e.desc).
+				SetKeepOrder(e.keepOrder).
+				SetTxnScope(e.txnScope).
+				SetReadReplicaScope(e.readReplicaScope).
+				SetIsStaleness(e.isStaleness).
+				SetFromSessionVars(e.dctx).
+				SetFromInfoSchema(e.infoSchema).
+				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+				SetMemTracker(tracker).
+				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+				SetAllowBatchCop(e.batchCop).
+				SetStoreType(e.storeType)
+			if e.index.IsFulltextIndex() {
+				builder.SetPaging(false)
+				builder.SetFullText(true)
+				builder.FullTextInfo.TableID = e.table.Meta().ID
+				builder.FullTextInfo.IndexID = e.index.ID
+				builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
+
+				id := e.Table().Meta().ID
+				startKey := tablecodec.EncodeTablePrefix(id)
+				endKey := tablecodec.EncodeTablePrefix(id + 1)
+				kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
+				kvRanges = kvRanges[:0]
+				kvRanges = append(kvRanges, []kv.KeyRange{kvRange})
+			}
+
+			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+				}
 			}
 
 			// init kvReq, result and worker for this partition

@@ -16,6 +16,7 @@ package ingestcli
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,7 +102,7 @@ func TestClientIngest(t *testing.T) {
 	defer server.Close()
 
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
+	client := NewClient(server.URL, 12345, false, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
@@ -126,7 +128,7 @@ func TestClientIngestError(t *testing.T) {
 	// serverURL, err := url.Parse(server.URL)
 	// require.NoError(t, err)
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
+	client := NewClient(server.URL, 12345, false, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
@@ -151,4 +153,24 @@ func (sc *storeClient) GetStore(_ context.Context, _ uint64) (*metapb.Store, err
 		Address:       sc.addr,
 		StatusAddress: sc.addr,
 	}, nil
+}
+
+func TestNextClientURL(t *testing.T) {
+	for _, c := range []struct {
+		inURL    string
+		forHTTP  string
+		forHTTPS string
+	}{
+		{inURL: "localhost:9000", forHTTP: "http://localhost:9000", forHTTPS: "https://localhost:9000"},
+		{inURL: "http://localhost:9000", forHTTP: "http://localhost:9000", forHTTPS: "http://localhost:9000"},
+		{inURL: "https://localhost:9000", forHTTP: "https://localhost:9000", forHTTPS: "https://localhost:9000"},
+	} {
+		cli := NewClient(c.inURL, 1, false, util.ClientWithTLS(nil), nil).(*client)
+		require.Equal(t, "http://", cli.urlSchema)
+		require.Equal(t, c.forHTTP, cli.tikvWorkerURL)
+
+		cli = NewClient(c.inURL, 1, true, util.ClientWithTLS(&tls.Config{}), nil).(*client)
+		require.Equal(t, "https://", cli.urlSchema)
+		require.Equal(t, c.forHTTPS, cli.tikvWorkerURL)
+	}
 }

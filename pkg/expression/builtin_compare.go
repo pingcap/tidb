@@ -1718,7 +1718,7 @@ func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildCo
 // For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
 // can be broken if the parameter changes to 1 after.
 func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowRefining bool) {
-	if !MaybeOverOptimized4PlanCache(ctx, args) {
+	if !MaybeOverOptimized4PlanCache(ctx, args...) {
 		return true // plan-cache disabled or no parameter in these args
 	}
 
@@ -1786,7 +1786,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 		return args, nil
 	}
 	// We should remove the mutable constant for correctness, because its value may be changed.
-	if err := RemoveMutableConst(ctx, args); err != nil {
+	if err := RemoveMutableConst(ctx, args...); err != nil {
 		return nil, err
 	}
 
