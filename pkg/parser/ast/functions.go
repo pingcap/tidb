@@ -375,6 +375,9 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// TiDB Query Attribute function
+	QueryAttrString = "mysql_query_attribute_string"
 )
 
 type FuncCallExprType int8

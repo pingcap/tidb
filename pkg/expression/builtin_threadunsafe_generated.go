@@ -307,6 +307,11 @@ func (s *builtinValuesVectorFloat32Sig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGetQueryAttrStringSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinRegexpLikeFuncSig) SafeToShareAcrossSession() bool {
 	return false
 }
