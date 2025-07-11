@@ -179,8 +179,13 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
+<<<<<<< HEAD
 	dom.updateStatsWorker(mock.NewContext(), nil)
 	dom.autoAnalyzeWorker(nil)
+=======
+	dom.gcStatsWorker()
+	dom.autoAnalyzeWorker()
+>>>>>>> 830a64dd6ca (domain: move deltaUpdateTicker/gcstats into a new goroutine (#58926))
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
 	err = counter.Write(pb)
