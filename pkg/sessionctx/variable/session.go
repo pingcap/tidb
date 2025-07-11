@@ -2226,6 +2226,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		CostModelVersion:              DefTiDBCostModelVer,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2275,6 +2276,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker.IsRootTrackerOfSess = true
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
+	vars.LoadBindingTimeout = DefTiDBLoadBindingTimeout
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {

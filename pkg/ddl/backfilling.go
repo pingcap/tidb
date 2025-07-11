@@ -897,6 +897,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			failpoint.InjectCall("onUpdateJobParam")
 			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
@@ -930,15 +931,13 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	var wg util.WaitGroupWrapper
 	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.RunWithLog(func() {
 			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
-		}()
+		})
 	}
 
 	err = pipe.Close()
-
+	failpoint.InjectCall("afterPipeLineClose")
 	cancel()
 	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
@@ -1091,6 +1090,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	})
 
 	// generate task goroutine
+	doneCh := make(chan struct{})
 	eg.Go(func() error {
 		// we will modify the startKey in this goroutine, so copy them to avoid race.
 		start, end := startKey, endKey
@@ -1122,17 +1122,21 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 
 		scheduler.close(false)
+		close(doneCh)
 		return nil
 	})
 
 	// update the worker cnt goroutine
-	go func() {
+	eg.Go(func() error {
 		ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
 		defer ticker.Stop()
+	outer:
 		for {
 			select {
-			case <-ctx.Done():
-				return
+			case <-egCtx.Done():
+				return egCtx.Err()
+			case <-doneCh:
+				break outer
 			case <-ticker.C:
 				currentWorkerCnt := scheduler.currentWorkerSize()
 				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
@@ -1148,7 +1152,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				}
 			}
 		}
-	}()
+		return nil
+	})
 
 	return eg.Wait()
 }

@@ -943,12 +943,7 @@ var defaultSysVars = []*SysVar{
 			}
 			return origin, nil
 		}},
-	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return "OFF", nil
-	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_telemetry is deprecated since Telemetry has been removed, this variable is 'OFF' always."))
-		return nil
-	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, Depended: true},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -1672,13 +1667,13 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:                   ScopeGlobal,
 		Name:                    TiDBLoadBindingTimeout,
-		Value:                   "200",
+		Value:                   strconv.Itoa(DefTiDBLoadBindingTimeout),
 		Type:                    TypeUnsigned,
 		MinValue:                0,
 		MaxValue:                math.MaxInt32,
 		IsHintUpdatableVerified: false,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			timeoutMS := tidbOptPositiveInt32(s, 0)
+			timeoutMS := tidbOptPositiveInt32(s, DefTiDBLoadBindingTimeout)
 			vars.LoadBindingTimeout = uint64(timeoutMS)
 			return nil
 		}},

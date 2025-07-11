@@ -70,6 +70,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/store",
         "//pkg/store/helper",
+        "//pkg/telemetry",
         "//pkg/ttl/ttlworker",
         "//pkg/types",
         "//pkg/util",

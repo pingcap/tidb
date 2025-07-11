@@ -694,8 +694,7 @@ const (
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
-	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
-	// Deprecated: it is 'off' always since Telemetry has been removed from TiDB.
+	// TiDBEnableTelemetry indicates that whether usage data print to log is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
@@ -1409,7 +1408,7 @@ const (
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
-	DefTiDBEnableTelemetry                  = false
+	DefTiDBEnableTelemetry                  = true
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
@@ -1606,6 +1605,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBLoadBindingTimeout                         = 200
 )
 
 // Process global variables.
