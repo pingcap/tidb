@@ -58,7 +58,11 @@ go_test(
     ],
     embed = [":split"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 17,
+=======
+    shard_count = 28,
+>>>>>>> c6cf760c9af (ingest: retry failed regions when batch scatter regions (#61722))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/utils",
