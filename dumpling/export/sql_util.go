@@ -256,8 +256,8 @@ func pickupPossibleFieldForStringChunking(tctx *tcontext.Context, meta TableMeta
 func escapeSQLString(s string) string {
 	var buf bytes.Buffer
 	buf.WriteByte('\'')
-	// Use the existing escapeSQL function with escapeBackslash=false for proper SQL escaping
-	escapeSQL([]byte(s), &buf, false)
+	// Use the existing escapeSQL function with escapeBackslash=true for proper SQL escaping
+	escapeSQL([]byte(s), &buf, true)
 	buf.WriteByte('\'')
 	return buf.String()
 }
