@@ -143,7 +143,6 @@ func TestSubmitTaskNextgen(t *testing.T) {
 }
 
 func TestGetTaskImportedRows(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -246,7 +245,6 @@ func TestGetTaskImportedRows(t *testing.T) {
 }
 
 func TestShowImportProgress(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	fmap := plannercore.ImportIntoFieldMap
 
 	store := testkit.CreateMockStore(t)

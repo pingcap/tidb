@@ -379,7 +379,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		return nil, err
 	}
 
-	if err := updateTaskSummary(taskHandle, task, taskMeta, task.Step, nextStep, logicalPlan); err != nil {
+	if err := updateTaskSummary(taskHandle, task, taskMeta, nextStep, logicalPlan); err != nil {
 		return nil, err
 	}
 
@@ -518,7 +518,7 @@ func updateTaskSummary(
 	handle storage.TaskHandle,
 	task *proto.Task,
 	taskMeta *TaskMeta,
-	currStep, nextStep proto.Step,
+	nextStep proto.Step,
 	p *LogicalPlan,
 ) error {
 	var (
