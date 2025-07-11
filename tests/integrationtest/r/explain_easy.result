@@ -507,7 +507,11 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#22
 └─HashAgg	2.50	root		group by:Column#47, Column#48, Column#49, funcs:count(1)->Column#36
   └─Projection	2.50	root		Column#14->Column#47, Column#15->Column#48, coalesce(explain_easy.test02.region_name, 不详)->Column#49
+<<<<<<< HEAD
     └─IndexJoin	2.50	root		left outer join, inner:TableReader, outer key:Column#16, inner key:explain_easy.test02.id, equal cond:eq(Column#16, explain_easy.test02.id)
+=======
+    └─IndexJoin	2.50	root		left outer join, inner:TableReader, left side:HashAgg, outer key:Column#16, inner key:explain_easy.test02.id, equal cond:eq(Column#16, explain_easy.test02.id)
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
       ├─HashAgg(Build)	2.00	root		group by:Column#14, Column#15, Column#16, funcs:firstrow(Column#33)->Column#14, funcs:firstrow(Column#34)->Column#15, funcs:firstrow(Column#35)->Column#16, funcs:count(1)->Column#37
       │ └─Union	2.00	root		
       │   ├─Projection	1.00	root		Column#33, Column#34, Column#35, Column#14, Column#15, Column#16
