@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -27,6 +28,8 @@ func NewAbortCommand() *cobra.Command {
 			build.LogInfo(build.BR)
 			logutil.LogEnvVariables()
 			task.LogArguments(c)
+			// disable stats otherwise takes too much memory
+			session.DisableStats4Test()
 			return nil
 		},
 	}
