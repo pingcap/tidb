@@ -62,9 +62,15 @@ func (m LoadMode) String() string {
 const (
 	// LoadModeAuto will use v1 or v2 according to vardef.SchemaCacheSize.
 	// this is also the default mode.
+	//  - v1: when vardef.SchemaCacheSize is 0, we will load all matched info
+	//    schema objects into memory eagerly.
+	//  - v2: when vardef.SchemaCacheSize is greater than 0, we will load only
+	//    names/IDS and some special tableInfo into memory immediately, and will
+	//    load other info schema objects lazily when they are accessed.
+	//    we will also try to restrict the memory usage of the info schema below
+	//    vardef.SchemaCacheSize.
 	LoadModeAuto LoadMode = 0
-	// LoadModeFull uses infoschema V1, and loads all matched info schema objects
-	// into memory immediately.
+	// LoadModeFull uses info schema v1.
 	LoadModeFull LoadMode = 1
 )
 
@@ -97,7 +103,7 @@ func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loa
 		infoCache: infoCache,
 		deferFn:   &deferFn{},
 		crossKS:   true,
-		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)).Named("infoschema"),
+		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)),
 	}
 }
 
@@ -140,7 +146,6 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		schemaTs = 0
 	}
 
-	// 0 means LoadModeFull
 	var schemaCacheSize uint64
 	if l.mode == LoadModeAuto {
 		schemaCacheSize = vardef.SchemaCacheSize.Load()
