@@ -13,11 +13,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 6,
-=======
-    shard_count = 10,
->>>>>>> 0bf7afe5cdf (planner: constant folding to isnull(not null column) (#62046))
+    shard_count = 7,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
