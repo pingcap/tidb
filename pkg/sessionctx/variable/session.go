@@ -2023,6 +2023,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		EnableWindowFunction:          DefEnableWindowFunction,
+		CostModelVersion:              DefTiDBCostModelVer,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
