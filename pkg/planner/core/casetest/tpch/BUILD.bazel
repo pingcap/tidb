@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "tpch_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "tpch_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 11,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/benchdaily",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
