@@ -2028,6 +2028,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
+	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
