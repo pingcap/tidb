@@ -28,12 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/util/mathutil"
-=======
 	"github.com/pingcap/tidb/pkg/util/intest"
-	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
->>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -137,19 +133,14 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
-<<<<<<< HEAD
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
-=======
-				val, err := constVal.Eval(evalCtx, chunk.Row{})
 				intest.AssertFunc(func() bool {
-					if sctx.ExprCtx.ConnectionID() == 0 {
-						return sctx.RegardNULLAsPoint
+					if sctx.GetSessionVars().ConnectionID == 0 {
+						return sctx.GetSessionVars().RegardNULLAsPoint
 					}
 					return true
 				})
-				if err != nil || (!sctx.RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
->>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1

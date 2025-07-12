@@ -31,12 +31,8 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/hack",
-<<<<<<< HEAD
-        "//pkg/util/mathutil",
-=======
         "//pkg/util/intest",
-        "//pkg/util/ranger/context",
->>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
+        "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",
     ],
 )
