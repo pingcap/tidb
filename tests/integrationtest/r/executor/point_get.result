@@ -538,14 +538,14 @@ analyze table t1 all columns;
 analyze table t2 all columns;
 explain format = 'brief' select * from t1 where a = 1 and b = 1 and c = 1;
 id	estRows	task	access object	operator info
-Selection	0.11	root		eq(executor__point_get.t1.c, 1)
+Selection	1.00	root		eq(executor__point_get.t1.c, 1)
 └─Point_Get	1.00	root	table:t1, clustered index:PRIMARY(a, b)	
 select * from t1 where a = 1 and b = 1 and c = 1;
 a	b	c
 1	1	1
 explain format = 'brief' select * from t2 where t2.a = '111' and t2.b = 1;
 id	estRows	task	access object	operator info
-Selection	0.33	root		eq(executor__point_get.t2.b, 1)
+Selection	1.00	root		eq(executor__point_get.t2.b, 1)
 └─Point_Get	1.00	root	table:t2, clustered index:PRIMARY(a)	
 select * from t2 where t2.a = '111' and t2.b = 1;
 a	b
@@ -561,14 +561,14 @@ a	b	c	a	b
 1	1	1	111	1
 explain format = 'brief' select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2;
 id	estRows	task	access object	operator info
-Selection	0.56	root		eq(executor__point_get.t1.c, 2)
+Selection	1.00	root		eq(executor__point_get.t1.c, 2)
 └─Batch_Point_Get	2.00	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2;
 a	b	c
 2	2	2
 explain format = 'brief' select * from t2 where a in ('111','222') and b = 2;
 id	estRows	task	access object	operator info
-Selection	0.67	root		eq(executor__point_get.t2.b, 2)
+Selection	1.00	root		eq(executor__point_get.t2.b, 2)
 └─Batch_Point_Get	2.00	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
 select * from t2 where a in ('111','222') and b = 2;
 a	b

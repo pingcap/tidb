@@ -331,14 +331,14 @@ set @a = 1;
 execute stmt using @a, @a;
 id	estRows	task	access object	operator info
 HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_15	0.01	root		data:Selection_14
-  └─Selection_14	0.01	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+└─TableReader_15	1.00	root		data:Selection_14
+  └─Selection_14	1.00	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
     └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where id = 1 and k = 1 group by id, k;
 id	estRows	task	access object	operator info
 HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_15	0.01	root		data:Selection_14
-  └─Selection_14	0.01	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+└─TableReader_15	1.00	root		data:Selection_14
+  └─Selection_14	1.00	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
     └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';
 show warnings;
@@ -348,12 +348,12 @@ set @a = 1;
 execute stmt using @a, @a;
 id	estRows	task	access object	operator info
 HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_15	0.01	root		data:Selection_14
-  └─Selection_14	0.01	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+└─TableReader_15	1.00	root		data:Selection_14
+  └─Selection_14	1.00	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
     └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t where 1 = id and 1 = k group by id, k;
 id	estRows	task	access object	operator info
 HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
-└─TableReader_15	0.01	root		data:Selection_14
-  └─Selection_14	0.01	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+└─TableReader_15	1.00	root		data:Selection_14
+  └─Selection_14	1.00	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
     └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

@@ -3741,7 +3741,7 @@
       {
         "SQL": "select * from t where b=1 and c='1' and d='1';",
         "Plan": [
-          "Selection 0.00 root  eq(test.t.d, \"1\")",
+          "Selection 1.00 root  eq(test.t.d, \"1\")",
           "└─Point_Get 1.00 root table:t, index:ubc(b, c) "
         ],
         "Warning": null

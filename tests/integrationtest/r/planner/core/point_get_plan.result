@@ -514,13 +514,13 @@ create table t(a float, unique index uidx(a));
 insert into t values(9.46347e37), (1.1);
 explain format='brief' select * from t where a = 9.46347e37;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 explain format='brief' select * from t where a in (-1.56018e38, -1.96716e38, 9.46347e37);
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 explain format='brief' select * from t where a in (1.1, 9.46347e37);
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 prepare stmt from 'select * from t where a in (?, ?, ?);';
 prepare stmt1 from 'select * from t where a = ?;';
 prepare stmt2 from 'select * from t where a in (?, ?);';
@@ -536,7 +536,7 @@ create table t2(a float, b float, c float, primary key(a, b, c) nonclustered);
 insert into t2 values(-1, 0, 1), (-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (0, 1, 2);
 explain format='brief' select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37));
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (-1, 0, 1));
 a	b	c
 -1	0	1
