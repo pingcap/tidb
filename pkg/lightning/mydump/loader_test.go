@@ -22,9 +22,11 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -959,7 +961,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 	}, mdl.GetDatabases())
 }
 
-func TestMaxScanFilesOption(t *testing.T) {
+func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	memStore := storage.NewMemStorage()
@@ -990,6 +992,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 
 	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(16),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, mdl)
@@ -1003,6 +1006,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	maxScanFilesCount = 100
 	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(0),
 	)
 	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
 	require.NotNil(t, mdl)
@@ -1108,6 +1112,21 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }
 
+func TestEstimateFileSize(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
+	}()
+	fileMeta := md.SourceFileMeta{Compression: md.CompressionNone, FileSize: 100}
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	fileMeta.Compression = md.CompressionGZ
+	require.Equal(t, int64(250), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+}
+
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
 	store, err := storage.NewLocalStorage(s.sourceDir)
@@ -1159,12 +1178,16 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	size, err := md.SampleParquetDataSize(ctx, md.SourceFileMeta{
+	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
 		Path: fileName,
 	}, store)
 	require.NoError(t, err)
+	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
+		Path: fileName,
+	})
+	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
-	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
+	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)
 }
 
 func TestSampleParquetDataSize(t *testing.T) {
@@ -1178,4 +1201,39 @@ func TestSetupOptions(t *testing.T) {
 	_ = md.WithMaxScanFiles
 	_ = md.ReturnPartialResultOnError
 	_ = md.WithFileIterator
+}
+
+func TestParallelProcess(t *testing.T) {
+	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		return strings.ToLower(f.Path), nil
+	}
+
+	letters := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	randomString := func() string {
+		b := make([]rune, 10)
+		for i := range b {
+			b[i] = letters[rand.Intn(len(letters))]
+		}
+		return string(b)
+	}
+
+	oneTest := func(length int, concurrency int) {
+		original := make([]md.RawFile, length)
+		for i := 0; i < length; i++ {
+			original[i] = md.RawFile{Path: randomString()}
+		}
+
+		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
+		require.NoError(t, err)
+
+		for i, s := range original {
+			require.Equal(t, strings.ToLower(s.Path), res[i])
+		}
+	}
+
+	oneTest(10, 0)
+	oneTest(10, 4)
+	oneTest(10, 16)
+	oneTest(1, 10)
+	oneTest(2, 2)
 }

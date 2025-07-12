@@ -5,3 +5,9 @@ set @@tidb_shard_allocate_step=3;
 insert into shard_t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11);
 select count(distinct(_tidb_rowid>>48)) from shard_t;
 set @@tidb_shard_allocate_step=default;
+
+# TestInsertBitDefaultValue
+drop table if exists t;
+create table t(a bit(32) default b'1100010001001110011000100100111');
+insert into t values ();
+select hex(a) from t;

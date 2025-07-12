@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,26 +39,30 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
+	metric        *lightningmetric.Common
 }
 
 func newCloudImportExecutor(
+	ctx context.Context,
 	job *model.Job,
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func() (ingest.BackendCtx, error),
+	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStoreURI string,
-) (*cloudImportExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
-	return &cloudImportExecutor{
+) (e *cloudImportExecutor, err error) {
+	e = &cloudImportExecutor{
 		job:           job,
 		index:         index,
 		ptbl:          ptbl,
-		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
-	}, nil
+		metric:        metrics.RegisterLightningCommonMetricsForDDL(job.ID),
+	}
+	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
+	e.bc, err = bcGetter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func (*cloudImportExecutor) Init(ctx context.Context) error {
@@ -83,6 +89,11 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		all.Merge(g)
 	}
 
+	// compatible with old version task meta
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
@@ -90,6 +101,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
 			EndKey:        all.EndKey,
+			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
@@ -112,6 +124,7 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
+	metrics.UnregisterLightningCommonMetricsForDDL(m.job.ID, m.metric)
 	return nil
 }
 

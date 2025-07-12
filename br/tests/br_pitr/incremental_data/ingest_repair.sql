@@ -46,3 +46,6 @@ ALTER TABLE test.pairs9 CHANGE y y2 varchar(20);
 
 -- test partition
 ALTER TABLE test.pairs10 ADD INDEX i1(y);
+
+
+CREATE INDEX huge ON test.huge_idx(blob1, blob2);

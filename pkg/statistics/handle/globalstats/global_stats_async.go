@@ -384,9 +384,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 			if err != nil {
 				return err
 			}
-			a.cmsketch <- mergeItem[*statistics.CMSketch]{
-				cmsketch, i,
-			}
 			select {
 			case a.cmsketch <- mergeItem[*statistics.CMSketch]{
 				cmsketch, i,

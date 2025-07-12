@@ -63,7 +63,7 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/ddl/util",

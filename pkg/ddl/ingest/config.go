@@ -52,6 +52,8 @@ func genConfig(
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
+	cfg.TikvImporter.StoreWriteBWLimit = lightning.ByteSize(variable.DDLReorgMaxWriteSpeed.Load())
+
 	// Each backend will build a single dir in lightning dir.
 	cfg.TikvImporter.SortedKVDir = jobSortPath
 	if ImporterRangeConcurrencyForTest != nil {

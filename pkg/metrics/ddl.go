@@ -15,9 +15,19 @@
 package metrics
 
 import (
+	"maps"
+	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+	mu                   sync.Mutex
+	registeredJobMetrics = make(map[int64]*metric.Common, 64)
 )
 
 // Metrics for the DDL package.
@@ -180,26 +190,79 @@ func InitDDLMetrics() {
 const (
 	LblAction = "action"
 
-	LblAddIndex      = "add_index"
-	LblAddIndexMerge = "add_index_merge_tmp"
-	LblModifyColumn  = "modify_column"
-
+	// Used by BackfillProgressGauge
+	LblAddIndex       = "add_index"
+	LblAddIndexMerge  = "add_index_merge_tmp"
+	LblModifyColumn   = "modify_column"
 	LblReorgPartition = "reorganize_partition"
+
+	// Used by BackfillTotalCounter
+	LblAddIdxRate         = "add_idx_rate"
+	LblMergeTmpIdxRate    = "merge_tmp_idx_rate"
+	LblCleanupIdxRate     = "cleanup_idx_rate"
+	LblUpdateColRate      = "update_col_rate"
+	LblReorgPartitionRate = "reorg_partition_rate"
 )
 
-// GenerateReorgLabel returns the label with schema name and table name.
-func GenerateReorgLabel(label string, schemaName string, tableName string) string {
+// generateReorgLabel returns the label with schema name, table name and optional column/index names.
+// Multiple columns/indexes can be concatenated with "+".
+func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) string {
 	var stringBuilder strings.Builder
-	stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
+	if len(colOrIdxNames) == 0 {
+		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
+	} else {
+		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
+	}
 	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("_")
+	stringBuilder.WriteString("-")
 	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("_")
+	stringBuilder.WriteString("-")
 	stringBuilder.WriteString(tableName)
+	if len(colOrIdxNames) > 0 {
+		stringBuilder.WriteString("-")
+		stringBuilder.WriteString(colOrIdxNames)
+	}
 	return stringBuilder.String()
 }
 
+// GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
+func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
+	return BackfillTotalCounter.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+}
+
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(label string, schemaName string, tableName string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(GenerateReorgLabel(label, schemaName, tableName))
+func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
+	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+}
+
+// RegisterLightningCommonMetricsForDDL returns the registered common metrics.
+func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
+	mu.Lock()
+	defer mu.Unlock()
+	if m, ok := registeredJobMetrics[jobID]; ok {
+		return m
+	}
+	metrics := metric.NewCommon(promutil.NewDefaultFactory(), TiDB, "ddl", prometheus.Labels{
+		"job_id": strconv.FormatInt(jobID, 10),
+	})
+	metrics.RegisterTo(prometheus.DefaultRegisterer)
+	registeredJobMetrics[jobID] = metrics
+	return metrics
+}
+
+// UnregisterLightningCommonMetricsForDDL unregisters the registered common metrics.
+func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
+	mu.Lock()
+	defer mu.Unlock()
+	metrics.UnregisterFrom(prometheus.DefaultRegisterer)
+	delete(registeredJobMetrics, jobID)
+}
+
+// GetRegisteredJob is used for test
+func GetRegisteredJob() map[int64]*metric.Common {
+	mu.Lock()
+	defer mu.Unlock()
+	ret := make(map[int64]*metric.Common, len(registeredJobMetrics))
+	maps.Copy(ret, registeredJobMetrics)
+	return ret
 }

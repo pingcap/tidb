@@ -35,11 +35,6 @@ var (
 	ConnIdleDurationHistogramNotInTxn prometheus.Observer
 	ConnIdleDurationHistogramInTxn    prometheus.Observer
 
-	AffectedRowsCounterInsert  prometheus.Counter
-	AffectedRowsCounterUpdate  prometheus.Counter
-	AffectedRowsCounterDelete  prometheus.Counter
-	AffectedRowsCounterReplace prometheus.Counter
-
 	InPacketBytes  prometheus.Counter
 	OutPacketBytes prometheus.Counter
 )
@@ -120,11 +115,6 @@ func InitMetricsVars() {
 
 	ConnIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
 	ConnIdleDurationHistogramInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
-
-	AffectedRowsCounterInsert = metrics.AffectedRowsCounter.WithLabelValues("Insert")
-	AffectedRowsCounterUpdate = metrics.AffectedRowsCounter.WithLabelValues("Update")
-	AffectedRowsCounterDelete = metrics.AffectedRowsCounter.WithLabelValues("Delete")
-	AffectedRowsCounterReplace = metrics.AffectedRowsCounter.WithLabelValues("Replace")
 
 	InPacketBytes = metrics.PacketIOCounter.WithLabelValues("In")
 	OutPacketBytes = metrics.PacketIOCounter.WithLabelValues("Out")

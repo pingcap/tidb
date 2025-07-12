@@ -62,7 +62,7 @@ func TestAzblob(t *testing.T) {
 	builder := &sharedKeyAzuriteClientBuilder{}
 	skip, err := createContainer(ctx, builder, options.Bucket)
 	if skip || err != nil {
-		t.Log("azurite is not running, skip test")
+		t.Skip("azurite is not running, skip test")
 		return
 	}
 	require.NoError(t, err)
@@ -123,23 +123,34 @@ func TestAzblob(t *testing.T) {
 
 	efr, err := azblobStorage.Open(ctx, "key2", nil)
 	require.NoError(t, err)
+	size, err := efr.GetFileSize()
+	require.NoError(t, err)
+	require.EqualValues(t, 33, size)
+
+	realReader := efr.(*azblobObjectReader)
+	require.Nil(t, realReader.reader)
 
 	p := make([]byte, 10)
 	n, err := efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 10, n)
 	require.Equal(t, "data222233", string(p))
+	require.NotNil(t, realReader.reader)
+	oldInnerReader := realReader.reader
 
 	p = make([]byte, 40)
 	n, err = efr.Read(p)
 	require.NoError(t, err)
 	require.Equal(t, 23, n)
 	require.Equal(t, "46757222222222289722222", string(p[:23]))
+	require.Same(t, oldInnerReader, realReader.reader)
 
 	p = make([]byte, 5)
 	offs, err := efr.Seek(3, io.SeekStart)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), offs)
+	// reader reopened
+	require.NotSame(t, oldInnerReader, realReader.reader)
 
 	n, err = efr.Read(p)
 	require.NoError(t, err)

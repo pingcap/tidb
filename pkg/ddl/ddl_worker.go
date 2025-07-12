@@ -479,7 +479,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		// currently doesn't support pause job in local mode.
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && !job.LocalMode {
-			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+			if err = pauseRunningJob(job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				task.cacheErr = err
 				continue
@@ -997,6 +997,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 	err = w.updateDDLJob(job, runJobErr != nil)
+	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)

@@ -399,14 +399,18 @@ func makeFailpointRes(t *testing.T, v any) string {
 func getMockedServerInfo() map[string]*infosync.ServerInfo {
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
-			ID:   "s1",
-			IP:   "127.0.0.1",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s1",
+				IP:   "127.0.0.1",
+				Port: 4000,
+			},
 		},
 		"s2": {
-			ID:   "s2",
-			IP:   "127.0.0.2",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s2",
+				IP:   "127.0.0.2",
+				Port: 4000,
+			},
 		},
 	}
 	return mockedAllServerInfos

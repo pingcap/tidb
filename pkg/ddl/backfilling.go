@@ -153,21 +153,30 @@ type backfillCtx struct {
 	metricCounter prometheus.Counter
 }
 
-func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
-	schemaName string, tbl table.Table, jobCtx *JobContext, label string, isDistributed bool) *backfillCtx {
+func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, rInfo *reorgInfo, schemaName string, tbl table.Table,
+	jobCtx *JobContext, label string, isDistributed bool) *backfillCtx {
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
 	}
+	colOrIdxName := ""
+	switch rInfo.Job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		colOrIdxName = getIndexNamesFromJobArgs(rInfo)
+	case model.ActionModifyColumn:
+		oldCol, _ := getOldAndNewColumnsForUpdateColumn(tbl, rInfo.currElement.ID)
+		if oldCol != nil {
+			colOrIdxName = oldCol.Name.String()
+		}
+	}
 	return &backfillCtx{
-		id:         id,
-		ddlCtx:     ctx,
-		sessCtx:    sessCtx,
-		schemaName: schemaName,
-		table:      tbl,
-		batchCnt:   int(variable.GetDDLReorgBatchSize()),
-		jobContext: jobCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
+		id:            id,
+		ddlCtx:        ctx,
+		sessCtx:       sessCtx,
+		schemaName:    schemaName,
+		table:         tbl,
+		batchCnt:      int(variable.GetDDLReorgBatchSize()),
+		jobContext:    jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}
 }
 

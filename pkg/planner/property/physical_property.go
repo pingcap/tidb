@@ -93,6 +93,19 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
+// ResolveIndices resolve index for MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
+	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
+	if err != nil {
+		return nil, err
+	}
+	newCol, _ := newColExpr.(*expression.Column)
+	return &MPPPartitionColumn{
+		Col:       newCol,
+		CollateID: partitionCol.CollateID,
+	}, nil
+}
+
 func (partitionCol *MPPPartitionColumn) hashCode() []byte {
 	hashcode := partitionCol.Col.HashCode()
 	if partitionCol.CollateID < 0 {
