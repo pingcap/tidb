@@ -42,8 +42,8 @@ const (
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
-	FlagResolveExpand
 	FlagEmptySelectionEliminator
+	FlagResolveExpand
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

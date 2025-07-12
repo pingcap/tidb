@@ -49,5 +49,5 @@ func (e *EmptySelectionEliminator) recursivePlan(p base.LogicalPlan, opt *optimi
 
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*EmptySelectionEliminator) Name() string {
-	return "derive_topn_from_window"
+	return "eliminate_empty_selection"
 }
