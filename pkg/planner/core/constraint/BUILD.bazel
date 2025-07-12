@@ -9,6 +9,5 @@ go_library(
         "//pkg/expression",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
     ],
 )
