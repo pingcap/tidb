@@ -943,3 +943,9 @@ HashJoin	19472.71	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
     └─TableReader(Probe)	9990.00	root		data:Selection
       └─Selection	9990.00	cop[tikv]		not(isnull(test.t3.b))
         └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+drop table if exists t0, v0;
+drop view if exists v0;
+CREATE  TABLE  t0(c0 INTEGER);
+CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
+SELECT t0.c0 FROM v0, t0 WHERE RAND();
+c0
