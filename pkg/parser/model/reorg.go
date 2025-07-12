@@ -32,6 +32,7 @@ type DDLReorgMeta struct {
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`
+	AnalyzeState      int8                             `json:"analyze_state"`
 	Version           int64                            `json:"version"`
 }
 
@@ -63,6 +64,15 @@ const (
 	// The incremental index KVs written by DML are redirected to a temporary index.
 	// After the backfill is finished, the temporary index records are merged back to the original index.
 	ReorgTypeTxnMerge
+)
+
+const (
+	// AnalyzeStateNone means the analyze process is not started yet.
+	AnalyzeStateNone = 0
+	// AnalyzeStateRunning means the analyze process is running.
+	AnalyzeStateRunning = 1
+	// AnalyzeStateDone means the analyze process is done.
+	AnalyzeStateDone = 2
 )
 
 // NeedMergeProcess means the incremental changes need to be merged.
