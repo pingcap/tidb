@@ -134,7 +134,7 @@ Selection_5	0.24	root		json_overlaps(planner__core__casetest__index__index.t2.a,
   └─TableRowIDScan_8(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range);
 id	estRows	task	access object	operator info
-TableDual_5	0.00	root		rows:0
+TableDual_5	1.00	root		rows:0
 drop table if exists t;
 create table t(a int, b int, c int, unique index(a), unique index(b), primary key(c));
 explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2;
@@ -445,23 +445,13 @@ Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
-<<<<<<< HEAD
-    └─Projection	17.91	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
-      └─IndexMerge	17.91	root		type: union
-        ├─Selection(Build)	10000.00	cop[tikv]		lt(7, planner__core__casetest__index__index.tt1.c_decimal)
-        │ └─TableRangeScan	10000.00	cop[tikv]	table:tt2	range:[7,7], keep order:false, stats:pseudo
-        ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
-        │ └─IndexRangeScan	33333333.33	cop[tikv]	table:tt2, index:c_str(c_str)	range:["zzzzzzzzzzzzzzzzzzz",+inf], keep order:false, stats:pseudo
-        └─Selection(Probe)	17.91	cop[tikv]		or(and(eq(planner__core__casetest__index__index.tt2.c_int, 7), lt(7, planner__core__casetest__index__index.tt1.c_decimal)), and(ge(planner__core__casetest__index__index.tt2.c_str, "zzzzzzzzzzzzzzzzzzz"), eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)))
-=======
     └─Projection	18.77	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
       └─IndexMerge	18.77	root		type: union
-        ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
-        │ └─IndexRangeScan	33333333.33	cop[tikv]	table:tt2, index:c_str(c_str)	range:["zzzzzzzzzzzzzzzzzzz",+inf], keep order:false, stats:pseudo
         ├─Selection(Build)	10000.00	cop[tikv]		lt(7, planner__core__casetest__index__index.tt1.c_decimal)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:tt2	range:[7,7], keep order:false, stats:pseudo
+        ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
+        │ └─IndexRangeScan	33333333.33	cop[tikv]	table:tt2, index:c_str(c_str)	range:["zzzzzzzzzzzzzzzzzzz",+inf], keep order:false, stats:pseudo
         └─Selection(Probe)	18.77	cop[tikv]		or(and(eq(planner__core__casetest__index__index.tt2.c_int, 7), lt(7, planner__core__casetest__index__index.tt1.c_decimal)), and(ge(planner__core__casetest__index__index.tt2.c_str, "zzzzzzzzzzzzzzzzzzz"), eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)))
->>>>>>> 61e061e08c6 (planner: selectivity estimate not to go below 1 (#61045))
           └─TableRowIDScan	43330.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
 select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
 c_int

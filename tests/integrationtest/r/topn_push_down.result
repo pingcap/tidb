@@ -169,7 +169,7 @@ ORDER BY te.expect_time asc
 LIMIT 0, 5;
 id	estRows	task	access object	operator info
 Limit	1.56	root		offset:0, count:5
-└─IndexJoin	1.56	root		left outer join, inner:IndexReader, left side:TopN, outer key:topn_push_down.tr.id, inner key:topn_push_down.p.relate_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.p.relate_id)
+└─IndexJoin	1.56	root		left outer join, inner:IndexReader, outer key:topn_push_down.tr.id, inner key:topn_push_down.p.relate_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.p.relate_id)
   ├─TopN(Build)	1.25	root		topn_push_down.te.expect_time, offset:0, count:5
   │ └─IndexJoin	1.25	root		inner join, inner:IndexLookUp, outer key:topn_push_down.tr.id, inner key:topn_push_down.te.trade_id, equal cond:eq(topn_push_down.tr.id, topn_push_down.te.trade_id)
   │   ├─IndexLookUp(Build)	1.00	root		

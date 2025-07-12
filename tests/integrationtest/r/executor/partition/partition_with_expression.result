@@ -633,12 +633,12 @@ SELECT * from t where a = 2 and a = 3;
 a	b
 explain format='brief' select * from trange where a = 2 and a = 3;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 SELECT * from trange where a = 2 and a = 3;
 a	b
 explain format='brief' select * from thash where a = 2 and a = 3;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 SELECT * from thash where a = 2 and a = 3;
 a	b
 SELECT * from t where a < 2 and a > 0;

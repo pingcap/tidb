@@ -470,7 +470,7 @@ a	b	c
 1	2	2
 explain format='brief' select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;
 a	b	c
 explain format='brief' select * from t where a = 1 and (b is null or b = 2);
@@ -503,7 +503,7 @@ select * from t where a = 1 and b is null and b is null and c > 1;
 a	b	c
 explain format='brief' select * from t where a = 1 and b is null and b = 1 and c > 1;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 select * from t where a = 1 and b is null and b = 1 and c > 1;
 a	b	c
 set @@session.tidb_regard_null_as_point=default;

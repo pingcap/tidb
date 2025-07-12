@@ -7,7 +7,7 @@ TableReader	10.00	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 explain format = 'brief' select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =;
 id	estRows	task	access object	operator info
 TableReader	10.00	root		data:Selection
@@ -15,10 +15,10 @@ TableReader	10.00	root		data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 explain format = 'brief' select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =;
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 explain format = 'brief' select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.;
 id	estRows	task	access object	operator info
 TableReader	6656.67	root		data:Selection
@@ -122,13 +122,13 @@ Selection	12.80	root		gt(Column#4, 100)
         └─TableFullScan	10000.00	cop[tikv]	table:ts	keep order:false, stats:pseudo
 explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
 id	estRows	task	access object	operator info
-TableReader	0.00	root		data:Selection
-└─Selection	0.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, NULL, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, NULL, 2, 3), ne(planner__core__casetest__predicate_simplification.t.f, NULL)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists dt;
 drop table if exists it;
@@ -211,7 +211,7 @@ drop table if exists t1;
 create table t1 (a1 int, b1 int, c1 char(2));
 explain format='brief' select * from t1 where b1=1 and (b1>1 or b1 < 1);
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+TableDual	1.00	root		rows:0
 explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 < 1);
 id	estRows	task	access object	operator info
 TableReader	1.00	root		data:Selection
