@@ -252,7 +252,10 @@ func pickupPossibleFieldForStringChunking(tctx *tcontext.Context, meta TableMeta
 	return fieldNames[0], isStrings[0], nil
 }
 
-// escapeSQLString properly escapes a string for use in SQL queries
+// escapeSQLString properly escapes a string for use in internal SQL boundary condition queries.
+// This function is used only for generating WHERE clauses in chunking and pagination queries,
+// and does NOT affect the dumpling data output format. Data output escaping is controlled
+// separately by the global --escape-backslash flag in the WriteToBuffer methods.
 func escapeSQLString(s string) string {
 	var buf bytes.Buffer
 	buf.WriteByte('\'')
