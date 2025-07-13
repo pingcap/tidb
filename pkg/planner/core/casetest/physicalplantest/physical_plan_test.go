@@ -1594,6 +1594,33 @@ func TestRuleAggElimination4Join(t *testing.T) {
 		}
 	})
 }
+func TestIssue62331(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("CREATE TABLE t1 (col_1 time DEFAULT NULL,col_2 mediumint NOT NULL,KEY idx_1 (col_2,col_1) /*T![global_index] GLOBAL */,KEY idx_2 (col_2,col_1),PRIMARY KEY (col_2) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY idx_4 (col_2)) PARTITION BY RANGE COLUMNS(col_2) (PARTITION p0 VALUES LESS THAN (7429676));")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+
+		cascadesData := getCascadesTemplateData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+		tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
+}
 
 // Helper: load cascades_template test data
 func getCascadesTemplateData() testdata.TestData {
