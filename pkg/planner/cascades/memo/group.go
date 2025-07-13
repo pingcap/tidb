@@ -66,6 +66,9 @@ type Group struct {
 
 	// explored indicates whether this group has been explored.
 	explored bool
+
+	// cleared is used to mark the group is cleared after group merge.
+	cleared bool
 }
 
 // GroupPair is a pair of *Group
@@ -236,6 +239,15 @@ func (g *Group) addParentGEs(parent *GroupExpression) {
 func (g *Group) mergeTo(target *Group) {
 	// maintain target group's parent GE refs, except the triggering src GE.
 	g.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
+		// case:
+		//   G2(proj1)
+		//   G3(proj2)  <--+
+		//   G4(join3)  ---+
+		// when merging G4 to G3, the parentGEs of G4 which should be proj2 should be skipped.
+		if val.GetGroup() == target {
+			// child group merge to parent group, skip maintain the parent GE ref.
+			return
+		}
 		target.hash2ParentGroupExpr.Put(key, val)
 	})
 	// maintain the ge migration, two groups may have the equivalent two,
@@ -274,6 +286,7 @@ func (g *Group) Clear() {
 	g.hash2ParentGroupExpr.Clear()
 	clear(g.Operand2FirstExpr)
 	g.logicalProp = nil
+	g.cleared = true
 }
 
 // Check is used in test for self check.

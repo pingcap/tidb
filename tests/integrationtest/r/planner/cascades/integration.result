@@ -305,13 +305,10 @@ c	sum(a)
 explain format="brief" select max(a.a) from t a left join t b on a.a = b.a;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#5
-└─IndexJoin	1.25	root		left outer join, inner:TableReader, left side:Limit, outer key:planner__cascades__integration.t.a, inner key:planner__cascades__integration.t.a, equal cond:eq(planner__cascades__integration.t.a, planner__cascades__integration.t.a)
-  ├─Limit(Build)	1.00	root		offset:0, count:1
-  │ └─TableReader	1.00	root		data:Limit
-  │   └─Limit	1.00	cop[tikv]		offset:0, count:1
-  │     └─TableFullScan	1.00	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
-  └─TableReader(Probe)	1.00	root		data:TableRangeScan
-    └─TableRangeScan	1.00	cop[tikv]	table:b	range: decided by [planner__cascades__integration.t.a], keep order:false, stats:pseudo
+└─Limit	1.00	root		offset:0, count:1
+  └─TableReader	1.00	root		data:Limit
+    └─Limit	1.00	cop[tikv]		offset:0, count:1
+      └─TableFullScan	1.00	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
 select max(a.a) from t a left join t b on a.a = b.a;
 max(a.a)
 4
@@ -336,10 +333,9 @@ a	max(t1.b)
 4	44
 explain format="brief" select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		planner__cascades__integration.t.a, Column#5
-└─Projection	10000.00	root		cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#5, planner__cascades__integration.t.a
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+Projection	10000.00	root		planner__cascades__integration.t.a, cast(planner__cascades__integration.t.b, decimal(32,0) BINARY)->Column#5
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a;
 a	sum(distinct t1.b)
 1	11
@@ -358,10 +354,8 @@ a	max(t2.b)
 4	44
 explain format="brief" select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		planner__cascades__integration.t.a, Column#5
-└─Projection	10000.00	root		planner__cascades__integration.t.b->Column#5, planner__cascades__integration.t.a
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a;
 a	max(t3.b)
 1	11
