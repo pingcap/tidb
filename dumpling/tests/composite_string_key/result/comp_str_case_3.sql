@@ -7,7 +7,7 @@ INSERT INTO `comp_str_case_3` VALUES
 ('en','welcome','Welcome to our application! 😊'),
 ('es','goodbye','Gracias por usar nuestro servicio'),
 ('es','welcome','¡Bienvenido a nuestra aplicación!'),
-('fr','goodbye','Merci d''utiliser notre service'),
+('fr','goodbye','Merci d\'utiliser notre service'),
 ('fr','welcome','Bienvenue dans notre application !'),
 ('ja','goodbye','サービスをご利用いただきありがとうございます'),
 ('ja','welcome','アプリケーションへようこそ！'),
