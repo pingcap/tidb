@@ -98,6 +98,7 @@ func StartRegionWithNewRootSpan(ctx context.Context, regionType string) (Region,
 //	defer tracing.StartRegion(ctx, "myTracedRegion").End()
 func StartRegion(ctx context.Context, regionType string) Region {
 	r := trace.StartRegion(ctx, regionType)
+	span2 := StartSpan(ctx, regionType)
 	var span1 opentracing.Span
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 = span.Tracer().StartSpan(regionType, opentracing.ChildOf(span.Context()))
@@ -105,6 +106,7 @@ func StartRegion(ctx context.Context, regionType string) Region {
 	return Region{
 		Region: r,
 		Span:   span1,
+		Span2:  span2,
 	}
 }
 
@@ -125,6 +127,7 @@ func StartRegionEx(ctx context.Context, regionType string) (Region, context.Cont
 type Region struct {
 	*trace.Region
 	opentracing.Span
+	Span2 Span
 }
 
 // End marks the end of the traced code region.
@@ -132,6 +135,7 @@ func (r Region) End() {
 	if r.Span != nil {
 		r.Span.Finish()
 	}
+	r.Span2.Done()
 	r.Region.End()
 }
 
