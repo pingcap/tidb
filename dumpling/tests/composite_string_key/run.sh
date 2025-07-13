@@ -12,8 +12,8 @@ for data in "$DUMPLING_BASE_NAME"/data/*; do
   run_sql_file "$data"
 done
 
-# Run dumpling with --rows parameter to force chunking
-run_dumpling --rows 5
+# Run dumpling with --rows parameter to force chunking and standard SQL escaping
+run_dumpling --rows 5 --escape-backslash=false
 
 for file_path in "$DUMPLING_BASE_NAME"/data/*; do
   base_name=$(basename "$file_path")
