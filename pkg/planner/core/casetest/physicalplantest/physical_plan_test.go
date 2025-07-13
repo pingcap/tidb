@@ -1594,6 +1594,7 @@ func TestRuleAggElimination4Join(t *testing.T) {
 		}
 	})
 }
+
 func TestIssue62331(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
