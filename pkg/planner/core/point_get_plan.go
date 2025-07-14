@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	math2 "math"
 	"slices"
 	"strconv"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
