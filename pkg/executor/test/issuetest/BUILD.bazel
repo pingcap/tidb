@@ -8,14 +8,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 22,
-=======
-    shard_count = 25,
->>>>>>> af367b8a5ae (executor: replace `Call` with `CallWithRecover` in the close of hash join v1 (#61868))
+    shard_count = 23,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/executor",
         "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/parser/auth",
