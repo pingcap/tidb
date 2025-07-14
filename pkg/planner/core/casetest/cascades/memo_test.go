@@ -35,7 +35,7 @@ import (
 )
 
 func TestCascadesTemplate(t *testing.T) {
-	// wrap your test body with
+	// wrap your test body with.
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		// test your basic sql interface and assert the execution result.
 		tk.MustExec("use test")

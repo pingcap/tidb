@@ -176,6 +176,9 @@ func (td *TestData) LoadTestCases(t *testing.T, in any, out any, opts ...string)
 	}
 
 	casesIdx, ok := td.funcMap[funcName]
+	if !ok {
+		fmt.Println(1)
+	}
 	require.Truef(t, ok, "Must get test %s", funcName)
 	err := json.Unmarshal(*td.input[casesIdx].Cases, in)
 	require.NoError(t, err)
