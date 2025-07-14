@@ -5,8 +5,6 @@ issues:
 
   max-issues-per-linter: 0
 
-  new: true
-
 linters:
   default: none
   enable:
