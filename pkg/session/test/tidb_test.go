@@ -76,8 +76,7 @@ func TestKeysNeedLock(t *testing.T) {
 		if bytes.Equal(test.key, nonUniqueIndexKey) && bytes.Equal(test.val, nonUniqueVal) {
 			flag = kv.ApplyFlagsOps(kv.KeyFlags(0), kv.SetNeedLocked)
 			require.True(t, flag.HasNeedLocked())
-			need = session.KeyNeedToLock(test.key, test.val, flag)
-			require.True(t, need)
+			require.True(t, session.KeyNeedToLock(test.key, test.val, flag))
 		}
 	}
 }
