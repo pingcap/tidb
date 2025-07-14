@@ -2124,6 +2124,12 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
+		/*
+			exprCtx := ctx.GetExprCtx()
+			if castToTP.GetType() == mysql.TypeTimestamp {
+				exprCtx = context.WithValue(exprCtx.GetEvalCtx().TypeCtx().Flags(), "isUpdateTimestamp", true)
+			}
+		*/
 		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)

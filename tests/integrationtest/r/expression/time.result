@@ -1466,3 +1466,247 @@ NULL
 2023-11-30 22:58:59
 2023-11-30 22:58:59
 2023-12-30 22:58:59
+drop table if exists t;
+create table t (a int primary key, b timestamp, c varchar(255));
+affected rows: 0
+info: 
+set @old_sql_mode = @@sql_mode;
+affected rows: 0
+info: 
+set sql_mode = '';
+affected rows: 0
+info: 
+set time_zone = 'Europe/Amsterdam';
+affected rows: 0
+info: 
+insert into t values (1, CAST('NotTimestamp' AS DATETIME), 'NotTimestamp');
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+insert into t values (2, 'NotTimestamp', 'NotTimestamp');
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: 'NotTimestamp' for column 'b' at row 1
+insert into t values (3, DATE_ADD(CAST('NotTimestamp' AS DATETIME), INTERVAL 2000 YEAR), 'NotTimestamp');
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+insert into t values (4, DATE_ADD('NotTimestamp', INTERVAL 2000 YEAR), 'NotTimestamp');
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+insert into t values (5, '2025-03-30 02:30:00', '2025-03-30 02:30:00');
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:30:00' for column 'b' at row 1
+insert into t values (6, '2025-03-30 02:40:00', '2025-03-30 02:40:00');
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:40:00' for column 'b' at row 1
+insert into t values (7, '2025-03-30 02:50:00', '2025-03-30 02:50:00');
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect timestamp value: '2025-03-30 02:50:00' for column 'b' at row 1
+select * from t order by a;
+a	b	c
+1	NULL	NotTimestamp
+2	0000-00-00 00:00:00	NotTimestamp
+3	NULL	NotTimestamp
+4	NULL	NotTimestamp
+5	2025-03-30 03:00:00	2025-03-30 02:30:00
+6	2025-03-30 03:00:00	2025-03-30 02:40:00
+7	2025-03-30 03:00:00	2025-03-30 02:50:00
+affected rows: 0
+info: 
+update t set b = 'NotTimestamp' where a = 1;
+affected rows: 0
+info: Rows matched: 1  Changed: 0  Warnings: 1
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 1;
+a	b	c
+1	NULL	NotTimestamp
+affected rows: 0
+info: 
+update t set b = CAST('NotTimestamp' AS DATETIME) where a = 2;
+affected rows: 1
+info: Rows matched: 1  Changed: 1  Warnings: 1
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 2;
+a	b	c
+2	NULL	NotTimestamp
+affected rows: 0
+info: 
+update t set b = c where a = 3;
+affected rows: 0
+info: Rows matched: 1  Changed: 0  Warnings: 1
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 3;
+a	b	c
+3	NULL	NotTimestamp
+affected rows: 0
+info: 
+update t set b = CAST(c AS DATETIME) where a = 4;
+affected rows: 0
+info: Rows matched: 1  Changed: 0  Warnings: 1
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 4;
+a	b	c
+4	NULL	NotTimestamp
+affected rows: 0
+info: 
+update t set b = '2025-03-30 02:20:00' where a = 5;
+Error 8179 (HY000): Timestamp is not valid, since it is in Daylight Saving Time transition '2025-03-30 02:20:00' for time zone 'Europe/Amsterdam'
+select * from t where a = 5;
+a	b	c
+5	2025-03-30 03:00:00	2025-03-30 02:30:00
+affected rows: 0
+info: 
+update t set b = c where a = 6;
+Error 8179 (HY000): Timestamp is not valid, since it is in Daylight Saving Time transition '2025-03-30 02:40:00' for time zone 'Europe/Amsterdam'
+select * from t where a = 6;
+a	b	c
+6	2025-03-30 03:00:00	2025-03-30 02:40:00
+affected rows: 0
+info: 
+update t set b = CAST(c AS DATETIME) where a = 7;
+affected rows: 0
+info: Rows matched: 1  Changed: 0  Warnings: 1
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 50 0 0}' for time zone 'Europe/Amsterdam'
+select * from t where a = 7;
+a	b	c
+7	2025-03-30 03:00:00	2025-03-30 02:50:00
+affected rows: 0
+info: 
+delete from t where b = 'NotTimestamp' and a = 1;
+affected rows: 0
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 1;
+a	b	c
+1	NULL	NotTimestamp
+affected rows: 0
+info: 
+delete from t where b <=> 'NotTimestamp' and a = 1;
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 1;
+a	b	c
+affected rows: 0
+info: 
+delete from t where b = CAST('NotTimestamp' AS DATETIME) and a = 2;
+affected rows: 0
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 2;
+a	b	c
+2	NULL	NotTimestamp
+affected rows: 0
+info: 
+delete from t where b <=> CAST('NotTimestamp' AS DATETIME) and a = 2;
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 2;
+a	b	c
+affected rows: 0
+info: 
+delete from t where b = c and a = 3;
+affected rows: 0
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 3;
+a	b	c
+3	NULL	NotTimestamp
+affected rows: 0
+info: 
+delete from t where b <=> c and a = 3;
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 3;
+a	b	c
+affected rows: 0
+info: 
+delete from t where b = cast(c as datetime) and a = 4;
+affected rows: 0
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 4;
+a	b	c
+4	NULL	NotTimestamp
+affected rows: 0
+info: 
+delete from t where b <=> cast(c as datetime) and a = 4;
+affected rows: 1
+info: 
+Level	Code	Message
+Warning	1292	Incorrect datetime value: 'NotTimestamp'
+select * from t where a = 4;
+a	b	c
+affected rows: 0
+info: 
+delete from t where b = '2025-03-30 02:20:00' and a = 5;
+affected rows: 0
+info: 
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 20 0 0}' for time zone 'Europe/Amsterdam'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 20 0 0}' for time zone 'Europe/Amsterdam'
+select * from t where a = 5;
+a	b	c
+5	2025-03-30 03:00:00	2025-03-30 02:30:00
+affected rows: 0
+info: 
+delete from t where b = c and a = 6;
+affected rows: 0
+info: 
+select * from t where a = 6;
+a	b	c
+6	2025-03-30 03:00:00	2025-03-30 02:40:00
+affected rows: 0
+info: 
+delete from t where b = CAST(c AS DATETIME) and a = 7;
+affected rows: 0
+info: 
+select * from t where a = 7;
+a	b	c
+7	2025-03-30 03:00:00	2025-03-30 02:50:00
+affected rows: 0
+info: 
+delete from t where b <=> CAST(c AS DATETIME) and a = 7;
+affected rows: 0
+info: 
+select * from t where a = 7;
+a	b	c
+7	2025-03-30 03:00:00	2025-03-30 02:50:00
+affected rows: 0
+info: 
+select * from t;
+a	b	c
+5	2025-03-30 03:00:00	2025-03-30 02:30:00
+6	2025-03-30 03:00:00	2025-03-30 02:40:00
+7	2025-03-30 03:00:00	2025-03-30 02:50:00
+affected rows: 0
+info: 
+set @@sql_mode = @old_sql_mode;
+affected rows: 0
+info: 

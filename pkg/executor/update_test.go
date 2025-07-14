@@ -280,7 +280,13 @@ func TestUpdateInvalidTimestamp(t *testing.T) {
 	tk.MustQuery(`SELECT CAST("NotTimestamp" AS DATE)`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'NotTimestamp'"))
 	tk.MustExec("create table t (id int primary key, ts timestamp)")
-	tk.MustExec("insert into t values (1, '2020-01-01 00:00:00'),(2, '2020-01-01 00:00:00')")
+	tk.MustExec(`insert into t values (1, 'NotTimestamp')`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Incorrect timestamp value: 'NotTimestamp' for column 'ts' at row 1"))
+	tk.MustExec("insert into t values (2, CAST('NotTimestamp' AS DATETIME))")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'NotTimestamp'"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"1 0000-00-00 00:00:00",
+		"2 <nil>"))
 	tk.MustExec("update t set ts = CAST('NotTimestamp' AS DATETIME) where id = 1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'NotTimestamp'"))
 	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 <nil>"))
