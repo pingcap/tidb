@@ -15,13 +15,14 @@
 package physicalop
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"strconv"
-	"strings"
 )
 
 // PhysicalTableDual is the physical operator of dual.
