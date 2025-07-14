@@ -20,7 +20,7 @@
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where a = (select a from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 1.00 0 root "
         ],
         "Error": ""
       },
@@ -110,7 +110,7 @@
       {
         "SQL": "explain analyze format = 'brief' select * from t1 where (a, b) = (select a, b from t2 limit 1)",
         "Plan": [
-          "TableDual 0.00 0 root "
+          "TableDual 1.00 0 root "
         ],
         "Error": ""
       }
