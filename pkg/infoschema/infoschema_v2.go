@@ -82,13 +82,19 @@ func (si *schemaItem) Name() string {
 	return si.dbInfo.Name.L
 }
 
+// btree.Clone() is not safe to call from multiple goroutines at once,
+// as stated in the BTree source code. We use a mutex to ensure safety.
+var cloneMu sync.Mutex
+
 // btreeSet updates the btree.
 // Concurrent write is supported, but should be avoided as much as possible.
 func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
 	succ := false
 	for !succ {
 		var t = ptr.Load()
+		cloneMu.Lock()
 		t2 := t.Clone()
+		cloneMu.Unlock()
 		t2.ReplaceOrInsert(item)
 		succ = ptr.CompareAndSwap(t, t2)
 		if !succ {
