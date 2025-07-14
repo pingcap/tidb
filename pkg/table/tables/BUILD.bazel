@@ -74,11 +74,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 32,
-=======
-    shard_count = 36,
->>>>>>> 95b5aa9940b (tables: force to lock the touched index in DML when DDL merging temp index (#62387))
+    shard_count = 33,
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/util/callback",

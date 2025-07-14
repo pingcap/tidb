@@ -265,10 +265,6 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			} else {
 				err = txn.GetMemBuffer().Set(key, val)
 			}
-<<<<<<< HEAD
-			err = txn.GetMemBuffer().Set(key, val)
-=======
->>>>>>> 95b5aa9940b (tables: force to lock the touched index in DML when DDL merging temp index (#62387))
 			if err != nil {
 				return nil, err
 			}
