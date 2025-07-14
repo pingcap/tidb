@@ -2636,8 +2636,8 @@ func TestIssue46556(t *testing.T) {
 	tk.MustExec(`CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0 GROUP BY NULL;`)
 	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0;`) // no error
 	tk.MustQuery(`explain format='brief' SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0`).Check(
-		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#9, Column#10)]`,
-			`├─Projection(Build) 0.00 root  <nil>->Column#9`,
+		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
+			`├─Projection(Build) 0.00 root  <nil>->Column#5`,
 			`│ └─TableDual 0.00 root  rows:0`,
 			`└─TableReader(Probe) 9990.00 root  data:Selection`,
 			`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
