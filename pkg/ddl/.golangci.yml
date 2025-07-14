@@ -1,7 +1,9 @@
 version: "2"
 
 issues:
-  new-from-merge-base: master
+  new-from-merge-base: origin/master
+
+  max-issues-per-linter: 0
 
 linters:
   default: none
