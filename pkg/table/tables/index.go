@@ -254,10 +254,6 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			} else {
 				err = txn.GetMemBuffer().Set(key, val)
 			}
-<<<<<<< HEAD
-			err = txn.GetMemBuffer().Set(key, val)
-=======
->>>>>>> 95b5aa9940b (tables: force to lock the touched index in DML when DDL merging temp index (#62387))
 			if err != nil {
 				return nil, err
 			}
@@ -492,9 +488,6 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	return nil
 }
 
-<<<<<<< HEAD
-func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum,
-=======
 // mayDDLMergingTempIndex checks whether the DDL worker may be merging the temporary index to the normal index.
 // In most times, if an index is not unique, its primary record is assumed to be mutated and locked.
 // The only exception is when the DDL worker is merging the temporary index in fast reorging,
@@ -506,8 +499,7 @@ func (c *index) mayDDLMergingTempIndex() bool {
 		c.idxInfo.BackfillState == model.BackfillStateMerging
 }
 
-func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum,
->>>>>>> 95b5aa9940b (tables: force to lock the touched index in DML when DDL merging temp index (#62387))
+func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum,
 	h kv.Handle, handleRestoreData []types.Datum) table.IndexKVGenerator {
 	var mvIndexValues [][]types.Datum
 	if c.Meta().MVIndex {
