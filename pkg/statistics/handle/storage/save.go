@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -89,7 +90,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = convertBoundToBlob(sc, *hg.GetUpper(j))
 			if err != nil {
 				return
 			}
@@ -97,7 +98,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				lastAnalyzePos = upperBound.GetBytes()
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = convertBoundToBlob(sc, *hg.GetLower(j))
 			if err != nil {
 				return
 			}
@@ -398,4 +399,11 @@ func SaveMetaToStorage(
 	statsVer = version
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return
+}
+
+// convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundToBlob(sc *stmtctx.StatementContext, d types.Datum) (types.Datum, error) {
+	return d.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 }
