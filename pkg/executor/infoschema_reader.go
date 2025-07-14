@@ -242,6 +242,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTablePrivileges(ctx, sctx)
 		case infoschema.TableSchemaPrivileges:
 			err = e.setDataFromSchemaPrivileges(ctx, sctx)
+		case infoschema.TableRegions:
+			err = e.setDataForTableRegions(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2089,6 +2091,123 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	return nil
+}
+
+func (e *memtableRetriever) setDataForTableRegions(ctx context.Context, sctx sessionctx.Context) (err error) {
+	checker := privilege.GetPrivilegeManager(sctx)
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return errors.New("Information about table regions can be gotten only when the storage is TiKV")
+	}
+	splitStore, ok := sctx.GetStore().(kv.SplittableStore)
+	if !ok {
+		return errors.New("Information about table regions can be gotten only when the storage is splittable")
+	}
+
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	setTableRegionsByName := func(schemaName, tableName pmodel.CIStr) {
+		if util.IsMemOrSysDB(schemaName.L) {
+			return
+		}
+
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schemaName.L, tableName.L, "", mysql.AllPrivMask) {
+			return
+		}
+
+		tb, err := is.TableByName(ctx, schemaName, tableName)
+		if err != nil {
+			return
+		}
+
+		tableID := tb.Meta().ID
+		var physicalIDs []int64
+		var partitionNames []string
+		if pi := tb.Meta().Partition; pi != nil && len(pi.Definitions) > 0 {
+			// Handle partitioned tables.
+			numPartitions := len(pi.Definitions)
+			physicalIDs = make([]int64, numPartitions)
+			partitionNames = make([]string, numPartitions)
+			for i, p := range pi.Definitions {
+				physicalIDs[i] = p.ID
+				partitionNames[i] = p.Name.L
+			}
+		} else {
+			// Handle non-partitioned tables.
+			physicalIDs = []int64{tableID}
+			partitionNames = []string{""}
+		}
+
+		// In a partitioned table, it's possible for regions of different partitions to have the same ID.
+		// Therefore, we pass nil for uniqueRegionMap to avoid filtering and ensure that we retrieve all
+		// regions belonging to the physical table of a specific partition.
+		// TODO: handle EnableSplitTableRegion
+		for idx, physicalID := range physicalIDs {
+			regions, err := getPhysicalTableRecordRegions(physicalID, tb.Meta(), tikvStore, splitStore, nil)
+			if err != nil {
+				return
+			}
+
+			e.setNewTableRegionsCol(regions, physicalID, partitionNames[idx], tableID, schemaName.String(), tableName.String())
+		}
+	}
+
+	if e.extractor != nil {
+		extractor, ok := e.extractor.(*plannercore.TableRegionsExtractor)
+		if ok && extractor.GetSchemaName().String() != "" && extractor.GetTableName().String() != "" {
+			setTableRegionsByName(extractor.GetSchemaName(), extractor.GetTableName())
+			return
+		}
+	}
+
+	dbInfos := is.AllSchemas()
+	for _, dbInfo := range dbInfos {
+		schemaName := dbInfo.Name
+		if util.IsMemOrSysDB(schemaName.L) {
+			continue
+		}
+
+		tableInfos, _ := is.SchemaTableInfos(ctx, schemaName)
+		for _, tableInfo := range tableInfos {
+			tableName := tableInfo.Name
+			setTableRegionsByName(schemaName, tableName)
+		}
+	}
+
+	return nil
+}
+
+func (e *memtableRetriever) setNewTableRegionsCol(regions []regionMeta, physicalID int64, partitionName string, tableID int64, schemaName, tableName string) {
+	tableStart := tablecodec.GenTableRecordPrefix(physicalID)
+	tableEnd := tableStart.PrefixNext()
+
+	for _, region := range regions {
+		row := make([]types.Datum, len(infoschema.TableRegionsCols))
+
+		regionMeta := region.region
+		regionStart := kv.Key(regionMeta.StartKey)
+		regionEnd := kv.Key(regionMeta.EndKey)
+		if regionStart.Cmp(tableStart) < 0 {
+			regionStart = tableStart
+		}
+		if regionEnd.Cmp(tableEnd) > 0 {
+			regionEnd = tableEnd
+		}
+
+		row[0].SetUint64(regionMeta.Id)
+		row[1].SetString(regionStart.String(), mysql.DefaultCollationName)
+		row[2].SetString(regionEnd.String(), mysql.DefaultCollationName)
+		row[3].SetInt64(tableID)
+		row[4].SetString(schemaName, mysql.DefaultCollationName)
+		row[5].SetString(tableName, mysql.DefaultCollationName)
+		if partitionName != "" {
+			row[6].SetInt64(physicalID)
+			row[7].SetString(partitionName, mysql.DefaultCollationName)
+		}
+		row[8].SetInt64(region.approximateSize)
+		row[9].SetInt64(region.approximateKeys)
+
+		e.rows = append(e.rows, row)
+	}
 }
 
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {

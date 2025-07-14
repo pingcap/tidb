@@ -1148,3 +1148,71 @@ func TestStatisticShowPublicIndexes(t *testing.T) {
 	})
 	tk.MustExec("alter table t add index idx(b);")
 }
+
+func TestTableRegions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	t.Run("Basic table", func(t *testing.T) {
+		// A simple non-partitioned table with a primary key.
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1 (id int primary key, name varchar(32))")
+		tk.MustExec("insert into t1 values (1, 'sh'), (2, 'sh2')")
+		tk.MustQuery("select count(*) from information_schema.table_regions where table_name='t1'").Check(testkit.Rows(
+			"1",
+		))
+	})
+
+	t.Run("Partitioned Table", func(t *testing.T) {
+		// A table partitioned by range. Each partition should have its own region(s).
+		tk.MustExec("drop table if exists pt1")
+		tk.MustExec(`
+            create table pt1 (id int, name varchar(32))
+            partition by range (id) (
+                partition p0 values less than (100),
+                partition p1 values less than (200),
+                partition p2 values less than (MAXVALUE)
+            )
+        `)
+		tk.MustExec("insert into pt1 values (1, 'a'), (101, 'b'), (201, 'c')")
+		tk.MustQuery("select count(*) from information_schema.table_regions where table_name='pt1'").Check(testkit.Rows(
+			"3",
+		))
+	})
+
+	t.Run("Empty Table", func(t *testing.T) {
+		// A table with no data should still be associated with a region.
+		tk.MustExec("drop table if exists t_empty")
+		tk.MustExec("create table t_empty (id int)")
+		tk.MustQuery("select count(*) from information_schema.table_regions where table_name='t_empty'").Check(testkit.Rows(
+			"1",
+		))
+	})
+
+	t.Run("Basic table with index", func(t *testing.T) {
+		// A table with a secondary index. The query should only show the table's row region, not the index region.
+		tk.MustExec("drop table if exists t_with_index")
+		tk.MustExec("create table t_with_index (id int primary key, name varchar(32), key idx_name (name))")
+		tk.MustExec("insert into t_with_index values (1, 'a'), (2, 'b')")
+		tk.MustQuery("select count(*) from information_schema.table_regions where table_name='t_with_index'").Check(testkit.Rows(
+			"1",
+		))
+	})
+
+	t.Run("Partitioned table with index", func(t *testing.T) {
+		// A partitioned table with a secondary index. The query should only show the table's row region, not the index region.
+		tk.MustExec("drop table if exists pt_with_index")
+		tk.MustExec(`
+            create table pt_with_index (id int, name varchar(32), key idx_name (name))
+            partition by range (id) (
+                partition p0 values less than (10),
+                partition p1 values less than (20)
+            )
+        `)
+		tk.MustExec("insert into pt_with_index values (1, 'a'), (11, 'b')")
+		tk.MustQuery("select count(*) from information_schema.table_regions where table_name='pt_with_index'").Check(testkit.Rows(
+			"2",
+		))
+	})
+}

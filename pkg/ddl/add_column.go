@@ -628,11 +628,11 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 // allowedDateFormatSpecifiers holds the set of format strings that are permitted
 // within a DEFAULT value expression for the DATE_FORMAT function.
 var allowedDateFormatSpecifiers = map[string]struct{}{
-	"%Y-%m":                 {},
-	"%Y-%m-%d":              {},
-	"%y%m%d":                {},
-	"%Y-%m-%d %H.%i.%s":     {},
-	"%Y-%m-%d %H:%i:%s":     {},
+	"%Y-%m":             {},
+	"%Y-%m-%d":          {},
+	"%y%m%d":            {},
+	"%Y-%m-%d %H.%i.%s": {},
+	"%Y-%m-%d %H:%i:%s": {},
 }
 
 // isAllowedDateFormatSpecifier checks if the given format specifier
