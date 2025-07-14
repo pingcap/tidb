@@ -29,9 +29,6 @@ random_store_id=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|sel
 echo "random store id: $random_store_id"
 run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' 'read_only'
 
-run_pd_ctl -u https://$PD_ADDR config set replication.max-replicas 2
-trap 'run_pd_ctl -u https://$PD_ADDR config set replication.max-replicas 3' EXIT
-
 # set placement rule to add a learner replica for each region in the read only store
 run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle load --out=$TEST_DIR/default_rules.json
 cat $CUR/placement_rule_with_learner_template.json | jq  ".[].rules[0].count = $VOTER_COUNT" > $TEST_DIR/placement_rule_with_learner.json
