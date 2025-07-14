@@ -111,6 +111,7 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
+	ActionModifySchemaReadOnly   ActionType = 77
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -183,6 +184,7 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
+	ActionModifySchemaReadOnly:          "modify schema read only",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -218,6 +220,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StatePendingReadOnly means this database is pending to be read-only.
+	StatePendingReadOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */

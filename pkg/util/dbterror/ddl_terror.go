@@ -503,6 +503,8 @@ var (
 	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
 	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
+	// ErrAccessSystemDBRejected is returned when access system database is rejected.
+	ErrAccessSystemDBRejected = ClassDDL.NewStd(mysql.ErrAccessSysDBRejected)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
