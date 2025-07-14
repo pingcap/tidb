@@ -227,14 +227,12 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 		innerPlan := apply.Children()[1]
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 		if len(apply.CorCols) == 0 {
-			if !p.SCtx().GetSessionVars().EnableCascadesPlanner {
-				// If the inner plan is non-correlated, the apply will be simplified to join.
-				join := &apply.LogicalJoin
-				join.SetSelf(join)
-				join.SetTP(plancodec.TypeJoin)
-				p = join
-				appendApplySimplifiedTraceStep(apply, join, opt)
-			}
+			// If the inner plan is non-correlated, the apply will be simplified to join.
+			join := &apply.LogicalJoin
+			join.SetSelf(join)
+			join.SetTP(plancodec.TypeJoin)
+			p = join
+			appendApplySimplifiedTraceStep(apply, join, opt)
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
 		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {

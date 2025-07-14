@@ -127,6 +127,8 @@ go_library(
         "//pkg/planner/cardinality",
         "//pkg/planner/cascades",
         "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/impl",
+        "//pkg/planner/cascades/memo",
         "//pkg/planner/core/base",
         "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",
