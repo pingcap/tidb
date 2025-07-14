@@ -1749,7 +1749,7 @@ func TestStaleReadWithNonAutoCommit(t *testing.T) {
 	time.Sleep(time.Second) // to get rid of 'table not exist' error
 
 	done := make(chan struct{})
-	res := make(chan interface{})
+	res := make(chan any)
 	go func() {
 		defer func() {
 			res <- recover()
