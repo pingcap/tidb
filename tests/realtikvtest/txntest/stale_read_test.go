@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
+	"math/rand"
 	"strconv"
 	"testing"
 	"time"
@@ -1731,4 +1733,53 @@ func TestStaleReadAllCombinations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStaleReadWithNonAutoCommit(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_stale")
+	tk.MustExec("create table t_stale (id varchar(10) primary key, val varchar(255))")
+	tk.MustExec("insert ignore into t_stale (id, val) values ('A', 'init'), ('B', 'init')")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_read_staleness = -1;")
+	time.Sleep(time.Second) // to get rid of 'table not exist' error
+
+	done := make(chan struct{})
+	res := make(chan interface{})
+	go func() {
+		defer func() {
+			res <- recover()
+		}()
+
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			tk1.MustExec("set autocommit = 0")
+			res1 := tk1.MustQuery("select val from t_stale where id = 'A'")
+			res2 := tk1.MustQuery("select val from t_stale where id = 'B'")
+			if !res2.Equal(res1.Rows()) {
+				log.Fatal("inconsistency detected!")
+			}
+			tk1.MustExec("set autocommit = 1")
+		}
+	}()
+
+	for i := 0; i < 8000; i++ {
+		v := rand.Intn(65535)
+		tk.MustExec("begin")
+		tk.MustExec("update t_stale set val=? where id = 'A'", v)
+		tk.MustExec("update t_stale set val=? where id = 'B'", v)
+		tk.MustExec("commit")
+	}
+
+	close(done)
+	v := <-res
+	require.Nil(t, v)
 }
