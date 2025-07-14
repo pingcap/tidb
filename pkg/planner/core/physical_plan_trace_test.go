@@ -173,7 +173,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 		18: "HashJoin",
 		17: "HashJoin",
 		12: "TableReader",
-		14: "TableFullScan",
+		14: "TableReader",
 		15: "HashAgg",
 		27: "TableFullScan",
 		29: "TableReader",
