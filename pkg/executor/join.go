@@ -42,7 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 // IsChildCloseCalledForTest is used for test
@@ -154,11 +156,7 @@ type hashjoinWorkerResult struct {
 }
 
 // Close implements the Executor Close interface.
-<<<<<<< HEAD:pkg/executor/join.go
 func (e *HashJoinExec) Close() error {
-=======
-func (e *HashJoinV1Exec) Close() (err error) {
->>>>>>> af367b8a5ae (executor: replace `Call` with `CallWithRecover` in the close of hash join v1 (#61868)):pkg/executor/join/hash_join_v1.go
 	if e.closeCh != nil {
 		close(e.closeCh)
 	}
@@ -181,19 +179,16 @@ func (e *HashJoinV1Exec) Close() (err error) {
 			close(e.probeWorkers[i].joinChkResourceCh)
 			channel.Clear(e.probeWorkers[i].joinChkResourceCh)
 		}
-<<<<<<< HEAD:pkg/executor/join.go
 		e.probeSideTupleFetcher.probeChkResourceCh = nil
-		terror.Call(e.rowContainer.Close)
-		e.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.rowContainer.ActionSpill())
-=======
-		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
-		util.WithRecovery(func() { err = e.RowContainer.Close() }, func(r any) {
-			if r != nil {
-				err = errors.Errorf("%v", r)
+		util.WithRecovery(func() {
+			err := e.rowContainer.Close()
+			if err != nil {
+				logutil.BgLogger().Error("RowContainer encounters error",
+					zap.Error(err),
+					zap.Stack("stack trace"))
 			}
-		})
-		e.HashJoinCtxV1.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
->>>>>>> af367b8a5ae (executor: replace `Call` with `CallWithRecover` in the close of hash join v1 (#61868)):pkg/executor/join/hash_join_v1.go
+		}, nil)
+		e.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.rowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
@@ -215,11 +210,7 @@ func (e *HashJoinV1Exec) Close() (err error) {
 	}
 
 	IsChildCloseCalledForTest = true
-	childErr := e.BaseExecutor.Close()
-	if childErr != nil {
-		return childErr
-	}
-	return err
+	return e.BaseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
