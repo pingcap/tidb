@@ -64,6 +64,13 @@ import (
 //     trailing 1 is for RS divided by odd number.
 //   - else RangeS = floor(TempRangeS / RS) * RS.
 //
+// Note: below calculation only consider the memory taken by the KV pair itself,
+// golang takes 24*2 = 48B for each KV pair, so if the size of KV pair itself is
+// very small, the real memory taken by each KV pair might be doubled, so it's
+// only an estimation.
+// such as, for a simple table "create table t(id bigint primary key, v bigint, index(v))",
+// each data KV is 29B, each index KV is 38B.
+//
 // RangeS for different region size and cpu:mem ratio, the number in parentheses
 // is the number of SST files per region:
 //
