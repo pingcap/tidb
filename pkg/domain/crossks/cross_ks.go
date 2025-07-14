@@ -100,7 +100,7 @@ func (m *Manager) GetOrCreate(
 	}()
 
 	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
-	isLoader := issyncer.NewLoader(store, infoCache)
+	isLoader := issyncer.NewLoaderForCrossKS(store, infoCache)
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return nil, err

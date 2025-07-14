@@ -35,6 +35,7 @@ go_test(
         "//pkg/config/kerneltype",
         "//pkg/disttask/framework/storage",
         "//pkg/executor/importer",
+        "//pkg/infoschema",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/sessionctx",
