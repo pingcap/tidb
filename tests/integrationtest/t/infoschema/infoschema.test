@@ -81,6 +81,8 @@ select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table
 explain select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 -- sorted_result
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
+-- sorted_result
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_name like 'pt%';
 drop table pt1;
 drop table pt2;
 

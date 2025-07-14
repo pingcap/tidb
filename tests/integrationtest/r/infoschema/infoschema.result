@@ -176,6 +176,8 @@ Projection_4	10000.00	root		Column#3, Column#4
 └─MemTableScan_5	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 TABLE_NAME	PARTITION_NAME
+select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_name like 'pt%';
+TABLE_NAME	PARTITION_NAME
 drop table pt1;
 drop table pt2;
 create database test1;
