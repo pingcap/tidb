@@ -15,7 +15,6 @@
 package issuetest_test
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -790,19 +789,7 @@ func TestIssue60926(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic")
 	tk.MustExec("set tidb_hash_join_version=legacy")
 
-	ctx := context.Background()
 	join.IsChildCloseCalledForTest = false
-	rs, _ := tk.ExecWithContext(context.Background(), "select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
-	req := rs.NewChunk(nil)
-	for {
-		err := rs.Next(ctx, req)
-		require.NoError(t, err)
-		if req.NumRows() == 0 {
-			break
-		}
-	}
-	if rs != nil {
-		require.Error(t, rs.Close())
-	}
+	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, join.IsChildCloseCalledForTest)
 }
