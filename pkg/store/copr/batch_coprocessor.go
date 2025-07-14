@@ -1101,6 +1101,10 @@ func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint6
 		}
 		needRetry = true
 	} else if tiflashReplicaReadPolicy.IsClosestReplicas() {
+		logutil.BgLogger().Info("gjt debug", zap.Any("usedTiFlashStores", usedTiFlashStores),
+               zap.Any("aliveStores.storeIDsInTiDBZone", aliveStores.storeIDsInTiDBZone),
+               zap.Any("aliveStores.storeIDsInAllZones", aliveStores.storeIDsInAllZones),
+               zap.Any("maxRemoteReadCountAllowed", maxRemoteReadCountAllowed))
 		var remoteRegions []tikv.RegionVerID
 		for i, allStoresPerRegion := range usedTiFlashStores {
 			var storeOk bool
@@ -1113,6 +1117,7 @@ func checkAliveStore(aliveStores *aliveStoresBundle, usedTiFlashStores [][]uint6
 				if _, ok := aliveStores.storeIDsInAllZones[storeID]; ok {
 					remoteStoreOk = true
 				}
+				logutil.BgLogger().Info("gjt debug 1", zap.Any("storeOk", storeOk), zap.Any("storeID", storeID), zap.Any("remoteOK", remoteStoreOk))
 			}
 			if !storeOk {
 				if remoteStoreOk {
