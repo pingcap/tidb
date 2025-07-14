@@ -63,6 +63,10 @@ check-static: ## Run static code analysis checks
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
+.PHONY: check-ddl
+check-ddl: tools/bin/golangci-lint
+	cd pkg/ddl && ../../tools/bin/golangci-lint run -v . --config .golangci.yml
+
 .PHONY: check-file-perm
 check-file-perm:
 	@echo "check file permission"
@@ -226,7 +230,8 @@ SERVER_BUILD_CMD := \
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
 	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
 
-server: ## Build TiDB server binary
+.PHONY: server
+server: check-ddl ## Build TiDB server binary
 	$(SERVER_BUILD_CMD)
 
 .PHONY: server_debug
