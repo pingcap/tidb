@@ -838,6 +838,11 @@ func (c *pdClient) scatterRegionsSequentially(ctx context.Context, newRegions []
 					logutil.Region(region.Region),
 				)
 				delete(newRegionSet, region.Region.Id)
+			} else {
+				log.Warn("scatter region meet error, will retry",
+					logutil.ShortError(err),
+					logutil.Region(region.Region),
+				)
 			}
 			errs = multierr.Append(errs, err)
 		}
