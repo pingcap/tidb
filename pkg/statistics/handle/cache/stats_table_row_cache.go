@@ -17,6 +17,7 @@
 package cache
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -65,21 +66,19 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 }
 
 // UpdateByID tries to update the cache by table ID.
-func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
-	tableRows, err := getRowCountTables(sctx, id)
+func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, ids ...int64) error {
+	tableRows, err := getRowCountTables(sctx, ids...)
 	if err != nil {
 		return err
 	}
-	colLength, err := getColLengthTables(sctx, id)
+	colLength, err := getColLengthTables(sctx, ids...)
 	if err != nil {
 		return err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.tableRows[id] = tableRows[id]
-	for k, v := range colLength {
-		c.colLength[k] = v
-	}
+	maps.Copy(c.tableRows, tableRows)
+	maps.Copy(c.colLength, colLength)
 	return nil
 }
 
