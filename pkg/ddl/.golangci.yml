@@ -1,9 +1,11 @@
 version: "2"
 
 issues:
-  new-from-merge-base: origin/master
+  new-from-merge-base: master
 
   max-issues-per-linter: 0
+
+  new: true
 
 linters:
   default: none
@@ -13,8 +15,6 @@ linters:
     forbidigo:
       forbid:
         # Optional message that gets included in error reports.
-        - pattern: \.GetSessionVars\(
-          msg: Do not commit print statements.
-      # Exclude godoc examples from forbidigo checks.
-      # Default: true
+        - pattern: GetSessionVars
+          msg: Please check if the usage of GetSessionVars is appropriate.
       exclude-godoc-examples: false
