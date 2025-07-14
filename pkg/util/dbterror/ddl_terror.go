@@ -512,6 +512,8 @@ var (
 	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
 	// ErrStorageClassInvalidSpec is reserved for future use.
 	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
+	// ErrAccessSystemDBRejected is returned when access system database is rejected.
+	ErrAccessSystemDBRejected = ClassDDL.NewStd(mysql.ErrAccessSysDBRejected)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
