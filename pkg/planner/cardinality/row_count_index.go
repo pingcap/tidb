@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -424,52 +423,17 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	if matched {
 		return histCnt
 	}
+	// 3. Estimate the remaining average estimate based upon the NDV and row count.
+	//    Func `unmatchedEqAverage` will account for whether the remainder is based upon values remaining in the
+	//	  histogram or using the original average estimate.
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
 	minTopN := float64(idx.TopN.MinCount())
-	// Remaining cases will estimate based upon an average or out-of-range assumption. 
-	// None of these cases are backed by an accurate topn or histogram.
-	//
-	// 3. histNDV <= 0 means that all NDV's are in TopN, and no histograms.
-	//    NotNullCount() == 0 means the histograms are empty, implying that sampling
-	//    results in TopN containing all sampled NDVs, but there are values that were
-	//    not sampled. This is a special case of c.Histogram.NDV > c.TopN.Num().
-	if histNDV <= 0 || avgRowEstimate <= 0 {
-		if histNDV > 0 && modifyCount == 0 {
-			avgRowEstimate = max(minTopN, histNDV)
-		} else {
-			// If histNDV is zero - we have all NDV's in TopN - and no histograms.
-			// The histogram wont have a NotNullCount - so it needs to be derived.
-			notNullCount := idx.Histogram.NotNullCount()
-			if notNullCount <= 0 {
-				notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
-			}
-			increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-			avgRowEstimate = outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-		}
-	} else {
-		// 4. use uniform distribution assumption for the rest.
-		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
-		avgRowEstimate = 
-	}
-	if minTopN > 0 {
-		// The estimate cannot be larger than the minimum TopN value.
-		avgRowEstimate = min(avgRowEstimate, minTopN)
-	}
-	// skewRatio determines how much of the potential skew should be considered
-	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
-	if skewRatio > 0 {
-		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate := idx.Histogram.NotNullCount() - (histNDV - 1)
-		if minTopN > 0 {
-			// The skewEstimate should not be larger than the minimum TopN value.
-			skewEstimate = min(skewEstimate, float64(minTopN))
-		}
-		// Add a "ratio" of the skewEstimate to adjust the average row estimate.
-		return avgRowEstimate + max(0, (skewEstimate-avgRowEstimate)*skewRatio)
-	}
-	return avgRowEstimate
+	increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
+	avgRowEstimate = unmatchedEQAverage(float64(idx.Histogram.NDV), histNDV, idx.TotalRowCount(), idx.Histogram.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
+	// skewEstimate determines how much of the potential skew should be considered
+	skewEstimate := adjustEQSkewRisk(sctx, minTopN, avgRowEstimate)
+	return avgRowEstimate + skewEstimate
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.

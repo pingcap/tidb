@@ -28,6 +28,7 @@ import (
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1110,30 +1111,57 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 	return selectivity
 }
 
-// outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
-// and the searched value does not appear in the topN
-func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64) (result float64) {
-	// Calculate "newly added rows" using original row count. We do NOT use notNullCount here
-	// because that can always be less than realtimeRowCount if NULLs exist
-	newRows := realtimeRowCount - origRowCount
-	// If the original row count is zero - take the min of original row count and realtimeRowCount
-	if notNullCount <= 0 {
-		notNullCount = min(origRowCount, realtimeRowCount)
+// unmatchedEqAverage estimates the row count for equal conditions not matched in TopN or last value of a bucket.
+func unmatchedEQAverage(origNDV, remainNDV, origRowCount, remainCount, realtimeRowCount, increaseFactor, minTopN float64) (result float64) {
+	origAvg, remainAvg := float64(0), float64(0)
+	addedRows := realtimeRowCount - origRowCount
+	// If the remaining NDV or remaining row count is zero - we may not have any buckets.
+	// Only return the "average" of the remainder if it is greater than zero.
+	if remainNDV > 0 {
+		remainAvg = remainCount / remainNDV
+		if remainAvg > 0 {
+			// set the result here because we have a valid average for the remaining NDV.
+			result = remainAvg
+		} else {
+			// remainNDV is greater than zero, but the row count is zero - this should only happen when sampling
+			// resulted in TopN collecting all values in the sample, but NDV was greater than what was contained
+			// in the sample. Thus we created zero buckets but still have remaining NDV unaccounted for.
+			remainAvg = addedRows / (remainNDV * increaseFactor)
+		}
+	} else if origNDV > 0 {
+		// If the "remaining" above is zero - revert to the average based upon the original NDV and row count.
+		origAvg = origRowCount / origNDV
+		if origAvg > 0 {
+			// set result here because this is likely to be relatively accurate.
+			result = origAvg
+		} else {
+			origAvg = realtimeRowCount / (origNDV * increaseFactor)
+		}
 	}
-	// If realtimeRowCount has reduced below the original, we can't determine if there has been a
-	// combination of inserts/updates/deletes or only deletes - any out of range estimate is unreliable
-	if newRows < 0 {
-		newRows = min(notNullCount, realtimeRowCount)
+	// If the result is still zero - we aren't confident in our estimate.
+	if result <= 0 {
+		result = max(origAvg, remainAvg)
 	}
-	// if no NDV - derive an NDV using sqrt
-	if ndv <= 0 {
-		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
-	} else {
-		// We need to increase the ndv by increaseFactor because the estimate will be increased by
-		// the caller of the function
-		ndv *= increaseFactor
+	// Do not allow the result to be greater than the smallest value in the TopN.
+	if minTopN > 0 {
+		result = min(result, minTopN)
 	}
-	return max(1, newRows/ndv)
+	return result
+}
+
+func adjustEQSkewRisk(sctx planctx.PlanContext, minTopN, currRowEst float64) float64 {
+	// skewRatio determines how much of the potential skew should be considered between the estimated/average
+	// row count and the worst case row count. This code should only be considered when we do not have a matching
+	// value in the TopN or histogram buckets.
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	skewEstimate := float64(0)
+	if skewRatio > 0 {
+		// Calculate the adjusted value that should be considered to be added to the original estimate by the
+		// calling function.
+		skewEstimate = (skewEstimate - currRowEst) * skewRatio
+	}
+	return skewEstimate
 }
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
