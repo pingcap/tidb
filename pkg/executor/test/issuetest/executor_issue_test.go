@@ -787,7 +787,7 @@ func TestIssue60926(t *testing.T) {
 	tk.MustExec("insert into t1 values (0, 10), (1, 10), (2, 10), (3, 10), (4, 10), (5, 10), (6, 10), (7, 10), (8, 10), (9, 10), (10, 10);")
 	tk.MustExec("insert into t2 values (0, 5), (0, 5), (1, 5), (2, 5), (2, 5), (3, 5), (4, 5), (5, 5), (5, 5), (6, 5), (7, 5), (8, 5), (8, 5), (9, 5), (9, 5), (10, 5);")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue6", "panic")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic")
 	tk.MustExec("set tidb_hash_join_version=legacy")
 
 	ctx := context.Background()
