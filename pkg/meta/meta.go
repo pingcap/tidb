@@ -32,6 +32,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -132,11 +133,6 @@ const (
 	typeUnknown int = 0
 	typeJSON    int = 1
 	// todo: customized handler.
-
-	// MaxInt48 is the max value of int48.
-	MaxInt48 = 0x0000FFFFFFFFFFFF
-	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
-	MaxGlobalID = MaxInt48 - 1000
 )
 
 var (
@@ -218,8 +214,8 @@ func (m *Mutator) GenGlobalID() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	return newID, err
 }
@@ -234,8 +230,8 @@ func (m *Mutator) AdvanceGlobalIDs(n int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	return origID, nil
@@ -250,8 +246,8 @@ func (m *Mutator) GenGlobalIDs(n int) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if newID > MaxGlobalID {
-		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)
@@ -737,8 +733,8 @@ func (m *Mutator) ClearBDRRole() error {
 	return errors.Trace(m.txn.Clear(mBDRRole))
 }
 
-// SetDDLTables write a key into storage.
-func (m *Mutator) SetDDLTables(ddlTableVersion DDLTableVersion) error {
+// SetDDLTableVersion write a key into storage.
+func (m *Mutator) SetDDLTableVersion(ddlTableVersion DDLTableVersion) error {
 	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
 }
 

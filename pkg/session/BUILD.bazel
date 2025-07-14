@@ -50,6 +50,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/metabuild",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/owner",
