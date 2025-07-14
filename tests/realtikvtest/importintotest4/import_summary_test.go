@@ -76,23 +76,23 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	require.EqualValues(s.T(), 10000, importedRows)
 
 	// One encode/postprocess task plus four merge/ingest tasks, total 10 subtasks
+	taskKey := importinto.TaskKey(int64(jobID))
+	idSQL := `select id from mysql.tidb_global_task where task_key = ?
+		union select id from mysql.tidb_global_task_history where task_key = ?`
+	rs = s.tk.MustQuery(idSQL, taskKey, taskKey).Rows()
+	id, err := strconv.Atoi(rs[0][0].(string))
+	require.NoError(s.T(), err)
 
 	sql := `
-		WITH task_id AS (
-			SELECT id 
-			FROM mysql.tidb_global_task_history 
-			WHERE task_key = ?
-		)
 		SELECT step, summary 
 		FROM mysql.tidb_background_subtask 
-		WHERE task_key = (SELECT id FROM task_id)
+		WHERE task_key = ?
 		UNION ALL
 		SELECT step, summary 
 		FROM mysql.tidb_background_subtask_history 
-		WHERE task_key = (SELECT id FROM task_id);
+		WHERE task_key = ?
 		`
-
-	rs = s.tk.MustQuery(sql, importinto.TaskKey(int64(jobID))).Rows()
+	rs = s.tk.MustQuery(sql, id, id).Rows()
 	require.Len(s.T(), rs, 10)
 
 	for _, r := range rs {
