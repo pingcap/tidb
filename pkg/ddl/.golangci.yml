@@ -1,0 +1,18 @@
+version: "2"
+
+issues:
+  new-from-merge-base: master
+
+linters:
+  default: none
+  enable:
+    - forbidigo
+  settings:
+    forbidigo:
+      forbid:
+        # Optional message that gets included in error reports.
+        - pattern: \.GetSessionVars\(
+          msg: Do not commit print statements.
+      # Exclude godoc examples from forbidigo checks.
+      # Default: true
+      exclude-godoc-examples: false
