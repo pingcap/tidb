@@ -236,7 +236,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 	}
 
 	// Check is there a DDL task at flashbackTS.
-	sql = fmt.Sprintf("select count(*) from mysql.%s as of timestamp '%s'", JobTable, flashbackTSString)
+	sql = fmt.Sprintf("select count(*) from mysql.tidb_ddl_job as of timestamp '%s'", flashbackTSString)
 	rows, err = sess.NewSession(se).Execute(ctx, sql, "check_history_job")
 	if err != nil || len(rows) == 0 {
 		return errors.Errorf("Get history ddl jobs failed, can't do flashback")

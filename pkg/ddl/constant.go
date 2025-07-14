@@ -15,8 +15,6 @@
 package ddl
 
 const (
-	// JobTable stores the information of DDL jobs.
-	JobTable = "tidb_ddl_job"
 	// JobTableSQL is the CREATE TABLE SQL of `tidb_ddl_job`.
 	JobTableSQL = `create table mysql.tidb_ddl_job (
 		job_id bigint not null,
