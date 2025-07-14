@@ -298,7 +298,9 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
-	logutil.Logger(ctx).Info("estimated file size, including kv length, of this range group",
+	// Note: this is the file size of the range group, KV size is smaller, as we
+	// need additional 8*2 for each KV.
+	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
