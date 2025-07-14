@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -2165,7 +2166,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
@@ -2174,6 +2175,7 @@ func writeChunkToLocal(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
+	tblInfo *model.TableInfo,
 ) (int, kv.Handle, error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
@@ -2230,8 +2232,9 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
+				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
 				return 0, nil, errors.Trace(err)
 			}
 		}
@@ -2252,7 +2255,7 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
 	index table.Index,
@@ -2392,6 +2395,11 @@ func (w *worker) addPhysicalTableIndex(
 		return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.DDLLogger().Info("start to add table index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
+	m := metrics.RegisterLightningCommonMetricsForDDL(reorgInfo.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, m)
+	defer func() {
+		metrics.UnregisterLightningCommonMetricsForDDL(reorgInfo.ID, m)
+	}()
 	return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
 
@@ -2410,6 +2418,11 @@ func (w *worker) addTableIndex(
 			}
 			//nolint:forcetypeassert
 			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				// When adding unique index by global sort, it detects duplicate keys in each step.
+				// A duplicate key must be detected before, so we can skip the check bellow.
+				return nil
+			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, discovery)
 		}
 	}
@@ -2471,7 +2484,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
 				bc, err = ingest.LitBackCtxMgr.Register(
-					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
+					ctx, reorgInfo.Job, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS, 0)
 				if err != nil {
 					return err
 				}

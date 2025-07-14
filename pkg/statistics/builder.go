@@ -419,9 +419,13 @@ func BuildHistAndTopN(
 		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
 	}
 
+	topn := &TopN{TopN: topNList}
+	lenTopN := int64(len(topn.TopN))
+
 	// Step2: exclude topn from samples
-	if numTopN != 0 {
-		for i := int64(0); i < int64(len(samples)); i++ {
+	lenSamples := int64(len(samples))
+	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
+		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -460,6 +464,7 @@ func BuildHistAndTopN(
 					// Found the same value in topn: need to skip over this value in samples.
 					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 					samples = samples[:uint64(len(samples))-topNList[j].Count]
+					lenSamples = int64(len(samples))
 					i--
 					foundTwice = true
 					continue
@@ -468,17 +473,20 @@ func BuildHistAndTopN(
 		}
 	}
 
-	topn := &TopN{TopN: topNList}
-	topn.Scale(sampleFactor)
+	var topNTotalCount uint64
+	for i := range topn.TopN {
+		topn.TopN[i].Count = uint64(float64(topn.TopN[i].Count) * sampleFactor)
+		topNTotalCount += topn.TopN[i].Count
+	}
 
-	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
+	if uint64(count) <= topNTotalCount || hg.NDV <= lenTopN {
 		// If we've collected everything  - don't create any buckets
 		return hg, topn, nil
 	}
 
 	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
+	if lenSamples > 0 {
+		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-lenTopN, int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}

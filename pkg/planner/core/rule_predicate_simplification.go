@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -205,7 +206,7 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var otherPred expression.Expression
 	col1, p1Type := findPredicateType(p1)
 	col2, p2Type := findPredicateType(p2)
-	if col1 != col2 || col1 == nil {
+	if col1 == nil || !col1.Equals(col2) {
 		return false
 	}
 	if p1Type == equalPredicate {
@@ -221,14 +222,33 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	// Copy constant from equal predicate into other predicate.
 	equalValue := equalPred.(*expression.ScalarFunction)
 	otherValue := otherPred.(*expression.ScalarFunction)
-	newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
-	if err != nil {
-		return false
+	equalValueConst, ok1 := equalValue.GetArgs()[1].(*expression.Constant)
+	otherValueConst, ok2 := otherValue.GetArgs()[1].(*expression.Constant)
+	if ok1 && ok2 {
+		evalCtx := ctx.GetExprCtx().GetEvalCtx()
+		// We have checked the equivalence between col1 and col2, so we can safely use col1's collation.
+		colCollate := col1.GetType(evalCtx).GetCollate()
+		// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
+		// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
+		// If the collation is not compatible, we cannot simplify the expression.
+		if equalValueType := equalValueConst.GetType(evalCtx); equalValueType.EvalType() == types.ETString &&
+			!collate.CompatibleCollate(equalValueType.GetCollate(), colCollate) {
+			return false
+		}
+		if otherValueType := otherValueConst.GetType(evalCtx); otherValueType.EvalType() == types.ETString &&
+			!collate.CompatibleCollate(otherValueType.GetCollate(), colCollate) {
+			return false
+		}
+		newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValueConst, otherValueConst)
+		if err != nil {
+			return false
+		}
+		newPredList := make([]expression.Expression, 0, 1)
+		newPredList = append(newPredList, newPred)
+		newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
+		return unsatisfiableExpression(ctx, newPredList[0])
 	}
-	newPredList := make([]expression.Expression, 0, 1)
-	newPredList = append(newPredList, newPred)
-	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
-	return unsatisfiableExpression(ctx, newPredList[0])
+	return false
 }
 
 func comparisonPred(predType predicateType) predicateType {

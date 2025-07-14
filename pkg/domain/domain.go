@@ -2159,7 +2159,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 			if !ok {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
+				logutil.BgLogger().Warn("load privilege loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 				count++
 				if count > 10 {
@@ -2172,7 +2172,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
+				logutil.BgLogger().Warn("load privilege failed", zap.Error(err))
 			}
 		}
 	}, "loadPrivilegeInLoop")
@@ -2222,7 +2222,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			})
 
 			if !ok {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 				count++
 				if count > 10 {
@@ -2235,7 +2235,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+				logutil.BgLogger().Warn("LoadSysVarCacheLoop failed", zap.Error(err))
 			}
 		}
 	}, "LoadSysVarCacheLoop")
@@ -2880,6 +2880,11 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		<-ch
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")

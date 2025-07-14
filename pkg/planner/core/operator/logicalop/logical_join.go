@@ -748,7 +748,9 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 
 // ExtractFDForInnerJoin extracts FD for inner join.
 func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
-	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
+	children := p.Children()
+	rightFD := children[1].ExtractFD()
+	leftFD := children[0].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
 
