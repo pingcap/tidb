@@ -93,7 +93,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Flag Names
+// Flag names
 const (
 	nmVersion          = "V"
 	nmConfig           = "config"

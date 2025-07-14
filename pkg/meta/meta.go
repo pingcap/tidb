@@ -67,7 +67,7 @@ var (
 //	}
 //
 // DDL version 2
-// Names -> {
+// names -> {
 //		Name:DBname\x00tablename -> tableID
 // }
 

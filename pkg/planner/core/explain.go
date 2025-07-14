@@ -464,14 +464,6 @@ func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rows:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalExpand) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.LevelExprs) > 0 {

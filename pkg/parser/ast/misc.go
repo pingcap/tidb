@@ -944,7 +944,7 @@ func (n *UseStmt) Accept(v Visitor) (Node, bool) {
 
 const (
 	// SetNames is the const for set names stmt.
-	// If VariableAssignment.Name == Names, it should be set names stmt.
+	// If VariableAssignment.Name == names, it should be set names stmt.
 	SetNames = "SetNAMES"
 	// SetCharset is the const for set charset stmt.
 	SetCharset = "SetCharset"

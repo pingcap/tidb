@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	math2 "math"
 	"slices"
 	"strconv"
@@ -954,8 +955,8 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 				return nil
 			}
 			if fp.IsTableDual {
-				tableDual := PhysicalTableDual{}
-				tableDual.names = fp.outputNames
+				tableDual := physicalop.PhysicalTableDual{}
+				tableDual.SetOutputNames(fp.outputNames)
 				tableDual.SetSchema(fp.Schema())
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
@@ -2022,9 +2023,9 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 	pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.outputNames)
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
@@ -2153,9 +2154,9 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	}
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.outputNames)
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
