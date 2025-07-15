@@ -12,8 +12,8 @@ for data in "$DUMPLING_BASE_NAME"/data/*; do
   run_sql_file "$data"
 done
 
-# Run dumpling with --rows parameter to force chunking
-run_dumpling --rows 5
+# Run dumpling with --rows parameter to force chunking and UTF8MB4 charset
+run_dumpling --rows 5 --params "character_set_client=utf8mb4,character_set_connection=utf8mb4,character_set_results=utf8mb4"
 
 for file_path in "$DUMPLING_BASE_NAME"/data/*; do
   base_name=$(basename "$file_path")
