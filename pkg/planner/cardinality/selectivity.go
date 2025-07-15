@@ -1128,16 +1128,21 @@ func unmatchedEQAverage(sctx planctx.PlanContext, origNDV, remainNDV, origRowCou
 			// in the sample. Thus we created zero buckets but still have remaining NDV unaccounted for.
 			remainAvg = addedRows / (remainNDV * increaseFactor)
 		}
+		// For example, if you have 1000 rows and NDV==701, it could be that 700 values occur 1 time, and one value
+		// occurs 300 times. In this case, the average is 1.43, but the maximum estimate is 1000 - (701 - 1) = 300.
+		// This worst case scenario is considered the maximum estimate.
 		maxEstimate = remainCount - (remainNDV - 1)
 	} else if origNDV > 0 {
 		// If the "remaining" above is zero - revert to the average based upon the original NDV and row count.
 		origAvg = origRowCount / origNDV
 		if origAvg > 0 {
-			// set result here because this is likely to be relatively accurate.
+			// set result here because this is likely to be relatively accurate based upon an original even distribution.
 			result = origAvg
 		} else {
+			// Adjust origNDV because realtimeRowCount is also increased by the same factor.
 			origAvg = realtimeRowCount / (origNDV * increaseFactor)
 		}
+		// See above for explanation of the maximum estimate.
 		maxEstimate = origRowCount - (origNDV - 1)
 	}
 	// If the result is still zero - we aren't confident in our estimate.
@@ -1147,8 +1152,9 @@ func unmatchedEQAverage(sctx planctx.PlanContext, origNDV, remainNDV, origRowCou
 	// Do not allow the result to be greater than the smallest value in the TopN.
 	if minTopN > 0 {
 		result = min(result, minTopN)
+		// Do not allow the "worst case" estimate (maxEstimate) to be greater than the smallest value in the TopN.
 		if maxEstimate > 0 {
-			result = min(result, maxEstimate)
+			result = min(minTopN, maxEstimate)
 		} else {
 			maxEstimate = minTopN
 		}
