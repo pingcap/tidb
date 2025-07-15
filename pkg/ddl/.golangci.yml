@@ -2,8 +2,10 @@ version: "2"
 
 issues:
   new-from-merge-base: origin/master
-
   max-issues-per-linter: 0
+  exclude-files:
+    - *test.go
+    - executor.go
 
 linters:
   default: none

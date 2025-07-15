@@ -30,8 +30,8 @@ import (
 func TestNewMetaBuildContextWithSctx(t *testing.T) {
 	sqlMode := mysql.ModeStrictAllTables | mysql.ModeNoZeroDate
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().SQLMode = sqlMode
-	sessVars := sctx.GetSessionVars()
+	s := sctx.GetSessionVars()
+	s.SQLMode = sqlMode
 	cases := []struct {
 		field    string
 		setSctx  func(val any)
@@ -60,7 +60,7 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 		{
 			field: "enableAutoIncrementInGenerated",
 			setSctx: func(val any) {
-				sessVars.EnableAutoIncrementInGenerated = val.(bool)
+				s.EnableAutoIncrementInGenerated = val.(bool)
 			},
 			testVals: []any{true, false},
 			getter: func(ctx *metabuild.Context) any {
@@ -70,7 +70,7 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 		{
 			field: "primaryKeyRequired",
 			setSctx: func(val any) {
-				sessVars.PrimaryKeyRequired = val.(bool)
+				s.PrimaryKeyRequired = val.(bool)
 			},
 			testVals: []any{true, false},
 			getter: func(ctx *metabuild.Context) any {
@@ -78,15 +78,15 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 			},
 			extra: func() {
 				// `PrimaryKeyRequired` should always return false if `InRestrictedSQL` is true.
-				sessVars.PrimaryKeyRequired = true
-				sessVars.InRestrictedSQL = true
+				s.PrimaryKeyRequired = true
+				s.InRestrictedSQL = true
 				require.False(t, NewMetaBuildContextWithSctx(sctx).PrimaryKeyRequired())
 			},
 		},
 		{
 			field: "clusteredIndexDefMode",
 			setSctx: func(val any) {
-				sessVars.EnableClusteredIndex = val.(vardef.ClusteredIndexDefMode)
+				s.EnableClusteredIndex = val.(vardef.ClusteredIndexDefMode)
 			},
 			testVals: []any{
 				vardef.ClusteredIndexDefModeIntOnly,
@@ -100,7 +100,7 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 		{
 			field: "shardRowIDBits",
 			setSctx: func(val any) {
-				sessVars.ShardRowIDBits = val.(uint64)
+				s.ShardRowIDBits = val.(uint64)
 			},
 			testVals: []any{uint64(vardef.DefShardRowIDBits), uint64(6)},
 			getter: func(ctx *metabuild.Context) any {
@@ -110,7 +110,7 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 		{
 			field: "preSplitRegions",
 			setSctx: func(val any) {
-				sessVars.PreSplitRegions = val.(uint64)
+				s.PreSplitRegions = val.(uint64)
 			},
 			testVals: []any{uint64(vardef.DefPreSplitRegions), uint64(123)},
 			getter: func(ctx *metabuild.Context) any {

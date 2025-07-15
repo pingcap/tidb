@@ -287,7 +287,8 @@ func (e *executor) CreateSchemaWithInfo(
 		err := infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
 		switch onExist {
 		case OnExistIgnore:
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			ss := ctx.GetSessionVars().StmtCtx
+			ss.AppendNote(err)
 			return nil
 		case OnExistError, OnExistReplace:
 			// FIXME: can we implement MariaDB's CREATE OR REPLACE SCHEMA?
