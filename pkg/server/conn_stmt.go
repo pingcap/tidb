@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -228,9 +227,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []param.BinaryParam, useCursor bool) (err error) {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
-	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
 	fn := func() bool {
 		if cc.bufReadConn != nil {

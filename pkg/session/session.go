@@ -1845,9 +1845,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 
 	startTime := time.Now()
 	metrics.SessionRestrictedSQLCounter.Inc()
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
-	ctx = context.WithValue(ctx, tikvutil.RUDetailsCtxKey, tikvutil.NewRUDetails())
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)
@@ -2024,8 +2022,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		defer pprof.SetGoroutineLabels(ctx)
 		startTime := time.Now()
 		metrics.SessionRestrictedSQLCounter.Inc()
-		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
+		ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 		rs, err := se.ExecuteInternalStmt(ctx, stmt)
 		if err != nil {
 			se.sessionVars.StmtCtx.AppendError(err)
