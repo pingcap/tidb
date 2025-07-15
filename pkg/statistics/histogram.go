@@ -1085,7 +1085,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
+	// Use absolute value to account for the case where rows may have been added on one side,
+	// but deleted from the other, resulting in qualifying out of range rows even though
+	// realtimeRowCount is less than histogram count
+	addedRows := math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
