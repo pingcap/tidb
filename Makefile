@@ -66,7 +66,6 @@ check-static: tools/bin/golangci-lint
 .PHONY: check-ddl
 check-ddl: tools/bin/golangci-lint
 	git remote -v
-	ls -la .git/refs/remotes/
 	cd pkg/ddl && ../../tools/bin/golangci-lint run -v . --config .golangci.yml
 
 .PHONY: check-file-perm
