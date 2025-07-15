@@ -61,7 +61,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	var predicatesWithVCol, predicatesWithoutVCol []expression.Expression
 	// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
 	// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
@@ -73,12 +73,15 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 		}
 	}
 	predicates = predicatesWithoutVCol
-	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
+	retainedPredicates, _, err := p.Children()[0].PredicatePushDown(predicates, opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	p.Conditions = make([]expression.Expression, 0, len(predicates))
 	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
 	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
-	return retainedPredicates, p
+	return retainedPredicates, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
