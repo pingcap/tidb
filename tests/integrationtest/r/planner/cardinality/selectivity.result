@@ -698,8 +698,8 @@ TableReader_8	4.00	root		data:Selection_7
   └─TableFullScan_6	9.00	cop[tikv]	table:topn_after_hist_no_index	keep order:false
 explain select * from topn_after_hist_no_index where a = 6;
 id	estRows	task	access object	operator info
-TableReader_8	2.00	root		data:Selection_7
-└─Selection_7	2.00	cop[tikv]		eq(planner__cardinality__selectivity.topn_after_hist_no_index.a, 6)
+TableReader_8	1.00	root		data:Selection_7
+└─Selection_7	1.00	cop[tikv]		eq(planner__cardinality__selectivity.topn_after_hist_no_index.a, 6)
   └─TableFullScan_6	9.00	cop[tikv]	table:topn_after_hist_no_index	keep order:false
 explain select * from topn_before_hist_no_index where a = 1;
 id	estRows	task	access object	operator info
@@ -708,8 +708,8 @@ TableReader_8	4.00	root		data:Selection_7
   └─TableFullScan_6	9.00	cop[tikv]	table:topn_before_hist_no_index	keep order:false
 explain select * from topn_before_hist_no_index where a = 2;
 id	estRows	task	access object	operator info
-TableReader_8	2.00	root		data:Selection_7
-└─Selection_7	2.00	cop[tikv]		eq(planner__cardinality__selectivity.topn_before_hist_no_index.a, 2)
+TableReader_8	1.00	root		data:Selection_7
+└─Selection_7	1.00	cop[tikv]		eq(planner__cardinality__selectivity.topn_before_hist_no_index.a, 2)
   └─TableFullScan_6	9.00	cop[tikv]	table:topn_before_hist_no_index	keep order:false
 drop table if exists t;
 create table t(a char(10), b int, key idx(a, b));

@@ -426,11 +426,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// 3. Estimate the remaining average estimate based upon the NDV and row count.
 	//    Func `unmatchedEqAverage` will account for whether the remainder is based upon values remaining in the
 	//	  histogram or using the original average estimate.
-	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-	minTopN := float64(idx.TopN.MinCount())
-	increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-
-	result, _ = unmatchedEQAverage(sctx, float64(idx.Histogram.NDV), histNDV, idx.TotalRowCount(), idx.Histogram.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
+	result, _ = unmatchedEQAverage(sctx, nil, idx, realtimeRowCount)
 	return result
 }
 
