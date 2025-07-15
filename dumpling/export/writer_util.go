@@ -217,7 +217,7 @@ func WriteInsert(
 
 	// Determine if we should write INSERT prefix based on chunk position
 	shouldWritePrefix := (chunkIndex == 0)
-	
+
 	var insertStatementPrefixLen uint64
 	if shouldWritePrefix {
 		// if has generated column
@@ -259,10 +259,10 @@ func WriteInsert(
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()
-			
+
 			// Determine row terminator based on chunk position and remaining rows
 			hasMoreRows := fileRowIter.HasNext() && !shouldSwitch
-			
+
 			if hasMoreRows {
 				bf.WriteString(",\n")
 			} else if isLastChunk {
