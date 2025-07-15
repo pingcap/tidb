@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,36 +37,36 @@ import (
 
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
 func TestCBOWithoutAnalyze(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t1 (a int)")
-	testKit.MustExec("create table t2 (a int)")
-	h := dom.StatsHandle()
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t1 (a int)")
+		testKit.MustExec("create table t2 (a int)")
+		h := dom.StatsHandle()
+		err := statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
-	testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	analyzeSuiteData := GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
-	for i, sql := range input {
-		plan := testKit.MustQuery(sql)
-		testdata.OnRecord(func() {
-			output[i].SQL = sql
-			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-		})
-		plan.Check(testkit.Rows(output[i].Plan...))
-	}
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
+		testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
+		testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		analyzeSuiteData := GetAnalyzeSuiteData()
+		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			plan := testKit.MustQuery(sql)
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(output[i].Plan...))
+		}
+	})
 }
 
 func TestStraightJoin(t *testing.T) {
