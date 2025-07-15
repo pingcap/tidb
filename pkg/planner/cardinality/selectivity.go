@@ -1118,16 +1118,16 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 	increaseFactor, minTopN := 1.0, 1.0
 	if c != nil {
 		// Use column stats if available.
-		fullRowCount = float64(c.Histogram.TotalRowCount())
+		fullRowCount = c.Histogram.TotalRowCount()
 		fullNDV = float64(c.Histogram.NDV)
-		histRowCount = float64(c.Histogram.NotNullCount())
+		histRowCount = c.Histogram.NotNullCount()
 		histNDV = float64(c.Histogram.NDV - int64(c.TopN.Num()))
 		minTopN = float64(c.TopN.MinCount())
 		increaseFactor = c.GetIncreaseFactor(realtimeRowCount)
 	} else if idx != nil {
-		fullRowCount = float64(idx.TotalRowCount())
+		fullRowCount = idx.TotalRowCount()
 		fullNDV = float64(idx.Histogram.NDV)
-		histRowCount = float64(idx.Histogram.NotNullCount())
+		histRowCount = idx.Histogram.NotNullCount()
 		histNDV = float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 		minTopN = float64(idx.TopN.MinCount())
 		increaseFactor = idx.GetIncreaseFactor(realtimeRowCount)
@@ -1165,7 +1165,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		maxEstimate = fullRowCount - (fullNDV - 1)
 	} else {
 		// Calculate a default NDV based upon the number of added rows.
-		defNDV := math.Sqrt(float64(addedRows))
+		defNDV := math.Sqrt(addedRows)
 		maxEstimate = addedRows - (defNDV - 1)
 		result = addedRows / defNDV
 	}
