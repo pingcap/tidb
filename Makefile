@@ -65,7 +65,6 @@ check-static: tools/bin/golangci-lint
 
 .PHONY: check-ddl
 check-ddl: tools/bin/golangci-lint
-	git remote -v
 	GO111MODULE=on CGO_ENABLED=1 ./tools/bin/golangci-lint run -v pkg/ddl \
 		--config pkg/ddl/.golangci.yml \
 		--new-from-merge-base=$$(git remote -v | awk '/pingcap\/tidb.git/ {print $$1; exit}')/master
@@ -233,8 +232,7 @@ SERVER_BUILD_CMD := \
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
 	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
 
-.PHONY: server
-server: check-ddl ## Build TiDB server binary
+server: ## Build TiDB server binary
 	$(SERVER_BUILD_CMD)
 
 .PHONY: server_debug
@@ -679,7 +677,7 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_build
-bazel_build: ## Build TiDB using Bazel build system
+bazel_build: check-ddl ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
