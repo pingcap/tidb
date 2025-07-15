@@ -450,9 +450,9 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 
 	// create SQL bindings
 	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")

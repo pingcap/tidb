@@ -1112,6 +1112,7 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 }
 
 // unmatchedEqAverage estimates the row count for equal conditions not matched in TopN or last value of a bucket.
+// Func call can pass in nil for c or idx, but at least one of them must be non-nil.
 func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *statistics.Index, realtimeRowCount int64) (result, maxEstimate float64) {
 	fullRowCount, fullNDV, fullAvg := float64(0), float64(0), float64(0)
 	histRowCount, histNDV, histAvg := float64(0), float64(0), float64(0)
@@ -1125,6 +1126,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		minTopN = float64(c.TopN.MinCount())
 		increaseFactor = c.GetIncreaseFactor(realtimeRowCount)
 	} else if idx != nil {
+		// Use index stats if available.
 		fullRowCount = idx.TotalRowCount()
 		fullNDV = float64(idx.Histogram.NDV)
 		histRowCount = idx.Histogram.NotNullCount()
@@ -1134,58 +1136,67 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 	}
 	// realtimeRowCount may have increased or decreased - use abs to record the difference.
 	addedRows := math.Abs(float64(realtimeRowCount) - fullRowCount)
+	histValid := false
 	// If the histogram NDV and histogram row count are greater than zero - then we have histogram buckets.
 	// Only return the "average" of the remainder if it is greater than zero.
 	if histNDV > 0 {
 		histAvg = histRowCount / histNDV
 		if histAvg > 0 {
 			// set the result here because we have a valid average for the remaining NDV.
-			result = histAvg
+			histValid = true
+			maxEstimate = histRowCount - (histNDV - 1)
 		} else {
-			// remainNDV is greater than zero, but the row count is zero - this should only happen when sampling
-			// resulted in TopN collecting all values in the sample, but NDV was greater than what was contained
-			// in the sample. Thus we created zero buckets but still have remaining NDV unaccounted for.
-			histAvg = addedRows / (histNDV * increaseFactor)
+			// histNDV is greater than zero, but histAvg t is zero - this means that sampling resulted in
+			// TopN collecting all values in the sample, but NDV was greater than what was contained in the sample.
+			// Thus we created zero buckets but still have remaining NDV unaccounted for.
+			// If addedRows is zero - the result will still be zero.
+			if addedRows > 0 {
+				histValid = true
+				histAvg = addedRows / (histNDV * increaseFactor)
+				maxEstimate = addedRows - (histNDV - 1)
+			}
 		}
-		// For example, if you have 1000 rows and NDV==701, it could be that 700 values occur 1 time, and one value
-		// occurs 300 times. In this case, the average is 1.43, but the maximum estimate is 1000 - (701 - 1) = 300.
-		// This worst case scenario is considered the maximum estimate.
-		maxEstimate = histRowCount - (histNDV - 1)
+	}
+	if histValid {
+		result = histAvg
 	} else if fullNDV > 0 {
-		// If the histogram RowCount/NDV is zero - revert to the average based upon the original NDV and row count.
+		// If the histogram statistics didn't derive a valid estimate - use the average of full NDV and row count.
 		fullAvg = fullRowCount / fullNDV
 		if fullAvg > 0 {
 			// set result here because this is likely to be relatively accurate based upon an original even distribution.
 			result = fullAvg
-		} else {
-			// Adjust fullNDV because realtimeRowCount is also increased by the same factor.
-			fullAvg = float64(realtimeRowCount) / (fullNDV * increaseFactor)
+			maxEstimate = fullRowCount - (fullNDV - 1)
 		}
-		// See above for explanation of the maximum estimate.
-		maxEstimate = fullRowCount - (fullNDV - 1)
-	} else {
-		// Calculate a default NDV based upon the number of added rows.
-		defNDV := math.Sqrt(addedRows)
-		maxEstimate = addedRows - (defNDV - 1)
-		result = addedRows / defNDV
 	}
-	// If the result is still zero - we aren't confident in our estimate.
+
 	if result <= 0 {
-		result = max(fullAvg, histAvg)
+		// If we stil haven't derived a result - it's because we didn't have a valid NDV.
+		// Use sqrt to derive a default NDV.
+		defaultNDV := math.Sqrt(fullRowCount)
+		if defaultNDV > 0 {
+			result = fullRowCount / defaultNDV
+		}
+		// This also means that we don't have a valid maxEstimate, so we set it to large value to reflect it's risk.
+		maxEstimate = max(addedRows, fullRowCount) - (defaultNDV - 1)
 	}
 	// Do not allow the result to be greater than the smallest value in the TopN.
-	if minTopN > 0 {
+	// But only if the number of additions isn't larger than the original (full) row count - as this would indicate
+	// that the statistics are very unreliable.
+	if minTopN > 0 && fullRowCount < addedRows {
 		result = min(result, minTopN)
 		// Do not allow the "worst case" estimate (maxEstimate) to be greater than the smallest value in the TopN.
 		if maxEstimate > 0 {
-			result = min(minTopN, maxEstimate)
+			maxEstimate = min(minTopN, maxEstimate)
 		} else {
 			maxEstimate = minTopN
 		}
+	} else if maxEstimate <= 0 {
+		// If we've gotten here - our worst case is very large.
+		maxEstimate = addedRows
 	}
 	skewEstimate := adjustEQSkewRisk(sctx, maxEstimate, result)
 	// Also return the maxEstimate, so the caller can assess the risk of skew.
-	return result + skewEstimate, maxEstimate
+	return max(0, result+skewEstimate), maxEstimate
 }
 
 func adjustEQSkewRisk(sctx planctx.PlanContext, maxEstimate, currRowEst float64) float64 {

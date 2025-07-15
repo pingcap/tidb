@@ -160,8 +160,8 @@ a	b
 2020-08-22 10:00:00	2
 explain select * from tp where a > '2020-07-07 01:00:00';
 id	estRows	task	access object	operator info
-TableReader_8	2.00	root	partition:p1,p2	data:Selection_7
-└─Selection_7	2.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
+TableReader_8	3.00	root	partition:p1,p2	data:Selection_7
+└─Selection_7	3.00	cop[tikv]		gt(executor__partition__partition_with_expression.tp.a, 2020-07-07 01:00:00.000000)
   └─TableFullScan_6	4.00	cop[tikv]	table:tp	keep order:false
 select * from tp where a > '2020-07-07 01:00:00';
 a	b
