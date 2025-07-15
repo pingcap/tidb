@@ -12,17 +12,11 @@ linters:
   exclusions:
     rules:
       - path: _test\.go
-        linters:
-          - forbidigo
+        linters: [forbidigo]
       - path: executor\.go
-        linters:
-          - forbidigo
+        linters: [forbidigo]
   settings:
     forbidigo:
       forbid:
-        # Optional message that gets included in error reports.
-        # This is a strict check to ensure that the usage of GetSessionVars is appropriate.
-        # If GetSessionVars are found in the PR, the check will fail to remind the reviewer.
         - pattern: GetSessionVars
-          msg: Please check if the usage of GetSessionVars is appropriate.
-      exclude-godoc-examples: false
+          msg: Please check if the usage of GetSessionVars is appropriate

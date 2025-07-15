@@ -145,6 +145,7 @@ func getSplitIdxPhysicalKeysFromValueList(
 	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
 	sc := sctx.GetSessionVars().StmtCtx
 
+	fmt.Sprint(sctx.GetSessionVars().StmtCtx)
 	sc2 := sctx.GetSessionVars()
 	logutil.DDLLogger().Error("test lint",
 		zap.String("port", sc2.Port))
