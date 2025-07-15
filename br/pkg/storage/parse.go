@@ -97,7 +97,6 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if u.Scheme == "ks3" {
 			s3.Provider = ks3SDKProvider
 		}
-
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
 	case "gs", "gcs":
