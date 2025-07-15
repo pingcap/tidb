@@ -16,6 +16,10 @@
 
 package intest
 
+import (
+	"runtime/debug"
+)
+
 // InTest checks if the code is running in test.
 var InTest = true
 
