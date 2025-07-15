@@ -53,7 +53,7 @@ func TestWriteInsert(t *testing.T) {
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
-	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), n)
 
@@ -91,7 +91,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
-	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.ErrorIs(t, err, rowErr)
 	require.Equal(t, uint64(3), n)
 
@@ -124,7 +124,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 	m := newMetrics(cfg.PromFactory, conf.Labels)
-	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
@@ -142,7 +142,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
 	m = newMetrics(conf.PromFactory, conf.Labels)
-	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
@@ -160,7 +160,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
 	m = newMetrics(conf.PromFactory, conf.Labels)
-	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
@@ -178,7 +178,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
 	m = newMetrics(conf.PromFactory, conf.Labels)
-	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
@@ -199,7 +199,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
 	conf = configForWriteCSV(cfg, false, opt)
 	m = newMetrics(conf.PromFactory, conf.Labels)
-	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.Equal(t, uint64(4), n)
 	require.NoError(t, err)
 
@@ -234,7 +234,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 	m := newMetrics(conf.PromFactory, conf.Labels)
-	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.Equal(t, uint64(3), n)
 	require.ErrorIs(t, err, rowErr)
 
@@ -265,7 +265,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		bf := storage.NewBufferWriter()
-		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
 
@@ -283,7 +283,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		bf := storage.NewBufferWriter()
-		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
 
@@ -301,7 +301,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
 		bf := storage.NewBufferWriter()
-		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
 
@@ -334,7 +334,7 @@ func TestSQLDataTypes(t *testing.T) {
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 		m := newMetrics(conf.PromFactory, conf.Labels)
-		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), n)
 
@@ -432,7 +432,7 @@ func TestWriteInsertWithStatementSizeLimit(t *testing.T) {
 	conf := configForWriteSQL(cfg, UnspecifiedSize, statementSizeLimit)
 	m := newMetrics(conf.PromFactory, conf.Labels)
 
-	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.NoError(t, err)
 	require.Equal(t, uint64(6), n)
 
@@ -498,7 +498,7 @@ func TestWriteInsertWithoutStatementSizeLimit(t *testing.T) {
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
 
-	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), n)
 
@@ -539,7 +539,7 @@ func TestWriteInsertFirstChunkTracking(t *testing.T) {
 	conf := configForWriteSQL(cfg, UnspecifiedSize, statementSizeLimit)
 	m := newMetrics(conf.PromFactory, conf.Labels)
 
-	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true)
+	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m, 0, 1, true, false)
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), n)
 
