@@ -66,7 +66,7 @@ check-static: tools/bin/golangci-lint
 .PHONY: check-ddl
 check-ddl: tools/bin/golangci-lint
 	git remote -v
-	cd pkg/ddl && ../../tools/bin/golangci-lint run -v . --config .golangci.yml
+	GO111MODULE=on CGO_ENABLED=1 ./tools/bin/golangci-lint run -v pkg/ddl --config pkg/ddl/.golangci.yml
 
 .PHONY: check-file-perm
 check-file-perm:
