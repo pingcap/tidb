@@ -1,14 +1,14 @@
 version: "2"
 
 issues:
-  new-from-merge-base: upstream/master
+  new-from-merge-base: origin/master
   max-issues-per-linter: 0
 
 linters:
   default: none
   enable:
     - forbidigo
-  # Ignore forbidigo in test files and executor.go
+  # Ignore test files and executor.go
   exclusions:
     rules:
       - path: _test\.go
