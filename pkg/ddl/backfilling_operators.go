@@ -301,6 +301,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 			src.store,
 			startKey,
 			endKey,
+			nil,
 			backfillTaskChanSize,
 		)
 		if err != nil {

@@ -87,9 +87,6 @@ const (
 	gRPCKeepAliveTimeout = 5 * time.Minute
 	gRPCBackOffMaxDelay  = 10 * time.Minute
 
-	// The max ranges count in a batch to split and scatter.
-	maxBatchSplitRanges = 4096
-
 	propRangeIndex = "tikv.range_index"
 
 	defaultPropSizeIndexDistance = 4 * units.MiB
@@ -492,10 +489,11 @@ type Backend struct {
 	keyAdapter          common.KeyAdapter
 	importClientFactory ImportClientFactory
 
-	bufferPool   *membuf.Pool
-	metrics      *metric.Common
-	writeLimiter StoreWriteLimiter
-	logger       log.Logger
+	bufferPool    *membuf.Pool
+	metrics       *metric.Common
+	writeLimiter  StoreWriteLimiter
+	ingestLimiter atomic.Pointer[ingestLimiter]
+	logger        log.Logger
 	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
 	mu sync.Mutex
 }
@@ -1177,7 +1175,15 @@ func (local *Backend) prepareAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	lfTotalSize, lfLength := engine.KVStatistics()
-	log.FromContext(ctx).Info("import engine ranges", zap.Int("count", len(initialSplitRanges)))
+	splitRangesBatch := GetMaxBatchSplitRanges()
+	maxRangesPerSec := GetMaxSplitRangePerSec()
+
+	log.FromContext(ctx).Info("import engine ranges",
+		zap.Int("count", len(initialSplitRanges)),
+		zap.Int("splitRangesBatch", splitRangesBatch),
+		zap.Float64("splitRangePerSec", maxRangesPerSec),
+	)
+
 	if len(initialSplitRanges) == 0 {
 		return nil
 	}
@@ -1198,7 +1204,7 @@ func (local *Backend) prepareAndSendJob(
 			failpoint.Break()
 		})
 
-		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, maxBatchSplitRanges)
+		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, splitRangesBatch, maxRangesPerSec)
 		if err == nil || common.IsContextCanceledError(err) {
 			break
 		}
@@ -1626,11 +1632,17 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
+	maxReqInFlight := GetMaxIngestConcurrency()
+	maxReqPerSec := GetMaxIngestPerSec()
+	local.ingestLimiter.Store(newIngestLimiter(ctx, maxReqInFlight, maxReqPerSec))
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(regionRanges)),
 		zap.Int64("count", lfLength),
-		zap.Int64("size", lfTotalSize))
+		zap.Int64("size", lfTotalSize),
+		zap.Int("maxReqInFlight", maxReqInFlight),
+		zap.Float64("maxReqPerSec", maxReqPerSec),
+	)
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
 
