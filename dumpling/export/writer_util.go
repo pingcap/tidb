@@ -149,7 +149,7 @@ func WriteInsert(
 	w storage.ExternalFileWriter,
 	metrics *metrics,
 	chunkIndex int,
-	totalChunks int,
+	_ int,
 	isLastChunk bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
@@ -322,9 +322,9 @@ func WriteInsertInCsv(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
-	chunkIndex int,
-	totalChunks int,
-	isLastChunk bool,
+	_ int,
+	_ int,
+	_ bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {

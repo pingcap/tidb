@@ -402,3 +402,19 @@ var serverSpecialComments = map[version.ServerType][]string{
 func getSpecialComments(serverType version.ServerType) []string {
 	return serverSpecialComments[serverType]
 }
+
+func getSpecialCommentsWithCharset(serverType version.ServerType, charset string) []string {
+	comments := make([]string, len(serverSpecialComments[serverType]))
+	copy(comments, serverSpecialComments[serverType])
+	
+	// Replace SET NAMES binary with specified charset if provided
+	if charset != "" && charset != "binary" {
+		for i, comment := range comments {
+			if strings.Contains(comment, "SET NAMES binary") {
+				comments[i] = strings.Replace(comment, "SET NAMES binary", "SET NAMES "+charset, 1)
+			}
+		}
+	}
+	
+	return comments
+}
