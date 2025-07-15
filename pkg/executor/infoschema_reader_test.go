@@ -1159,8 +1159,23 @@ func TestTableRegions(t *testing.T) {
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("create table t1 (id int primary key, name varchar(32))")
 		tk.MustExec("insert into t1 values (1, 'sh'), (2, 'sh2')")
-		tk.MustQuery("select count(*) from information_schema.table_regions where table_name='t1'").Check(testkit.Rows(
-			"1",
+
+		// 1. Fetch the region keys for the table from information_schema.table_regions.
+		// For a newly created small table, there is typically only one region.
+		rows := tk.MustQuery("select start_key, end_key from information_schema.table_regions where table_name = 't1'").Rows()
+		require.Len(t, rows, 1, "Expected a single region for the basic table")
+
+		startKey := rows[0][0]
+		endKey := rows[0][1]
+
+		// 2. Construct the query with the TABLESPLIT clause.
+		query := fmt.Sprintf("select id, name from t1 TABLESPLIT('%s', '%s') order by id", startKey, endKey)
+
+		// 3. Execute the query and verify the result.
+		// The expected result should be all rows from the table, as the split keys cover the entire table.
+		tk.MustQuery(query).Check(testkit.Rows(
+			"1 sh",
+			"2 sh2",
 		))
 	})
 
@@ -1179,6 +1194,28 @@ func TestTableRegions(t *testing.T) {
 		tk.MustQuery("select count(*) from information_schema.table_regions where table_name='pt1'").Check(testkit.Rows(
 			"3",
 		))
+
+		// 1. Fetch the region keys corresponding to partition p0.
+		rowsP0 := tk.MustQuery("select start_key, end_key from information_schema.table_regions where table_name = 'pt1' and partition_name = 'p0'").Rows()
+		require.Len(t, rowsP0, 1, "Expected a single region for partition p0")
+		startKeyP0 := rowsP0[0][0]
+		endKeyP0 := rowsP0[0][1]
+
+		// 2. Construct the query for partition p0 and verify the result.
+		queryP0 := fmt.Sprintf("select id, name from pt1 TABLESPLIT('%s', '%s')", startKeyP0, endKeyP0)
+		// It is expected to return only the data from partition p0.
+		tk.MustQuery(queryP0).Check(testkit.Rows("1 a"))
+
+		// 3. Fetch the region keys corresponding to partition p1.
+		rowsP1 := tk.MustQuery("select start_key, end_key from information_schema.table_regions where table_name = 'pt1' and partition_name = 'p1'").Rows()
+		require.Len(t, rowsP1, 1, "Expected a single region for partition p1")
+		startKeyP1 := rowsP1[0][0]
+		endKeyP1 := rowsP1[0][1]
+
+		// 4. Construct the query for partition p1 and verify the result.
+		queryP1 := fmt.Sprintf("select id, name from pt1 TABLESPLIT('%s', '%s')", startKeyP1, endKeyP1)
+		// It is expected to return only the data from partition p1.
+		tk.MustQuery(queryP1).Check(testkit.Rows("101 b"))
 	})
 
 	t.Run("Empty Table", func(t *testing.T) {

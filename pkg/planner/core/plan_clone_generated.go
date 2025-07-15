@@ -65,6 +65,9 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.AnnIndexExtra != nil {
 		return nil, false
 	}
+	if op.TableSplit != nil {
+		return nil, false
+	}
 	return cloned, true
 }
 
@@ -219,6 +222,9 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
 	if op.TableScanAndPartitionInfos != nil {
+		return nil, false
+	}
+	if op.TableSplit != nil {
 		return nil, false
 	}
 	return cloned, true

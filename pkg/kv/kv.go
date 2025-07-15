@@ -525,6 +525,40 @@ func (rr *KeyRanges) TotalRangeNum() int {
 	return ret
 }
 
+// Intersect filters rr.ranges to only include and trim KeyRanges overlapping the [start, end) span.
+func (rr *KeyRanges) Intersect(start, end []byte) {
+	ranges := make([][]KeyRange, 0, len(rr.ranges))
+	rowCountHints := make([][]int, 0, len(rr.rowCountHints))
+	for i, kvRanges := range rr.ranges {
+		newKvRanges := make([]KeyRange, 0, len(kvRanges))
+		newRowCountHints := make([]int, 0)
+		for j, kvRange := range kvRanges {
+			if kvRange.StartKey.Cmp(end) >= 0 || kvRange.EndKey.Cmp(start) <= 0 {
+				continue
+			}
+			if kvRange.StartKey.Cmp(start) < 0 {
+				kvRange.StartKey = start
+			}
+			if kvRange.EndKey.Cmp(end) > 0 {
+				kvRange.EndKey = end
+			}
+			newKvRanges = append(newKvRanges, kvRange)
+			if rr.rowCountHints != nil {
+				newRowCountHints = append(newRowCountHints, rr.rowCountHints[i][j])
+			}
+		}
+		if len(newKvRanges) > 0 {
+			ranges = append(ranges, newKvRanges)
+			if len(newRowCountHints) > 0 {
+				rowCountHints = append(rowCountHints, newRowCountHints)
+			}
+		}
+	}
+
+	rr.ranges = ranges
+	rr.rowCountHints = rowCountHints
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.

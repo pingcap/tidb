@@ -7733,3 +7733,29 @@ func TestVector(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestTableSplitStmt(t *testing.T) {
+	table := []testCase{
+		// Valid cases
+		{"SELECT * FROM t TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` TABLESPLIT('a', 'b')"},
+		{"select * from t tablesplit ('a', 'b')", true, "SELECT * FROM `t` TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t AS t1 TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` AS `t1` TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t PARTITION (p0) TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` PARTITION(`p0`) TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t1 TABLESPLIT ('a', 'b'), t2", true, "SELECT * FROM (`t1` TABLESPLIT('a', 'b')) JOIN `t2`"},
+		{"SELECT * FROM t1, t2 TABLESPLIT ('a', 'b')", true, "SELECT * FROM (`t1`) JOIN `t2` TABLESPLIT('a', 'b')"},
+		{"SELECT * FROM t TABLESPLIT ('', 'b')", true, "SELECT * FROM `t` TABLESPLIT('', 'b')"},
+		{"SELECT * FROM t PARTITION (p0, p1) AS t1 TABLESPLIT ('a', 'b')", true, "SELECT * FROM `t` PARTITION(`p0`, `p1`) AS `t1` TABLESPLIT('a', 'b')"},
+
+		// Invalid cases
+		{"SELECT * FROM t TABLESPLIT", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a')", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a',)", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a', 'b', 'c')", false, ""},
+		{"SELECT * FROM t TABLESPLIT ('a' 'b')", false, ""},
+		{"SELECT * FROM t TABLESPLIT 'a', 'b'", false, ""},
+		{"SELECT * FROM t TABLESPLIT (a, b)", false, ""},
+		{"SELECT * FROM t TABLESPLIT (1, 2)", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
