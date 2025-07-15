@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -205,19 +206,17 @@ func decodeIndexUniqueness(job *model.Job) (bool, error) {
 
 type backfillDistExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	d         *ddl
-	task      *proto.Task
-	taskTable taskexecutor.TaskTable
-	taskMeta  *BackfillTaskMeta
-	jobID     int64
+	d        *ddl
+	task     *proto.Task
+	taskMeta *BackfillTaskMeta
+	jobID    int64
 }
 
-func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
+func newBackfillDistExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param, d *ddl) taskexecutor.TaskExecutor {
 	s := &backfillDistExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param),
 		d:                d,
 		task:             task,
-		taskTable:        taskTable,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -253,14 +252,20 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func isRetryableError(err error) bool {
+	errMsg := err.Error()
+	for _, m := range dbterror.ReorgRetryableErrMsgs {
+		if strings.Contains(errMsg, m) {
+			return true
+		}
+	}
 	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
 		return ok
 	}
-	// can't retry Unknown err.
-	return false
+	// For the unknown errors, we should retry.
+	return true
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {

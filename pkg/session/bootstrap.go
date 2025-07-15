@@ -585,8 +585,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateGlobalTaskHistory is a table about history global task.
@@ -606,8 +607,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
@@ -1100,11 +1102,15 @@ const (
 
 	// version199 add column `summary` to `mysql.tidb_background_subtask_history`.
 	version199 = 199
+
+	// version 200
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version200 = 200
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version199
+var currentBootstrapVersion int64 = version200
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1269,6 +1275,7 @@ var (
 		upgradeToVer197,
 		upgradeToVer198,
 		upgradeToVer199,
+		upgradeToVer200,
 	}
 )
 
@@ -3125,6 +3132,14 @@ func upgradeToVer199(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer200(s sessiontypes.Session, ver int64) {
+	if ver >= version200 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

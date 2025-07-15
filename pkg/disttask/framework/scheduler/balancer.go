@@ -19,10 +19,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -48,9 +49,9 @@ type balancer struct {
 }
 
 func newBalancer(param Param) *balancer {
-	logger := log.L()
+	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
-		logger = log.L().With(zap.String("server-id", param.serverID))
+		logger = logger.With(zap.String("server-id", param.serverID))
 	}
 	return &balancer{
 		Param:         param,
@@ -73,7 +74,7 @@ func (b *balancer) balanceLoop(ctx context.Context, sm *Manager) {
 func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	// we will use currUsedSlots to calculate adjusted eligible nodes during balance,
 	// it's initial value depends on the managed nodes, to have a consistent view,
-	// DO NOT call getManagedNodes twice during 1 balance.
+	// DO NOT call getNodes twice during 1 balance.
 	managedNodes := b.nodeMgr.getNodes()
 	b.currUsedSlots = make(map[string]int, len(managedNodes))
 	for _, n := range managedNodes {
@@ -116,6 +117,9 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	// managed nodes, subtasks of task might not be balanced.
 	adjustedNodes := filterNodesWithEnoughSlots(b.currUsedSlots, b.slotMgr.getCapacity(),
 		eligibleNodes, subtasks[0].Concurrency)
+	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
+		adjustedNodes = []string{}
+	})
 	if len(adjustedNodes) == 0 {
 		// no node has enough slots to run the subtasks, skip balance and skip
 		// update used slots.

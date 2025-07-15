@@ -83,11 +83,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 // GCSubtasks deletes the history subtask which is older than the given days.
 func (mgr *TaskManager) GCSubtasks(ctx context.Context) error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
-	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
-		if val, ok := val.(int); ok {
-			subtaskHistoryKeepSeconds = val
-		}
-	})
+	failpoint.InjectCall("subtaskHistoryKeepSeconds", &subtaskHistoryKeepSeconds)
 	_, err := mgr.ExecuteSQLWithNewSession(
 		ctx,
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),

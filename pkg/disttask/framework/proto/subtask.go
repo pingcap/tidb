@@ -72,6 +72,10 @@ type SubtaskBase struct {
 	// Concurrency is the concurrency of the subtask, should <= task's concurrency.
 	// some subtasks like post-process of import into, don't consume too many resources,
 	// can lower this value.
+	// NOTE: currently it always equals task's concurrency, except the subtask is
+	// done and task concurrency is modified.
+	// NOTE: this field should normally be used for non-runtime purpose, when
+	// allocating resource at runtime, use StepResource.CPU instead.
 	Concurrency int
 	// ExecID is the ID of target executor, right now it's the same as instance_id,
 	// its value is IP:PORT, see GenerateExecID
