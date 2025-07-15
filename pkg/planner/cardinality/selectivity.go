@@ -1174,7 +1174,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		result = max(fullAvg, histAvg)
 	}
 	// Do not allow the result to be greater than the smallest value in the TopN.
-	if minTopN > 1 {
+	if minTopN > 0 {
 		result = min(result, minTopN)
 		// Do not allow the "worst case" estimate (maxEstimate) to be greater than the smallest value in the TopN.
 		if maxEstimate > 0 {
