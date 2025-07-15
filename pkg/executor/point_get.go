@@ -897,26 +897,25 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 		for _, col := range schema.Columns {
 			if col.ID == model.ExtraHandleID ||
 				(e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag())) {
-				if e.handle.IsInt() {
-					idxColMap[col.ID] = types.NewIntDatum(e.handle.IntValue())
-				} else {
+				if !e.handle.IsInt() {
 					// For common handle, we need to decode the handle value
 					// This is more complex and for now we'll fall back to row fetch
 					return e.buildResultFromRowData(ctx, req, schema, sctx)
 				}
+				idxColMap[col.ID] = types.NewIntDatum(e.handle.IntValue())
 			}
 		}
 	}
 
 	// Build the row from index values
 	for i, col := range schema.Columns {
-		if datum, ok := idxColMap[col.ID]; ok {
-			req.AppendDatum(i, &datum)
-		} else {
+		datum, ok := idxColMap[col.ID]
+		if !ok {
 			// If column is not in index map, this shouldn't happen with proper covering index detection
 			// Fall back to row data fetch for safety
 			return e.buildResultFromRowData(ctx, req, schema, sctx)
 		}
+		req.AppendDatum(i, &datum)
 	}
 
 	// Handle virtual columns
