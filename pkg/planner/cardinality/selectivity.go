@@ -1112,7 +1112,7 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 }
 
 // unmatchedEqAverage estimates the row count for equal conditions not matched in TopN or last value of a bucket.
-func unmatchedEQAverage(origNDV, remainNDV, origRowCount, remainCount, realtimeRowCount, increaseFactor, minTopN float64) (result float64) {
+func unmatchedEQAverage(sctx planctx.PlanContext, origNDV, remainNDV, origRowCount, remainCount, realtimeRowCount, increaseFactor, minTopN float64) (result, maxEstimate float64) {
 	origAvg, remainAvg := float64(0), float64(0)
 	addedRows := realtimeRowCount - origRowCount
 	// If the remaining NDV or remaining row count is zero - we may not have any buckets.
@@ -1128,6 +1128,7 @@ func unmatchedEQAverage(origNDV, remainNDV, origRowCount, remainCount, realtimeR
 			// in the sample. Thus we created zero buckets but still have remaining NDV unaccounted for.
 			remainAvg = addedRows / (remainNDV * increaseFactor)
 		}
+		maxEstimate = remainCount - (remainNDV - 1)
 	} else if origNDV > 0 {
 		// If the "remaining" above is zero - revert to the average based upon the original NDV and row count.
 		origAvg = origRowCount / origNDV
@@ -1137,6 +1138,7 @@ func unmatchedEQAverage(origNDV, remainNDV, origRowCount, remainCount, realtimeR
 		} else {
 			origAvg = realtimeRowCount / (origNDV * increaseFactor)
 		}
+		maxEstimate = origRowCount - (origNDV - 1)
 	}
 	// If the result is still zero - we aren't confident in our estimate.
 	if result <= 0 {
@@ -1145,11 +1147,18 @@ func unmatchedEQAverage(origNDV, remainNDV, origRowCount, remainCount, realtimeR
 	// Do not allow the result to be greater than the smallest value in the TopN.
 	if minTopN > 0 {
 		result = min(result, minTopN)
+		if maxEstimate > 0 {
+			result = min(result, maxEstimate)
+		} else {
+			maxEstimate = minTopN
+		}
 	}
-	return result
+	skewEstimate := adjustEQSkewRisk(sctx, maxEstimate, result)
+	// Also return the maxEstimate, so the caller can assess the risk of skew.
+	return result + skewEstimate, maxEstimate
 }
 
-func adjustEQSkewRisk(sctx planctx.PlanContext, minTopN, currRowEst float64) float64 {
+func adjustEQSkewRisk(sctx planctx.PlanContext, maxEstimate, currRowEst float64) float64 {
 	// skewRatio determines how much of the potential skew should be considered between the estimated/average
 	// row count and the worst case row count. This code should only be considered when we do not have a matching
 	// value in the TopN or histogram buckets.
@@ -1159,7 +1168,7 @@ func adjustEQSkewRisk(sctx planctx.PlanContext, minTopN, currRowEst float64) flo
 	if skewRatio > 0 {
 		// Calculate the adjusted value that should be considered to be added to the original estimate by the
 		// calling function.
-		skewEstimate = (minTopN - currRowEst) * skewRatio
+		skewEstimate = max(0, (maxEstimate-currRowEst)*skewRatio)
 	}
 	return skewEstimate
 }

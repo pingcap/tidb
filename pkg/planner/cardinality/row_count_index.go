@@ -429,10 +429,9 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	minTopN := float64(idx.TopN.MinCount())
 	increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-	avgRowEstimate := unmatchedEQAverage(float64(idx.Histogram.NDV), histNDV, idx.TotalRowCount(), idx.Histogram.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
-	// skewEstimate determines how much of the potential skew should be considered
-	skewEstimate := adjustEQSkewRisk(sctx, minTopN, avgRowEstimate)
-	return avgRowEstimate + skewEstimate
+
+	result, _ = unmatchedEQAverage(sctx, float64(idx.Histogram.NDV), histNDV, idx.TotalRowCount(), idx.Histogram.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
+	return result
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.

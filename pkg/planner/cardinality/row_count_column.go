@@ -178,10 +178,8 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 	minTopN := float64(c.TopN.MinCount())
-	result = unmatchedEQAverage(float64(c.Histogram.NDV), histNDV, c.TotalRowCount(), c.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
-	// branch 2: some NDV's are in histograms
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	result += adjustEQSkewRisk(sctx, minTopN, result)
+	result, _ = unmatchedEQAverage(sctx, float64(c.Histogram.NDV), histNDV, c.TotalRowCount(), c.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
+
 	return result, nil
 }
 
