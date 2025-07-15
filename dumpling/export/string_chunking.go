@@ -81,7 +81,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		chunkIndex int
 	}
 	var buffer *bufferedChunk
-	
+
 	// Helper function to send buffered chunk with correct termination flag
 	sendBufferedChunk := func(isLast bool) error {
 		if buffer != nil {
@@ -90,7 +90,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			if isLast {
 				buffer.task.TotalChunks = buffer.chunkIndex + 1 // Now we know the total
 			}
-			
+
 			ctxDone := d.sendTaskToChan(tctx, buffer.task, taskChan)
 			if ctxDone {
 				return tctx.Err()
@@ -108,7 +108,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		if buffer != nil {
 			sendBufferedChunk(true) // Mark as last chunk
 		}
-		
+
 		chunkStats.finalized.Store(true)
 
 		// Update the totalChunks at the end of streaming to enable proper progress tracking
@@ -245,7 +245,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 
 		// Create task for chunk using previousBoundary -> currentBoundary (with buffering)
 		var newTask *TaskTableData
-		
+
 		if len(previousBoundary) == 0 {
 			// First chunk: everything up to first boundary
 			whereClause := buildUpperBoundWhereClause(orderByColumns, currentBoundary)
@@ -264,7 +264,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		if err := sendBufferedChunk(false); err != nil {
 			return err
 		}
-		
+
 		// Buffer the new task
 		buffer = &bufferedChunk{
 			task:       newTask,
