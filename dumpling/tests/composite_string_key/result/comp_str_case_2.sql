@@ -1,5 +1,5 @@
 /*!40014 SET FOREIGN_KEY_CHECKS=0*/;
-/*!40101 SET NAMES binary*/;
+/*!40101 SET NAMES utf8mb4*/;
 INSERT INTO `comp_str_case_2` VALUES
 ('asia','china','beijing',21540000,16410.54),
 ('asia','china','shanghai',24280000,6340.50),
