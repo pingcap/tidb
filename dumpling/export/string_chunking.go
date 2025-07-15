@@ -251,13 +251,13 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			whereClause := buildUpperBoundWhereClause(orderByColumns, currentBoundary)
 			fullWhere := buildWhereCondition(conf, whereClause)
 			query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
+			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1, true)
 		} else {
 			// Intermediate chunk: between previousBoundary and currentBoundary
 			whereClause := buildBoundedWhereClause(orderByColumns, previousBoundary, currentBoundary)
 			fullWhere := buildWhereCondition(conf, whereClause)
 			query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
+			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1, true)
 		}
 
 		// Send previous buffered chunk (now we know it's not the last)
@@ -293,7 +293,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		whereClause := buildLowerBoundWhereClause(orderByColumns, previousBoundary)
 		fullWhere := buildWhereCondition(conf, whereClause)
 		query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-		finalTask := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
+		finalTask := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1, true)
 
 		buffer = &bufferedChunk{
 			task:       finalTask,
@@ -313,7 +313,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			firstWhereClause = conf.Where
 		}
 		query := buildSelectQuery(db, tbl, selectField, "", firstWhereClause, orderByClause)
-		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), 0, 1)
+		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), 0, 1, true)
 
 		// Single chunk case - send immediately as we know it's the only one
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
