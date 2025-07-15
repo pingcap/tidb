@@ -16,6 +16,7 @@ package expression
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 	"unsafe"
 
@@ -45,6 +46,7 @@ type ScalarFunction struct {
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
+	testStackTrace    intest.TestStackTrace
 }
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.
@@ -565,10 +567,13 @@ func (sf *ScalarFunction) HashCode() []byte {
 			copyhashcode := make([]byte, len(sf.hashcode))
 			copy(copyhashcode, sf.hashcode)
 			ReHashCode(sf)
-			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode))
+			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode),
+				"HashCode should not change after ReHashCode is called",
+				fmt.Sprintf("next called stack trace: %s", sf.testStackTrace.String()))
 		}
 		return sf.hashcode
 	}
+	sf.testStackTrace = intest.NewTestStackTrace()
 	ReHashCode(sf)
 	return sf.hashcode
 }

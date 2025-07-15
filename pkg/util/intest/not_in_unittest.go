@@ -18,3 +18,22 @@ package intest
 
 // InTest checks if the code is running in test.
 var InTest = false
+
+// TestStackTrace provides a way to capture the stack trace in tests.
+type TestStackTrace struct {
+}
+
+// NewTestStackTrace creates a new TestStackTrace instance with the current stack trace.
+func NewTestStackTrace() TestStackTrace {
+	return TestStackTrace{}
+}
+
+// IsEmpty checks if the stack trace is empty.
+func (t *TestStackTrace) IsEmpty() bool {
+	return true
+}
+
+// String returns a string representation of the stack trace.
+func (t *TestStackTrace) String() string {
+	return "TestStackTrace: no stack trace available in non-test builds"
+}
