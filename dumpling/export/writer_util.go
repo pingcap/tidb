@@ -216,11 +216,7 @@ func WriteInsert(
 	selectedField := meta.SelectedField()
 
 	// Determine if we should write INSERT prefix based on chunk position
-	// For string-based chunking (composite key tables), only first chunk gets prefix
-	// For row-based chunking (like rows test), each chunk is independent
-	tableName := meta.TableName()
-	isStringChunking := strings.HasPrefix(tableName, "comp_str_case_")
-	shouldWritePrefix := (chunkIndex == 0) || !isStringChunking
+	shouldWritePrefix := (chunkIndex == 0)
 
 	var insertStatementPrefixLen uint64
 	if shouldWritePrefix {
@@ -269,11 +265,10 @@ func WriteInsert(
 
 			if hasMoreRows {
 				bf.WriteString(",\n")
-			} else if isLastChunk || !isStringChunking {
-				// End with semicolon for last chunk OR when not in string chunking mode
+			} else if isLastChunk {
 				bf.WriteString(";\n")
 			} else {
-				// Not last chunk in string chunking mode, end with comma for concatenation
+				// Not last chunk, end with comma for concatenation
 				bf.WriteString(",\n")
 			}
 			if bf.Len() >= lengthLimit {
