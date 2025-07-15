@@ -22,6 +22,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/sessionctx",
@@ -57,6 +58,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/store/mockstore",
+        "//pkg/util/logutil",
         "@com_github_stretchr_testify//require",
     ],
 )

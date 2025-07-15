@@ -15,13 +15,20 @@
 package meta_test
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -34,17 +41,77 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestInitDDLTables(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	allTables := append(append(append(append([]session.TableBasicInfo{},
+		session.DDLJobTables...), session.MDLTables...),
+		session.BackfillTables...), session.DDLNotifierTables...)
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	for _, c := range []struct {
+		initVer meta.DDLTableVersion
+		tables  []session.TableBasicInfo
+	}{
+		{meta.InitDDLTableVersion, allTables},
+		{meta.BaseDDLTableVersion, allTables[3:]},
+		{meta.MDLTableVersion, allTables[4:]},
+		{meta.BackfillTableVersion, allTables[6:]},
+		{meta.DDLNotifierTableVersion, []session.TableBasicInfo{}},
+	} {
+		if c.initVer != meta.InitDDLTableVersion {
+			require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.SetDDLTableVersion(c.initVer))
+				return nil
+			}))
+		}
+		require.NoError(t, session.InitDDLTables(store))
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			systemDBID, err2 := m.GetSystemDBID()
+			require.NoError(t, err2)
+
+			tables, err2 := m.ListTables(ctx, systemDBID)
+			require.NoError(t, err2)
+			require.Len(t, tables, len(c.tables))
+			gotTables := make([]session.TableBasicInfo, 0, len(tables))
+			for _, tbl := range tables {
+				gotTables = append(gotTables, session.TableBasicInfo{ID: tbl.ID, Name: tbl.Name.L})
+			}
+			slices.SortFunc(gotTables, func(a, b session.TableBasicInfo) int {
+				return cmp.Compare(b.ID, a.ID)
+			})
+			require.True(t, slices.EqualFunc(c.tables, gotTables, func(a, b session.TableBasicInfo) bool {
+				return a.ID == b.ID && a.Name == b.Name
+			}))
+			postVer, err2 := m.CheckDDLTableVersion()
+			require.NoError(t, err2)
+			require.Equal(t, meta.DDLNotifierTableVersion, postVer)
+
+			require.NoError(t, m.SetDDLTableVersion(meta.InitDDLTableVersion))
+			require.NoError(t, m.DropDatabase(systemDBID))
+			return nil
+		}))
+	}
+}
+
 func TestInitMetaTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	for _, sql := range session.DDLJobTables {
-		tk.MustExec(sql.SQL)
+		theSQL := strings.Replace(sql.SQL, "mysql.", "", 1)
+		tk.MustExec(theSQL)
 	}
 
 	for _, sql := range session.BackfillTables {
-		tk.MustExec(sql.SQL)
+		theSQL := strings.Replace(sql.SQL, "mysql.", "", 1)
+		tk.MustExec(theSQL)
 	}
 
 	tbls := map[string]struct{}{
@@ -80,20 +147,20 @@ func TestMetaTableRegion(t *testing.T) {
 
 	ddlReorgTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_reorg regions").Rows()[0][0]
 	ddlReorgTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_reorg regions").Rows()[0][1]
-	require.Equal(t, ddlReorgTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.ReorgTableID))
+	require.Equal(t, ddlReorgTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), metadef.TiDBDDLReorgTableID))
 
 	ddlJobTableRegionID := tk.MustQuery("show table mysql.tidb_ddl_job regions").Rows()[0][0]
 	ddlJobTableRegionStartKey := tk.MustQuery("show table mysql.tidb_ddl_job regions").Rows()[0][1]
-	require.Equal(t, ddlJobTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.JobTableID))
+	require.Equal(t, ddlJobTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), metadef.TiDBDDLJobTableID))
 
 	require.NotEqual(t, ddlJobTableRegionID, ddlReorgTableRegionID)
 
 	ddlBackfillTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][0]
 	ddlBackfillTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskTableID))
+	require.Equal(t, ddlBackfillTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), metadef.TiDBBackgroundSubtaskTableID))
 	ddlBackfillHistoryTableRegionID := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][0]
 	ddlBackfillHistoryTableRegionStartKey := tk.MustQuery("show table mysql.tidb_background_subtask_history regions").Rows()[0][1]
-	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), ddl.BackgroundSubtaskHistoryTableID))
+	require.Equal(t, ddlBackfillHistoryTableRegionStartKey, fmt.Sprintf("%s_%d_", tablecodec.TablePrefix(), metadef.TiDBBackgroundSubtaskHistoryTableID))
 
 	require.NotEqual(t, ddlBackfillTableRegionID, ddlBackfillHistoryTableRegionID)
 }

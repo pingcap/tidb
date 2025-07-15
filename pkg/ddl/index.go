@@ -94,6 +94,8 @@ const (
 	MaxCommentLength = 1024
 )
 
+var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
@@ -1099,6 +1101,8 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
+			// Increase telemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
@@ -2648,7 +2652,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	// When pausing the related ddl job, it is possible that the task with taskKey is succeed and in tidb_global_task_history.
 	// As a result, when resuming the related ddl job,
 	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
-	taskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
@@ -2991,7 +2995,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 }
 
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
-	taskMgr, err := storage.GetTaskManager()
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get task manager", zap.String("task_key", taskKey), zap.Error(err))
 		return

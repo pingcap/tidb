@@ -35,106 +35,106 @@ drop table if exists t2;
 create table t2(pk int primary key, a json, b json, c int, d int, e int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 1: OR index merge from multi complicated mv index (memberof);
 id	estRows	task	access object	operator info
-IndexMerge_8	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexMerge_9	0.20	root		type: union
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_8(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 2: OR index merge from multi complicated mv index (memberof);
 id	estRows	task	access object	operator info
-IndexMerge_8	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexMerge_9	0.20	root		type: union
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_8(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 3: OR index merge from multi complicated mv index (memberof)，while each DNF item contains redundant condition, which should be remained as table filters;
 id	estRows	task	access object	operator info
-IndexMerge_9	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
-└─Selection_8(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-  └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexMerge_10	0.20	root		type: union
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
+└─Selection_9(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_8	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 4: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
 id	estRows	task	access object	operator info
-IndexLookUp_11	1.00	root		
-├─IndexRangeScan_8(Build)	1.25	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 2,1 2], [3 2,3 2], keep order:false, stats:pseudo
-└─Selection_10(Probe)	1.00	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-  └─TableRowIDScan_9	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexLookUp_12	1.00	root		
+├─IndexRangeScan_9(Build)	1.25	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 2,1 2], [3 2,3 2], keep order:false, stats:pseudo
+└─Selection_11(Probe)	1.00	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_10	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 5: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
 id	estRows	task	access object	operator info
-Selection_5	0.32	root		or(and(json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-└─IndexMerge_11	0.40	root		type: union
-  ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-  ├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 2,1 2], keep order:false, stats:pseudo
-  ├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 3,1 3], keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	0.40	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Selection_6	0.32	root		or(and(json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+└─IndexMerge_12	0.40	root		type: union
+  ├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 2,1 2], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 3,1 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_10(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
+  └─TableRowIDScan_11(Probe)	0.40	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and d=2) or (2 member of (b) and c=3 and d=2); -- 6: OR index merge from multi complicated mv index (memberof)，make full use of other DNF items even if one of the DNF items fails;
 id	estRows	task	access object	operator info
-IndexMerge_9	0.01	root		type: union
-├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[2,2], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
-└─Selection_8(Probe)	0.01	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), eq(planner__core__casetest__index__index.t2.d, 2)), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-  └─TableRowIDScan_7	10.10	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexMerge_10	0.01	root		type: union
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[2,2], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
+└─Selection_9(Probe)	0.01	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), eq(planner__core__casetest__index__index.t2.d, 2)), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_8	10.10	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4); -- 7: OR index merge from multi complicated mv index (memberof)，each DNF item can be more complicated like a another embedded CNF member-of composition.;
 id	estRows	task	access object	operator info
-IndexMerge_9	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
-└─Selection_8(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)))
-  └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexMerge_10	0.20	root		type: union
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+└─Selection_9(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)))
+  └─TableRowIDScan_8	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.;
 id	estRows	task	access object	operator info
-TableReader_7	12.00	root		data:Selection_6
-└─Selection_6	12.00	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.e, 1)))
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+TableReader_8	12.00	root		data:Selection_7
+└─Selection_7	12.00	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.e, 1)))
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint;
 id	estRows	task	access object	operator info
-IndexMerge_10	0.01	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
-├─IndexRangeScan_7(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[1,1], keep order:false, stats:pseudo
-└─Selection_9(Probe)	0.01	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.d, 1)))
-  └─TableRowIDScan_8	10.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexMerge_11	0.01	root		type: union
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[1,1], keep order:false, stats:pseudo
+└─Selection_10(Probe)	0.01	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.d, 1)))
+  └─TableRowIDScan_9	10.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1(pk int primary key, a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))));
 create table t2(pk int primary key, a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));
 explain select /*+ use_index_merge(t1, idx2, idx) */ * from t1 where 1 member of (a) and 2 member of (b); -- 1: AND index merge from multi member mv index predicate, since member of is single partial path, it can be merged with outer index merge.;
 id	estRows	task	access object	operator info
-IndexMerge_8	0.01	root		type: intersection
-├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:idx(cast(`a` as signed array))	range:[1,1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t1, index:idx2(cast(`b` as signed array))	range:[2,2], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+IndexMerge_9	0.01	root		type: intersection
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t1, index:idx(cast(`a` as signed array))	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	10.00	cop[tikv]	table:t1, index:idx2(cast(`b` as signed array))	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan_8(Probe)	0.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b); -- 2: AND index merge from multi complicated mv index;
 id	estRows	task	access object	operator info
-IndexMerge_8	0.00	root		type: intersection
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b) and d=3; -- 3: AND index merge from multi complicated mv indexes and normal indexes;
-id	estRows	task	access object	operator info
 IndexMerge_9	0.00	root		type: intersection
-├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[3,3], keep order:false, stats:pseudo
 ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
 ├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
 └─TableRowIDScan_8(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b) and d=3; -- 3: AND index merge from multi complicated mv indexes and normal indexes;
+id	estRows	task	access object	operator info
+IndexMerge_10	0.00	root		type: intersection
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 4: AND index merge from multi complicated mv indexes (json_contains (intersection))and normal indexes;
 id	estRows	task	access object	operator info
-IndexMerge_11	0.00	root		type: intersection
-├─IndexRangeScan_5(Build)	1.25	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 3,1 3], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 2,1 2], keep order:false, stats:pseudo
-├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 3,1 3], keep order:false, stats:pseudo
-├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
-└─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexMerge_12	0.00	root		type: intersection
+├─IndexRangeScan_6(Build)	1.25	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 3,1 3], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 2,1 2], keep order:false, stats:pseudo
+├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 3,1 3], keep order:false, stats:pseudo
+├─IndexRangeScan_10(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 5: AND index merge from multi complicated mv indexes (json_overlap (intersection))and normal indexes;
 id	estRows	task	access object	operator info
-Selection_5	0.24	root		json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY))
-└─IndexMerge_9	0.00	root		type: intersection
-  ├─IndexRangeScan_6(Build)	1.25	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 3,1 3], keep order:false, stats:pseudo
-  ├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
-  └─TableRowIDScan_8(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Selection_6	0.24	root		json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY))
+└─IndexMerge_10	0.00	root		type: intersection
+  ├─IndexRangeScan_7(Build)	1.25	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 3,1 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+  └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range);
 id	estRows	task	access object	operator info
-TableDual_6	0.00	root		rows:0
+TableDual_7	0.00	root		rows:0
 drop table if exists t;
 create table t(a int, b int, c int, unique index(a), unique index(b), primary key(c));
 explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2;
@@ -582,72 +582,72 @@ create table t4(a bigint, b varchar(255), c bigint, primary key(a, b) noncluster
 set @@tidb_enable_chunk_rpc = on;
 explain format = 'verbose' select * from t1 where a = 3 or a = 5;
 id	estRows	estCost	task	access object	operator info
-Batch_Point_Get_5	2.00	887.04	root	table:t1	handle:[3 5], keep order:false, desc:false
+Batch_Point_Get_6	2.00	887.04	root	table:t1	handle:[3 5], keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	handle of t1 is selected since the path only has point ranges
 explain format = 'verbose' select f, g from t1 where f = 2 and g in (3, 4, 5);
 id	estRows	estCost	task	access object	operator info
-Batch_Point_Get_5	3.00	380.16	root	table:t1, index:f_g(f, g)	keep order:false, desc:false
+Batch_Point_Get_6	3.00	380.16	root	table:t1, index:f_g(f, g)	keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	unique index f_g of t1 is selected since the path only has point ranges with single scan
 explain format = 'verbose' select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5);
 id	estRows	estCost	task	access object	operator info
-Batch_Point_Get_5	4.00	1774.08	root	table:t1, index:c_d_e(c, d, e)	keep order:false, desc:false
+Batch_Point_Get_6	4.00	1774.08	root	table:t1, index:c_d_e(c, d, e)	keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	unique index c_d_e of t1 is selected since the path only has point ranges with double scan
 explain format = 'verbose' select f, g from t1 where f = 2 and g > 3;
 id	estRows	estCost	task	access object	operator info
-IndexReader_6	33.33	733.82	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	33.33	6783.33	cop[tikv]	table:t1, index:f_g(f, g)	range:(2 3,2 +inf], keep order:false, stats:pseudo
+IndexReader_7	33.33	733.82	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	33.33	6783.33	cop[tikv]	table:t1, index:f_g(f, g)	range:(2 3,2 +inf], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 Note	1105	unique index f_g of t1 is selected since the path only fetches limited number of rows with single scan
 explain format = 'verbose' select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
 id	estRows	estCost	task	access object	operator info
-Selection_6	1.00	289.88	root		eq(planner__core__casetest__index__index.t2.b, 2), in(planner__core__casetest__index__index.t2.c, 1, 2, 3, 4, 5)
-└─Point_Get_5	1.00	190.08	root	table:t2, index:idx_a(a)	
+Selection_7	1.00	289.88	root		eq(planner__core__casetest__index__index.t2.b, 2), in(planner__core__casetest__index__index.t2.c, 1, 2, 3, 4, 5)
+└─Point_Get_6	1.00	190.08	root	table:t2, index:idx_a(a)	
 show warnings;
 Level	Code	Message
 Note	1105	unique index idx_a of t2 is selected since the path only has point ranges with double scan
 explain format = 'verbose' select * from t3 where (a = 1 or a = 3) and b = 'xx';
 id	estRows	estCost	task	access object	operator info
-Batch_Point_Get_5	2.00	1449.36	root	table:t3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+Batch_Point_Get_6	2.00	1449.36	root	table:t3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	handle of t3 is selected since the path only has point ranges
 explain format = 'verbose' select * from t4 where (a = 1 or a = 3) and b = 'xx';
 id	estRows	estCost	task	access object	operator info
-Batch_Point_Get_5	2.00	1449.36	root	table:t4, index:PRIMARY(a, b)	keep order:false, desc:false
+Batch_Point_Get_6	2.00	1449.36	root	table:t4, index:PRIMARY(a, b)	keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	unique index PRIMARY of t4 is selected since the path only has point ranges with double scan
 explain format = 'verbose' select a, b from t3 where (a = 1 or a = 3) and b = 'xx';
 id	estRows	estCost	task	access object	operator info
-Batch_Point_Get_5	2.00	1322.64	root	table:t3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+Batch_Point_Get_6	2.00	1322.64	root	table:t3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	handle of t3 is selected since the path only has point ranges
 explain format = 'verbose' select a, b from t4 where (a = 1 or a = 3) and b = 'xx';
 id	estRows	estCost	task	access object	operator info
-Batch_Point_Get_5	2.00	1322.64	root	table:t4, index:PRIMARY(a, b)	keep order:false, desc:false
+Batch_Point_Get_6	2.00	1322.64	root	table:t4, index:PRIMARY(a, b)	keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	unique index PRIMARY of t4 is selected since the path only has point ranges with single scan
 explain format = 'verbose' update t1 set b = 2 where a = 4 or a = 6;
 id	estRows	estCost	task	access object	operator info
 Update_4	N/A	N/A	root		N/A
-└─Batch_Point_Get_6	2.00	887.04	root	table:t1	handle:[4 6], keep order:false, desc:false
+└─Batch_Point_Get_7	2.00	887.04	root	table:t1	handle:[4 6], keep order:false, desc:false
 show warnings;
 Level	Code	Message
 Note	1105	handle of t1 is selected since the path only has point ranges
 explain format = 'verbose' delete from t1 where f = 2 and g in (3, 4);
 id	estRows	estCost	task	access object	operator info
 Delete_3	N/A	N/A	root		N/A
-└─Selection_7	2.00	430.06	root		in(planner__core__casetest__index__index.t1.g, 3, 4)
-  └─Point_Get_6	1.00	380.16	root	table:t1, index:f(f)	
+└─Selection_8	2.00	430.06	root		in(planner__core__casetest__index__index.t1.g, 3, 4)
+  └─Point_Get_7	1.00	380.16	root	table:t1, index:f(f)	
 show warnings;
 Level	Code	Message
 Note	1105	unique index f of t1 is selected since the path only has point ranges with double scan
@@ -655,14 +655,14 @@ explain format = 'verbose' insert into t3 select a, b, c from t1 where f = 2;
 id	estRows	estCost	task	access object	operator info
 Insert_1	N/A	N/A	root		N/A
 └─Projection_6	1.00	253.74	root		planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t1.c
-  └─Point_Get_8	1.00	253.44	root	table:t1, index:f(f)	
+  └─Point_Get_9	1.00	253.44	root	table:t1, index:f(f)	
 show warnings;
 Level	Code	Message
 Note	1105	unique index f of t1 is selected since the path only has point ranges with double scan
 explain format = 'verbose' replace into t3 select a, b, c from t1 where a = 3;
 id	estRows	estCost	task	access object	operator info
 Insert_1	N/A	N/A	root		N/A
-└─Point_Get_7	1.00	190.08	root	table:t1	handle:3
+└─Point_Get_8	1.00	190.08	root	table:t1	handle:3
 show warnings;
 Level	Code	Message
 Note	1105	handle of t1 is selected since the path only has point ranges

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
@@ -162,21 +163,18 @@ func TestBootstrapWithError(t *testing.T) {
 		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
+		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
-		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-		require.NoError(t, err)
-		err = InitMDLTable(store)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.BackfillTableVersion)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		err := InitDDLTables(store)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
 		se.dom = dom
+		se.infoCache = dom.InfoCache()
+		se.schemaValidator = dom.GetSchemaValidator()
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -254,7 +252,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
 	// downgrade `mDDLTableVersion`
-	m.SetDDLTables(meta.MDLTableVersion)
+	m.SetDDLTableVersion(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
@@ -286,7 +284,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
 
 	// downgrade DDL table version
-	m.SetDDLTables(meta.BackfillTableVersion)
+	m.SetDDLTableVersion(meta.BackfillTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -2247,12 +2245,13 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV210)
+
+	newSe := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(newSe)
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	seV210.(*session).dom = dom
-	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	r := MustExecToRecodeSet(t, newSe, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)

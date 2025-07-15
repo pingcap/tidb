@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -59,7 +60,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if !ok {
 		return false
 	}
-	if util.IsMemOrSysDB(tableItem.DBName.L) {
+	if metadef.IsMemOrSysDB(tableItem.DBName.L) {
 		return false
 	}
 	if dumpAll {
