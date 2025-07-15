@@ -151,6 +151,7 @@ func WriteInsert(
 	chunkIndex int,
 	totalChunks int,
 	isLastChunk bool,
+	isStringChunking bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
@@ -216,7 +217,8 @@ func WriteInsert(
 	selectedField := meta.SelectedField()
 
 	// Determine if we should write INSERT prefix based on chunk position
-	shouldWritePrefix := (chunkIndex == 0)
+	// For string chunking, only first chunk gets prefix; for row chunking, each chunk is independent
+	shouldWritePrefix := (chunkIndex == 0) || !isStringChunking
 
 	var insertStatementPrefixLen uint64
 	if shouldWritePrefix {
@@ -265,10 +267,11 @@ func WriteInsert(
 
 			if hasMoreRows {
 				bf.WriteString(",\n")
-			} else if isLastChunk {
+			} else if isLastChunk || !isStringChunking {
+				// End with semicolon for last chunk OR when not in string chunking mode
 				bf.WriteString(";\n")
 			} else {
-				// Not last chunk, end with comma for concatenation
+				// Not last chunk in string chunking mode, end with comma for concatenation
 				bf.WriteString(",\n")
 			}
 			if bf.Len() >= lengthLimit {
@@ -325,6 +328,7 @@ func WriteInsertInCsv(
 	chunkIndex int,
 	totalChunks int,
 	isLastChunk bool,
+	isStringChunking bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
@@ -687,12 +691,13 @@ func (f FileFormat) WriteInsert(
 	chunkIndex int,
 	totalChunks int,
 	isLastChunk bool,
+	isStringChunking bool,
 ) (uint64, error) {
 	switch f {
 	case FileFormatSQLText:
-		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk)
+		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk, isStringChunking)
 	case FileFormatCSV:
-		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk)
+		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk, isStringChunking)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}
