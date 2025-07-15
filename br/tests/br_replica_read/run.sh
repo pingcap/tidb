@@ -24,9 +24,6 @@ if [ "$VOTER_COUNT" -lt "1" ];then
   exit 0
 fi
 
-trap 'cat "$TEST_DIR/pd.log"' ERR
-tail -f "$TEST_DIR/pd.log" &
-
 # set random store to read only
 random_store_id=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
 echo "random store id: $random_store_id"
@@ -63,11 +60,6 @@ run_br -u https://$PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --rep
 
 run_sql "DROP DATABASE $DB;"
 
-run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' ''
-run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/default_rules.json
-
-sleep 60
-
 # restore db
 echo "restore start..."
 run_br restore db --db $DB -s "local://$TEST_DIR/$DB" -u https://$PD_ADDR
@@ -94,3 +86,5 @@ run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE
 run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE DATABASE'
 
 run_sql "DROP DATABASE $DB;"
+run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' ''
+run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/default_rules.json
