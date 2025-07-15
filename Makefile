@@ -65,9 +65,10 @@ check-static: tools/bin/golangci-lint
 
 .PHONY: check-ddl
 check-ddl: tools/bin/golangci-lint
+	git remote -v
 	GO111MODULE=on CGO_ENABLED=1 ./tools/bin/golangci-lint run -v pkg/ddl \
 		--config pkg/ddl/.golangci.yml \
-		--new-from-merge-base=$$(git remote -v | awk '/git@github.com:pingcap\/tidb.git/ {print $$1; exit}')/master
+		--new-from-merge-base=$$(git remote -v | awk '/pingcap\/tidb.git/ {print $$1; exit}')/master
 
 .PHONY: check-file-perm
 check-file-perm:
