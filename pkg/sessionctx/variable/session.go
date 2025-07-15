@@ -2023,9 +2023,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		EnableWindowFunction:          DefEnableWindowFunction,
-		CostModelVersion:              DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
+		CostModelVersion:              DefTiDBCostModelVer,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
