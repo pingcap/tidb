@@ -45,7 +45,6 @@ go_library(
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend/local",
-        "//pkg/lightning/common",
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/metrics",
