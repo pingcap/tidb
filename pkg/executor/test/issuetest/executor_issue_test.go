@@ -728,7 +728,6 @@ func TestIssue60926(t *testing.T) {
 	tk.MustExec("insert into t2 values (0, 5), (0, 5), (1, 5), (2, 5), (2, 5), (3, 5), (4, 5), (5, 5), (5, 5), (6, 5), (7, 5), (8, 5), (8, 5), (9, 5), (9, 5), (10, 5);")
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic")
-	tk.MustExec("set tidb_hash_join_version=legacy")
 	executor.IsChildCloseCalledForTest.Store(false)
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, executor.IsChildCloseCalledForTest.Load())
