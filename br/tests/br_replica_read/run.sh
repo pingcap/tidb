@@ -24,6 +24,8 @@ if [ "$VOTER_COUNT" -lt "1" ];then
   exit 0
 fi
 
+trap 'cat "$TEST_DIR/pd.log"' ERR
+
 # set random store to read only
 random_store_id=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
 echo "random store id: $random_store_id"
