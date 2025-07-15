@@ -48,11 +48,11 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 
 	infos1 := []*model.TableInfo{}
 	infos1 = append(infos1, &model.TableInfo{
-		ID:   124,
+		ID:   134,
 		Name: pmodel.NewCIStr("table_id_resued1"),
 	})
 	infos1 = append(infos1, &model.TableInfo{
-		ID:   125,
+		ID:   135,
 		Name: pmodel.NewCIStr("table_id_resued2"),
 	})
 
@@ -65,9 +65,9 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").
-		Check(testkit.Rows("124"))
+		Check(testkit.Rows("134"))
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").
-		Check(testkit.Rows("125"))
+		Check(testkit.Rows("135"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	// allocate new table id verification
@@ -84,7 +84,7 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 
 	infos2 := []*model.TableInfo{}
 	infos2 = append(infos2, &model.TableInfo{
-		ID:   124,
+		ID:   134,
 		Name: pmodel.NewCIStr("table_id_new"),
 	})
 

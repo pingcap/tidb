@@ -72,6 +72,10 @@ type GCWorker struct {
 	cancel             context.CancelFunc
 	done               chan error
 	regionLockResolver tikv.RegionLockResolver
+
+	// follow item is used to gc some records in system table.
+	lastGCSysTable     time.Time
+	intervalGcSystable time.Duration //the interval is 10min to GC system table
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -100,6 +104,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		lastFinish:         time.Now(),
 		regionLockResolver: tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
 		done:               make(chan error),
+		intervalGcSystable: time.Minute * 10,
 	}
 	variable.RegisterStatistics(worker)
 	return worker, nil
@@ -279,6 +284,10 @@ func (w *GCWorker) tick(ctx context.Context) {
 		err = w.leaderTick(ctx)
 		if err != nil {
 			logutil.Logger(ctx).Warn("leader tick", zap.String("category", "gc worker"), zap.Error(err))
+		}
+		err = w.TickGCSysTable(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Warn("[gc worker] tick gc system table", zap.Error(err))
 		}
 	} else {
 		// Config metrics should always be updated by leader, set them to 0 when current instance is not leader.
