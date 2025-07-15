@@ -402,5 +402,3 @@ var serverSpecialComments = map[version.ServerType][]string{
 func getSpecialComments(serverType version.ServerType) []string {
 	return serverSpecialComments[serverType]
 }
-
-

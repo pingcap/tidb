@@ -106,7 +106,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 	defer func() {
 		// Send any remaining buffered chunk as the last chunk
 		if buffer != nil {
-			sendBufferedChunk(true) // Mark as last chunk
+			_ = sendBufferedChunk(true) // Mark as last chunk
 		}
 
 		chunkStats.finalized.Store(true)
