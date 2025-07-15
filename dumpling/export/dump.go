@@ -1274,12 +1274,6 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return nil, err
 	}
 
-	// Check if UTF8MB4 charset is configured via MySQL client config
-	charset := "binary"
-	if strings.Contains(conf.GetDriverConfig(db).Collation, "utf8mb4") {
-		charset = "utf8mb4"
-	}
-	
 	meta := &tableMeta{
 		avgRowLength:     table.AvgRowLength,
 		database:         db,
@@ -1288,7 +1282,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		selectedField:    selectField,
 		selectedLen:      selectLen,
 		hasImplicitRowID: hasImplicitRowID,
-		specCmts:         getSpecialCommentsWithCharset(conf.ServerInfo.ServerType, charset),
+		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}
 
 	if conf.NoSchemas {
