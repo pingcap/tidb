@@ -2256,6 +2256,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
+		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
 		inCallProcedure: struct {
 			inCall bool
 			num    int
