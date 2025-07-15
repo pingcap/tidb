@@ -15,11 +15,11 @@ package model
 
 import (
 	"encoding/json"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"go.uber.org/atomic"
 )
 
 // DDLReorgMeta is meta info of DDL reorganization.
