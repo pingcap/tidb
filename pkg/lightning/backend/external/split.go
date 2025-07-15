@@ -248,7 +248,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			r.recordRegionSplitAfterNextProp = false
 		}
 
-		// each KV need additional memory for 2 slice
+		// each KV need additional memory for 2 slice.
+		// we can enhance it later using SliceLocation.
 		rangeMemSize := r.curRangeJobSize + r.curRangeJobKeyCnt*size.SizeOfSlice*2
 		if rangeMemSize >= r.rangeJobSize || r.curRangeJobKeyCnt >= r.rangeJobKeyCnt {
 			r.curRangeJobSize = 0
