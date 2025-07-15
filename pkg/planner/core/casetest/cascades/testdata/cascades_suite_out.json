@@ -305,9 +305,9 @@
       {
         "SQL": "select count(1) from t1 where b > 0 group by a, b",
         "Str": [
-          "GID:1, GE:DataSource_15{}, logic prop:{stats:{count 4, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Aggregation_17{GID:1}, logic prop:{stats:{count 4, ColNDVs map[4:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#4] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(4)}}",
-          "GID:3, GE:Projection_18{GID:2}, logic prop:{stats:{count 4, ColNDVs map[4:4], GroupNDVs []}, schema:{Column: [Column#4] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(4)}}"
+          "GID:1, GE:DataSource_15{}, logic prop:{stats:{count 2, ColNDVs map[1:1 2:1], GroupNDVs [{[1 2] 2}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Aggregation_17{GID:1}, logic prop:{stats:{count 2, ColNDVs map[4:2], GroupNDVs [{[1 2] 2}]}, schema:{Column: [Column#4] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(4)}}",
+          "GID:3, GE:Projection_18{GID:2}, logic prop:{stats:{count 2, ColNDVs map[4:2], GroupNDVs []}, schema:{Column: [Column#4] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(4)}}"
         ],
         "OpNum": 3
       },
