@@ -1961,6 +1961,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMPPStoreFailTTL, Type: vardef.TypeStr, Value: vardef.DefTiDBMPPStoreFailTTL, SetSession: func(s *SessionVars, val string) error {
 		s.MPPStoreFailTTL = val
 		return nil
+	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_mpp_store_fail_ttl is always 0s. This variable has been deprecated and will be removed in the future releases"))
+		return vardef.DefTiDBMPPStoreFailTTL, nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashExchangeWithNewCollation, Type: vardef.TypeBool, Value: BoolToOnOff(vardef.DefTiDBHashExchangeWithNewCollation), SetSession: func(s *SessionVars, val string) error {
 		s.HashExchangeWithNewCollation = TiDBOptOn(val)
