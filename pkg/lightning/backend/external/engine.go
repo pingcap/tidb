@@ -64,6 +64,13 @@ import (
 //     trailing 1 is for RS divided by odd number.
 //   - else RangeS = floor(TempRangeS / RS) * RS.
 //
+// Note: below calculation only consider the memory taken by the KV pair itself,
+// golang takes 24*2 = 48B for each KV pair, so if the size of KV pair itself is
+// very small, the real memory taken by each KV pair might be doubled, so it's
+// only an estimation.
+// such as, for a simple table "create table t(id bigint primary key, v bigint, index(v))",
+// each index KV is 38B, golang need 86B memory to store it.
+//
 // RangeS for different region size and cpu:mem ratio, the number in parentheses
 // is the number of SST files per region:
 //
@@ -74,16 +81,6 @@ import (
 //	|  256M |       256M(1) |       512M(1) |
 //	|  512M |       256M(2) |       512M(1) |
 const writeStepMemShareCount = 6.5
-
-// during test on ks3, we found that we can open about 8000 connections to ks3,
-// bigger than that, we might receive "connection reset by peer" error, and
-// the read speed will be very slow, still investigating the reason.
-// Also open too many connections will take many memory in kernel, and the
-// test is based on k8s pod, not sure how it will behave on EC2.
-// but, ks3 supporter says there's no such limit on connections.
-// And our target for global sort is AWS s3, this default value might not fit well.
-// TODO: adjust it according to cloud storage.
-const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
 	mu  sync.Mutex
@@ -282,6 +279,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	// Note: this is the file size of the range group, KV size is smaller, as we
+	// need additional 8*2 for each KV.
 	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil

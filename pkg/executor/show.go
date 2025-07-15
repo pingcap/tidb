@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -68,14 +69,12 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -383,9 +382,7 @@ func (e *ShowExec) fetchShowBind() error {
 
 func (e *ShowExec) fetchPlanForSQL() error {
 	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
-	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
-	currentDB := e.Ctx().GetSessionVars().CurrentDB
-	plans, err := bindingHandle.ExplorePlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(e.Ctx().GetPlanCtx(), e.SQLOrDigest, false)
 	if err != nil {
 		return err
 	}
@@ -459,14 +456,14 @@ func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 
 // moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
 func moveInfoSchemaToFront(dbs []string) {
-	if len(dbs) > 0 && strings.EqualFold(dbs[0], filter.InformationSchemaName) {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], metadef.InformationSchemaName.O) {
 		return
 	}
 
-	i := sort.SearchStrings(dbs, filter.InformationSchemaName)
-	if i < len(dbs) && strings.EqualFold(dbs[i], filter.InformationSchemaName) {
+	i := sort.SearchStrings(dbs, metadef.InformationSchemaName.O)
+	if i < len(dbs) && strings.EqualFold(dbs[i], metadef.InformationSchemaName.O) {
 		copy(dbs[1:i+1], dbs[0:i])
-		dbs[0] = filter.InformationSchemaName
+		dbs[0] = metadef.InformationSchemaName.O
 	}
 }
 
@@ -547,7 +544,7 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 		return "VIEW"
 	case tb.IsSequence():
 		return "SEQUENCE"
-	case util.IsSystemView(e.DBName.L):
+	case metadef.IsMemDB(e.DBName.L):
 		return "SYSTEM VIEW"
 	default:
 		return "BASE TABLE"
@@ -2473,7 +2470,7 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(runInfo.ImportRows)
+		importedRowCount = runInfo.ImportRows
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
@@ -2543,34 +2540,37 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 	result.AppendString(4, job["engine"].(string))
 	result.AppendString(5, job["rule"].(string))
 	result.AppendString(6, job["status"].(string))
-	layout := "2006-01-02T15:04:05.999999-07:00" // RFC3339 with microseconds
+	timeout := uint64(job["timeout"].(float64))
+	result.AppendString(7, time.Duration(timeout).String())
 	if create, ok := job["create"]; ok {
-		logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("create", create.(string)))
-		creatTime, err := time.Parse(layout, create.(string))
+		createTime := &time.Time{}
+		err := createTime.UnmarshalText([]byte(create.(string)))
 		if err != nil {
 			return err
 		}
-		result.AppendTime(7, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
-	} else {
-		result.AppendNull(7)
-	}
-	if start, ok := job["start"]; ok {
-		creatTime, err := time.Parse(layout, start.(string))
-		if err != nil {
-			return err
-		}
-		result.AppendTime(8, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+		result.AppendTime(8, types.NewTime(types.FromGoTime(*createTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(8)
 	}
-	if finish, ok := job["finish"]; ok {
-		creatTime, err := time.Parse(layout, finish.(string))
+	if start, ok := job["start"]; ok {
+		startTime := &time.Time{}
+		err := startTime.UnmarshalText([]byte(start.(string)))
 		if err != nil {
 			return err
 		}
-		result.AppendTime(9, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+		result.AppendTime(9, types.NewTime(types.FromGoTime(*startTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(9)
+	}
+	if finish, ok := job["finish"]; ok {
+		finishedTime := &time.Time{}
+		err := finishedTime.UnmarshalText([]byte(finish.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(10, types.NewTime(types.FromGoTime(*finishedTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(10)
 	}
 	return nil
 }

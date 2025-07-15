@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -472,7 +471,7 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 					break
 				}
 			}
-			if match {
+			if match && idx.IsEssentialStatsLoaded() {
 				ndv := property.GroupNDV{
 					Cols: idxCols,
 					NDV:  float64(idx.NDV),
@@ -490,11 +489,11 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
-	is := domain.GetDomain(sctx).InfoSchema()
+	is := sctx.GetLatestISWithoutSessExt()
 	var tbl table.Table
 	var partDef *model.PartitionDefinition
 
-	tbl, partDef = infoschema.FindTableByTblOrPartID(is, id)
+	tbl, partDef = infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
 	if tbl == nil || tbl.Meta() == nil {
 		return
 	}

@@ -118,6 +118,12 @@ aliases:
     - ghazalfamilyusa
     - henrybw
     - wddevries
+    - King-Dylan
+  sig-approvers-metrics: # approvers for metrics module
+    - XuHuaiyu
+    - zimulala
+    - yibin87
+    - nolouch
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013
@@ -176,6 +182,7 @@ aliases:
     - GMHDBJD
     - IANTHEREAL
     - JmPotato
+    - King-Dylan
     - Leavrth
     - Little-Wallace
     - MyonKeminta

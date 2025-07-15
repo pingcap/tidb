@@ -80,7 +80,8 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # check the snapshot restore has checkpoint data
-run_sql 'select count(*) from '"__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"'.`cpt_data`;'
+latest_db=$(run_sql "select table_schema from information_schema.tables where table_schema like '__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint%' order by table_schema desc limit 1;" | tail -n 1 | awk '{print $2}')
+run_sql "select count(*) from \`$latest_db\`.\`cpt_data\`;"
 check_contains "count(*): 1"
 
 # check the log restore save id map into the table mysql.tidb_pitr_id_map

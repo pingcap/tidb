@@ -62,7 +62,7 @@ func GetTPCHSuiteData() testdata.TestData {
 	return testDataMap["tpch_suite"]
 }
 
-func createLineItem(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createLineItem(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`
 CREATE TABLE lineitem (
     L_ORDERKEY bigint NOT NULL,
@@ -87,7 +87,7 @@ CREATE TABLE lineitem (
 	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
 }
 
-func createCustomer(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createCustomer(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE customer (
     C_CUSTKEY bigint NOT NULL,
     C_NAME varchar(25) NOT NULL,
@@ -102,7 +102,7 @@ func createCustomer(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	testkit.SetTiFlashReplica(t, dom, "test", "customer")
 }
 
-func createOrders(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createOrders(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`
 CREATE TABLE orders (
     O_ORDERKEY bigint NOT NULL,
@@ -119,7 +119,7 @@ CREATE TABLE orders (
 	testkit.SetTiFlashReplica(t, dom, "test", "orders")
 }
 
-func createSupplier(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createSupplier(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE supplier (
   S_SUPPKEY bigint NOT NULL,
   S_NAME char(25) NOT NULL,
@@ -133,7 +133,7 @@ func createSupplier(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
 }
 
-func createNation(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createNation(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE nation (
   N_NATIONKEY bigint NOT NULL,
   N_NAME char(25) NOT NULL,
@@ -144,7 +144,7 @@ func createNation(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	testkit.SetTiFlashReplica(t, dom, "test", "nation")
 }
 
-func createPart(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createPart(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE part (
   P_PARTKEY bigint NOT NULL,
   P_NAME varchar(55) NOT NULL,
@@ -160,7 +160,7 @@ func createPart(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	testkit.SetTiFlashReplica(t, dom, "test", "part")
 }
 
-func createPartsupp(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createPartsupp(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE partsupp (
   PS_PARTKEY bigint NOT NULL,
   PS_SUPPKEY bigint NOT NULL,
@@ -172,7 +172,7 @@ func createPartsupp(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	testkit.SetTiFlashReplica(t, dom, "test", "partsupp")
 }
 
-func createRegion(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+func createRegion(t testing.TB, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`CREATE TABLE region (
   R_REGIONKEY bigint NOT NULL,
   R_NAME char(25) NOT NULL,

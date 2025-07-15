@@ -163,14 +163,6 @@ func MergePartitionStats2GlobalStatsByTableID(
 	return
 }
 
-// analyzeOptionDefault saves the default values of NumBuckets and NumTopN.
-// These values will be used in dynamic mode when we drop table partition and then need to merge global-stats.
-// These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
-var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets: 256,
-	ast.AnalyzeOptNumTopN:    20,
-}
-
 // blockingMergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 // It is the old algorithm to merge partition-level stats to global-level stats. It will happen the OOM. because it will load all the partition-level stats into memory.
 func blockingMergePartitionStats2GlobalStats(

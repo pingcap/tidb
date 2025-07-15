@@ -198,3 +198,145 @@ SELECT { t '14:00:00' };
 14:00:00
 SELECT { d '2024-01-01 01:12:31' };
 Error 1292 (22007): Incorrect date value: '2024-01-01 01:12:31'
+SET time_zone = 'UTC';
+CREATE TABLE t (id int primary key, ts TIMESTAMP);
+INSERT INTO t VALUES (1, '2025-03-30 00:59:59');
+INSERT INTO t VALUES (2, '2025-03-30 01:00:00');
+SET time_zone = 'Europe/Paris';
+SELECT *, UNIX_TIMESTAMP(ts) FROM t;
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+2	2025-03-30 03:00:00	1743296400
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+ALTER TABLE t ADD INDEX idx_ts (ts);
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts < '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts > '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts >= '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts <=> '2025-03-30 02:00:00';
+id	ts	UNIX_TIMESTAMP(ts)
+Level	Code	Message
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+Warning	8179	Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 0 0 0}' for time zone 'Europe/Paris'
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval 20 minute) = '2025-03-30 02:19:59';
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE date_add(ts, interval -20 minute) = '2025-03-30 02:40:00';
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:40:00', interval 20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+2	2025-03-30 03:00:00	1743296400
+SELECT /*+ USE_INDEX(t, idx_ts) */ *, UNIX_TIMESTAMP(ts) FROM t WHERE ts = date_add('2025-03-30 02:19:59', interval -20 minute);
+id	ts	UNIX_TIMESTAMP(ts)
+1	2025-03-30 01:59:59	1743296399
+SELECT DATE_ADD(ts, INTERVAL 1 HOUR) FROM t;
+DATE_ADD(ts, INTERVAL 1 HOUR)
+2025-03-30 02:59:59
+2025-03-30 04:00:00
+SELECT DATE_SUB(ts, INTERVAL 1 HOUR) FROM t;
+DATE_SUB(ts, INTERVAL 1 HOUR)
+2025-03-30 00:59:59
+2025-03-30 02:00:00
+SELECT TIMESTAMPADD(HOUR, 1, ts) FROM t;
+Error 8179 (HY000): Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 59 59 0}' for time zone 'Europe/Paris'
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', ts) FROM t;
+TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', ts)
+0
+1
+SELECT UNIX_TIMESTAMP(ts) FROM t;
+UNIX_TIMESTAMP(ts)
+1743296399
+1743296400
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP(ts)) FROM t;
+FROM_UNIXTIME(UNIX_TIMESTAMP(ts))
+2025-03-30 01:59:59
+2025-03-30 03:00:00
+SELECT DATE_ADD('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+DATE_ADD('2025-03-30 02:30:00', INTERVAL 1 HOUR)
+2025-03-30 03:30:00
+SELECT DATE_SUB('2025-03-30 02:30:00', INTERVAL 1 HOUR);
+DATE_SUB('2025-03-30 02:30:00', INTERVAL 1 HOUR)
+2025-03-30 01:30:00
+SELECT TIMESTAMPADD(HOUR, 1, '2025-03-30 02:30:00');
+TIMESTAMPADD(HOUR, 1, '2025-03-30 02:30:00')
+2025-03-30 03:30:00
+SELECT TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', '2025-03-30 02:30:00');
+TIMESTAMPDIFF(HOUR, '2025-03-30 01:59:59', '2025-03-30 02:30:00')
+0
+SELECT UNIX_TIMESTAMP('2025-03-30 02:30:00');
+UNIX_TIMESTAMP('2025-03-30 02:30:00')
+1743296400
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'));
+FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'))
+2025-03-30 03:00:00

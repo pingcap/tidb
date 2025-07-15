@@ -24,11 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
 )
 
@@ -41,8 +43,9 @@ func hasCostFlag(costFlag, flag uint64) bool {
 	return (costFlag & flag) > 0
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalSelection calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalSelection(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalSelection)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -59,7 +62,7 @@ func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
 	selfCost = getCardinality(p.Children()[0], costFlag) * cpuFactor
-	if p.fromDataSource {
+	if p.FromDataSource {
 		selfCost = 0 // for compatibility, see https://github.com/pingcap/tidb/issues/36243
 	}
 
@@ -87,6 +90,7 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	intest.Assert(p.SCtx().GetSessionVars().CostModelVersion != 0)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1016,8 +1020,9 @@ func (p *PhysicalHashAgg) GetPlanCostVer1(taskType property.TaskType, option *op
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of in memory sort.
-func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
+// getCost4PhysicalSort computes the cost of in memory sort.
+func getCost4PhysicalSort(pp base.PhysicalPlan, count float64, schema *expression.Schema) float64 {
+	p := pp.(*physicalop.PhysicalSort)
 	if count < 2.0 {
 		count = 2.0
 	}
@@ -1038,8 +1043,9 @@ func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64
 	return cpuCost + memoryCost + diskCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSort) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalSort calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalSort(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalSort)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1054,28 +1060,9 @@ func (p *PhysicalSort) GetPlanCostVer1(taskType property.TaskType, option *optim
 	return p.PlanCost, nil
 }
 
-// GetCost computes cost of TopN operator itself.
-func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
-	heapSize := max(float64(p.Offset+p.Count), 2.0)
-	sessVars := p.SCtx().GetSessionVars()
-	// Ignore the cost of `doCompaction` in current implementation of `TopNExec`, since it is the
-	// special side-effect of our Chunk format in TiDB layer, which may not exist in coprocessor's
-	// implementation, or may be removed in the future if we change data format.
-	// Note that we are using worst complexity to compute CPU cost, because it is simpler compared with
-	// considering probabilities of average complexity, i.e, we may not need adjust heap for each input
-	// row.
-	var cpuCost float64
-	if isRoot {
-		cpuCost = count * math.Log2(heapSize) * sessVars.GetCPUFactor()
-	} else {
-		cpuCost = count * math.Log2(heapSize) * sessVars.GetCopCPUFactor()
-	}
-	memoryCost := heapSize * sessVars.GetMemoryFactor()
-	return cpuCost + memoryCost
-}
-
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTopN) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalTopN)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1189,8 +1176,9 @@ func (p *PointGetPlan) GetAvgRowSize() float64 {
 	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, cols, p.IndexInfo.Unique)
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalUnionAll) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalUnionAll calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalUnionAll(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalUnionAll)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
