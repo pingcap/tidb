@@ -1159,7 +1159,7 @@ func adjustEQSkewRisk(sctx planctx.PlanContext, minTopN, currRowEst float64) flo
 	if skewRatio > 0 {
 		// Calculate the adjusted value that should be considered to be added to the original estimate by the
 		// calling function.
-		skewEstimate = (skewEstimate - currRowEst) * skewRatio
+		skewEstimate = (minTopN - currRowEst) * skewRatio
 	}
 	return skewEstimate
 }

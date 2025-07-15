@@ -265,7 +265,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					}
 					continue
 				}
-				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
+				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
@@ -385,7 +385,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
-func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
+func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
@@ -427,10 +427,9 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	//    Func `unmatchedEqAverage` will account for whether the remainder is based upon values remaining in the
 	//	  histogram or using the original average estimate.
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
 	minTopN := float64(idx.TopN.MinCount())
 	increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
-	avgRowEstimate = unmatchedEQAverage(float64(idx.Histogram.NDV), histNDV, idx.TotalRowCount(), idx.Histogram.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
+	avgRowEstimate := unmatchedEQAverage(float64(idx.Histogram.NDV), histNDV, idx.TotalRowCount(), idx.Histogram.NotNullCount(), float64(realtimeRowCount), increaseFactor, minTopN)
 	// skewEstimate determines how much of the potential skew should be considered
 	skewEstimate := adjustEQSkewRisk(sctx, minTopN, avgRowEstimate)
 	return avgRowEstimate + skewEstimate
