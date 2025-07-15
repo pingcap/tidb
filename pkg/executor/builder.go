@@ -254,7 +254,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSetConfig(v)
 	case *physicalop.PhysicalSort:
 		return b.buildSort(v)
-	case *plannercore.PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		return b.buildTopN(v)
 	case *physicalop.PhysicalUnionAll:
 		return b.buildUnionAll(v)
@@ -272,7 +272,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpMergeJoin(v)
 	case *plannercore.PhysicalIndexHashJoin:
 		return b.buildIndexNestedLoopHashJoin(v)
-	case *plannercore.PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plannercore.PhysicalHashAgg:
 		return b.buildHashAgg(v)
@@ -2152,7 +2152,7 @@ func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v
 	return e
 }
 
-func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.Executor {
+func (b *executorBuilder) buildSelection(v *physicalop.PhysicalSelection) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2608,7 +2608,7 @@ func (b *executorBuilder) buildSort(v *physicalop.PhysicalSort) exec.Executor {
 	return &sortExec
 }
 
-func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
+func (b *executorBuilder) buildTopN(v *physicalop.PhysicalTopN) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -3409,7 +3409,7 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 	for _, p := range plans {
 		switch x := p.(type) {
-		case *plannercore.PhysicalSelection:
+		case *physicalop.PhysicalSelection:
 			for _, cond := range x.Conditions {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
 					return true
@@ -3421,7 +3421,7 @@ func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 					return true
 				}
 			}
-		case *plannercore.PhysicalTopN:
+		case *physicalop.PhysicalTopN:
 			for _, byItem := range x.ByItems {
 				if len(expression.ExtractCorColumns(byItem.Expr)) > 0 {
 					return true
@@ -4595,7 +4595,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
-	case *plannercore.PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err

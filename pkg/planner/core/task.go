@@ -129,7 +129,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
 	task := tasks[0].ConvertToRootTask(p.SCtx())
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
-	if sel, ok := task.Plan().(*PhysicalSelection); ok {
+	if sel, ok := task.Plan().(*physicalop.PhysicalSelection); ok {
 		if pj, ok := sel.Children()[0].(*PhysicalProjection); ok {
 			// Convert unionScan->selection->projection to projection->unionScan->selection.
 			// shallow clone sel
@@ -700,8 +700,8 @@ func (t *CopTask) handleRootTaskConds(ctx base.PlanContext, newTask *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
-		sel.fromDataSource = true
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.GetPlan().StatsInfo().Scale(selectivity), newTask.GetPlan().QueryBlockOffset())
+		sel.FromDataSource = true
 		sel.SetChildren(newTask.GetPlan())
 		newTask.SetPlan(sel)
 	}
@@ -961,7 +961,7 @@ func attach2Task4NominalSort(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 	return t
 }
 
-func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (topN, newGlobalTopN *PhysicalTopN) {
+func getPushedDownTopN(p *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, storeTp kv.StoreType) (topN, newGlobalTopN *physicalop.PhysicalTopN) {
 	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
@@ -976,7 +976,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		if err != nil {
 			return nil, nil
 		}
-		newGlobalTopN = x.(*PhysicalTopN)
+		newGlobalTopN = x.(*physicalop.PhysicalTopN)
 		// the projecton's construction cannot be create if the AllowProjectionPushDown is disable.
 		if storeTp == kv.TiKV && !p.SCtx().GetSessionVars().AllowProjectionPushDown {
 			newGlobalTopN = nil
@@ -1042,7 +1042,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 		bottomProj.SetChildren(childPlan)
 
-		topN := PhysicalTopN{
+		topN := physicalop.PhysicalTopN{
 			ByItems:     newByItems,
 			PartitionBy: newPartitionBy,
 			Count:       newCount,
@@ -1068,7 +1068,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		return topN, newGlobalTopN
 	}
 
-	topN = PhysicalTopN{
+	topN = physicalop.PhysicalTopN{
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,
@@ -1089,7 +1089,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 //
 // DataSource(id, dis) -> TopN(by dis) -> Projection2(id)
 // └─Schema: id, dis
-func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, childPlan base.PhysicalPlan, proj *PhysicalProjection) bool {
+func tryReturnDistanceFromIndex(local, global *physicalop.PhysicalTopN, childPlan base.PhysicalPlan, proj *PhysicalProjection) bool {
 	tableScan, ok := childPlan.(*PhysicalTableScan)
 	if !ok {
 		return false
@@ -1194,7 +1194,7 @@ func ContainHeavyFunction(expr expression.Expression) bool {
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
 // It can be pushed to the index side when all columns used by ByItems are available from the index side and there's no prefix index column.
-func (*PhysicalTopN) canPushToIndexPlan(indexPlan base.PhysicalPlan, byItemCols []*expression.Column) bool {
+func canPushToIndexPlan(indexPlan base.PhysicalPlan, byItemCols []*expression.Column) bool {
 	// If we call canPushToIndexPlan and there's no index plan, we should go into the index merge case.
 	// Index merge case is specially handled for now. So we directly return false here.
 	// So we directly return false.
@@ -1215,7 +1215,7 @@ func (*PhysicalTopN) canPushToIndexPlan(indexPlan base.PhysicalPlan, byItemCols 
 }
 
 // canExpressionConvertedToPB checks whether each of the the expression in TopN can be converted to pb.
-func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
+func canExpressionConvertedToPB(p *physicalop.PhysicalTopN, storeTp kv.StoreType) bool {
 	exprs := make([]expression.Expression, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
@@ -1224,7 +1224,7 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 }
 
 // containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
-func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
+func containVirtualColumn(p *physicalop.PhysicalTopN, tCols []*expression.Column) bool {
 	tColSet := make(map[int64]struct{}, len(tCols))
 	for _, tCol := range tCols {
 		if tCol.ID > 0 && tCol.VirtualExpr != nil {
@@ -1244,8 +1244,8 @@ func (p *PhysicalTopN) containVirtualColumn(tCols []*expression.Column) bool {
 }
 
 // canPushDownToTiKV checks whether this topN can be pushed down to TiKV.
-func (p *PhysicalTopN) canPushDownToTiKV(copTask *CopTask) bool {
-	if !p.canExpressionConvertedToPB(kv.TiKV) {
+func canPushDownToTiKV(p *physicalop.PhysicalTopN, copTask *CopTask) bool {
+	if !canExpressionConvertedToPB(p, kv.TiKV) {
 		return false
 	}
 	if len(copTask.rootTaskConds) != 0 {
@@ -1253,22 +1253,22 @@ func (p *PhysicalTopN) canPushDownToTiKV(copTask *CopTask) bool {
 	}
 	if !copTask.indexPlanFinished && len(copTask.idxMergePartPlans) > 0 {
 		for _, partialPlan := range copTask.idxMergePartPlans {
-			if p.containVirtualColumn(partialPlan.Schema().Columns) {
+			if containVirtualColumn(p, partialPlan.Schema().Columns) {
 				return false
 			}
 		}
-	} else if p.containVirtualColumn(copTask.Plan().Schema().Columns) {
+	} else if containVirtualColumn(p, copTask.Plan().Schema().Columns) {
 		return false
 	}
 	return true
 }
 
 // canPushDownToTiFlash checks whether this topN can be pushed down to TiFlash.
-func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
-	if !p.canExpressionConvertedToPB(kv.TiFlash) {
+func canPushDownToTiFlash(p *physicalop.PhysicalTopN, mppTask *MppTask) bool {
+	if !canExpressionConvertedToPB(p, kv.TiFlash) {
 		return false
 	}
-	if p.containVirtualColumn(mppTask.Plan().Schema().Columns) {
+	if containVirtualColumn(p, mppTask.Plan().Schema().Columns) {
 		return false
 	}
 	return true
@@ -1279,13 +1279,13 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
 // it will change plan from
 // TopN -> TableReader -> TableFullScan[cop] to
 // TopN -> TableReader -> Limit[cop] -> TableFullScan[cop] + keepOrder
-func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
+func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *CopTask) (base.Task, bool) {
 	if copTsk.indexPlan != nil || copTsk.tablePlan == nil {
 		return nil, false
 	}
 
 	var (
-		selOnTblScan   *PhysicalSelection
+		selOnTblScan   *physicalop.PhysicalSelection
 		selSelectivity float64
 		tblScan        *PhysicalTableScan
 		err            error
@@ -1298,7 +1298,7 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 	}
 	finalTblScanPlan := copTsk.tablePlan
 	for len(finalTblScanPlan.Children()) > 0 {
-		selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
+		selOnTblScan, _ = finalTblScanPlan.(*physicalop.PhysicalSelection)
 		finalTblScanPlan = finalTblScanPlan.Children()[0]
 	}
 
@@ -1343,7 +1343,8 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 }
 
 // Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
+func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalTopN)
 	t := tasks[0].Copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
@@ -1351,18 +1352,18 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	needPushDown := len(cols) > 0
 	if copTask, ok := t.(*CopTask); ok && needPushDown && copTask.getStoreType() == kv.TiDB && len(copTask.rootTaskConds) == 0 {
-		newTask, changed := p.pushLimitDownToTiDBCop(copTask)
+		newTask, changed := pushLimitDownToTiDBCop(p, copTask)
 		if changed {
 			return newTask
 		}
 	}
-	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
+	if copTask, ok := t.(*CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
-		var pushedDownTopN *PhysicalTopN
-		var newGlobalTopN *PhysicalTopN
-		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
-			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.indexPlan, copTask.getStoreType())
+		var pushedDownTopN *physicalop.PhysicalTopN
+		var newGlobalTopN *physicalop.PhysicalTopN
+		if !copTask.indexPlanFinished && canPushToIndexPlan(copTask.indexPlan, cols) {
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.indexPlan, copTask.getStoreType())
 			copTask.indexPlan = pushedDownTopN
 			if newGlobalTopN != nil {
 				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
@@ -1376,7 +1377,7 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
-			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.tablePlan, copTask.getStoreType())
+			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.tablePlan, copTask.getStoreType())
 			copTask.tablePlan = pushedDownTopN
 			if newGlobalTopN != nil {
 				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
@@ -1388,8 +1389,8 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 				return attachPlan2Task(newGlobalTopN, rootTask)
 			}
 		}
-	} else if mppTask, ok := t.(*MppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
-		pushedDownTopN, newGlobalTopN := p.getPushedDownTopN(mppTask.p, kv.TiFlash)
+	} else if mppTask, ok := t.(*MppTask); ok && needPushDown && canPushDownToTiFlash(p, mppTask) {
+		pushedDownTopN, newGlobalTopN := getPushedDownTopN(p, mppTask.p, kv.TiFlash)
 		mppTask.p = pushedDownTopN
 		if newGlobalTopN != nil {
 			rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
@@ -1489,8 +1490,9 @@ func attach2Task4PhysicalUnionAll(pp base.PhysicalPlan, tasks ...base.Task) base
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalSelection implements PhysicalPlan interface.
+func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	sel := pp.(*physicalop.PhysicalSelection)
 	if mppTask, _ := tasks[0].(*MppTask); mppTask != nil { // always push to mpp task.
 		if expression.CanExprsPushDown(util.GetPushDownCtx(sel.SCtx()), sel.Conditions, kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.Copy())
@@ -1511,7 +1513,7 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 	// !isIndexJoin means the childTask only be passed through to indexJoin as an END.
 	if !isIndexJoin && indexJoinInfo != nil {
 		switch p.(type) {
-		case *PhysicalSelection:
+		case *physicalop.PhysicalSelection:
 			// todo: for simplicity, we can just inherit it from child.
 			// scale(1) means a cloned stats information same as the input stats.
 			p.SetStats(stats.Scale(1))

@@ -72,16 +72,31 @@ func init() {
 	// for physical limit.
 	utilfuncp.ResolveIndices4PhysicalLimit = resolveIndices4PhysicalLimit
 	utilfuncp.Attach2Task4PhysicalLimit = attach2Task4PhysicalLimit
+	// for physical topN.
+	utilfuncp.GetPlanCostVer14PhysicalTopN = getPlanCostVer14PhysicalTopN
+	utilfuncp.GetPlanCostVer24PhysicalTopN = getPlanCostVer24PhysicalTopN
+	utilfuncp.Attach2Task4PhysicalTopN = attach2Task4PhysicalTopN
+	utilfuncp.ResolveIndices4PhysicalTopN = resolveIndices4PhysicalTopN
+	// for physical selection.
+	utilfuncp.Attach2Task4PhysicalSelection = attach2Task4PhysicalSelection
+	utilfuncp.ResolveIndices4PhysicalSelection = resolveIndices4PhysicalSelection
+	utilfuncp.GetPlanCostVer24PhysicalSelection = getPlanCostVer24PhysicalSelection
+	utilfuncp.GetPlanCostVer14PhysicalSelection = getPlanCostVer14PhysicalSelection
 
 	utilfuncp.DoOptimize = doOptimize
+	utilfuncp.GetPlanCost = getPlanCost
 	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
 	utilfuncp.AttachPlan2Task = attachPlan2Task
+	utilfuncp.GetTaskPlanCost = getTaskPlanCost
+	utilfuncp.CompareTaskCost = compareTaskCost
+
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
 	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
+	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

@@ -1425,7 +1425,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// Grouping
-	init := func(groupingFunc *ScalarFunction) (Expression, error) {
+	init := func(groupingFunc *ScalarFunction) (*ScalarFunction, error) {
 		var err error
 		if groupingFunc.FuncName.L == ast.Grouping {
 			err = groupingFunc.Function.(*BuiltinGroupingImplSig).

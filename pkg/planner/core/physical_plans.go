@@ -58,9 +58,9 @@ import (
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
 
 var (
-	_ base.PhysicalPlan = &PhysicalSelection{}
+	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
 	_ base.PhysicalPlan = &PhysicalProjection{}
-	_ base.PhysicalPlan = &PhysicalTopN{}
+	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
 	_ base.PhysicalPlan = &PhysicalTableDual{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
@@ -1204,67 +1204,6 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalTopN is the physical operator of topN.
-type PhysicalTopN struct {
-	physicalop.PhysicalSchemaProducer
-
-	ByItems     []*util.ByItems
-	PartitionBy []property.SortItem
-	Offset      uint64
-	Count       uint64
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (lt *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalTopN)
-	*cloned = *lt
-	cloned.SetSCtx(newCtx)
-	base, err := lt.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
-	for _, it := range lt.ByItems {
-		cloned.ByItems = append(cloned.ByItems, it.Clone())
-	}
-	cloned.PartitionBy = make([]property.SortItem, 0, len(lt.PartitionBy))
-	for _, it := range lt.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
-	for _, item := range lt.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalTopN
-func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
-	if lt == nil {
-		return
-	}
-
-	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
-	for _, byItem := range lt.ByItems {
-		sum += byItem.MemoryUsage()
-	}
-	for _, item := range lt.PartitionBy {
-		sum += item.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalApply represents apply plan, only used for subquery.
 type PhysicalApply struct {
 	PhysicalHashJoin
@@ -2292,60 +2231,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
 		p.Ranges[0].IsPointNonNullable(tc)
-}
-
-// PhysicalSelection represents a filter.
-type PhysicalSelection struct {
-	physicalop.BasePhysicalPlan
-
-	Conditions []expression.Expression
-
-	// The flag indicates whether this Selection is from a DataSource.
-	// The flag is only used by cost model for compatibility and will be removed later.
-	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
-	fromDataSource bool
-
-	// todo Since the feature of adding filter operators has not yet been implemented,
-	// the following code for this function will not be used for now.
-	// The flag indicates whether this Selection is used for RuntimeFilter
-	// True: Used for RuntimeFilter
-	// False: Only for normal conditions
-	// hasRFConditions bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalSelection) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalSelection)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalPlan = *base
-	cloned.Conditions = util.CloneExprs(p.Conditions)
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalSelection
-func (p *PhysicalSelection) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfBool
-	for _, expr := range p.Conditions {
-		sum += expr.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.

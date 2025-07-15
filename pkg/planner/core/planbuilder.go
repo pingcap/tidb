@@ -565,6 +565,9 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt, *ast.DropProcedureStmt:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case ast.DDLNode:
+		if b.ctx.IsCrossKS() {
+			return nil, errors.New("DDL is not supported in cross keyspace session")
+		}
 		return b.buildDDL(ctx, x)
 	case *ast.CreateBindingStmt:
 		return b.buildCreateBindPlan(x)

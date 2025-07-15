@@ -26,25 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes PhysicalSelection.
-func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo, qbOffset int, props ...*property.PhysicalProperty) *PhysicalSelection {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalProjection.
 func (p PhysicalProjection) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProjection {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalTopN.
-func (p PhysicalTopN) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalTopN {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeTopN, &p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
 	return &p
@@ -291,7 +275,7 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 			case 1:
 				for _, plan := range p.TablePlans {
 					switch plan.(type) {
-					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+					case *PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalTopN:
 						p.ReadReqType = BatchCop
 						return
 					}
