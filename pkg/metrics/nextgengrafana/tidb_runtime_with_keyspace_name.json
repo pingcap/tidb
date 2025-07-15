@@ -2804,7 +2804,7 @@
     ]
   },
   "timezone": "browser",
-  "title": "Test-Cluster-TiDB-Runtime",
+  "title": "Test-Cluster-TiDB-Runtime-KeyspaceName",
   "uid": "000000013",
   "version": 1
 }

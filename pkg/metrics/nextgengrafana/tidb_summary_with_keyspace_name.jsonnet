@@ -25,7 +25,7 @@ local myDS = '${' + myNameFlag + '}';
 
 // A new dashboard, set Dashboard basic configuration
 local newDash = dashboard.new(
-  title='Test-Cluster-TiDB-Summary',
+  title='Test-Cluster-TiDB-Summary-KeyspaceName',
   editable=true,
   graphTooltip='shared_crosshair',
   refresh='30s',
