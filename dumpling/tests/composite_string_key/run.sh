@@ -4,6 +4,14 @@
 
 set -eu
 
+# Configure TiDB server charset settings
+run_sql "set global character_set_server=utf8mb4"
+run_sql "set global character_set_client=utf8mb4"
+run_sql "set global character_set_connection=utf8mb4"
+run_sql "set global character_set_results=utf8mb4"
+run_sql "set global collation_server=utf8mb4_bin"
+run_sql "set global collation_connection=utf8mb4_bin"
+
 run_sql "drop database if exists composite_string_key"
 run_sql "create database composite_string_key DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 export DUMPLING_TEST_DATABASE=composite_string_key
@@ -11,9 +19,6 @@ export DUMPLING_TEST_DATABASE=composite_string_key
 for data in "$DUMPLING_BASE_NAME"/data/*; do
   run_sql_file "$data"
 done
-
-# Set environment variable to use UTF8MB4 charset
-export MYSQL_HOME="$DUMPLING_BASE_NAME"
 
 # Run dumpling with --rows parameter to force chunking
 run_dumpling --rows 5
