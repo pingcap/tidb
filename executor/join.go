@@ -45,7 +45,7 @@ import (
 )
 
 // IsChildCloseCalledForTest is used for test
-var IsChildCloseCalledForTest = false
+var IsChildCloseCalledForTest atomic.Bool
 
 var (
 	_ Executor = &HashJoinExec{}
@@ -205,7 +205,7 @@ func (e *HashJoinExec) Close() error {
 	if e.stats != nil {
 		defer e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	IsChildCloseCalledForTest = true
+	IsChildCloseCalledForTest.Store(true)
 	return e.baseExecutor.Close()
 }
 
