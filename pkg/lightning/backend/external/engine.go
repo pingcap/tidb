@@ -67,7 +67,7 @@ import (
 // very small, the real memory taken by each KV pair might be doubled, so it's
 // only an estimation.
 // such as, for a simple table "create table t(id bigint primary key, v bigint, index(v))",
-// each data KV is 29B, each index KV is 38B.
+// each index KV is 38B, golang need 86B memory to store it.
 //
 // RangeS for different region size and cpu:mem ratio, the number in parentheses
 // is the number of SST files per region:
