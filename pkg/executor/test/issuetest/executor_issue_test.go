@@ -768,7 +768,7 @@ func TestIssue60926(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue60926"))
 	}()
-	executor.IsChildCloseCalledForTest = false
+	executor.IsChildCloseCalledForTest.Store(false)
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
-	require.True(t, executor.IsChildCloseCalledForTest)
+	require.True(t, executor.IsChildCloseCalledForTest.Load())
 }
