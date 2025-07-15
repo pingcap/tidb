@@ -221,11 +221,7 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 
 				originIdxKey := w.originIdxKeys[i]
 				if idxRecord.delete {
-					if idxRecord.unique {
-						err = txn.GetMemBuffer().DeleteWithFlags(originIdxKey, kv.SetNeedLocked)
-					} else {
-						err = txn.GetMemBuffer().Delete(originIdxKey)
-					}
+					err = txn.GetMemBuffer().Delete(originIdxKey)
 				} else {
 					err = txn.GetMemBuffer().Set(originIdxKey, idxRecord.vals)
 				}
