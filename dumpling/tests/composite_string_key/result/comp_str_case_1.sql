@@ -1,5 +1,5 @@
 /*!40014 SET FOREIGN_KEY_CHECKS=0*/;
-/*!40101 SET NAMES binary*/;
+/*!40101 SET NAMES utf8mb4*/;
 INSERT INTO `comp_str_case_1` VALUES
 ('clothing','item_001','T-Shirt Size M',19.99),
 ('electronics','item_001','Smartphone with special chars: !@#$%',599.99),
