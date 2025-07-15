@@ -281,7 +281,7 @@ func TestAuthPlugin(t *testing.T) {
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 10", "2 20"))
 	require.EqualError(t, tk2.ExecToErr("insert into t1 values (3, 30)"), "[planner:1142]INSERT command denied to user 'u2'@'localhost' for table 't1'")
 	// Should verify privilege using plugin impl.
-	p.AssertNumberOfCalls(t, "VerifyPrivilege", 3)
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 6)
 	p.AssertCalled(t, "VerifyPrivilege", authzMatcher2)
 	p.AssertCalled(t, "VerifyPrivilege", authzMatcher3)
 
@@ -394,7 +394,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 10", "2 20"))
 	require.EqualError(t, tk2.ExecToErr("insert into t1 values (3, 30)"), "[planner:1142]INSERT command denied to user 'u2'@'localhost' for table 't1'")
 	// Should verify privilege using plugin impl.
-	p.AssertNumberOfCalls(t, "VerifyPrivilege", 3)
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 6)
 	p.AssertCalled(t, "VerifyPrivilege", selectMatcher)
 	p.AssertCalled(t, "VerifyPrivilege", insertMatcher)
 
@@ -403,7 +403,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	// Existing session should still use plugin.
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 10", "2 20"))
-	p.AssertNumberOfCalls(t, "VerifyPrivilege", 5)
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 11)
 
 	// New session should not use plugin.
 	tk2.RefreshSession()
@@ -414,7 +414,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	tk2.MustExec("insert into t1 values (3, 30), (4, 40)")
 	tk2.MustQuery("select * from t1 where id=3").Check(testkit.Rows("3 30"))
 	// Should not verify privilege using plugin impl now that the user is not using the plugin.
-	p.AssertNumberOfCalls(t, "VerifyPrivilege", 5)
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 11)
 
 	// Switch back to plugin should work.
 	tk.MustExec("alter user 'u2'@'localhost' identified with 'authentication_test_plugin' by 'rawpassword'")
@@ -427,7 +427,7 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 10"))
 	require.EqualError(t, tk2.ExecToErr("insert into t1 values (5, 50)"), "[planner:1142]INSERT command denied to user 'u2'@'localhost' for table 't1'")
 	// Now it should verify privilege using plugin impl.
-	p.AssertNumberOfCalls(t, "VerifyPrivilege", 7)
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 15)
 }
 
 func TestCreateUserWhenGrant(t *testing.T) {
@@ -578,7 +578,7 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	tk2.MustQuery("select * from v1").Check(testkit.Rows("1 10", "2 20"))
 	// Session 1 should also be able to access the view now.
 	tk1.MustQuery("select * from v1").Check(testkit.Rows("1 10", "2 20"))
-	p.AssertNumberOfCalls(t, "VerifyPrivilege", 5)
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 8)
 
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.Session().SetExtensions(ext.NewSessionExtensions())
@@ -589,7 +589,7 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 	p.On("VerifyPrivilege", selectMatcher).Return(false)
 	tk3.MustQuery("select * from v1").Check(testkit.Rows("1 10", "2 20"))
 	// Should not verify privilege using the plugin since the definer is not in-session.
-	p.AssertNumberOfCalls(t, "VerifyPrivilege", 5)
+	p.AssertNumberOfCalls(t, "VerifyPrivilege", 8)
 }
 
 func TestPluginUserModification(t *testing.T) {

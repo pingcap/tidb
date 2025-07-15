@@ -47,6 +47,7 @@ import (
 	"time"
 	"unsafe"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -118,6 +119,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 type Server struct {
 	cfg               *config.Config
 	tlsConfig         unsafe.Pointer // *tls.Config
+	tlcpConfig        unsafe.Pointer // *tlcp.Config
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
@@ -125,6 +127,9 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+
+	userResLock  sync.RWMutex // userResLock used to protect userResource
+	userResource map[string]*userResourceLimits
 
 	capability uint32
 	dom        *domain.Domain
@@ -247,6 +252,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
@@ -294,6 +300,23 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
+
+	// load tlcp certificates
+	tlcpConfig, err := util.LoadTLCPCertificates(s.cfg.Security.TLCPCA, s.cfg.Security.TLCPSigKey, s.cfg.Security.TLCPSigCert,
+		s.cfg.Security.TLCPEncKey, s.cfg.Security.TLCPEncCert)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tlcpConfig != nil {
+		setTLCPVariable(s.cfg.Security.TLCPCA, s.cfg.Security.TLCPSigCert, s.cfg.Security.TLCPSigKey,
+			s.cfg.Security.TLCPEncCert, s.cfg.Security.TLCPEncKey)
+		atomic.StorePointer(&s.tlcpConfig, unsafe.Pointer(tlcpConfig))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
+			zap.Bool("client tlcp verification enabled", len(variable.GetSysVar("tlcp_ca").Value) > 0))
+		// set the capability extension flag
+		s.capability |= mysql.ClientCapabilityExtension
+	}
+
 	variable.RegisterStatistics(s)
 	return s, nil
 }
@@ -410,6 +433,14 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_ca", ca)
 }
 
+func setTLCPVariable(ca, signKey, signCert, encKey, encCert string) {
+	variable.SetSysVar("tlcp_ca", ca)
+	variable.SetSysVar("tlcp_sig_cert", signCert)
+	variable.SetSysVar("tlcp_sig_key", signKey)
+	variable.SetSysVar("tlcp_enc_cert", encCert)
+	variable.SetSysVar("tlcp_enc_key", encKey)
+}
+
 func setTxnScope() {
 	variable.SetSysVar(variable.TiDBTxnScope, func() string {
 		if !variable.EnableLocalTxn.Load() {
@@ -445,10 +476,28 @@ func (s *Server) Run(dom *domain.Domain) error {
 	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
 		<-dom.StatsHandle().InitStatsDone
 	}
+
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("server", 0)).
+			Error("error in get extensions", zap.Error(err))
+		return err
+	}
+
+	// If encryption is configured, audit logs are displayed.
+	if svrExtensions := extensions.NewSessionExtensions(); svrExtensions != nil {
+		if len(s.cfg.Security.SSLCA) > 0 || len(s.cfg.Security.SSLCert) > 0 || len(s.cfg.Security.SSLKey) > 0 {
+			onExtensionSecurity("TLS between servers and clients has been enabled", svrExtensions)
+		}
+		if len(s.cfg.Security.ClusterSSLCA) > 0 || len(s.cfg.Security.ClusterSSLCert) > 0 || len(s.cfg.Security.ClusterSSLKey) > 0 {
+			onExtensionSecurity("TLS between cluster components has been enabled", svrExtensions)
+		}
+	}
+
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error, 2)
-	err := s.initTiDBListener()
+	err = s.initTiDBListener()
 	if err != nil {
 		log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
 		return err
@@ -673,11 +722,29 @@ func (s *Server) onConn(conn *clientConn) {
 		defer func() {
 			conn.onExtensionConnEvent(extension.ConnDisconnected, nil)
 		}()
+		// ip whitelist plugin
+		if !conn.AllowIPConnection() {
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Error("Host " + conn.peerHost + "is not allowed to connect by whitelist plugin")
+			terror.Log(conn.Close())
+			return
+		}
 	}
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 
 	if err := conn.handshake(ctx); err != nil {
+		if checkHost, _, err1 := conn.PeerHost("NO", false); err1 == nil {
+			if tidbContext := conn.getCtx(); tidbContext != nil {
+				if authUser, err1 := tidbContext.MatchIdentity(conn.user, checkHost); err1 == nil {
+					if insertErr := insertLoginHistoryTable(ctx, conn, authUser, err); insertErr != nil {
+						terror.Log(conn.Close())
+						return
+					}
+				}
+			}
+		}
+
 		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
 			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
@@ -715,9 +782,12 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
+		conn.decrementUserConnectionsCounter()
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
+
+	conn.incrementUserConnectionsCounter()
 
 	if !s.registerConn(conn) {
 		return
@@ -726,6 +796,12 @@ func (s *Server) onConn(conn *clientConn) {
 	sessionVars := conn.ctx.GetSessionVars()
 	sessionVars.ConnectionInfo = conn.connectInfo()
 	conn.onExtensionConnEvent(extension.ConnHandshakeAccepted, nil)
+
+	if err := insertLoginHistoryTable(ctx, conn, sessionVars.User, nil); err != nil {
+		logutil.Logger(ctx).Warn("faild to insert login record", zap.Error(err))
+		return
+	}
+
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
@@ -801,9 +877,7 @@ func (s *Server) checkConnectionCount() error {
 		return nil
 	}
 
-	s.rwlock.RLock()
-	conns := len(s.clients)
-	s.rwlock.RUnlock()
+	conns := s.ConnectionCount()
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
@@ -945,6 +1019,10 @@ func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
 // GetTLSConfig implements the SessionManager interface.
 func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
+}
+
+func (s *Server) getTLCPConfig() *tlcp.Config {
+	return (*tlcp.Config)(atomic.LoadPointer(&s.tlcpConfig))
 }
 
 func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {

@@ -171,11 +171,16 @@ const (
 	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
 	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA, Not supported: https://dev.mysql.com/doc/c-api/8.0/en/c-api-optional-metadata.html
 	ClientZstdCompressionAlgorithm                      // CLIENT_ZSTD_COMPRESSION_ALGORITHM
-	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
-	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
-	// 1 << 29 == CLIENT_CAPABILITY_EXTENSION
+	ClientQueryAttributes
+	MultiFactorAuthentication
+	ClientCapabilityExtension // use CLIENT_CAPABILITY_EXTENSION support TLCP
 	// 1 << 30 == CLIENT_SSL_VERIFY_SERVER_CERT
 	// 1 << 31 == CLIENT_REMEMBER_OPTIONS
+)
+
+// TLCP Capability information.
+const (
+	ClientTLCP uint8 = 1 << iota
 )
 
 // Cache type information.
@@ -225,6 +230,10 @@ const (
 	DefaultRoleTable = "default_roles"
 	// PasswordHistoryTable is the table in system db contains password history.
 	PasswordHistoryTable = "password_history"
+	// Routines is the table in system db contains procedure.
+	Routines = "routines"
+	// ProcsPriv is the table in system db contains routine privilege.
+	ProcsPriv = "procs_priv"
 )
 
 // MySQL type maximum length.
