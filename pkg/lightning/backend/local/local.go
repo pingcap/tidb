@@ -1138,7 +1138,12 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 	switch job.stage {
 	case regionScanned, wrote, ingested:
-		w.jobFromWorkerCh <- job
+		select {
+		case <-ctx.Done():
+			job.done(w.jobWg)
+			return nil
+		case w.jobFromWorkerCh <- job:
+		}
 	case needRescan:
 		jobs, err2 := local.generateJobForRange(
 			ctx,
@@ -1327,6 +1332,11 @@ func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
+	failpoint.Inject("mockRunJobSucceed", func(_ failpoint.Value) {
+		job.convertStageTo(regionScanned)
+		failpoint.Return(nil)
+	})
+
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
 			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
