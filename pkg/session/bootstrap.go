@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1332,51 +1331,6 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func checkDistTask(s sessiontypes.Session, ver int64) {
-	if ver > version195 {
-		// since version195 we enable dist task by default, no need to check
-		return
-	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY variable_value from mysql.global_variables where variable_name = %?;", variable.TiDBEnableDistTask)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
-	}
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
-	}
-	if req.NumRows() == 0 {
-		// Not set yet.
-		return
-	} else if req.GetRow(0).GetString(0) == variable.On {
-		logutil.BgLogger().Fatal("check dist task failed, tidb_enable_dist_task is enabled", zap.Error(err))
-	}
-
-	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
-	rs2, err := s.ExecuteInternal(ctx, `SELECT id FROM %n.%n WHERE state not in (%?, %?, %?)`,
-		mysql.SystemDB,
-		"tidb_global_task",
-		proto.TaskStateSucceed,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-	)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
-	}
-	defer terror.Call(rs2.Close)
-	req = rs2.NewChunk(nil)
-	err = rs2.Next(ctx, req)
-	if err != nil {
-		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
-	}
-	if req.NumRows() > 0 {
-		logutil.BgLogger().Fatal("check dist task failed, some distributed tasks is still running", zap.Error(err))
-	}
-}
-
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
@@ -1387,7 +1341,6 @@ func upgrade(s sessiontypes.Session) {
 		return
 	}
 
-	checkDistTask(s, ver)
 	printClusterState(s, ver)
 
 	// Only upgrade from under version92 and this TiDB is not owner set.
