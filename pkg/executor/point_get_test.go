@@ -375,3 +375,30 @@ func TestWithTiDBSnapshot(t *testing.T) {
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
 }
+
+func TestPointGetCoveringIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Create test table as described in issue #37765
+	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk.MustExec("insert into t1 values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+
+	// Test case 1: Point get with covering index (id2 is both in WHERE and SELECT)
+	// This should use the covering index optimization to avoid fetching row data
+	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 10").Check(testkit.Rows("10"))
+	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 20").Check(testkit.Rows("20"))
+	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 30").Check(testkit.Rows("30"))
+
+	// Test case 2: Point get with non-covering index (selecting id3 which is not in index)
+	// This should still work but may need to fetch row data
+	tk.MustQuery("SELECT id3 FROM t1 WHERE id2 = 10").Check(testkit.Rows("100"))
+	tk.MustQuery("SELECT id3 FROM t1 WHERE id2 = 20").Check(testkit.Rows("200"))
+
+	// Test case 3: Multiple columns including covering case
+	tk.MustQuery("SELECT id1, id2, id3 FROM t1 WHERE id2 = 10").Check(testkit.Rows("1 10 100"))
+
+	// Test case 4: Verify the optimization doesn't affect non-point-get queries
+	tk.MustQuery("SELECT COUNT(*) FROM t1").Check(testkit.Rows("3"))
+}
