@@ -441,14 +441,13 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
-	// before analyzing, the planner will choose TableScan to access the 1% of records
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
+
+	// Since this test is to isolate the effect of SQL bindings, set the table scan cost factor to discourage
+	// the optimizer from using table scans without bindings.
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
 
 	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
 	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
@@ -469,9 +468,12 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("drop session binding for select * from trange where a<100")
 	tk.MustExec("drop session binding for select * from tlist where a<100")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	// Back to IndexRangeScan after dropping bindings and high table scan cost factor.
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 	// Reset auto analyze after test
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
+	// Reset the table scan cost factor after test
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
 }

@@ -1119,7 +1119,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 	increaseFactor, minTopN := 1.0, 1.0
 	if c != nil {
 		// Use column stats if available.
-		fullRowCount = c.Histogram.TotalRowCount()
+		fullRowCount = c.TotalRowCount()
 		fullNDV = float64(c.Histogram.NDV)
 		histRowCount = c.Histogram.NotNullCount()
 		histNDV = float64(c.Histogram.NDV - int64(c.TopN.Num()))
