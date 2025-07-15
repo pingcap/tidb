@@ -29,11 +29,11 @@ func NewTestStackTrace() TestStackTrace {
 }
 
 // IsEmpty checks if the stack trace is empty.
-func (t *TestStackTrace) IsEmpty() bool {
+func (*TestStackTrace) IsEmpty() bool {
 	return true
 }
 
 // String returns a string representation of the stack trace.
-func (t *TestStackTrace) String() string {
+func (*TestStackTrace) String() string {
 	return "TestStackTrace: no stack trace available in non-test builds"
 }
