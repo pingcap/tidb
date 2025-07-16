@@ -55,13 +55,14 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 			tk.Exec("alter table t add index idx_a (a);")
 		}()
 		<-ch
-		t.Skipf("global task submitted")
+		t.Log("global task submitted")
 	})
 
 	t.Run("run add index worker at system keyspace", func(t *testing.T) {
 		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithRetainData())
 		tk := testkit.NewTestKit(t, systemStore)
 		tk.MustExec("use test")
+		// The table in system keyspace is different from the one in user keyspace.
 		tk.MustExec("create table t (a int, b int);")
 
 		rs := tk.MustQuery("select * from mysql.tidb_global_task order by id desc").Rows()
@@ -78,16 +79,11 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithKeyspaceName("cross_ks"), realtikvtest.WithRetainData())
 		tk := testkit.NewTestKit(t, systemStore)
 		var jobState string
-		for {
+		require.Eventuallyf(t, func() bool {
 			rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
 			jobState = rs[0][11].(string)
-			if jobState == model.JobStateRunning.String() {
-				t.Log(rs)
-				<-time.After(2 * time.Second)
-				continue
-			}
-			break
-		}
-		require.Equal(t, model.JobStateSynced.String(), jobState, "job state should be done")
+			return jobState == model.JobStateSynced.String()
+		}, 10*time.Second, 200*time.Millisecond, "job state should be done")
+		tk.MustExec("admin check table t;")
 	})
 }
