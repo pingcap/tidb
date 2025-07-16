@@ -44,7 +44,7 @@ var (
 )
 
 // InitializeRateLimiterParam initializes the rate limiter params.
-func InitializeRateLimiterParam(m *meta.Mutator, logger *zap.Logger) error {
+func InitializeRateLimiterParam(m *meta.Meta, logger *zap.Logger) error {
 	err := initializeVariables(
 		m.GetIngestMaxBatchSplitRanges,
 		defaultMaxBatchSplitRanges,

@@ -2023,16 +2023,16 @@ func NewIngestConcurrencyHandler(tool *handler.TikvHandlerTool, param IngestPara
 
 // ServeHTTP handles request of lightning max_batch_split_ranges.
 func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var getter func(*meta.Mutator) (float64, bool, error)
-	var setter func(*meta.Mutator, float64) error
+	var getter func(*meta.Meta) (float64, bool, error)
+	var setter func(*meta.Meta, float64) error
 	var updateGlobal func(v float64) float64
 	switch h.param {
 	case IngestParamMaxBatchSplitRanges:
-		getter = func(m *meta.Mutator) (float64, bool, error) {
+		getter = func(m *meta.Meta) (float64, bool, error) {
 			v, isNull, err := m.GetIngestMaxBatchSplitRanges()
 			return float64(v), isNull, err
 		}
-		setter = func(m *meta.Mutator, value float64) error {
+		setter = func(m *meta.Meta, value float64) error {
 			return m.SetIngestMaxBatchSplitRanges(int(value))
 		}
 		updateGlobal = func(v float64) float64 {
@@ -2042,10 +2042,10 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return float64(*old)
 		}
 	case IngestParamMaxSplitRangesPerSec:
-		getter = func(m *meta.Mutator) (float64, bool, error) {
+		getter = func(m *meta.Meta) (float64, bool, error) {
 			return m.GetIngestMaxSplitRangesPerSec()
 		}
-		setter = func(m *meta.Mutator, value float64) error {
+		setter = func(m *meta.Meta, value float64) error {
 			return m.SetIngestMaxSplitRangesPerSec(value)
 		}
 		updateGlobal = func(v float64) float64 {
@@ -2054,10 +2054,10 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return *old
 		}
 	case IngestParamMaxPerSecond:
-		getter = func(m *meta.Mutator) (float64, bool, error) {
+		getter = func(m *meta.Meta) (float64, bool, error) {
 			return m.GetIngestMaxPerSec()
 		}
-		setter = func(m *meta.Mutator, value float64) error {
+		setter = func(m *meta.Meta, value float64) error {
 			return m.SetIngestMaxPerSec(value)
 		}
 		updateGlobal = func(v float64) float64 {
@@ -2066,11 +2066,11 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return *old
 		}
 	case IngestParamMaxInflight:
-		getter = func(m *meta.Mutator) (float64, bool, error) {
+		getter = func(m *meta.Meta) (float64, bool, error) {
 			v, isNull, err := m.GetIngestMaxInflight()
 			return float64(v), isNull, err
 		}
-		setter = func(m *meta.Mutator, value float64) error {
+		setter = func(m *meta.Meta, value float64) error {
 			return m.SetIngestMaxInflight(int(value))
 		}
 		updateGlobal = func(v float64) float64 {
@@ -2087,7 +2087,7 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		var respValue float64
 		var respIsNull bool
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
-			m := meta.NewMutator(txn)
+			m := meta.NewMeta(txn)
 			var getErr error
 			respValue, respIsNull, getErr = getter(m)
 			return getErr
@@ -2117,7 +2117,7 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return
 		}
 		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
-			m := meta.NewMutator(txn)
+			m := meta.NewMeta(txn)
 			return setter(m, newValue)
 		})
 

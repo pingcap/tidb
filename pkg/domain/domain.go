@@ -1554,7 +1554,7 @@ func (do *Domain) InitDistTaskLoop() error {
 		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID)
 	}, "distTaskFrameworkLoop")
 	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
+		m := meta.NewMeta(txn)
 		logger := logutil.BgLogger()
 		return local.InitializeRateLimiterParam(m, logger)
 	}); err != nil {
