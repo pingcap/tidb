@@ -304,6 +304,22 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 infoschema__infoschema_2	t2	a
 infoschema__infoschema_2	t2	b
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema like '%infoschema__infoschema_2%';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+infoschema__infoschema_2	t2	a
+infoschema__infoschema_2	t2	b
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_name like '%t%';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+infoschema__infoschema_2	t2	a
+infoschema__infoschema_2	t2	b
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_name like '%t2%';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+infoschema__infoschema_2	t2	a
+infoschema__infoschema_2	t2	b
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema like '%fake_schema%';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
+select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%fake_table%' and table_schema like '%infoschema__infoschema_2%';
+TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 drop table infoschema__infoschema.t1;
 drop table infoschema__infoschema_2.t2;
 drop database if exists indexusage;
