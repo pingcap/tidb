@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -749,4 +750,25 @@ func TestIssue55881(t *testing.T) {
 		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte union all select * from cte) d limit 1)," +
 			"(select max(value) from (select * from cte union all select * from cte union all select * from aaa where aaa.id > bbb.id)) from bbb;")
 	}
+}
+
+func TestIssue60926(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (col0 int, col1 int);")
+	tk.MustExec("create table t2 (col0 int, col1 int);")
+	tk.MustExec("insert into t1 values (0, 10), (1, 10), (2, 10), (3, 10), (4, 10), (5, 10), (6, 10), (7, 10), (8, 10), (9, 10), (10, 10);")
+	tk.MustExec("insert into t2 values (0, 5), (0, 5), (1, 5), (2, 5), (2, 5), (3, 5), (4, 5), (5, 5), (5, 5), (6, 5), (7, 5), (8, 5), (8, 5), (9, 5), (9, 5), (10, 5);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue60926"))
+	}()
+	executor.IsChildCloseCalledForTest.Store(false)
+	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
+	require.True(t, executor.IsChildCloseCalledForTest.Load())
 }
