@@ -60,7 +60,6 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/pkg/retry"
 	"github.com/tikv/pd/client/retry"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"

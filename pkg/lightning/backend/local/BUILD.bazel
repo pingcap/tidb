@@ -90,7 +90,6 @@ go_library(
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//errs",
         "@com_github_tikv_pd_client//http",
-        "@com_github_tikv_pd_client//pkg/retry",
         "@com_github_tikv_pd_client//retry",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
