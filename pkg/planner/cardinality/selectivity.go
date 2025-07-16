@@ -1112,7 +1112,8 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 }
 
 // unmatchedEqAverage estimates the row count for equal conditions not matched in TopN or last value of a bucket.
-// Func call can pass in nil for c or idx, but at least one of them must be non-nil.
+// Func call can pass in nil for c or idx, but at least one of them must be non-nil. If both are nil, then
+// the returned result will be based on realtimeRowCount only, and the maxEstimate will be equal to realtimeRowCount.
 func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *statistics.Index, realtimeRowCount float64) (result, maxEstimate float64) {
 	fullRowCount, fullNDV, histRowCount, histNDV, minTopN, lenTopN := float64(0), float64(0), float64(0), float64(0), float64(0), float64(0)
 	if c != nil {
