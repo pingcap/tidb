@@ -56,7 +56,7 @@ func prepareData(tk *testkit.TestKit) {
 	tk.MustExec(`insert into t1 values (1, 2, 3);`)
 	tk.MustExec(`insert into t2 values (4, 5, 6);`)
 	tk.MustExec(`insert into t3 values (7, 8, 9);`)
-	tk.MustExec(`analyze table t1;`)
-	tk.MustExec(`analyze table t2;`)
-	tk.MustExec(`analyze table t3;`)
+	tk.MustExec(`analyze table t1 all columns;`)
+	tk.MustExec(`analyze table t2 all columns;`)
+	tk.MustExec(`analyze table t3 all columns;`)
 }
