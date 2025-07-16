@@ -131,6 +131,9 @@ func SetTiFlashConfVarsInContext(ctx context.Context, dctx *distsqlctx.DistSQLCo
 	if dctx.TiFlashMaxBytesBeforeExternalSort != -1 {
 		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeExternalSort, 10))
 	}
+	if dctx.TiFlashMaxBytesBeforeCTESpill != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiDBMaxBytesBeforeTiFlashCTESpill, strconv.FormatInt(dctx.TiFlashMaxBytesBeforeCTESpill, 10))
+	}
 	if dctx.TiFlashMaxQueryMemoryPerNode <= 0 {
 		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashMemQuotaQueryPerNode, "0")
 	} else {
