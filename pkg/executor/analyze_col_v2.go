@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -153,6 +154,16 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 			}
 		}
 	}
+	intest.AssertFunc(func() bool {
+		// Ensure all columns in the chunk have the same number of rows.
+		// Checking for virtual columns.
+		for i := 1; i < chk.NumCols(); i++ {
+			if chk.Column(i).Rows() != chk.Column(0).Rows() {
+				return false
+			}
+		}
+		return true
+	}, "all columns in chunk should have the same number of rows")
 	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx, chk)
 	if err != nil {
 		return err
