@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -853,4 +854,31 @@ func TestInfoSchemaRenameTable(t *testing.T) {
 	tk.MustExec("rename table test.t2 to mysql.t2, test.t3 to mysql.t3;")
 	tk.MustQuery("SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't3');").
 		Check(testkit.Rows("1"))
+}
+
+func TestStatisticShowPublicIndexes(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.SchemaState == model.StatePublic {
+			return
+		}
+		rs := tk1.MustQuery(`SELECT count(1) FROM INFORMATION_SCHEMA.STATISTICS where 
+			TABLE_SCHEMA = 'test' and table_name = 't' and index_name = 'idx';`).Rows()
+		require.Equal(t, "0", rs[0][0].(string))
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+	tk.MustExec("alter table t add index idx(b);")
 }

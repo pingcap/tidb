@@ -82,6 +82,7 @@ go_test(
     deps = [
         "//config",
         "//ddl/placement",
+        "//ddl/util/callback",
         "//domain",
         "//errno",
         "//executor",
