@@ -249,6 +249,21 @@ func TestApplyUpdate(t *testing.T) {
 			},
 		},
 		{
+			name: "tencent provider",
+			options: S3BackendOptions{
+				Region:         "us-west-2",
+				ForcePathStyle: true,
+				Provider:       "tencent",
+			},
+			s3: &backuppb.S3{
+				Region:         "us-west-2",
+				ForcePathStyle: false,
+				Bucket:         "bucket",
+				Prefix:         "prefix",
+				Provider:       "tencent",
+			},
+		},
+		{
 			name: "useAccelerateEndpoint",
 			options: S3BackendOptions{
 				Region:                "us-west-2",
@@ -1062,7 +1077,7 @@ func TestS3ReaderResetRetry(t *testing.T) {
 		require.Equal(t, someRandomBytes[offset:offset+cnt], slice[:cnt])
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		readAndCheck(20, i*20)
 	}
 

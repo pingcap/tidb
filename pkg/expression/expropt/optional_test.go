@@ -74,7 +74,7 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 	var verifyNoProvider func(ctx exprctx.EvalContext)
 	var verifyProvider func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider)
 
-	for i := 0; i < exprctx.OptPropsCnt; i++ {
+	for i := range exprctx.OptPropsCnt {
 		key := exprctx.OptionalEvalPropKey(i)
 		switch key {
 		case exprctx.OptPropCurrentUser:
@@ -123,7 +123,7 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 			reader = r
 			verifyNoProvider = func(ctx exprctx.EvalContext) {
 				assertReaderFuncReturnErr(t, ctx, r.GetSessionInfoSchema)
-				assertReaderFuncReturnErr(t, ctx, r.GetDomainInfoSchema)
+				assertReaderFuncReturnErr(t, ctx, r.GetLatestInfoSchema)
 			}
 			verifyProvider = func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider) {
 				is, ok := val.(InfoSchemaPropProvider)(true).(*mockIsType)
@@ -134,7 +134,7 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 				require.True(t, ok)
 				require.Same(t, &is2, is)
 
-				require.Same(t, &is1, assertReaderFuncValue(t, ctx, r.GetDomainInfoSchema))
+				require.Same(t, &is1, assertReaderFuncValue(t, ctx, r.GetLatestInfoSchema))
 				require.Same(t, &is2, assertReaderFuncValue(t, ctx, r.GetSessionInfoSchema))
 			}
 		case exprctx.OptPropKVStore:

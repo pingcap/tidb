@@ -75,7 +75,7 @@ const (
 	emptyFkCascadeSize = int64(unsafe.Sizeof(FKCascade{}))
 )
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (f *FKCheck) AccessObject() base.AccessObject {
 	if f.Idx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
@@ -83,7 +83,7 @@ func (f *FKCheck) AccessObject() base.AccessObject {
 	return OtherAccessObject(fmt.Sprintf("table:%s, index:%s", f.Tbl.Meta().Name, f.Idx.Meta().Name))
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (f *FKCheck) OperatorInfo(bool) string {
 	if f.FK != nil {
 		return fmt.Sprintf("foreign_key:%s, check_exist", f.FK.Name)
@@ -112,7 +112,7 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 	return
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (f *FKCascade) AccessObject() base.AccessObject {
 	if f.FKIdx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))

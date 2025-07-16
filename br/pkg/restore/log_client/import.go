@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -135,20 +137,34 @@ func (importer *LogFileImporter) ImportKVFiles(
 	log.Debug("rewrite file keys",
 		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 
+	var (
+		numRegions int64
+
+		listener = RangeCtlMetricListener{
+			RequestRegion: metrics.KVApplyRunOverRegionsEvents.WithLabelValues("request-region"),
+			RetryRegion:   metrics.KVApplyRunOverRegionsEvents.WithLabelValues("retry-region"),
+			RetryRange:    metrics.KVApplyRunOverRegionsEvents.WithLabelValues("retry-range"),
+			RegionSuccess: metrics.KVApplyRunOverRegionsEvents.WithLabelValues("region-success"),
+		}
+	)
 	// This RetryState will retry 45 time, about 10 min.
 	rs := utils.InitialRetryState(45, 100*time.Millisecond, 15*time.Second)
 	ctl := CreateRangeController(startKey, endKey, importer.metaClient, &rs)
+	ctl.SetEventListener(&listener)
 	err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
+		atomic.AddInt64(&numRegions, 1)
 		subfiles, errFilter := filterFilesByRegion(files, ranges, r)
 		if errFilter != nil {
 			return RPCResultFromError(errFilter)
 		}
+		metrics.KVApplyRegionFiles.Observe(float64(len(subfiles)))
 		if len(subfiles) == 0 {
 			return RPCResultOK()
 		}
 		return importer.importKVFileForRegion(ctx, subfiles, rule, shiftStartTS, startTS, restoreTS, r, supportBatch,
 			cipherInfo, masterKeys)
 	})
+	metrics.KVApplyBatchRegions.Observe(float64(numRegions))
 	return errors.Trace(err)
 }
 

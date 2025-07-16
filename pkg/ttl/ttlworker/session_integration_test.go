@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -173,13 +174,17 @@ func (f *faultSessionPool) setFault(ft fault) {
 }
 
 func TestGetSessionWithFault(t *testing.T) {
-	origAttachStats, origDetachStats := ttlworker.AttachStatsCollector, ttlworker.DetachStatsCollector
+	origAttachStats, origDetachStats := statshandle.AttachStatsCollector, statshandle.DetachStatsCollector
 	defer func() {
-		ttlworker.AttachStatsCollector = origAttachStats
-		ttlworker.DetachStatsCollector = origDetachStats
+		statshandle.AttachStatsCollector = origAttachStats
+		statshandle.DetachStatsCollector = origDetachStats
 	}()
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)
+	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
 	pool := newFaultSessionPool(t, dom.AdvancedSysSessionPool())
 
 	var sysSe *syssession.Session
@@ -195,13 +200,13 @@ func TestGetSessionWithFault(t *testing.T) {
 	type mockAttached struct{ sqlexec.SQLExecutor }
 	var attached *mockAttached
 	var detached sqlexec.SQLExecutor
-	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.Nil(t, attached)
 		require.Nil(t, detached)
 		attached = &mockAttached{SQLExecutor: s}
 		return attached
 	}
-	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	statshandle.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
 		require.NotNil(t, attached)
 		require.Same(t, attached, s)
 		require.Nil(t, detached)

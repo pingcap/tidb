@@ -21,8 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -72,7 +70,7 @@ func TestAlterThreadRightAfterJobFinish(t *testing.T) {
 }
 
 func TestAlterJobOnDXF(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -81,7 +79,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		tk.MustExec("insert into t1 values (), (), (), ()")
 	}
 	tk.MustExec("split table t1 between (3) and (8646911284551352360) regions 50;")
@@ -94,9 +92,9 @@ func TestAlterJobOnDXF(t *testing.T) {
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
-		reader, writer := pipe.GetLocalIngestModeReaderAndWriter()
-		require.EqualValues(t, 4, reader.(*ddl.TableScanOperator).GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.(*ddl.IndexIngestOperator).GetWorkerPoolSize())
+		reader, writer := pipe.GetReaderAndWriter()
+		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
+		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
 	})
 	var finishedSubtasks int
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(be *local.Backend) {

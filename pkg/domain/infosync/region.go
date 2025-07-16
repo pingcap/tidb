@@ -106,3 +106,15 @@ func CreateSchedulerConfigWithInput(ctx context.Context, schedulerName string, i
 	}
 	return is.pdHTTPCli.CreateSchedulerWithInput(ctx, schedulerName, input)
 }
+
+// CancelSchedulerJob is used to cancel a given scheduler job.
+func CancelSchedulerJob(ctx context.Context, schedulerName string, jobID uint64) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.pdHTTPCli == nil {
+		return errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
+	}
+	return is.pdHTTPCli.CancelSchedulerJob(ctx, schedulerName, jobID)
+}

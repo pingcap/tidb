@@ -448,3 +448,21 @@ create table ta (pk int not null, ex int not null, primary key (pk, ex) nonclust
 create table tb (pk int not null, ex int not null, primary key (pk, ex) clustered);
 alter table ta exchange partition p1 with table tb;
 Error 1736 (HY000): Tables have different definitions
+drop table if exists t;
+create table t(a varbinary(255)) partition by list columns (a) (partition p0 values in (''));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` varbinary(255) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`a`)
+(PARTITION `p0` VALUES IN (''))
+drop table t;
+create table t(a varbinary(255)) partition by range columns (a) (partition p0 values less than (''));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` varbinary(255) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`a`)
+(PARTITION `p0` VALUES LESS THAN (''))

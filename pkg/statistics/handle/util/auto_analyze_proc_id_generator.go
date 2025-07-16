@@ -15,10 +15,11 @@
 package util
 
 import (
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
-	"golang.org/x/exp/maps"
 )
 
 // AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
@@ -92,7 +93,7 @@ type AutoAnalyzeTracker struct {
 func (g *globalAutoAnalyzeProcessList) All() []uint64 {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	return maps.Keys(g.processes)
+	return slices.Collect(maps.Keys(g.processes))
 }
 
 // Contains checks whether the auto analyze process ID is in the list.

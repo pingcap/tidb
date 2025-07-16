@@ -38,7 +38,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		argFieldType := types.NewFieldType(argType)
 		genFunc := getDataGenFunc(argFieldType)
 
-		for m := 0; m < numRows; m++ {
+		for m := range numRows {
 			arg := genFunc(m)
 			entries1 = append(entries1, getJSONValue(arg, argFieldType))
 		}
@@ -75,7 +75,7 @@ func TestJsonArrayagg(t *testing.T) {
 		argFieldType := types.NewFieldType(argType)
 		genFunc := getDataGenFunc(argFieldType)
 
-		for m := 0; m < numRows; m++ {
+		for m := range numRows {
 			arg := genFunc(m)
 			entries = append(entries, getJSONValue(arg, argFieldType))
 		}
@@ -92,7 +92,7 @@ func TestJsonArrayagg(t *testing.T) {
 
 func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, aggfuncs.DefInterfaceSize)

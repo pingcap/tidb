@@ -322,16 +322,14 @@ func (em *engineManager) closeEngine(
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.keyAdapter,
-			em.DupeDetectEnabled,
-			em.duplicateDB,
-			em.DuplicateDetectOpt,
 			em.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
+			externalCfg.OnDup,
+			"",
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil

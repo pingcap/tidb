@@ -48,7 +48,9 @@ func TestSemiJoinOrder(t *testing.T) {
 		"  └─TableReader(Probe) 9990.00 root  data:Selection",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
 		"      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+		"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+		"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
 	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
 		"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
@@ -73,7 +75,10 @@ func TestSemiJoinOrder(t *testing.T) {
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
 		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 		"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints",
+		"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+		"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 		"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
 	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
@@ -96,45 +101,63 @@ func TestJoinWithNullEQ(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/57583
 	tk.MustExec("create table t1(id int, v1 int, v2 int, v3 int);")
 	tk.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
-	tk.MustQuery("explain select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
-		"HashJoin_15 6393.60 root  semi join, left side:HashAgg_16, equal:[nulleq(test.t1.id, test.t1.id)]",
-		"├─HashJoin_26(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"│ ├─TableReader_33(Build) 9990.00 root  data:Selection_32",
-		"│ │ └─Selection_32 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"│ │   └─TableFullScan_31 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"│ └─TableReader_30(Probe) 9990.00 root  data:Selection_29",
-		"│   └─Selection_29 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"│     └─TableFullScan_28 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─HashAgg_16(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
-		"  └─HashJoin_17 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-		"    ├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"    │ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-		"    │   └─TableFullScan_22 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"    └─TableReader_21(Probe) 9990.00 root  data:Selection_20",
-		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format='brief' select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
+		"HashJoin 6393.60 root  semi join, left side:HashAgg, equal:[nulleq(test.t1.id, test.t1.id)]",
+		"├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"│ ├─TableReader(Build) 9990.00 root  data:Selection",
+		"│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"│ │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"│ └─TableReader(Probe) 9990.00 root  data:Selection",
+		"│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─HashAgg(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
+		"  └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+		"    ├─TableReader(Build) 9990.00 root  data:Selection",
+		"    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
+		"    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 9990.00 root  data:Selection",
+		"      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
+		"        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 	// https://github.com/pingcap/tidb/issues/60322
 	tk.MustExec("CREATE TABLE tt0(c0 BOOL );")
 	tk.MustExec("CREATE TABLE tt1(c0 CHAR );")
 	tk.MustExec("INSERT INTO tt1 VALUES (NULL);")
 	tk.MustExec("INSERT INTO tt0(c0) VALUES (false);")
-	tk.MustQuery(`explain SELECT * FROM tt1
+	tk.MustQuery(`explain format='brief' SELECT * FROM tt1
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows(
-		"HashJoin_13 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
-		"├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
-		"│ └─TableFullScan_24 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
-		"└─HashJoin_17(Probe) 12500.00 root  left outer join, left side:Projection_18, equal:[eq(Column#8, Column#9)]",
-		"  ├─Projection_18(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
-		"  │ └─TableReader_20 10000.00 root  data:TableFullScan_19",
-		"  │   └─TableFullScan_19 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
-		"  └─Projection_21(Probe) 10000.00 root  0->Column#5, 0->Column#9",
-		"    └─TableReader_23 10000.00 root  data:TableFullScan_22",
-		"      └─TableFullScan_22 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
+		"HashJoin 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
+		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"│ └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
+		"└─HashJoin(Probe) 12500.00 root  left outer join, left side:Projection, equal:[eq(Column#8, Column#9)]",
+		"  ├─Projection(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
+		"  │ └─TableReader 10000.00 root  data:TableFullScan",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
+		"  └─Projection(Probe) 10000.00 root  0->Column#5, 0->Column#9",
+		"    └─TableReader 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
 	tk.MustQuery(`SELECT * FROM tt1
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows())
+}
+
+func TestJoinSimplifyCondition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE t1 (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL,KEY idx_a (a));`)
+	tk.MustExec(`CREATE TABLE t2 (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL,KEY idx_a (a));`)
+	tk.MustQuery(`explain format='brief' select * from t1,t2 where t1.a=t2.a and t1.b = 1 or 1=2;`).
+		Check(testkit.Rows(
+			"IndexHashJoin 12.49 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+			"├─TableReader(Build) 9.99 root  data:Selection",
+			"│ └─Selection 9.99 cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
+			"│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+			"└─IndexLookUp(Probe) 12.49 root  ",
+			"  ├─Selection(Build) 12.49 cop[tikv]  not(isnull(test.t2.a))",
+			"  │ └─IndexRangeScan 12.50 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+			"  └─TableRowIDScan(Probe) 12.49 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }

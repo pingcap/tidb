@@ -177,7 +177,7 @@ func TestTableRangesToKVRanges(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xd, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 		},
 	}
-	for i := 0; i < len(expect); i++ {
+	for i := range expect {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -721,7 +721,7 @@ func TestTableRangesToKVRangesWithFbs(t *testing.T) {
 		},
 	}
 
-	for i := 0; i < len(actual); i++ {
+	for i := range actual {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -742,7 +742,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5},
 		},
 	}
-	for i := 0; i < len(actual.FirstPartitionRange()); i++ {
+	for i := range actual.FirstPartitionRange() {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
 	}
 }
@@ -884,7 +884,7 @@ func TestRequestBuilderHandle(t *testing.T) {
 	handles := []kv.Handle{kv.IntHandle(0), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
 		kv.IntHandle(5), kv.IntHandle(10), kv.IntHandle(11), kv.IntHandle(100)}
 
-	resourceTagBuilder := kv.NewResourceGroupTagBuilder()
+	resourceTagBuilder := kv.NewResourceGroupTagBuilder(nil)
 	tableID := int64(15)
 	actual, err := (&RequestBuilder{}).SetTableHandles(tableID, handles).
 		SetDAGRequest(&tipb.DAGRequest{}).

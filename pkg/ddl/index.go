@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -47,10 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -90,6 +93,8 @@ const (
 	// MaxCommentLength is exported for testing.
 	MaxCommentLength = 1024
 )
+
+var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
 
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
@@ -216,7 +221,7 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn, col
 
 // checkIndexColumn will be run for all non-columnar indexes.
 func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr bool) error {
-	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
+	if col.FieldType.GetType() == mysql.TypeNull || (col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType()))) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
@@ -930,7 +935,7 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		logutil.DDLLogger().Info("[ddl] run add vector index job done",
+		logutil.DDLLogger().Info("[ddl] run add columnar index job done",
 			zap.Int64("ver", ver),
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
@@ -1096,6 +1101,8 @@ SwitchIndexState:
 		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
+			// Increase telemetryAddIndexIngestUsage
+			telemetryAddIndexIngestUsage.Inc()
 			for _, indexInfo := range allIndexInfos {
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
@@ -1406,7 +1413,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
-	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
+	jc.cloudStorageURI = handle.GetCloudStorageURI(w.workCtx, w.store)
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
@@ -1620,7 +1627,7 @@ func runReorgJobAndHandleErr(
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (addIndexErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, tbl.Meta(), func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, allIndexInfos[0].Name)
@@ -1819,7 +1826,7 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 		return
 	}
 	// Remove the target index.
-	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
+	tblInfo.Indices = slices.Delete(tblInfo.Indices, offset, offset+1)
 }
 
 func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
@@ -2267,7 +2274,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
@@ -2276,6 +2283,7 @@ func writeChunkToLocal(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
+	tblInfo *model.TableInfo,
 ) (int, kv.Handle, error) {
 	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
@@ -2332,8 +2340,9 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
+				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
 				return 0, nil, errors.Trace(err)
 			}
 		}
@@ -2354,7 +2363,7 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
 	index table.Index,
@@ -2494,6 +2503,11 @@ func (w *worker) addPhysicalTableIndex(
 		return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexMergeTmpWorker, reorgInfo)
 	}
 	logutil.DDLLogger().Info("start to add table index", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
+	m := metrics.RegisterLightningCommonMetricsForDDL(reorgInfo.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, m)
+	defer func() {
+		metrics.UnregisterLightningCommonMetricsForDDL(reorgInfo.ID, m)
+	}()
 	return w.writePhysicalTableRecord(ctx, w.sessPool, t, typeAddIndexWorker, reorgInfo)
 }
 
@@ -2510,6 +2524,11 @@ func (w *worker) addTableIndex(
 			err := w.executeDistTask(jobCtx, t, reorgInfo)
 			if err != nil {
 				return err
+			}
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				// When adding unique index by global sort, it detects duplicate keys in each step.
+				// A duplicate key must be detected before, so we can skip the check bellow.
+				return nil
 			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 		}
@@ -2601,6 +2620,15 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
+// TaskKey generates a task key for the backfill job.
+func TaskKey(jobID int64) string {
+	if kerneltype.IsNextGen() {
+		ks := keyspace.GetKeyspaceNameBySettings()
+		return fmt.Sprintf("%s/ddl/%s/%d", ks, proto.Backfill, jobID)
+	}
+	return fmt.Sprintf("ddl/%s/%d", proto.Backfill, jobID)
+}
+
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -2608,7 +2636,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+	taskKey := TaskKey(reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(w.workCtx)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 
@@ -2624,7 +2652,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	// When pausing the related ddl job, it is possible that the task with taskKey is succeed and in tidb_global_task_history.
 	// As a result, when resuming the related ddl job,
 	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
-	taskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
 	}
@@ -2692,6 +2720,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 			EstimateRowSize: rowSize,
+			Version:         BackfillTaskMetaVersion1,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -2966,7 +2995,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 }
 
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
-	taskMgr, err := storage.GetTaskManager()
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get task manager", zap.String("task_key", taskKey), zap.Error(err))
 		return
@@ -3060,7 +3089,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 			ts := oracle.GoTimeToTS(time.Now())
 			//nolint:forcetypeassert
 			s := reorg.jobCtx.store.(tikv.Storage)
-			s.UpdateSPCache(ts, time.Now())
+			s.UpdateTxnSafePointCache(ts, time.Now())
 			time.Sleep(time.Second * 3)
 		}
 	})
@@ -3179,7 +3208,7 @@ type cleanUpIndexWorker struct {
 }
 
 func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*cleanUpIndexWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false, false)
+	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false)
 	if err != nil {
 		return nil, err
 	}

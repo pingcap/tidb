@@ -63,7 +63,7 @@ type DDLExec struct {
 func (e *DDLExec) toErr(err error) error {
 	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.Ctx())
-	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
+	checker := domain.NewSchemaChecker(dom.GetSchemaValidator(), e.is.SchemaMetaVersion(), nil, true)
 	txn, err1 := e.Ctx().Txn(true)
 	if err1 != nil {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
@@ -120,6 +120,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			}
 			if ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
+				// TODO: investigate why this does not work instead:
+				//s.Tables = slices.Delete(s.Tables, tbIdx, tbIdx+1)
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
 		}

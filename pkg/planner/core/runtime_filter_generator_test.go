@@ -85,8 +85,8 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
 		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }

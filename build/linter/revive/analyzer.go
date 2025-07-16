@@ -52,7 +52,7 @@ var defaultRules = []lint.Rule{
 	//&rule.PackageCommentsRule{},
 	&rule.DotImportsRule{},
 	&rule.ExportedRule{},
-	&rule.VarNamingRule{},
+	//&rule.VarNamingRule{},
 	&rule.IncrementDecrementRule{},
 	//&rule.UnexportedReturnRule{},
 	&rule.ContextKeysType{},

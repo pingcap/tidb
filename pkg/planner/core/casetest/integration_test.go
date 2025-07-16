@@ -398,12 +398,12 @@ func TestFixControl45132(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, key(a))`)
 	values := make([]string, 0, 101)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		values = append(values, "(1, 1)")
 	}
 	values = append(values, "(2, 2)") // count(1) : count(2) == 100 : 1
 	tk.MustExec(`insert into t values ` + strings.Join(values, ","))
-	for i := 0; i < 7; i++ {
+	for range 7 {
 		tk.MustExec(`insert into t select * from t`)
 	}
 	tk.MustExec(`analyze table t`)
@@ -452,12 +452,12 @@ func TestIssue52023(t *testing.T) {
 	tk.MustQuery(`select * from t where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
 	tk.MustQuery(`explain select * from t where a = 0x5`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:P4, clustered index:PRIMARY(a) "))
 	tk.MustQuery(`explain format='brief' select * from t where a = 5`).Check(testkit.Rows(""+
-		"TableReader 0.80 root partition:P4 data:Selection",
-		"└─Selection 0.80 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
+		"TableReader 1.00 root partition:P4 data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
 		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format='brief' select * from t where a IN (5,55)`).Check(testkit.Rows(""+
-		"TableReader 0.96 root partition:P4 data:Selection",
-		"└─Selection 0.96 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
+		"TableReader 1.00 root partition:P4 data:Selection",
+		"└─Selection 1.00 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
 		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format='brief' select * from t where a IN (0x5,55)`).Check(testkit.Rows(""+
 		"TableReader 1.00 root partition:P4 data:Selection",
@@ -507,14 +507,14 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 	tk.MustExec(`set tidb_analyze_version=2;`)
 	tk.MustExec(`analyze table t all columns;`)
 	tk.MustQuery("explain select * from t use index (iad) where a = 1;").Check(testkit.Rows(
-		"TableReader_7 1.00 root  data:Selection_6",
-		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
-		"  └─TableFullScan_5 2.00 cop[tikv] table:t keep order:false",
+		"TableReader_8 1.00 root  data:Selection_7",
+		"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1)",
+		"  └─TableFullScan_6 2.00 cop[tikv] table:t keep order:false",
 	))
 	tk.MustQuery("explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
-		"IndexMerge_7 1.00 root  type: union",
-		"├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-		"└─TableRowIDScan_6(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+		"IndexMerge_8 1.00 root  type: union",
+		"├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
+		"└─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
 	))
 }
 

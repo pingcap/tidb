@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -231,7 +232,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		ddl.NewDDLReorgMeta(tk.Session()),
 		0,
 		2,
-		&ddl.EmptyRowCntListener{},
+		&execute.TestCollector{},
 	)
 	require.NoError(t, err)
 	err = pipeline.Execute()
@@ -331,7 +332,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				ddl.NewDDLReorgMeta(tk.Session()),
 				0,
 				2,
-				&ddl.EmptyRowCntListener{},
+				&execute.TestCollector{},
 			)
 			require.NoError(t, err)
 			err = pipeline.Execute()
@@ -357,7 +358,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
-	for i := 0; i < regionCnt; i++ {
+	for i := range regionCnt {
 		tk.MustExec("insert into t values (?, ?)", i*10000, i)
 	}
 	maxRowID := regionCnt * 10000

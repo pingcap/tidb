@@ -18,11 +18,13 @@ package testkit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -32,6 +34,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -41,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statisticsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -118,15 +122,6 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
-	if intest.InTest {
-		seed := uint64(time.Now().UnixNano())
-		tk.t.Logf("RefreshSession rand seed: %d", seed)
-		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
-		}
-	}
-
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
@@ -275,26 +270,6 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...any) *Re
 	return tk.MustQuery(sql, args...)
 }
 
-// MustPartitionByList checks if the result execution plan must read specific partitions by list.
-func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...any) *Result {
-	rs := tk.MustQuery("explain "+sql, args...)
-	ok := len(partitions) == 0
-	for i := range rs.rows {
-		if ok {
-			tk.require.NotContains(rs.rows[i][3], "partition:")
-		}
-		for index, partition := range partitions {
-			if !ok && strings.Contains(rs.rows[i][3], "partition:"+partition) {
-				partitions = append(partitions[:index], partitions[index+1:]...)
-			}
-		}
-	}
-	if !ok {
-		tk.require.Len(partitions, 0)
-	}
-	return tk.MustQuery(sql, args...)
-}
-
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...any) error {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
@@ -395,6 +370,10 @@ func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 // ExecWithContext executes a sql statement using the prepared stmt API
 func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
+
+	// Set the command value to ComQuery, so that the process info can be updated correctly
+	tk.Session().SetCommandValue(mysql.ComQuery)
+	defer tk.Session().SetCommandValue(mysql.ComSleep)
 
 	cursorExists := tk.Session().GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists)
 	if len(args) == 0 {
@@ -773,4 +752,24 @@ func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.Wa
 	})
 
 	return &wg
+}
+
+// LoadTableStats loads table stats from json file.
+func LoadTableStats(fileName string, dom *domain.Domain) error {
+	statsPath := filepath.Join("testdata", fileName)
+	bytes, err := os.ReadFile(statsPath)
+	if err != nil {
+		return err
+	}
+	statsTbl := &statisticsutil.JSONTable{}
+	err = json.Unmarshal(bytes, statsTbl)
+	if err != nil {
+		return err
+	}
+	statsHandle := dom.StatsHandle()
+	err = statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), statsTbl, 0)
+	if err != nil {
+		return err
+	}
+	return nil
 }

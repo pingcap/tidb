@@ -399,7 +399,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	n := input.NumRows()
 	selected = selected[:0]
 	nulls = nulls[:0]
-	for i := 0; i < n; i++ {
+	for range n {
 		selected = append(selected, false)
 		nulls = append(nulls, false)
 	}
@@ -407,7 +407,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 	sel := allocSelSlice(n)
 	defer deallocateSelSlice(sel)
 	sel = sel[:0]
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sel = append(sel, i)
 	}
 	input.SetSel(sel)
@@ -922,7 +922,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // Set the skip cache to false when the caller will not change the logical plan tree.
 // it is currently closed only by pkg/planner/core.ExtractNotNullFromConds when to extractFD.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
-	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, expr) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {

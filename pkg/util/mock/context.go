@@ -25,10 +25,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -68,6 +70,7 @@ type Context struct {
 	*sessionexpr.ExprContext
 	txn           wrapTxn // mock global variable
 	dom           any
+	schValidator  validatorapi.Validator
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
@@ -351,18 +354,41 @@ func (c *Context) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 // MockInfoschema only serves for test.
 var MockInfoschema func(tbList []*model.TableInfo) infoschema.MetaOnlyInfoSchema
 
-// GetDomainInfoSchema returns the latest information schema in domain
-func (c *Context) GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema {
+// GetLatestInfoSchema returns the latest information schema in domain
+func (c *Context) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
 	return c.is
 }
 
+// GetLatestISWithoutSessExt implements sessionctx.Context GetLatestISWithoutSessExt interface.
+func (c *Context) GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema {
+	return c.GetLatestInfoSchema()
+}
+
+// GetSQLServer implements sessionctx.Context GetSQLServer interface.
+func (c *Context) GetSQLServer() sqlsvrapi.Server {
+	return c.dom.(sqlsvrapi.Server)
+}
+
+// IsCrossKS implements sessionctx.Context IsCrossKS interface.
+func (*Context) IsCrossKS() bool {
+	return false
+}
+
+// GetSchemaValidator implements sessionctx.Context GetSchemaValidator interface.
+func (c *Context) GetSchemaValidator() validatorapi.Validator {
+	return c.schValidator
+}
+
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
 func (*Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
+
+// BuiltinFunctionUsageInc implements sessionctx.Context.
+func (*Context) BuiltinFunctionUsageInc(_ string) {}
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, error) {
@@ -641,9 +667,10 @@ func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 	return nil
 }
 
-// BindDomain bind domain into ctx.
-func (c *Context) BindDomain(dom any) {
+// BindDomainAndSchValidator bind domain into ctx.
+func (c *Context) BindDomainAndSchValidator(dom any, validator validatorapi.Validator) {
 	c.dom = dom
+	c.schValidator = validator
 }
 
 // GetDomain get domain from ctx.
@@ -682,7 +709,6 @@ func newContext() *Context {
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	vars.EnablePaging = vardef.DefTiDBEnablePaging
 	vars.MinPagingSize = vardef.DefMinPagingSize
-	vars.CostModelVersion = vardef.DefTiDBCostModelVer
 	vars.EnableChunkRPC = true
 	vars.DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	if err := sctx.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, "67108864"); err != nil {

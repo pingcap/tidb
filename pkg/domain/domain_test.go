@@ -89,7 +89,7 @@ func TestInfo(t *testing.T) {
 		ddl.WithStore(s),
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
-		ddl.WithSchemaLoader(dom),
+		ddl.WithSchemaLoader(dom.isSyncer),
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
@@ -127,8 +127,8 @@ func TestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone"))
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 1000; i++ {
-		if dom.SchemaValidator.IsStarted() {
+	for range 1000 {
+		if dom.GetSchemaValidator().IsStarted() {
 			syncerStarted = true
 			break
 		}
@@ -152,7 +152,7 @@ func TestInfo(t *testing.T) {
 	}
 	ctx := mock.NewContext()
 	require.NoError(t, dom.ddlExecutor.CreateSchema(ctx, stmt))
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.isSyncer.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
 	// Test for RemoveServerInfo.
@@ -497,21 +497,4 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
 	}
-}
-
-func TestDeferFn(t *testing.T) {
-	var df deferFn
-	var a, b, c, d bool
-	df.add(func() { a = true }, time.Now().Add(50*time.Millisecond))
-	df.add(func() { b = true }, time.Now().Add(100*time.Millisecond))
-	df.add(func() { c = true }, time.Now().Add(10*time.Minute))
-	df.add(func() { d = true }, time.Now().Add(150*time.Millisecond))
-	time.Sleep(300 * time.Millisecond)
-	df.check()
-
-	require.True(t, a)
-	require.True(t, b)
-	require.False(t, c)
-	require.True(t, d)
-	require.Len(t, df.data, 1)
 }

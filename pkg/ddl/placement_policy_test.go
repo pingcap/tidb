@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -176,7 +177,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// Test again with failpoint.
 	// For https://github.com/pingcap/tidb/issues/54796
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("exchangepartition")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/MockTryLoadDiffError", `return("exchangepartition")`)
 	testPlacementPolicy(t)
 }
 
@@ -1036,12 +1037,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	require.NotNil(t, dependencies)
 	require.Equal(t, 2, len(dependencies))
 	in := func() bool {
-		for _, one := range dependencies {
-			if one == tbl2.Meta().ID {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(dependencies, tbl2.Meta().ID)
 	}
 	require.Equal(t, true, in())
 

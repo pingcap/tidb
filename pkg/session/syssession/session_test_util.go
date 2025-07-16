@@ -55,3 +55,9 @@ func (s *Session) IsInternalClosed() bool {
 func (p *AdvancedSessionPool) Size() int {
 	return len(p.pool)
 }
+
+// IsAvoidReuse returns whether the internal session avoids re-use
+// It is only used in testing
+func (s *Session) IsAvoidReuse() bool {
+	return s.internal.IsAvoidReuse()
+}

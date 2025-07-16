@@ -48,7 +48,7 @@ var (
 
 	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
 	// subtask table.
-	updateSubtaskSummaryInterval = 3 * time.Second
+	updateSubtaskSummaryInterval = 5 * time.Second
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
@@ -113,7 +113,11 @@ type BaseTaskExecutor struct {
 // TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
 // depends on it to init, so we keep it for now.
 func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *BaseTaskExecutor {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
+	logger := logutil.ErrVerboseLogger().With(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+		zap.String("task-type", string(task.Type)),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
 	}
@@ -197,7 +201,7 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
 		summary := stepExec.RealtimeSummary()
-		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		err := taskMgr.UpdateSubtaskSummary(runStepCtx, curSubtaskID, summary)
 		if err != nil {
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
@@ -463,7 +467,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	defer subtaskCancel()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
-
 	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {

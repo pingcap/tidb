@@ -51,10 +51,10 @@ type Plan interface {
 	ID() int
 
 	// TP get the plan type.
-	TP() string
+	TP(...bool) string
 
 	// Get the ID in explain statement
-	ExplainID() fmt.Stringer
+	ExplainID(isChildOfINL ...bool) fmt.Stringer
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -95,7 +95,7 @@ type PhysicalPlan interface {
 	GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
 
 	// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
-	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
+	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -199,7 +199,7 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
 	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
@@ -280,6 +280,7 @@ type LogicalPlan interface {
 	RollBackTaskMap(TS uint64)
 
 	// CanPushToCop check if we might push this plan to a specific store.
+	// Deprecated: don't depend subtree based push check, see CanSelfBeingPushedToCopImpl based op-self push check.
 	CanPushToCop(store kv.StoreType) bool
 
 	// ExtractFD derive the FDSet from the tree bottom up.

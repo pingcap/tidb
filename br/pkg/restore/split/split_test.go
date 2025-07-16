@@ -134,6 +134,33 @@ func TestScatterSequentiallyRetryCnt(t *testing.T) {
 	require.Equal(t, 7, backoffer.already)
 }
 
+// TestBatchScatterRegionsRetryCnt tests the retry count of BatchScatterRegions.
+func TestBatchScatterRegionsRetryCnt(t *testing.T) {
+	mockClient := NewMockPDClientForSplit()
+	mockClient.scatterRegions.failedCount = 7
+	client := pdClient{
+		needScatterVal: true,
+		client:         mockClient,
+	}
+	client.needScatterInit.Do(func() {})
+
+	ctx := context.Background()
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+}
+
 func TestScatterBackwardCompatibility(t *testing.T) {
 	mockClient := NewMockPDClientForSplit()
 	mockClient.scatterRegions.notImplemented = true
@@ -991,7 +1018,7 @@ func TestSplitPoint2(t *testing.T) {
 	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", i)), keyWithTablePrefix(tableID, getCharFromNumber("g", i+1)))
 	}
 	client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", 256)), keyWithTablePrefix(tableID, "h"))

@@ -472,7 +472,7 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	name = strings.ToLower(name)
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			tc.Savepoints = slices.Delete(tc.Savepoints, i, i+1)
 			return true
 		}
 	}
@@ -513,9 +513,7 @@ func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
 	if tc.pessimisticLockCache == nil {
 		tc.pessimisticLockCache = make(map[string][]byte)
 	}
-	for key, val := range tc.CurrentStmtPessimisticLockCache {
-		tc.pessimisticLockCache[key] = val
-	}
+	maps.Copy(tc.pessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	tc.CurrentStmtPessimisticLockCache = nil
 }
 
@@ -865,6 +863,9 @@ type SessionVars struct {
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
 
+	// InExplainExplore indicates if this statement is under EXPLAIN EXPLORE.
+	InExplainExplore bool
+
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 
@@ -1019,6 +1020,9 @@ type SessionVars struct {
 
 	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
 	RiskEqSkewRatio float64
+
+	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket.
+	RiskRangeSkewRatio float64
 
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
@@ -1435,8 +1439,6 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
-	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
-	EnableNewCostInterface bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
 	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
@@ -1612,6 +1614,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// EnhanceIndexJoinBuildV2 indicates whether to enhance index join build.
+	EnhanceIndexJoinBuildV2 bool
+
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
@@ -1641,6 +1646,15 @@ type SessionVars struct {
 	// Value 0 will estimate row(s) found immediately.
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
+
+	// RecordRelevantOptVarsAndFixes indicates whether to record optimizer variables/fixes relevant to this query.
+	RecordRelevantOptVarsAndFixes bool
+
+	// RelevantOptVars is a map of relevant optimizer variables to be recorded.
+	RelevantOptVars map[string]struct{}
+
+	// RelevantOptFixes is a map of relevant optimizer fixes to be recorded.
+	RelevantOptFixes map[uint64]struct{}
 
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
@@ -1723,6 +1737,35 @@ type SessionVars struct {
 
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
+}
+
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2143,7 +2186,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    vardef.DefTiDBRetryLimit,
@@ -2156,6 +2199,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
 		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
 		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
+		RiskRangeSkewRatio:            vardef.DefOptRiskRangeSkewRatio,
 		cpuFactor:                     vardef.DefOptCPUFactor,
 		copCPUFactor:                  vardef.DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
@@ -2247,7 +2291,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:               vardef.DefTiDBRedactLog,
 		EnableWindowFunction:          vardef.DefEnableWindowFunction,
+		CostModelVersion:              vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
+		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
+		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 	}
+	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
@@ -2334,6 +2384,7 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 
 // GetAllowPreferRangeScan get preferRangeScan from SessionVars.preferRangeScan.
 func (s *SessionVars) GetAllowPreferRangeScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptPreferRangeScan)
 	return s.preferRangeScan
 }
 
@@ -2765,8 +2816,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return sv.SetSessionFromHook(s, val)
 }
 
-// SetSystemVarWithOldValAsRet is wrapper of SetSystemVar. Return the old value for later use.
-func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, error) {
+// SetSystemVarWithOldStateAsRet is wrapper of SetSystemVar. Return the old value for later use.
+func (s *SessionVars) SetSystemVarWithOldStateAsRet(name string, val string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -2775,12 +2826,24 @@ func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (stri
 	if err != nil {
 		return "", err
 	}
-	// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
-	// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
-	oldV, err := s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
-	if err != nil {
-		return "", err
+
+	var oldV string
+
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		oldV, _ /* not_default */, err = sv.GetStateValue(s)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
+		// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
+		oldV, err = s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+		if err != nil {
+			return "", err
+		}
 	}
+
 	return oldV, sv.SetSessionFromHook(s, val)
 }
 

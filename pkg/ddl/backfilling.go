@@ -169,8 +169,7 @@ type backfillCtx struct {
 	metricCounter prometheus.Counter
 }
 
-func newBackfillCtx(id int, rInfo *reorgInfo,
-	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool, isUpdateColumn bool) (*backfillCtx, error) {
+func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isUpdateColumn bool) (*backfillCtx, error) {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
 	exprCtx, err := newReorgExprCtxWithReorgMeta(rInfo.ReorgMeta, warnHandler)
 	if err != nil {
@@ -193,9 +192,6 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	}
 
 	tblCtx := newReorgTableMutateContext(exprCtx)
-	if isDistributed {
-		id = int(backfillContextID.Add(1))
-	}
 
 	colOrIdxName := ""
 	switch rInfo.Job.Type {
@@ -395,6 +391,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
+	failpoint.InjectCall("afterHandleBackfillTask", task.jobID)
+
 	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
 		zap.Int("added count", result.addedCount),
@@ -485,6 +483,7 @@ func loadTableRanges(
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
+	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	if len(startKey) == 0 && len(endKey) == 0 {
@@ -543,6 +542,7 @@ func loadTableRanges(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ranges = splitRangesByKeys(ranges, splitKeys)
 	logutil.DDLLogger().Info("load table ranges from PD done",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
@@ -550,6 +550,37 @@ func loadTableRanges(
 		zap.Int("range count", len(ranges)))
 	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
 	return ranges, nil
+}
+
+// splitRangesByKeys splits the ranges into more ranges by given split keys.
+// The split keys should be ordered.
+func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
+	if len(splitKeys) == 0 {
+		return ranges
+	}
+	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
+	for _, r := range ranges {
+		start := r.StartKey
+		finishOneRange := false
+		for !finishOneRange {
+			if len(splitKeys) == 0 {
+				break
+			}
+			split := splitKeys[0]
+			switch {
+			case split.Cmp(start) <= 0:
+				splitKeys = splitKeys[1:]
+			case split.Cmp(r.EndKey) < 0:
+				splitKeys = splitKeys[1:]
+				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
+				start = split
+			default:
+				finishOneRange = true
+			}
+		}
+		ret = append(ret, kv.KeyRange{StartKey: start, EndKey: r.EndKey})
+	}
+	return ret
 }
 
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
@@ -772,7 +803,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
-	rowCntListener := &localRowCntListener{
+	rowCntListener := &localRowCntCollector{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
 		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
@@ -828,20 +859,9 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 }
 
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
-	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
-	if opR == nil || opW == nil {
+	reader, writer := pipe.GetReaderAndWriter()
+	if reader == nil || writer == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
-		return
-	}
-	reader, readerOk := opR.(*TableScanOperator)
-	writer, writerOk := opW.(*IndexIngestOperator)
-	if !readerOk || !writerOk {
-		logutil.DDLIngestLogger().Error(
-			"unexpected operator types, config can't be adjusted",
-			zap.Int64("jobID", job.ID),
-			zap.Bool("isReaderValid", readerOk),
-			zap.Bool("isWriterValid", writerOk),
-		)
 		return
 	}
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
@@ -900,8 +920,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	return err
 }
 
-type localRowCntListener struct {
-	EmptyRowCntListener
+type localRowCntCollector struct {
 	reorgCtx *reorgCtx
 	counter  prometheus.Counter
 
@@ -914,15 +933,15 @@ type localRowCntListener struct {
 	}
 }
 
-func (s *localRowCntListener) Written(rowCnt int) {
+func (s *localRowCntCollector) Add(_, rowCnt int64) {
 	s.curPhysicalRowCnt.mu.Lock()
-	s.curPhysicalRowCnt.cnt += int64(rowCnt)
+	s.curPhysicalRowCnt.cnt += rowCnt
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + s.curPhysicalRowCnt.cnt)
 	s.curPhysicalRowCnt.mu.Unlock()
 	s.counter.Add(float64(rowCnt))
 }
 
-func (s *localRowCntListener) SetTotal(total int) {
+func (s *localRowCntCollector) SetTotal(total int) {
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
 }
 
@@ -987,6 +1006,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return errors.Trace(err)
 	}
 
+	var splitKeys []kv.Key
+	if reorgInfo.mergingTmpIdx {
+		splitKeys = getSplitKeysForTempIndexRanges(t.GetPhysicalID(), reorgInfo.elements)
+	}
+
 	// process result goroutine
 	eg.Go(func() error {
 		totalAddedCount := reorgInfo.Job.GetRowCount()
@@ -1022,7 +1046,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				} else {
 					totalAddedCount += int64(result.addedCount)
 				}
-				dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalAddedCount)
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 
@@ -1046,7 +1069,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, splitKeys, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}

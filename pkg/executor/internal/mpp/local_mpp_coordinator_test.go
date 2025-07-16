@@ -18,20 +18,21 @@ import (
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNeedReportExecutionSummary(t *testing.T) {
 	tableScan := &plannercore.PhysicalTableScan{}
-	limit := &plannercore.PhysicalLimit{}
+	limit := &physicalop.PhysicalLimit{}
 	passSender := &plannercore.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	passSender.SetID(10)
 	tableReader := &plannercore.PhysicalTableReader{}
 	tableReader.SetTablePlanForTest(passSender)
-	limitTIDB := &plannercore.PhysicalLimit{}
+	limitTIDB := &physicalop.PhysicalLimit{}
 	limitTIDB.SetChildren(tableReader)
 	passSender.SetChildren(limit)
 	limit.SetChildren(tableScan)
@@ -49,7 +50,7 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	tableReader2 := &plannercore.PhysicalTableReader{}
 	tableReader2.SetTablePlanForTest(tableScan2)
 	join.SetChildren(tableReader2, projection)
-	limitTIDB2 := &plannercore.PhysicalLimit{}
+	limitTIDB2 := &physicalop.PhysicalLimit{}
 	limitTIDB2.SetChildren(join)
 	require.True(t, needReportExecutionSummary(limitTIDB2, 10, false))
 }
@@ -84,7 +85,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := 0; i < slots; i++ {
+	for i := range slots {
 		require.True(t, sameZoneFlags[i])
 	}
 
@@ -96,7 +97,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := 0; i < slots; i++ {
+	for i := range slots {
 		require.False(t, sameZoneFlags[i])
 	}
 
@@ -105,7 +106,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := 0; i < slots; i++ {
+	for i := range slots {
 		require.True(t, sameZoneFlags[i])
 	}
 

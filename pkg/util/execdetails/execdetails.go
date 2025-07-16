@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -1176,9 +1177,7 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		invertedIdxIndexedRows:        context.invertedIdxIndexedRows,
 		invertedIdxSearchSelectedRows: context.invertedIdxSearchSelectedRows,
 	}
-	for k, v := range context.regionsOfInstance {
-		newContext.regionsOfInstance[k] = v
-	}
+	maps.Copy(newContext.regionsOfInstance, context.regionsOfInstance)
 	return newContext
 }
 
@@ -1694,6 +1693,16 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) mergeExecSummary(summary *ti
 	networkTraffic.interZoneSendBytes += *summary.InterZoneSendBytes
 	networkTraffic.innerZoneReceiveBytes += *summary.InnerZoneReceiveBytes
 	networkTraffic.interZoneReceiveBytes += *summary.InterZoneReceiveBytes
+}
+
+// GetInterZoneTrafficBytes returns the inter zone network traffic bytes involved
+// between tiflash instances.
+func (networkTraffic *TiFlashNetworkTrafficSummary) GetInterZoneTrafficBytes() uint64 {
+	// NOTE: we only count the inter zone sent bytes here because tiflash count the traffic bytes
+	// of all sub request. For each sub request, both side with count the send and recv traffic.
+	// So here, we only use the send bytes as the overall traffic to avoid count the traffic twice.
+	// While this statistics logic seems a bit weird to me, but this is the tiflash side desicion.
+	return networkTraffic.interZoneSendBytes
 }
 
 // BasicRuntimeStats is the basic runtime stats.
