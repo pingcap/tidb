@@ -181,6 +181,11 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
 failed to wait region splitted
