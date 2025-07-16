@@ -426,7 +426,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// 3. Estimate the remaining average estimate based upon the NDV and row count.
 	//    Func `unmatchedEqAverage` will account for whether the remainder is based upon values remaining in the
 	//	  histogram or using the original average estimate.
-	result, _ = unmatchedEQAverage(sctx, nil, idx, realtimeRowCount)
+	result, _ = unmatchedEQAverage(sctx, nil, idx, float64(realtimeRowCount))
 	return result
 }
 

@@ -171,7 +171,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		return histCnt, nil
 	}
 	// 3. use uniform distribution assumption for the remainder
-	result, _ = unmatchedEQAverage(sctx, c, nil, realtimeRowCount)
+	result, _ = unmatchedEQAverage(sctx, c, nil, float64(realtimeRowCount))
 
 	return result, nil
 }
