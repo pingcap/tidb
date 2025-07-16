@@ -773,6 +773,7 @@ var funcs = map[string]functionClass{
 	ast.Hex:             &hexFunctionClass{baseFunctionClass{ast.Hex, 1, 1}},
 	ast.InsertFunc:      &insertFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
 	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
+	ast.LabelAceesible:  &labelAccessibleFunctionClass{baseFunctionClass{ast.LabelAceesible, 2, 2}},
 	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
 	ast.Length:          &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
@@ -981,11 +982,14 @@ var funcs = map[string]functionClass{
 	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
+	ast.DataOperationAudit:   &dataOpAuditFunctionClass{baseFunctionClass{ast.DataOperationAudit, 5, 5}},
 
 	// TiDB Sequence function.
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	ast.SetProcedureVar: &setProcedureVarFunctionClass{baseFunctionClass{ast.SetProcedureVar, 2, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
@@ -1008,7 +1012,7 @@ func GetDisplayName(name string) string {
 // GetBuiltinList returns a list of builtin functions
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
-	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
+	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull, ast.SetProcedureVar}
 	for funcName := range funcs {
 		skipFunc := false
 		// Skip not implemented functions

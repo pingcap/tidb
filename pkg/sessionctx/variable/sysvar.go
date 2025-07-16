@@ -85,6 +85,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ssl_ca", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_cert", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_key", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_ca", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_sig_cert", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_sig_key", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_enc_cert", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_enc_key", Value: ""},
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 	/* TiDB specific variables */
@@ -705,6 +710,29 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(int64(PasswordValidationSpecialCharCount.Load()), 10), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableProcedure, Value: Off, Type: TypeBool,
+		SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+			on := TiDBOptOn(val)
+			// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
+			if on && s.StmtCtx.StmtType == "Set" {
+				s.EnableSPParamSubstitute = on
+				err := s.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBEnableSPParamSubstitute, "ON")
+				if err != nil {
+					return err
+				}
+			}
+			TiDBEnableProcedureValue.Store(on)
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(TiDBEnableProcedureValue.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: AutomaticSpPrivileges, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		AutomaticSPPrivileges.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(AutomaticSPPrivileges.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
 	{Scope: ScopeGlobal, Name: DefaultPasswordLifetime, Value: "0", Type: TypeInt, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -1010,6 +1038,14 @@ var defaultSysVars = []*SysVar{
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(TiDBAutoAnalyzePartitionBatchSize))
 			return normalizedValue, nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: MaxUserConnections, Value: strconv.FormatUint(DefMaxUserConnections, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			MaxUserConnectionsCount.Store(uint32(TidbOptInt64(val, DefMaxUserConnections)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(uint64(MaxUserConnectionsCount.Load()), 10), nil
 		},
 	},
 	// variable for top SQL feature.
@@ -3318,6 +3354,14 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetMaxCapacity()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableDutySeparationMode, Value: BoolToOnOff(DefTiDBEnableDutySeparationMode), Type: TypeBool, ReadOnly: true,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableDutySeparationMode.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableDutySeparationMode.Load()), nil
+		},
+	},
 	// runtime filter variables group
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRuntimeFilterTypeName, Value: DefRuntimeFilterType, Type: TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
@@ -3453,6 +3497,51 @@ var defaultSysVars = []*SysVar{
 			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: TiDBEnableLabelSecurity, Value: BoolToOnOff(DefTiDBEnableLabelSecurity), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+		EnableLabelSecurity.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableLabelSecurity.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: SPCacheSize, Value: strconv.Itoa(DefStoredProgramCacheSize), Type: TypeInt, MinValue: 0, MaxValue: 524288, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		StoredProgramCacheSize.Store(val)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(int(StoredProgramCacheSize.Load())), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxSpRecursionDepth, Type: TypeInt, Value: "0", MinValue: 0, MaxValue: 255, SetSession: func(s *SessionVars, val string) error {
+		s.MaxSpRecursionDepth = TidbOptInt(val, 0)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: AutomaticSpPrivileges, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		AutomaticSPPrivileges.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(AutomaticSPPrivileges.Load()), nil
+	}},
+	{Scope: ScopeSession, Name: TiDBProcedureLastErrorSQL, Value: "", Type: TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return s.LastProcedureErrorStr, nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableProcedureAstCache, Value: BoolToOnOff(TiDBEnableSPAstReuse.Load()), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(TiDBEnableSPAstReuse.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		TiDBEnableSPAstReuse.Store(TiDBOptOn(val))
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableUDVSubstitute, Value: BoolToOnOff(DefTiDBEnableUDVSubstitute), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableUDVSubstitute = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSPParamSubstitute, Value: BoolToOnOff(DefTiDBEnableSPParamSubstitute), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSPParamSubstitute = TiDBOptOn(val)
+		return nil
+	}, GetSession: func(vars *SessionVars) (string, error) {
+		return BoolToOnOff(vars.EnableSPParamSubstitute), nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIdleTransactionTimeout, Value: strconv.Itoa(DefTiDBIdleTransactionTimeout), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear,
 		SetSession: func(s *SessionVars, val string) error {
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
@@ -3506,6 +3595,29 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBTSOClientRPCMode, Value: DefTiDBTSOClientRPCMode, Type: TypeEnum, PossibleValues: []string{TSOClientRPCModeDefault, TSOClientRPCModeParallel, TSOClientRPCModeParallelFast},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBEnableLoginHistory, Value: BoolToOnOff(DefTiDBEnableLoginHistory), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableLoginHistory.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableLoginHistory.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBLoginHistoryRetainDuration, Value: DefTiDBLoginHistoryRetainDuration.String(),
+		Type: TypeDuration, MinValue: int64(time.Second), MaxValue: math.MaxUint64,
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return LoginHistoryRetainDuration.Load().String(), nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			LoginHistoryRetainDuration.Store(d)
+			return nil
 		},
 	},
 }
@@ -3883,4 +3995,6 @@ const (
 	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
 	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
 	ValidatePasswordDictionary = "validate_password.dictionary"
+	// SPCacheSize specified the soft upper limit for number of cached stored routines for one connection.
+	SPCacheSize = "stored_program_cache"
 )

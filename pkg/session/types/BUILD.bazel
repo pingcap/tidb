@@ -17,5 +17,6 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/util",
         "//pkg/util/sqlexec",
+        "@com_gitee_trisia_gotlcp//tlcp",
     ],
 )

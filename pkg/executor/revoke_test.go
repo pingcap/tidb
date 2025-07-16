@@ -175,3 +175,37 @@ func TestRevokeColumnScope(t *testing.T) {
 	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3"`).Rows()
 	require.Len(t, rows, 0)
 }
+
+func TestRevokeColumnPriv(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE t1 (c1 int, c2 int)")
+
+	// grant column priv should add records to both mysql.columns_priv and mysql.tables_priv
+	tk.MustExec("GRANT SELECT(c1) ON test.t1 TO u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+		Check(testkit.Rows("Select"))
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+		Check(testkit.Rows(" Select"))
+
+	// revoke column privilege should remove records from both mysql.columns_priv and mysql.tables_priv
+	tk.MustExec("REVOKE SELECT(c1) ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+		Check(testkit.Rows())
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+		Check(testkit.Rows())
+
+	// revoke table privilege should also remove corresponding records from mysql.columns_priv
+	tk.MustExec("GRANT SELECT,SELECT(c1) ON test.t1 TO u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+		Check(testkit.Rows("Select"))
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+		Check(testkit.Rows("Select Select"))
+	tk.MustExec("REVOKE SELECT ON test.t1 FROM u1")
+	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
+		Check(testkit.Rows())
+	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
+		Check(testkit.Rows())
+}
