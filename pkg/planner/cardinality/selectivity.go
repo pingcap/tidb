@@ -1182,7 +1182,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 	// Do not allow the result to be greater than the smallest value in the TopN.
 	// But only if the number of additions isn't larger than the original (full) row count - as this would indicate
 	// that the statistics are very unreliable.
-	if minTopN > 0 && fullRowCount < addedRows {
+	if minTopN > 0 {
 		result = min(result, minTopN)
 		// Do not allow the "worst case" estimate (maxEstimate) to be greater than the smallest value in the TopN.
 		if maxEstimate > 0 {
