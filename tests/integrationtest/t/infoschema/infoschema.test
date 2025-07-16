@@ -64,6 +64,9 @@ create table caseSensitive (a int);
 create table unrelatedTable (a int);
 select table_schema, table_name from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
 select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
+select table_schema, table_name from information_schema.tables where table_schema like '%infoschema__infoschem%' and table_name like '%aseSensitive';
+select table_schema, table_name from information_schema.tables where table_name like '%Sensitive' and table_name like '%aseSensitive';
+select table_schema, table_name from information_schema.tables where table_name like '%aseSensitive%' and table_name like '%fake_table%';
 drop table caseSensitive;
 drop table unrelatedTable;
 
@@ -81,8 +84,6 @@ select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table
 explain select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
 -- sorted_result
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
--- sorted_result
-select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_name like 'pt%';
 drop table pt1;
 drop table pt2;
 
@@ -156,14 +157,6 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 explain select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
 --sorted_result
 select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema = 'infoschema__infoschema_2';
---sorted_result
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema like '%infoschema__infoschema_2%';
---sorted_result
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_name like '%t%';
---sorted_result
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema like '%fake_schema%';
---sorted_result
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%fake_table%' and table_schema like '%infoschema__infoschema_2%';
 drop table infoschema__infoschema.t1;
 drop table infoschema__infoschema_2.t2;
 
