@@ -44,3 +44,12 @@ func (t *TestStackTrace) IsEmpty() bool {
 func (t *TestStackTrace) String() string {
 	return string(t.stack)
 }
+
+// Copy creates a copy of the TestStackTrace instance.
+func (t *TestStackTrace) Copy() TestStackTrace {
+	result := TestStackTrace{
+		stack: make([]byte, len(t.stack)),
+	}
+	copy(result.stack, t.stack)
+	return result
+}

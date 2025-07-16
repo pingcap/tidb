@@ -578,6 +578,32 @@ func TestMPPSharedCTEScan(t *testing.T) {
 	}
 }
 
+func TestMPPSharedCTEScan2(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+
+	// test table
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("create table s(a int, b int, c int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("alter table s set tiflash replica 1")
+
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tb = external.GetTableByName(t, tk, "test", "s")
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("set @@tidb_enforce_mpp='on'")
+	tk.MustExec("set @@tidb_opt_enable_mpp_shared_cte_execution='on'")
+	tk.MustQuery("explain format = 'brief' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2, (with c3 as (select * from t) select c3.* from c3, c3 c4 where c3.c=c4.b) c3 where c1.a=c2.b and c1.a=c3.a")
+}
+
 func TestRollupMPP(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")

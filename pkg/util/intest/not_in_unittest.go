@@ -38,6 +38,7 @@ func (*TestStackTrace) String() string {
 	return "TestStackTrace: no stack trace available in non-test builds"
 }
 
-func (*TestStackTrace) Copy() *TestStackTrace {
-	return &TestStackTrace{}
+// Copy creates a copy of the TestStackTrace instance.
+func (*TestStackTrace) Copy() TestStackTrace {
+	return TestStackTrace{}
 }
