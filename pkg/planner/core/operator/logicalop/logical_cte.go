@@ -132,7 +132,12 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *op
 	}
 	newPred := make([]expression.Expression, 0, len(predicates))
 	for i := range pushedPredicates {
-		newPred = append(newPred, pushedPredicates[i].Clone())
+		switch pp := pushedPredicates[i].(type) {
+		case *expression.ScalarFunction:
+			newPred = append(newPred, pp.CloneWithoutHashcode())
+		default:
+			newPred = append(newPred, pp.Clone())
+		}
 		ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
 	}
 	p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
