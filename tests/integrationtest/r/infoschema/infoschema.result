@@ -142,6 +142,14 @@ infoschema__infoschema	caseSensitive
 select table_schema, table_name, tidb_pk_type from information_schema.tables where table_schema = 'infoschema__infoschema' and table_name like '%aseSensitive';
 table_schema	table_name	tidb_pk_type
 infoschema__infoschema	caseSensitive	NONCLUSTERED
+select table_schema, table_name from information_schema.tables where table_schema like '%infoschema__infoschem%' and table_name like '%aseSensitive';
+table_schema	table_name
+infoschema__infoschema	caseSensitive
+select table_schema, table_name from information_schema.tables where table_name like '%Sensitive' and table_name like '%aseSensitive';
+table_schema	table_name
+infoschema__infoschema	caseSensitive
+select table_schema, table_name from information_schema.tables where table_name like '%aseSensitive%' and table_name like '%fake_table%';
+table_schema	table_name
 drop table caseSensitive;
 drop table unrelatedTable;
 create table pt1(a int primary key, b int) partition by hash(a) partitions 4;
@@ -175,8 +183,6 @@ id	estRows	task	access object	operator info
 Projection_4	10000.00	root		Column#3, Column#4
 └─MemTableScan_5	10000.00	root	table:PARTITIONS	table_schema:["infoschema__infoschema"], table_name_pattern:[pt0]
 select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_schema = 'infoschema__infoschema';
-TABLE_NAME	PARTITION_NAME
-select TABLE_NAME, PARTITION_NAME from information_schema.partitions where table_name like 'pt0' and table_name like 'pt%';
 TABLE_NAME	PARTITION_NAME
 drop table pt1;
 drop table pt2;
@@ -304,22 +310,6 @@ select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics 
 TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 infoschema__infoschema_2	t2	a
 infoschema__infoschema_2	t2	b
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema like '%infoschema__infoschema_2%';
-TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
-infoschema__infoschema_2	t2	a
-infoschema__infoschema_2	t2	b
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_name like '%t%';
-TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
-infoschema__infoschema_2	t2	a
-infoschema__infoschema_2	t2	b
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_name like '%t2%';
-TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
-infoschema__infoschema_2	t2	a
-infoschema__infoschema_2	t2	b
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%t2%' and table_schema like '%fake_schema%';
-TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
-select TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME from information_schema.statistics where table_name like '%fake_table%' and table_schema like '%infoschema__infoschema_2%';
-TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME
 drop table infoschema__infoschema.t1;
 drop table infoschema__infoschema_2.t2;
 drop database if exists indexusage;
