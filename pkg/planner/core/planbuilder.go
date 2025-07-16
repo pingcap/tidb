@@ -1378,6 +1378,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
+	// Filter out indexes that have higher EqCondCount when a subset index has the same columns as the superset
+	if !hasScanHint || !hasUseOrForce {
+		available = filterIndexesByEqCondCount(available)
+	}
+
 	return available, nil
 }
 
@@ -1450,6 +1455,58 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 		i++
 	}
 	return paths[:i]
+}
+
+// filterIndexesByEqCondCount filters out indexes that have higher EqCondCount values
+// when a subset index has the same columns as the superset.
+func filterIndexesByEqCondCount(paths []*util.AccessPath) []*util.AccessPath {
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	// Helper function to check if one index is a prefix of another
+	isIndexPrefix := func(idx1, idx2 *model.IndexInfo) bool {
+		if len(idx1.Columns) > len(idx2.Columns) {
+			return false
+		}
+		for i := range idx1.Columns {
+			if idx1.Columns[i].Name.L != idx2.Columns[i].Name.L {
+				return false
+			}
+		}
+		return true
+	}
+
+	filteredPaths := make([]*util.AccessPath, 0, len(paths))
+	for i, path := range paths {
+		// Skip table paths (they don't have index information)
+		if path.Index == nil {
+			filteredPaths = append(filteredPaths, path)
+			continue
+		}
+
+		shouldKeep := true
+		for j, otherPath := range paths {
+			if i == j || otherPath.Index == nil {
+				continue
+			}
+
+			// Check if current index is a prefix of the other index
+			if isIndexPrefix(path.Index, otherPath.Index) {
+				// If current index has higher or equal EqCondCount, keep the other one instead
+				if path.EqOrInCondCount < otherPath.EqOrInCondCount {
+					shouldKeep = false
+					break
+				}
+			}
+		}
+
+		if shouldKeep {
+			filteredPaths = append(filteredPaths, path)
+		}
+	}
+
+	return filteredPaths
 }
 
 func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*logicalop.LogicalLock, error) {
