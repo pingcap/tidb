@@ -17,7 +17,6 @@ go_library(
         "split.go",
         "stat_reader.go",
         "testutil.go",
-        "tici_file_writer.go",
         "util.go",
         "writer.go",
     ],

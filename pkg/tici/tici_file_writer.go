@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package external
+package tici
 
 import (
 	"context"
@@ -25,22 +25,33 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
-
 	"go.uber.org/zap"
 )
+
+// maxUploadWorkersPerThread defines the maximum number of upload workers per thread.
+// This variable refers to maxUploadWorkersPerThread in the external package.
+var maxUploadWorkersPerThread = 8
 
 // ticiFileWriterMemSizeLimit is the memory buffer size limit for TICIFileWriter.
 // This buffer is used to avoid frequent allocations for each KV pair.
 var ticiFileWriterMemSizeLimit uint64 = 128 * units.MiB
 
-// ticiFileFormatVersion defines the version of the TiCI file format.
-// This is used to ensure compatibility with future versions of the TiCI file format.
-// If the format changes, this version should be incremented.
-const ticiFileFormatVersion uint8 = 1
-
 // TiCIMinUploadPartSize defines the minimum upload part size for external storage multipart uploads.
 // Both S3 and GCS require a minimum part size of 5MiB.
 var TiCIMinUploadPartSize int64 = 5 * units.MiB
+
+const (
+	// ticiFileFormatVersion defines the version of the TiCI file format.
+	// This is used to ensure compatibility with future versions of the TiCI file format.
+	// If the format changes, this version should be incremented.
+	ticiFileFormatVersion uint8 = 1
+
+	// we use uint64 to store the length of key and value.
+	lengthBytes = 8
+
+	// DefaultBlockSize is the default block size for writer.
+	DefaultBlockSize = 16 * units.MiB
+)
 
 // TICIFileWriter writes data to a fixed S3 location.
 type TICIFileWriter struct {
@@ -161,7 +172,7 @@ func (w *TICIFileWriter) WriteHeader(
 	header := make([]byte, headerLen)
 	off := 0
 
-	header[off] = byte(ticiFileFormatVersion)
+	header[off] = ticiFileFormatVersion
 	off += 1
 
 	binary.BigEndian.PutUint64(header[off:], uint64(len(tblInBytes)))
@@ -182,7 +193,7 @@ func (w *TICIFileWriter) WriteHeader(
 	}
 
 	binary.BigEndian.PutUint64(header[off:], commitTS)
-	off += 8
+	// off += 8 // for the commitTS, we are using another 8 bytes
 
 	_, err := w.dataWriter.Write(ctx, header)
 	if err != nil {

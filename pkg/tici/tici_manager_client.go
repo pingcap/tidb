@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infosync
+package tici
 
 import (
 	"context"
@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -29,29 +28,49 @@ import (
 
 // TiCIManagerCtx manages fulltext index for TiCI.
 type TiCIManagerCtx struct {
-	conn              *grpc.ClientConn
-	metaServiceClient tici.MetaServiceClient
+	Conn              *grpc.ClientConn
+	metaServiceClient MetaServiceClient
+}
+
+var newTiCIManager = defaultNewTiCIManager
+
+func NewTiCIManager(host, port string) (*TiCIManagerCtx, error) {
+	return newTiCIManager(host, port)
 }
 
 // NewTiCIManager creates a new TiCI manager.
-func NewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
+func defaultNewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
 	conn, err := grpc.NewClient(fmt.Sprintf("%s:%s", ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
-	metaServiceClient := tici.NewMetaServiceClient(conn)
+	metaServiceClient := NewMetaServiceClient(conn)
 	return &TiCIManagerCtx{
-		conn:              conn,
+		Conn:              conn,
 		metaServiceClient: metaServiceClient,
+	}, nil
+}
+
+// NewTiCIManagerWithOpts creates a new TiCI manager with additional gRPC options.
+// This is useful for testing or when you need to customize the gRPC connection.
+func NewTiCIManagerWithOpts(target string, extra ...grpc.DialOption) (*TiCIManagerCtx, error) {
+	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, extra...)
+	conn, err := grpc.Dial(target, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &TiCIManagerCtx{
+		Conn:              conn,
+		metaServiceClient: NewMetaServiceClient(conn),
 	}, nil
 }
 
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
-	indexColumns := make([]*tici.ColumnInfo, 0)
+	indexColumns := make([]*ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset
-		indexColumns = append(indexColumns, &tici.ColumnInfo{
+		indexColumns = append(indexColumns, &ColumnInfo{
 			ColumnId:     tblInfo.Columns[offset].ID,
 			ColumnName:   tblInfo.Columns[offset].Name.String(),
 			Type:         int32(tblInfo.Columns[offset].GetType()),
@@ -62,9 +81,9 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			IsArray:      len(indexInfo.Columns) > 1,
 		})
 	}
-	tableColumns := make([]*tici.ColumnInfo, 0)
+	tableColumns := make([]*ColumnInfo, 0)
 	for i := range tblInfo.Columns {
-		tableColumns = append(tableColumns, &tici.ColumnInfo{
+		tableColumns = append(tableColumns, &ColumnInfo{
 			ColumnId:     tblInfo.Columns[i].ID,
 			ColumnName:   tblInfo.Columns[i].Name.String(),
 			Type:         int32(tblInfo.Columns[i].GetType()),
@@ -75,19 +94,19 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			IsArray:      len(tblInfo.Columns) > 1,
 		})
 	}
-	req := &tici.CreateIndexRequest{
-		IndexInfo: &tici.IndexInfo{
+	req := &CreateIndexRequest{
+		IndexInfo: &IndexInfo{
 			TableId:   tblInfo.ID,
 			IndexId:   indexInfo.ID,
 			IndexName: indexInfo.Name.String(),
-			IndexType: tici.IndexType_FULL_TEXT,
+			IndexType: IndexType_FULL_TEXT,
 			Columns:   indexColumns,
 			IsUnique:  indexInfo.Unique,
-			ParserInfo: &tici.ParserInfo{
-				ParserType: tici.ParserType_DEFAULT_PARSER,
+			ParserInfo: &ParserInfo{
+				ParserType: ParserType_DEFAULT_PARSER,
 			},
 		},
-		TableInfo: &tici.TableInfo{
+		TableInfo: &TableInfo{
 			TableId:      tblInfo.ID,
 			TableName:    tblInfo.Name.L,
 			DatabaseName: schemaName,
@@ -118,11 +137,11 @@ func (t *TiCIManagerCtx) GetCloudStoragePath(
 	schemaName string,
 	lowerBound, upperBound []byte,
 ) (string, error) {
-	// Convert model.IndexInfo to tici.IndexInfo and extract information needed
-	indexColumns := make([]*tici.ColumnInfo, 0)
+	// Convert model.IndexInfo to IndexInfo and extract information needed
+	indexColumns := make([]*ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset
-		indexColumns = append(indexColumns, &tici.ColumnInfo{
+		indexColumns = append(indexColumns, &ColumnInfo{
 			ColumnId:     tblInfo.Columns[offset].ID,
 			ColumnName:   tblInfo.Columns[offset].Name.String(),
 			Type:         int32(tblInfo.Columns[offset].GetType()),
@@ -133,21 +152,21 @@ func (t *TiCIManagerCtx) GetCloudStoragePath(
 			IsArray:      len(indexInfo.Columns) > 1,
 		})
 	}
-	indexerIndexInfo := &tici.IndexInfo{
+	indexerIndexInfo := &IndexInfo{
 		TableId:   tblInfo.ID,
 		IndexId:   indexInfo.ID,
 		IndexName: indexInfo.Name.String(),
-		IndexType: tici.IndexType_FULL_TEXT,
+		IndexType: IndexType_FULL_TEXT,
 		Columns:   indexColumns,
 		IsUnique:  indexInfo.Unique,
-		ParserInfo: &tici.ParserInfo{
-			ParserType: tici.ParserType_DEFAULT_PARSER,
+		ParserInfo: &ParserInfo{
+			ParserType: ParserType_DEFAULT_PARSER,
 		},
 	}
 
-	tableColumns := make([]*tici.ColumnInfo, 0)
+	tableColumns := make([]*ColumnInfo, 0)
 	for i := range tblInfo.Columns {
-		tableColumns = append(tableColumns, &tici.ColumnInfo{
+		tableColumns = append(tableColumns, &ColumnInfo{
 			ColumnId:     tblInfo.Columns[i].ID,
 			ColumnName:   tblInfo.Columns[i].Name.String(),
 			Type:         int32(tblInfo.Columns[i].GetType()),
@@ -158,7 +177,7 @@ func (t *TiCIManagerCtx) GetCloudStoragePath(
 			IsArray:      len(tblInfo.Columns) > 1,
 		})
 	}
-	indexerTableInfo := &tici.TableInfo{
+	indexerTableInfo := &TableInfo{
 		TableId:      tblInfo.ID,
 		TableName:    tblInfo.Name.L,
 		DatabaseName: schemaName,
@@ -167,7 +186,7 @@ func (t *TiCIManagerCtx) GetCloudStoragePath(
 		IsClustered:  tblInfo.PKIsHandle || tblInfo.IsCommonHandle,
 	}
 
-	req := &tici.GetCloudStoragePathRequest{
+	req := &GetCloudStoragePathRequest{
 		IndexInfo:  indexerIndexInfo,
 		TableInfo:  indexerTableInfo,
 		LowerBound: lowerBound,
@@ -200,7 +219,7 @@ func (t *TiCIManagerCtx) MarkPartitionUploadFinished(
 	ctx context.Context,
 	s3Path string,
 ) error {
-	req := &tici.MarkPartitionUploadFinishedRequest{
+	req := &MarkPartitionUploadFinishedRequest{
 		S3Path: s3Path,
 	}
 	resp, err := t.metaServiceClient.MarkPartitionUploadFinished(ctx, req)
@@ -223,7 +242,7 @@ func (t *TiCIManagerCtx) MarkTableUploadFinished(
 	tableID int64,
 	indexID int64,
 ) error {
-	req := &tici.MarkTableUploadFinishedRequest{
+	req := &MarkTableUploadFinishedRequest{
 		TableId: tableID,
 		IndexId: indexID,
 	}
@@ -246,19 +265,19 @@ func (t *TiCIManagerCtx) MarkTableUploadFinished(
 
 // Close closes the underlying gRPC connection to TiCI Meta Service.
 func (t *TiCIManagerCtx) Close() error {
-	if t.conn != nil {
-		return t.conn.Close()
+	if t.Conn != nil {
+		return t.Conn.Close()
 	}
 	return nil
 }
 
-// ModelTableToTiCITableInfo converts a model.TableInfo to a tici.TableInfo.
-// It extracts the necessary information from the model.TableInfo to create a tici.TableInfo
+// ModelTableToTiCITableInfo converts a model.TableInfo to a TableInfo.
+// It extracts the necessary information from the model.TableInfo to create a TableInfo
 // suitable for TiCI operations.
-func ModelTableToTiCITableInfo(tblInfo *model.TableInfo, schemaName string) *tici.TableInfo {
-	tableColumns := make([]*tici.ColumnInfo, 0)
+func ModelTableToTiCITableInfo(tblInfo *model.TableInfo, schemaName string) *TableInfo {
+	tableColumns := make([]*ColumnInfo, 0)
 	for i := range tblInfo.Columns {
-		tableColumns = append(tableColumns, &tici.ColumnInfo{
+		tableColumns = append(tableColumns, &ColumnInfo{
 			ColumnId:     tblInfo.Columns[i].ID,
 			ColumnName:   tblInfo.Columns[i].Name.String(),
 			Type:         int32(tblInfo.Columns[i].GetType()),
@@ -270,7 +289,7 @@ func ModelTableToTiCITableInfo(tblInfo *model.TableInfo, schemaName string) *tic
 		})
 	}
 
-	return &tici.TableInfo{
+	return &TableInfo{
 		TableId:      tblInfo.ID,
 		TableName:    tblInfo.Name.L,
 		DatabaseName: schemaName,
@@ -280,15 +299,15 @@ func ModelTableToTiCITableInfo(tblInfo *model.TableInfo, schemaName string) *tic
 	}
 }
 
-// ModelIndexToTiCIIndexInfo converts a model.IndexInfo to a tici.IndexInfo.
+// ModelIndexToTiCIIndexInfo converts a model.IndexInfo to a IndexInfo.
 // It extracts the necessary information from the model.IndexInfo and model.TableInfo
-// to create a tici.IndexInfo suitable for TiCI operations.
+// to create a IndexInfo suitable for TiCI operations.
 func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableInfo,
-) *tici.IndexInfo {
-	indexColumns := make([]*tici.ColumnInfo, 0)
+) *IndexInfo {
+	indexColumns := make([]*ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset
-		indexColumns = append(indexColumns, &tici.ColumnInfo{
+		indexColumns = append(indexColumns, &ColumnInfo{
 			ColumnId:     tblInfo.Columns[offset].ID,
 			ColumnName:   tblInfo.Columns[offset].Name.String(),
 			Type:         int32(tblInfo.Columns[offset].GetType()),
@@ -300,24 +319,24 @@ func ModelIndexToTiCIIndexInfo(indexInfo *model.IndexInfo, tblInfo *model.TableI
 		})
 	}
 
-	return &tici.IndexInfo{
+	return &IndexInfo{
 		TableId:   tblInfo.ID,
 		IndexId:   indexInfo.ID,
 		IndexName: indexInfo.Name.String(),
-		IndexType: tici.IndexType_FULL_TEXT,
+		IndexType: IndexType_FULL_TEXT,
 		Columns:   indexColumns,
 		IsUnique:  indexInfo.Unique,
-		ParserInfo: &tici.ParserInfo{
-			ParserType: tici.ParserType_DEFAULT_PARSER,
+		ParserInfo: &ParserInfo{
+			ParserType: ParserType_DEFAULT_PARSER,
 		},
 	}
 }
 
-// ModelPrimaryKeyToTiCIIndexInfo returns a tici.IndexInfo describing the
+// ModelPrimaryKeyToTiCIIndexInfo returns a IndexInfo describing the
 // primary key index of the table. If the table has no primary key, returns nil.
 func ModelPrimaryKeyToTiCIIndexInfo(
 	tblInfo *model.TableInfo,
-) *tici.IndexInfo {
+) *IndexInfo {
 	var pkIndex *model.IndexInfo
 	for _, idx := range tblInfo.Indices {
 		if idx.Primary {
@@ -331,14 +350,14 @@ func ModelPrimaryKeyToTiCIIndexInfo(
 		return nil
 	}
 
-	pkColumns := make([]*tici.ColumnInfo, 0, len(pkIndex.Columns))
+	pkColumns := make([]*ColumnInfo, 0, len(pkIndex.Columns))
 	for _, idxCol := range pkIndex.Columns {
 		offset := idxCol.Offset
 		if offset < 0 || offset >= len(tblInfo.Columns) {
 			return nil
 		}
 		col := tblInfo.Columns[offset]
-		pkColumns = append(pkColumns, &tici.ColumnInfo{
+		pkColumns = append(pkColumns, &ColumnInfo{
 			ColumnId:     col.ID,
 			ColumnName:   col.Name.String(),
 			Type:         int32(col.GetType()),
@@ -350,7 +369,7 @@ func ModelPrimaryKeyToTiCIIndexInfo(
 		})
 	}
 
-	return &tici.IndexInfo{
+	return &IndexInfo{
 		TableId:   tblInfo.ID,
 		IndexId:   pkIndex.ID,
 		IndexName: pkIndex.Name.String(),

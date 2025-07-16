@@ -11,7 +11,6 @@ go_library(
         "region.go",
         "resource_manager_client.go",
         "schedule_manager.go",
-        "tici_manager_client.go",
         "tiflash_manager.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/domain/infosync",

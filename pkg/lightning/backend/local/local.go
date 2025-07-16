@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -532,7 +533,7 @@ type Backend struct {
 
 	nextgenHTTPCli *http.Client
 
-	ticiWriteGroup *TiCIDataWriterGroup // TiCI writer group
+	ticiWriteGroup *tici.TiCIDataWriterGroup // TiCI writer group
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -1177,7 +1178,7 @@ func (local *Backend) ImportEngine(
 		e = localEngine
 	}
 
-	SetTiCIDataWriterGroupWritable(ctx, local.ticiWriteGroup, engineUUID, engineID)
+	tici.SetTiCIDataWriterGroupWritable(ctx, local.ticiWriteGroup, engineUUID, engineID)
 
 	lfTotalSize, lfLength := e.KVStatistics()
 	if lfTotalSize == 0 {
@@ -1767,5 +1768,5 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 
 // SetTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
 func (local *Backend) SetTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) {
-	local.ticiWriteGroup = NewTiCIDataWriterGroup(ctx, tblInfo, schema)
+	local.ticiWriteGroup = tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
 }

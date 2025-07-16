@@ -12,30 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package tici
 
 import (
 	"context"
 	"strings"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 // TiCI host and port for Meta Service.
 const (
 	defaultTiCIHost = "0.0.0.0"
 	defaultTiCIPort = "50061"
+
+	// IndexEngineID is the engine ID for index engine, referring to common.IndexEngineID.
+	IndexEngineID = -1
 )
 
 // GetFulltextIndexes returns all IndexInfo in the table that are fulltext indexes.
@@ -64,8 +64,8 @@ type TiCIDataWriter struct {
 	tblInfo        *model.TableInfo
 	idxInfo        *model.IndexInfo
 	schema         string
-	s3Path         string                   // stores the S3 URI for this writer
-	ticiFileWriter *external.TICIFileWriter // handles writing to S3 file for this writer
+	s3Path         string          // stores the S3 URI for this writer
+	ticiFileWriter *TICIFileWriter // handles writing to S3 file for this writer
 }
 
 // NewTiCIDataWriter creates a new TiCIDataWriter.
@@ -134,7 +134,7 @@ func (w *TiCIDataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Log
 		logger = logutil.Logger(ctx)
 	}
 
-	writer, err := external.NewTICIFileWriter(ctx, store, filename, external.TiCIMinUploadPartSize, logger)
+	writer, err := NewTICIFileWriter(ctx, store, filename, TiCIMinUploadPartSize, logger)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (w *TiCIDataWriter) GetCloudStoragePath(
 	lowerBound, upperBound []byte,
 ) (string, error) {
 	logger := log.FromContext(ctx)
-	ticiMgr, err := infosync.NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
+	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
 		logger.Error("failed to create TiCI manager",
 			zap.Error(err),
@@ -213,7 +213,7 @@ func (w *TiCIDataWriter) MarkPartitionUploadFinished(
 		)
 		return nil // or return an error if s3Path is required
 	}
-	ticiMgr, err := infosync.NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
+	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
 		logger.Error("failed to create TiCI manager",
 			zap.Error(err),
@@ -257,7 +257,7 @@ func (w *TiCIDataWriter) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
 	logger := log.FromContext(ctx)
-	ticiMgr, err := infosync.NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
+	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
 		logger.Error("failed to create TiCI manager",
 			zap.Error(err),
@@ -294,9 +294,13 @@ func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error
 		return errors.New("TICIFileWriter is not initialized")
 	}
 
-	tblPB := infosync.ModelTableToTiCITableInfo(w.tblInfo, w.schema)
-	idxPB := infosync.ModelIndexToTiCIIndexInfo(w.idxInfo, w.tblInfo)
-	pkIdxPB := infosync.ModelPrimaryKeyToTiCIIndexInfo(w.tblInfo)
+	if w.tblInfo == nil || w.idxInfo == nil {
+		return errors.New("tblInfo / idxInfo is nil")
+	}
+
+	tblPB := ModelTableToTiCITableInfo(w.tblInfo, w.schema)
+	idxPB := ModelIndexToTiCIIndexInfo(w.idxInfo, w.tblInfo)
+	pkIdxPB := ModelPrimaryKeyToTiCIIndexInfo(w.tblInfo)
 
 	// Use proto.Marshal to serialize TableInfo and IndexInfo.
 	tblBytes, err := proto.Marshal(tblPB)
@@ -428,7 +432,7 @@ func SetTiCIDataWriterGroupWritable(
 		return
 	}
 
-	writable := engineID != common.IndexEngineID
+	writable := engineID != IndexEngineID
 	g.writable = writable
 
 	logger := logutil.Logger(ctx)
