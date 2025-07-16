@@ -369,6 +369,9 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
+	if intest.InTest {
+		c.testStackTrace = sf.testStackTrace.Copy()
+	}
 	return c
 }
 
