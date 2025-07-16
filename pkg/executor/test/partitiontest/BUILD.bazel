@@ -4,12 +4,8 @@ go_test(
     name = "partitiontest_test",
     timeout = "short",
     srcs = [
-        "ddl_test.go",
         "main_test.go",
-<<<<<<< HEAD:pkg/executor/test/partitiontest/BUILD.bazel
         "partition_test.go",
-=======
->>>>>>> c65420d934e (ddl: add retry for updateSelfVersion (#62190)):tests/realtikvtest/ddltest/BUILD.bazel
     ],
     flaky = True,
     race = "on",
