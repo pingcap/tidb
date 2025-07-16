@@ -125,7 +125,7 @@ run_sql "create table $DB.sbtest(id int primary key, k int not null, c char(120)
 run_sql "insert into $DB.sbtest values ($i, $i, '$i', '$i');"
 
 # backup table and policies
-BR_LOG_TO_TERM=1 run_br backup full -s "local://$TEST_DIR/${DB}_related" --pd $PD_ADDR
+run_br backup full -s "local://$TEST_DIR/${DB}_related" --pd $PD_ADDR
 
 # clear data and policies for restore.
 run_sql "DROP DATABASE $DB;"
