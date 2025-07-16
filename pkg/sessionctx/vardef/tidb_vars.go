@@ -452,6 +452,9 @@ const (
 	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
+	// TiDBMaxBytesBeforeTiFlashCTESpill is the maximum bytes used by a TiFlash CTE before spill to disk
+	TiDBMaxBytesBeforeTiFlashCTESpill = "tidb_max_bytes_before_tiflash_cte_spill"
+
 	// TiFlashMemQuotaQueryPerNode is the maximum bytes used by a TiFlash Query on each TiFlash node
 	TiFlashMemQuotaQueryPerNode = "tiflash_mem_quota_query_per_node"
 
@@ -1396,6 +1399,7 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin    = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy = -1
 	DefTiFlashMaxBytesBeforeExternalSort    = -1
+	DefTiFlashMaxBytesBeforeCTESpill        = -1
 	DefTiFlashMemQuotaQueryPerNode          = 0
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiFlashHashJoinVersion               = joinversion.TiFlashHashJoinVersionDefVal
