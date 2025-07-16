@@ -4,6 +4,7 @@ go_test(
     name = "issue_test_test",
     srcs = ["executor_issue_test.go"],
     deps = [
+        "//executor",
         "//testkit",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
