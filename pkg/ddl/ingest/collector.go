@@ -32,13 +32,13 @@ func init() {
 		if !ok {
 			return
 		}
-		connIDCollector := c.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(key, value interface{}) bool {
-			tableCollector := value.(*tableCollector)
-			tableCollector.totalSingleWriteCnt.Add(tableCollector.singleWriteCnt.Load())
-			tableCollector.singleWriteCnt.Store(0)
-			tableCollector.totalDoubleWriteCnt.Add(tableCollector.doubleWriteCnt.Load())
-			tableCollector.doubleWriteCnt.Store(0)
+		//nolint:forcetypeassert
+		c.(*connIDCollector).tblID2Count.Range(func(_, value any) bool {
+			tblColl := value.(*tableCollector)
+			tblColl.totalSingleWriteCnt.Add(tblColl.singleWriteCnt.Load())
+			tblColl.singleWriteCnt.Store(0)
+			tblColl.totalDoubleWriteCnt.Add(tblColl.doubleWriteCnt.Load())
+			tblColl.doubleWriteCnt.Store(0)
 			return true
 		})
 	}
@@ -46,6 +46,7 @@ func init() {
 		c, _ := coll.write.LoadOrStore(connID, &connIDCollector{
 			tblID2Count: sync.Map{},
 		})
+		//nolint:forcetypeassert
 		tc, _ := c.(*connIDCollector).tblID2Count.LoadOrStore(tableID, &tableCollector{
 			singleWriteCnt:      &atomic.Uint64{},
 			doubleWriteCnt:      &atomic.Uint64{},
@@ -53,8 +54,10 @@ func init() {
 			totalDoubleWriteCnt: &atomic.Uint64{},
 		})
 		if doubleWrite {
+			//nolint:forcetypeassert
 			tc.(*tableCollector).doubleWriteCnt.Add(opCount)
 		} else {
+			//nolint:forcetypeassert
 			tc.(*tableCollector).singleWriteCnt.Add(opCount)
 		}
 	}
@@ -63,30 +66,34 @@ func init() {
 		if !ok {
 			return
 		}
-		connIDCollector := c.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(key, value interface{}) bool {
-			tableCollector := value.(*tableCollector)
-			tableCollector.singleWriteCnt.Store(0)
-			tableCollector.doubleWriteCnt.Store(0)
+		//nolint:forcetypeassert
+		connIDColl := c.(*connIDCollector)
+		connIDColl.tblID2Count.Range(func(_, value any) bool {
+			//nolint:forcetypeassert
+			tblColl := value.(*tableCollector)
+			tblColl.singleWriteCnt.Store(0)
+			tblColl.doubleWriteCnt.Store(0)
 			return true
 		})
 	}
 	metrics.DDLResetTempIndexWrite = func(tblID int64) {
-		coll.write.Range(func(key, value interface{}) bool {
+		coll.write.Range(func(_, value any) bool {
+			//nolint:forcetypeassert
 			connIDCollector := value.(*connIDCollector)
 			connIDCollector.tblID2Count.Delete(tblID)
 			return true
 		})
 		coll.merge.Delete(tblID)
 		coll.scan.Delete(tblID)
-
 	}
 	metrics.DDLSetTempIndexScan = func(tableID int64, opCount uint64) {
 		c, _ := coll.scan.LoadOrStore(tableID, &atomic.Uint64{})
+		//nolint:forcetypeassert
 		c.(*atomic.Uint64).Add(opCount)
 	}
 	metrics.DDLSetTempIndexMerge = func(tableID int64, opCount uint64) {
 		c, _ := coll.merge.LoadOrStore(tableID, &atomic.Uint64{})
+		//nolint:forcetypeassert
 		c.(*atomic.Uint64).Add(opCount)
 	}
 }
@@ -152,19 +159,22 @@ func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	singleMap := make(map[int64]uint64)
 	doubleMap := make(map[int64]uint64)
-	c.write.Range(func(key, value any) bool {
-		connIDCollector := value.(*connIDCollector)
-		connIDCollector.tblID2Count.Range(func(tableKey, tableValue interface{}) bool {
+	c.write.Range(func(_, value any) bool {
+		//nolint:forcetypeassert
+		connIDColl := value.(*connIDCollector)
+		connIDColl.tblID2Count.Range(func(tableKey, tableValue any) bool {
+			//nolint:forcetypeassert
 			tableID := tableKey.(int64)
-			tableCollector := tableValue.(*tableCollector)
+			//nolint:forcetypeassert
+			tblColl := tableValue.(*tableCollector)
 			if _, exists := singleMap[tableID]; !exists {
 				singleMap[tableID] = 0
 			}
-			singleMap[tableID] += tableCollector.totalSingleWriteCnt.Load()
+			singleMap[tableID] += tblColl.totalSingleWriteCnt.Load()
 			if _, exists := doubleMap[tableID]; !exists {
 				doubleMap[tableID] = 0
 			}
-			doubleMap[tableID] += tableCollector.totalDoubleWriteCnt.Load()
+			doubleMap[tableID] += tblColl.totalDoubleWriteCnt.Load()
 			return true
 		})
 		return true
@@ -187,7 +197,9 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	}
 	mergeMap := make(map[int64]uint64)
 	c.merge.Range(func(key, value any) bool {
+		//nolint:forcetypeassert
 		tableID := key.(int64)
+		//nolint:forcetypeassert
 		opCount := value.(*atomic.Uint64).Load()
 		if _, exists := mergeMap[tableID]; !exists {
 			mergeMap[tableID] = 0
@@ -205,7 +217,9 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	}
 	scanMap := make(map[int64]uint64)
 	c.scan.Range(func(key, value any) bool {
+		//nolint:forcetypeassert
 		tableID := key.(int64)
+		//nolint:forcetypeassert
 		opCount := value.(*atomic.Uint64).Load()
 		if _, exists := scanMap[tableID]; !exists {
 			scanMap[tableID] = 0
