@@ -1534,7 +1534,7 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 
 // MaybeOverOptimized4PlanCacheForMultiExpression is the same as MaybeOverOptimized4PlanCache,
 // but it accepts multiple expressions as input.
-func MaybeOverOptimized4PlanCacheForMultiExpression(ctx BuildContext, exprs ...Expression) bool {
+func MaybeOverOptimized4PlanCacheForMultiExpression(ctx sessionctx.Context, exprs ...Expression) bool {
 	return MaybeOverOptimized4PlanCache(ctx, exprs)
 }
 
