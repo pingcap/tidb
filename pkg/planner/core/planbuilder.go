@@ -1465,11 +1465,8 @@ func filterIndexesByEqCondCount(paths []*util.AccessPath) []*util.AccessPath {
 	}
 
 	// Helper function to check if one index is a prefix of another
-	isIndexPrefix := func(idx1, idx2 *model.IndexInfo) bool {
-		if len(idx1.Columns) > len(idx2.Columns) {
-			return false
-		}
-		for i := range idx1.Columns {
+	isIndexPrefix := func(idx1, idx2 *model.IndexInfo, minEq int) bool {
+		for i := 0; i < minEq; i++ {
 			if idx1.Columns[i].Name.L != idx2.Columns[i].Name.L {
 				return false
 			}
@@ -1492,7 +1489,7 @@ func filterIndexesByEqCondCount(paths []*util.AccessPath) []*util.AccessPath {
 			}
 
 			// Check if current index is a prefix of the other index
-			if isIndexPrefix(path.Index, otherPath.Index) {
+			if isIndexPrefix(path.Index, otherPath.Index, min(path.EqOrInCondCount, otherPath.EqOrInCondCount)) {
 				// If current index has higher or equal EqCondCount, keep the other one instead
 				if path.EqOrInCondCount < otherPath.EqOrInCondCount {
 					shouldKeep = false
