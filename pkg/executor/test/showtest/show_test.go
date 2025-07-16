@@ -845,6 +845,18 @@ func TestShowEscape(t *testing.T) {
 	tk.MustExec("set sql_mode=@old_sql_mode")
 }
 
+func TestShowBuiltin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	res := tk.MustQuery("show builtins;")
+	require.NotNil(t, res)
+	rows := res.Rows()
+	const builtinFuncNum = 305
+	require.Equal(t, builtinFuncNum, len(rows))
+	require.Equal(t, rows[0][0].(string), "abs")
+	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
+}
+
 func TestShowClusterConfig(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

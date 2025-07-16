@@ -325,7 +325,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 		time.Sleep(1 * time.Second)
 		tctx.L().Debug("progress ready, sleep 1s")
 	})
-	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
 		summary.CollectFailureUnit("dump table data", err)
 		return errors.Trace(err)
