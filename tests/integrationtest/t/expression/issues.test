@@ -2167,8 +2167,6 @@ DROP TABLE IF EXISTS test.t;
 CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
 INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
-<<<<<<< HEAD
-=======
 
 # TestIssue56339
 drop table if exists test.t;
@@ -2231,4 +2229,3 @@ insert into lrr_test values(-2,2295421130981788987);
 prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
 set @a=NULL, @b=-2;
 execute stmt using @a,@b;
->>>>>>> 9accc3cfa3d (planner: Fix expression rewriting and method signature mismatch in plan cache (#58506))
