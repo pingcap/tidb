@@ -208,7 +208,7 @@ func TestWriteHeader(t *testing.T) {
 func TestWriteHeader_NilWriter(t *testing.T) {
 	ctx := context.Background()
 	logger := zaptest.NewLogger(t)
-	tfw := &TICIFileWriter{
+	tfw := &FileWriter{
 		dataWriter:    nil,
 		headerWritten: false,
 		logger:        logger,

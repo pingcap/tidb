@@ -53,8 +53,8 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
-// TICIFileWriter writes data to a fixed S3 location.
-type TICIFileWriter struct {
+// FileWriter writes data to a fixed S3 location.
+type FileWriter struct {
 	store         storage.ExternalStorage
 	dataFile      string
 	dataWriter    storage.ExternalFileWriter
@@ -69,7 +69,7 @@ type TICIFileWriter struct {
 
 // NewTICIFileWriter creates a new TICIFileWriter.
 // dataFile is the file name we are writing into.
-func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataFile string, partSize int64, logger *zap.Logger) (*TICIFileWriter, error) {
+func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataFile string, partSize int64, logger *zap.Logger) (*FileWriter, error) {
 	dataWriter, err := store.Create(ctx, dataFile, &storage.WriterOption{
 		// TODO: maxUploadWorkersPerThread is subject to change up to the test results and performance tuning with TiCI worker.
 		// For now, we set it to maxUploadWorkersPerThread by default.
@@ -80,7 +80,7 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 		return nil, err
 	}
 	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(int(DefaultBlockSize)))
-	return &TICIFileWriter{
+	return &FileWriter{
 		store:      store,
 		dataFile:   dataFile,
 		dataWriter: dataWriter,
@@ -94,7 +94,7 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 }
 
 // WriteRow writes a key-value pair to the S3 file.
-func (w *TICIFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+func (w *FileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if buf == nil {
@@ -123,7 +123,7 @@ func (w *TICIFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) er
 }
 
 // Close closes the writer.
-func (w *TICIFileWriter) Close(ctx context.Context) error {
+func (w *FileWriter) Close(ctx context.Context) error {
 	if w.closed {
 		return errors.Errorf("TICIFileWriter already closed")
 	}
@@ -149,7 +149,7 @@ func (w *TICIFileWriter) Close(ctx context.Context) error {
 // [8 bytes] Length of PKIndexInfo (big endian uint64)
 // [P bytes] PKIndexInfo (serialized, may be zero length)
 // [8 bytes] CommitTS (big endian uint64)
-func (w *TICIFileWriter) WriteHeader(
+func (w *FileWriter) WriteHeader(
 	ctx context.Context,
 	tblInBytes []byte,
 	idxInBytes []byte,

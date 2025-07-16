@@ -533,7 +533,7 @@ type Backend struct {
 
 	nextgenHTTPCli *http.Client
 
-	ticiWriteGroup *tici.TiCIDataWriterGroup // TiCI writer group
+	ticiWriteGroup *tici.DataWriterGroup // TiCI writer group
 }
 
 var _ DiskUsage = (*Backend)(nil)

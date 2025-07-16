@@ -64,10 +64,10 @@ func startStubMetaService(t *testing.T) (cleanup func(), dialOpt grpc.DialOption
 	return cleanup, dialOpt, "bufnet" // “target” can be any string
 }
 
-func newTestTiCIDataWriter() *TiCIDataWriter {
+func newTestTiCIDataWriter() *DataWriter {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{}}
 	idx := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx")}
-	return &TiCIDataWriter{
+	return &DataWriter{
 		tblInfo: tbl,
 		idxInfo: idx,
 		schema:  "testdb",
@@ -76,7 +76,7 @@ func newTestTiCIDataWriter() *TiCIDataWriter {
 
 // newStubTICIFileWriter returns a real *TICIFileWriter whose underlying
 // storage is the in‑memory mock used in tici_file_writer_test.go.
-func newStubTICIFileWriter(t *testing.T, failWrite bool) (*TICIFileWriter, *mockExternalFileWriter) {
+func newStubTICIFileWriter(t *testing.T, failWrite bool) (*FileWriter, *mockExternalFileWriter) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -235,21 +235,21 @@ func TestSetTiCIDataWriterGroupWritable(t *testing.T) {
 
 func TestTiCIDataWriterGroup_InitTICIFileWriters_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &TiCIDataWriterGroup{writable: false}
+	group := &DataWriterGroup{writable: false}
 	err := group.InitTICIFileWriters(ctx)
 	assert.NoError(t, err)
 }
 
 func TestTiCIDataWriterGroup_GetCloudStoragePath_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &TiCIDataWriterGroup{writable: false}
+	group := &DataWriterGroup{writable: false}
 	err := group.GetCloudStoragePath(ctx, nil, nil)
 	assert.NoError(t, err)
 }
 
 func TestTiCIDataWriterGroup_MarkPartitionUploadFinished_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &TiCIDataWriterGroup{writable: false}
+	group := &DataWriterGroup{writable: false}
 	err := group.MarkPartitionUploadFinished(ctx)
 	assert.NoError(t, err)
 }
@@ -269,7 +269,7 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 	}
 
 	old := newTiCIManager
-	newTiCIManager = func(_, _ string) (*TiCIManagerCtx, error) {
+	newTiCIManager = func(_, _ string) (*ManagerCtx, error) {
 		return NewTiCIManagerWithOpts(target, dialOpt)
 	}
 	defer func() { newTiCIManager = old }()
@@ -280,7 +280,7 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 
 func TestTiCIDataWriterGroup_CloseFileWriters_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &TiCIDataWriterGroup{writable: false}
+	group := &DataWriterGroup{writable: false}
 	err := group.CloseFileWriters(ctx)
 	assert.NoError(t, err)
 }

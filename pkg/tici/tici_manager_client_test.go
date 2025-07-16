@@ -51,8 +51,8 @@ func (m *MockMetaServiceClient) MarkTableUploadFinished(ctx context.Context, in 
 	return args.Get(0).(*MarkTableUploadFinishedResponse), args.Error(1)
 }
 
-func newTestTiCIManagerCtx(mockClient MetaServiceClient) *TiCIManagerCtx {
-	return &TiCIManagerCtx{
+func newTestTiCIManagerCtx(mockClient MetaServiceClient) *ManagerCtx {
+	return &ManagerCtx{
 		Conn:              nil,
 		metaServiceClient: mockClient,
 	}
@@ -175,7 +175,7 @@ func TestMarkTableUploadFinished(t *testing.T) {
 }
 
 func TestTiCIManagerCtxClose(t *testing.T) {
-	ctx := &TiCIManagerCtx{Conn: nil}
+	ctx := &ManagerCtx{Conn: nil}
 	assert.NoError(t, ctx.Close())
 }
 

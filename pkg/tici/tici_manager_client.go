@@ -26,26 +26,27 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// TiCIManagerCtx manages fulltext index for TiCI.
-type TiCIManagerCtx struct {
+// ManagerCtx manages fulltext index for TiCI.
+type ManagerCtx struct {
 	Conn              *grpc.ClientConn
 	metaServiceClient MetaServiceClient
 }
 
 var newTiCIManager = defaultNewTiCIManager
 
-func NewTiCIManager(host, port string) (*TiCIManagerCtx, error) {
+// NewTiCIManager creates a new TiCI manager with the specified host and port.
+func NewTiCIManager(host, port string) (*ManagerCtx, error) {
 	return newTiCIManager(host, port)
 }
 
-// NewTiCIManager creates a new TiCI manager.
-func defaultNewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, error) {
+// defaultNewTiCIManager is the default implementation of NewTiCIManager.
+func defaultNewTiCIManager(ticiHost string, ticiPort string) (*ManagerCtx, error) {
 	conn, err := grpc.NewClient(fmt.Sprintf("%s:%s", ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
 	metaServiceClient := NewMetaServiceClient(conn)
-	return &TiCIManagerCtx{
+	return &ManagerCtx{
 		Conn:              conn,
 		metaServiceClient: metaServiceClient,
 	}, nil
@@ -53,20 +54,20 @@ func defaultNewTiCIManager(ticiHost string, ticiPort string) (*TiCIManagerCtx, e
 
 // NewTiCIManagerWithOpts creates a new TiCI manager with additional gRPC options.
 // This is useful for testing or when you need to customize the gRPC connection.
-func NewTiCIManagerWithOpts(target string, extra ...grpc.DialOption) (*TiCIManagerCtx, error) {
+func NewTiCIManagerWithOpts(target string, extra ...grpc.DialOption) (*ManagerCtx, error) {
 	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, extra...)
 	conn, err := grpc.Dial(target, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return &TiCIManagerCtx{
+	return &ManagerCtx{
 		Conn:              conn,
 		metaServiceClient: NewMetaServiceClient(conn),
 	}, nil
 }
 
 // CreateFulltextIndex creates fulltext index on TiCI.
-func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
 	indexColumns := make([]*ColumnInfo, 0)
 	for i := range indexInfo.Columns {
 		offset := indexInfo.Columns[i].Offset
@@ -130,7 +131,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 
 // GetCloudStoragePath requests the S3 path from TiCI Meta Service
 // for a baseline shard upload.
-func (t *TiCIManagerCtx) GetCloudStoragePath(
+func (t *ManagerCtx) GetCloudStoragePath(
 	ctx context.Context,
 	tblInfo *model.TableInfo,
 	indexInfo *model.IndexInfo,
@@ -215,7 +216,7 @@ func (t *TiCIManagerCtx) GetCloudStoragePath(
 }
 
 // MarkPartitionUploadFinished notifies TiCI Meta Service that all partitions for the given table are uploaded.
-func (t *TiCIManagerCtx) MarkPartitionUploadFinished(
+func (t *ManagerCtx) MarkPartitionUploadFinished(
 	ctx context.Context,
 	s3Path string,
 ) error {
@@ -237,7 +238,7 @@ func (t *TiCIManagerCtx) MarkPartitionUploadFinished(
 }
 
 // MarkTableUploadFinished notifies TiCI Meta Service that the whole table/index upload is finished.
-func (t *TiCIManagerCtx) MarkTableUploadFinished(
+func (t *ManagerCtx) MarkTableUploadFinished(
 	ctx context.Context,
 	tableID int64,
 	indexID int64,
@@ -264,7 +265,7 @@ func (t *TiCIManagerCtx) MarkTableUploadFinished(
 }
 
 // Close closes the underlying gRPC connection to TiCI Meta Service.
-func (t *TiCIManagerCtx) Close() error {
+func (t *ManagerCtx) Close() error {
 	if t.Conn != nil {
 		return t.Conn.Close()
 	}

@@ -59,13 +59,13 @@ func GetPrimaryIndex(tbl *model.TableInfo) *model.IndexInfo {
 	return nil
 }
 
-// TiCIDataWriter handles S3 path management and upload notifications via TiCI Meta Service.
-type TiCIDataWriter struct {
+// DataWriter handles S3 path management and upload notifications via TiCI Meta Service.
+type DataWriter struct {
 	tblInfo        *model.TableInfo
 	idxInfo        *model.IndexInfo
 	schema         string
-	s3Path         string          // stores the S3 URI for this writer
-	ticiFileWriter *TICIFileWriter // handles writing to S3 file for this writer
+	s3Path         string      // stores the S3 URI for this writer
+	ticiFileWriter *FileWriter // handles writing to S3 file for this writer
 }
 
 // NewTiCIDataWriter creates a new TiCIDataWriter.
@@ -75,7 +75,7 @@ func NewTiCIDataWriter(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	schema string,
-) *TiCIDataWriter {
+) *DataWriter {
 	logger := log.FromContext(ctx)
 	logger.Info("building TiCIDataWriter",
 		zap.Int64("tableID", tblInfo.ID),
@@ -85,7 +85,7 @@ func NewTiCIDataWriter(
 		zap.String("schema", schema),
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
-	return &TiCIDataWriter{
+	return &DataWriter{
 		tblInfo: tblInfo,
 		idxInfo: idxInfo,
 		schema:  schema,
@@ -94,7 +94,7 @@ func NewTiCIDataWriter(
 
 // InitTICIFileWriter initializes the ticiFileWriter for this TiCIDataWriter.
 // cloudStoreURI is the S3 URI, logger is optional (can be nil).
-func (w *TiCIDataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Logger) error {
+func (w *DataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Logger) error {
 	cloudStoreURI := w.s3Path
 	if cloudStoreURI == "" {
 		return errors.New("s3Path is not set, cannot initialize TICIFileWriter")
@@ -143,7 +143,7 @@ func (w *TiCIDataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Log
 }
 
 // GetCloudStoragePath requests the S3 path for a baseline shard upload and stores it in the struct.
-func (w *TiCIDataWriter) GetCloudStoragePath(
+func (w *DataWriter) GetCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) (string, error) {
@@ -195,7 +195,7 @@ func (w *TiCIDataWriter) GetCloudStoragePath(
 
 // MarkPartitionUploadFinished notifies TiCI Meta Service that a partition upload is finished.
 // Uses the stored s3Path if not explicitly provided.
-func (w *TiCIDataWriter) MarkPartitionUploadFinished(
+func (w *DataWriter) MarkPartitionUploadFinished(
 	ctx context.Context,
 	s3PathOpt ...string,
 ) error {
@@ -253,7 +253,7 @@ func (w *TiCIDataWriter) MarkPartitionUploadFinished(
 }
 
 // MarkTableUploadFinished notifies TiCI Meta Service that the whole table/index upload is finished.
-func (w *TiCIDataWriter) MarkTableUploadFinished(
+func (w *DataWriter) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
 	logger := log.FromContext(ctx)
@@ -289,7 +289,7 @@ func (w *TiCIDataWriter) MarkTableUploadFinished(
 
 // WriteHeader writes the header to the underlying TICIFileWriter.
 // commitTS is the commit timestamp to include in the header.
-func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error {
+func (w *DataWriter) WriteHeader(ctx context.Context, commitTS uint64) error {
 	if w.ticiFileWriter == nil {
 		return errors.New("TICIFileWriter is not initialized")
 	}
@@ -327,7 +327,7 @@ func (w *TiCIDataWriter) WriteHeader(ctx context.Context, commitTS uint64) error
 }
 
 // WritePairs writes a batch of KV Pairs to the S3 file using the underlying TICIFileWriter.
-func (w *TiCIDataWriter) WritePairs(ctx context.Context, pairs []*sst.Pair, count int) error {
+func (w *DataWriter) WritePairs(ctx context.Context, pairs []*sst.Pair, count int) error {
 	for i := range count {
 		if err := w.ticiFileWriter.WriteRow(ctx, pairs[i].Key, pairs[i].Value); err != nil {
 			return err
@@ -338,7 +338,7 @@ func (w *TiCIDataWriter) WritePairs(ctx context.Context, pairs []*sst.Pair, coun
 
 // CloseFileWriter closes the underlying TICIFileWriter if it is initialized.
 // It logs before closing, and flushes the writer before return.
-func (w *TiCIDataWriter) CloseFileWriter(ctx context.Context) error {
+func (w *DataWriter) CloseFileWriter(ctx context.Context) error {
 	logger := logutil.Logger(ctx)
 	if w.ticiFileWriter == nil {
 		return nil
@@ -356,15 +356,15 @@ func (w *TiCIDataWriter) CloseFileWriter(ctx context.Context) error {
 	return w.ticiFileWriter.Close(ctx)
 }
 
-// TiCIDataWriterGroup manages a group of TiCIDataWriter, each responsible for a fulltext index in a table.
-type TiCIDataWriterGroup struct {
-	writers  []*TiCIDataWriter
+// DataWriterGroup manages a group of TiCIDataWriter, each responsible for a fulltext index in a table.
+type DataWriterGroup struct {
+	writers  []*DataWriter
 	writable bool
 }
 
 // WriteHeader writes the header to all writers in the group.
 // commitTS is the commit timestamp to include in the header.
-func (g *TiCIDataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) error {
+func (g *DataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) error {
 	if !g.writable {
 		return nil
 	}
@@ -378,7 +378,7 @@ func (g *TiCIDataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) 
 
 // WritePairs writes a batch of KV Pairs to all writers in the group.
 // Logs detailed errors for each writer using the logger.
-func (g *TiCIDataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, count int) error {
+func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, count int) error {
 	if !g.writable {
 		return nil
 	}
@@ -399,9 +399,9 @@ func (g *TiCIDataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair,
 }
 
 // NewTiCIDataWriterGroup creates a new TiCIDataWriterGroup for all fulltext indexes in the given table.
-func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) *TiCIDataWriterGroup {
+func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) *DataWriterGroup {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
-	writers := make([]*TiCIDataWriter, 0, len(fulltextIndexes))
+	writers := make([]*DataWriter, 0, len(fulltextIndexes))
 
 	logger := log.FromContext(ctx)
 	logger.Info("building TiCIDataWriterGroup",
@@ -413,7 +413,7 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 	for _, idx := range fulltextIndexes {
 		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
 	}
-	return &TiCIDataWriterGroup{
+	return &DataWriterGroup{
 		writers:  writers,
 		writable: true,
 	}
@@ -422,7 +422,7 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 // SetTiCIDataWriterGroupWritable sets the writable state for the TiCIDataWriterGroup.
 func SetTiCIDataWriterGroupWritable(
 	ctx context.Context,
-	g *TiCIDataWriterGroup,
+	g *DataWriterGroup,
 	engineUUID uuid.UUID,
 	engineID int32,
 ) {
@@ -447,7 +447,7 @@ func SetTiCIDataWriterGroupWritable(
 
 // InitTICIFileWriters initializes the ticiFileWriter for all writers in the group.
 // cloudStoreURI is the S3 URI, logger is taken from context.
-func (g *TiCIDataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
+func (g *DataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
 	if !g.writable {
 		return nil
 	}
@@ -471,7 +471,7 @@ func (g *TiCIDataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
 
 // GetCloudStoragePath runs GetCloudStoragePath for all writers.
 // Sets the s3Path for each writer, returns the first error encountered.
-func (g *TiCIDataWriterGroup) GetCloudStoragePath(
+func (g *DataWriterGroup) GetCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) error {
@@ -489,7 +489,7 @@ func (g *TiCIDataWriterGroup) GetCloudStoragePath(
 
 // MarkPartitionUploadFinished runs MarkPartitionUploadFinished for all writers.
 // Optionally, you can pass a slice of s3Paths to override the stored s3Path for each writer.
-func (g *TiCIDataWriterGroup) MarkPartitionUploadFinished(
+func (g *DataWriterGroup) MarkPartitionUploadFinished(
 	ctx context.Context,
 ) error {
 	if !g.writable {
@@ -504,7 +504,7 @@ func (g *TiCIDataWriterGroup) MarkPartitionUploadFinished(
 }
 
 // MarkTableUploadFinished runs MarkTableUploadFinished for all writers.
-func (g *TiCIDataWriterGroup) MarkTableUploadFinished(
+func (g *DataWriterGroup) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
 	logger := logutil.Logger(ctx)
@@ -523,7 +523,7 @@ func (g *TiCIDataWriterGroup) MarkTableUploadFinished(
 }
 
 // CloseFileWriters closes the underlying TICIFileWriter for each writer in the group.
-func (g *TiCIDataWriterGroup) CloseFileWriters(ctx context.Context) error {
+func (g *DataWriterGroup) CloseFileWriters(ctx context.Context) error {
 	if !g.writable {
 		return nil
 	}
