@@ -16,7 +16,6 @@ package expression
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 	"unsafe"
 
@@ -33,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var _ base.HashEquals = &ScalarFunction{}
@@ -567,9 +568,13 @@ func (sf *ScalarFunction) HashCode() []byte {
 			copyhashcode := make([]byte, len(sf.hashcode))
 			copy(copyhashcode, sf.hashcode)
 			ReHashCode(sf)
-			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode),
-				"HashCode should not change after ReHashCode is called",
-				fmt.Sprintf("next called stack trace: %s", sf.testStackTrace.String()))
+			intest.AssertFunc(func() bool {
+				if bytes.Equal(sf.hashcode, copyhashcode) {
+					return true
+				}
+				logutil.BgLogger().Error("hashcode not equal", zap.String("last_stack_trace", sf.testStackTrace.String()))
+				return false
+			}, "HashCode should not change after ReHashCode is called")
 		}
 		return sf.hashcode
 	}
