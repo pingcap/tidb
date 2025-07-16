@@ -151,6 +151,50 @@ func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs
 	}
 }
 
+type autoIDType struct {
+	End int64
+	Tp  autoid.AllocatorType
+}
+
+// handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
+// For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
+func (w *worker) handleAutoIncID(job *model.Job, tbInfo *model.TableInfo) error {
+	r := &asAutoIDRequirement{
+		store:     w.store,
+		autoidCli: w.autoidCli,
+	}
+	allocs := autoid.NewAllocatorsFromTblInfo(r, job.SchemaID, tbInfo)
+
+	hs := make([]autoIDType, 0, 3)
+	if tbInfo.AutoIncID > 1 {
+		// Default tableAutoIncID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		if tbInfo.SepAutoInc() {
+			hs = append(hs, autoIDType{tbInfo.AutoIncID - 1, autoid.AutoIncrementType})
+		} else {
+			hs = append(hs, autoIDType{tbInfo.AutoIncID - 1, autoid.RowIDAllocType})
+		}
+	}
+	if tbInfo.AutoIncIDExtra != 0 {
+		hs = append(hs, autoIDType{tbInfo.AutoIncIDExtra - 1, autoid.RowIDAllocType})
+	}
+	if tbInfo.AutoRandID > 1 {
+		// Default tableAutoRandID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		hs = append(hs, autoIDType{tbInfo.AutoRandID - 1, autoid.AutoRandomType})
+	}
+
+	for _, h := range hs {
+		if alloc := allocs.Get(h.Tp); alloc != nil {
+			if err := alloc.Rebase(context.Background(), h.End, false); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
@@ -174,6 +218,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 
 	tbInfo, err = createTable(jobCtx, job, args)
 	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if err := w.handleAutoIncID(job, tbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -238,6 +286,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 }
 
 func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
+	failpoint.InjectCall("beforeCreateTables")
 	var ver int64
 
 	args, err := model.GetBatchCreateTableArgs(job)
@@ -268,6 +317,9 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			tbInfo, err := createTable(jobCtx, stubJob, tblArgs)
 			if err != nil {
 				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			if err := w.handleAutoIncID(job, tbInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
 			tableInfos = append(tableInfos, tbInfo)
