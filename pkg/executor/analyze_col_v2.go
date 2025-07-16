@@ -146,9 +146,7 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Base().Samples {
 		for i := range sample.Columns {
-			if schema.Columns[i].VirtualExpr != nil {
-				continue
-			}
+			// Virtual columns will be decoded as null first.
 			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
 			if err != nil {
 				return err
