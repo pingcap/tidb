@@ -52,6 +52,7 @@ type BackendCtxMgr interface {
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
+		initTS uint64,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// Load returns the registered BackendCtx with the given jobID.
@@ -123,6 +124,7 @@ func (m *litBackendCtxMgr) Register(
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
+	initTS uint64,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {

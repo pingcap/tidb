@@ -93,6 +93,7 @@ type litBackendCtx struct {
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
+	initTS          uint64
 }
 
 func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, tbl table.Table, hasDupe bool) error {
@@ -128,9 +129,10 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	// backend must be a local backend.
 	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-		SysVars: bc.sysVars,
-		IndexID: indexID,
+		SQLMode:     mysql.ModeStrictAllTables,
+		SysVars:     bc.sysVars,
+		IndexID:     indexID,
+		MinCommitTS: bc.initTS,
 	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
@@ -160,9 +162,10 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		//nolint:forcetypeassert
 		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: bc.sysVars,
-			IndexID: ei.indexID,
+			SQLMode:     mysql.ModeStrictAllTables,
+			SysVars:     bc.sysVars,
+			IndexID:     ei.indexID,
+			MinCommitTS: bc.initTS,
 		}, lightning.ErrorOnDup)
 		return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 	}

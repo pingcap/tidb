@@ -141,7 +141,7 @@ func (s *backfillDistExecutor) getBackendCtx(ctx context.Context) (ingest.Backen
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(ctx, job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(ctx, job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, job.RealStartTS)
 }
 
 func decodeIndexUniqueness(job *model.Job) (bool, error) {
