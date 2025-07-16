@@ -9,10 +9,11 @@ go_test(
         "rule_inject_extra_projection_test.go",
         "rule_join_reorder_test.go",
         "rule_predicate_pushdown_test.go",
+        "rule_predicate_simplification_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
