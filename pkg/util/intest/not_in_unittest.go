@@ -37,3 +37,7 @@ func (*TestStackTrace) IsEmpty() bool {
 func (*TestStackTrace) String() string {
 	return "TestStackTrace: no stack trace available in non-test builds"
 }
+
+func (*TestStackTrace) Copy() *TestStackTrace {
+	return &TestStackTrace{}
+}
