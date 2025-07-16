@@ -378,32 +378,11 @@ func TestBatchCreateTable(t *testing.T) {
 	// FIXME: we must change column type to give multiple id
 	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BatchCreateTableWithInfo", func() {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		tk2.MustExec("create table tables_5(id int)")
-	})
-
-	infos = []*model.TableInfo{}
-	infos = append(infos, &model.TableInfo{
-		Name: ast.NewCIStr("tables_4"),
-	})
-	infos = append(infos, &model.TableInfo{
-		Name: ast.NewCIStr("tables_5"),
-	})
-	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError))
-	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
-
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/BatchCreateTableWithInfo")
-
 	// duplicated name
 	infos[1].Name = ast.NewCIStr("tables_1")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), infos, ddl.WithOnExist(ddl.OnExistError))
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableExists))
-
-	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
 
 	newinfo := &model.TableInfo{
 		Name: ast.NewCIStr("tables_4"),

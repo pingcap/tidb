@@ -1271,8 +1271,6 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return nil
 	}
 
-	failpoint.InjectCall("BatchCreateTableWithInfo")
-
 	jobW := NewJobWrapperWithArgs(job, args, c.IDAllocated)
 	err = e.DoDDLJobWrapper(ctx, jobW)
 	if err != nil {
