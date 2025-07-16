@@ -2864,8 +2864,9 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
 			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
 		}
+		e.ctx.GetSessionVars().ResourceGroupName = s.Name.L
+	} else {
+		e.ctx.GetSessionVars().ResourceGroupName = "default"
 	}
-
-	e.ctx.GetSessionVars().ResourceGroupName = s.Name.L
 	return nil
 }

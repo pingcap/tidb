@@ -130,8 +130,9 @@ func (b *builtinCurrentResourceGroupSig) vecEvalString(input *chunk.Chunk, resul
 	}
 	n := input.NumRows()
 	result.ReserveString(n)
+	groupName := getHintResourceGroupName(data)
 	for i := 0; i < n; i++ {
-		result.AppendString(data.ResourceGroupName)
+		result.AppendString(groupName)
 	}
 	return nil
 }
