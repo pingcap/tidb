@@ -1182,16 +1182,15 @@ func (e *executor) CreateTableWithInfo(
 		if c.OnExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			err = nil
-		} else {
-			var scatterScope string
-			if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
-				scatterScope = val
-			}
-
-			preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
 		}
-	}
+	} else {
+		var scatterScope string
+		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+			scatterScope = val
+		}
 
+		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	}
 	return errors.Trace(err)
 }
 
