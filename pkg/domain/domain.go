@@ -1862,13 +1862,16 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		}()
 		defer util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 
-		var count int
+		var (
+			count int
+			resp  clientv3.WatchResponse
+		)
 		for {
 			ok := true
 			select {
 			case <-do.exit:
 				return
-			case _, ok = <-watchCh:
+			case resp, ok = <-watchCh:
 			case <-time.After(duration):
 			}
 			if !ok {
@@ -1878,6 +1881,21 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				if count > 10 {
 					time.Sleep(time.Duration(count) * time.Second)
 				}
+				continue
+			}
+
+			// Skip the event from this TiDB-Server
+			canSkip := true
+			for _, event := range resp.Events {
+				if event.Kv != nil {
+					val := string(event.Kv.Value)
+					if do.serverID != 0 && val != strconv.FormatUint(do.serverID, 10) {
+						canSkip = false
+						break
+					}
+				}
+			}
+			if canSkip {
 				continue
 			}
 
@@ -2834,7 +2852,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), privilegeKey, "")
+		_, err := row.Put(context.Background(), privilegeKey, strconv.FormatUint(do.serverID, 10))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
