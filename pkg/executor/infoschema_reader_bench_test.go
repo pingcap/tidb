@@ -19,14 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/benchdaily"
 )
-
-func TestInfoschemaBenchDaily(t *testing.T) {
-	benchdaily.Run(
-		BenchmarkInfoschemaTables,
-	)
-}
 
 func BenchmarkInfoschemaTables(b *testing.B) {
 	log.InitLogger(&log.Config{Level: "error"}, "")
