@@ -855,13 +855,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty, planC
 	// so we try to get the task without the enforced sort first.
 	exhaustObj := self
 	if ge != nil {
-		// If the logical plan is LogicalUnionAll, we need to get the self of the LogicalUnionAll.
-		// The self of LogicalUnionAll might be LogicalPartitionUnionAll.
-		if _, ok := ge.GetWrappedLogicalPlan().(*logicalop.LogicalUnionAll); ok {
-			exhaustObj = ge.GetWrappedLogicalPlan().GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Self()
-		} else {
-			exhaustObj = ge
-		}
+		exhaustObj = ge
 	}
 	// make sure call ExhaustPhysicalPlans over GE or Self, rather than the BaseLogicalPlan.
 	plansFitsProp, hintWorksWithProp, err = exhaustObj.ExhaustPhysicalPlans(newProp)
