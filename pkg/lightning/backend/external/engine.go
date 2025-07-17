@@ -39,7 +39,6 @@ import (
 	"go.uber.org/zap"
 )
 
-<<<<<<< HEAD
 // during test on ks3, we found that we can open about 8000 connections to ks3,
 // bigger than that, we might receive "connection reset by peer" error, and
 // the read speed will be very slow, still investigating the reason.
@@ -49,50 +48,6 @@ import (
 // And our target for global sort is AWS s3, this default value might not fit well.
 // TODO: adjust it according to cloud storage.
 const maxCloudStorageConnections = 1000
-=======
-// writeStepMemShareCount defines the number of shares of memory per job worker.
-// For each job worker, the memory it can use is determined by cpu:mem ratio, say
-// a 16c32G machine, each worker can use 2G memory.
-// And for the memory corresponding to each job worker, we divide into below and
-// total 6.5 shares:
-//   - one share used by HTTP and GRPC buf, such as loadRangeBatchData, write TiKV
-//   - one share used by loadRangeBatchData to store loaded data batch A
-//   - one share used by generateAndSendJob for handle loaded data batch B
-//   - one share used by the active job on job worker
-//   - 2.5 share for others, and burst allocation to avoid OOM
-//
-// the share size 'SS' determines the max data size 'RangeS' for a split-range
-// which is split out by RangeSplitter.
-// split-range is intersected with region to generate range job which is handled
-// by range job worker, and each range job corresponding to one ingested SST on TiKV.
-// our goal here is to load as many data as possible to make all range job workers
-// fully parallelized, while minimizing the number of SSTs (too many SST file, say
-// 500K, will cause TiKV slow down when ingest), i.e. to make RangeS larger, and
-// also try to make the SST be more even, so we calculate RangeS by:
-//   - RS = region size
-//   - let TempRangeS = SS
-//   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
-//     trailing 1 is for RS divided by odd number.
-//   - else RangeS = floor(TempRangeS / RS) * RS.
-//
-// Note: below calculation only consider the memory taken by the KV pair itself,
-// golang takes 24*2 = 48B for each KV pair, so if the size of KV pair itself is
-// very small, the real memory taken by each KV pair might be doubled, so it's
-// only an estimation.
-// such as, for a simple table "create table t(id bigint primary key, v bigint, index(v))",
-// each index KV is 38B, golang need 86B memory to store it.
-//
-// RangeS for different region size and cpu:mem ratio, the number in parentheses
-// is the number of SST files per region:
-//
-//	|   RS  | RangeS        | RangeS        |
-//	|       | cpu:mem=1:1.7 | cpu:mem=1:3.5 |
-//	|-------|---------------|---------------|
-//	|   96M |       192M(1) |       480M(1) |
-//	|  256M |       256M(1) |       512M(1) |
-//	|  512M |       256M(2) |       512M(1) |
-const writeStepMemShareCount = 6.5
->>>>>>> 65c3cf222d2 (globalsort: fix stuck when ingesting small kv (#62407))
 
 type memKVsAndBuffers struct {
 	mu     sync.Mutex
@@ -302,13 +257,6 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
-<<<<<<< HEAD
-=======
-	// Note: this is the file size of the range group, KV size is smaller, as we
-	// need additional 8*2 for each KV.
-	logutil.Logger(ctx).Info("estimated file size of this range group",
-		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
->>>>>>> 65c3cf222d2 (globalsort: fix stuck when ingesting small kv (#62407))
 	return result, startOffs, nil
 }
 
