@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -159,6 +160,7 @@ func TestBootstrapWithError(t *testing.T) {
 		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
+		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
