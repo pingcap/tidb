@@ -55,7 +55,7 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
+func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
@@ -145,6 +145,13 @@ func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		// Updating auto id metakv is done in a separate txn.
+		// It's ok as these data are binded with table ID, and we won't use see these table IDs
+		// until info schema version is updated.
+		if err := handleAutoIncID(r, job, tbInfo); err != nil {
+			return tbInfo, errors.Trace(err)
+		}
+
 		return tbInfo, nil
 	default:
 		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
@@ -158,11 +165,7 @@ type autoIDType struct {
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (w *worker) handleAutoIncID(job *model.Job, tbInfo *model.TableInfo) error {
-	r := &asAutoIDRequirement{
-		store:     w.store,
-		autoidCli: w.autoidCli,
-	}
+func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableInfo) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(r, job.SchemaID, tbInfo)
 
 	hs := make([]autoIDType, 0, 3)
@@ -216,12 +219,11 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
-	tbInfo, err = createTable(jobCtx, job, args)
+	tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+		store:     w.store,
+		autoidCli: w.autoidCli,
+	}, args)
 	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	if err := w.handleAutoIncID(job, tbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -248,7 +250,10 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, job, args)
+		tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+			store:     w.store,
+			autoidCli: w.autoidCli,
+		}, args)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -314,12 +319,12 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, stubJob, tblArgs)
+			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
+				store:     w.store,
+				autoidCli: w.autoidCli,
+			}, tblArgs)
 			if err != nil {
 				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			if err := w.handleAutoIncID(job, tbInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
 			tableInfos = append(tableInfos, tbInfo)
