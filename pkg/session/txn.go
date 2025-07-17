@@ -657,7 +657,19 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		return current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value)
 	}
 
-	return tablecodec.IndexKVIsUnique(v)
+	if !tablecodec.IndexKVIsUnique(v) {
+		// In most times, if an index is not unique, its primary record is assumed to be locked if mutated.
+		// So we don't need to lock the index key for performance purposes.
+		// However, the above assumption is not always true, for example, when adding the index, the DDL background task
+		// may not lock the primary record.
+		// So, the SQL layer can use the flag `flagNeedLocked` to indicate whether the index key should be force locked.
+		// - If `flagNeedLocked` is true, we should lock the index key by force to guarantee the correctness.
+		// - If `flagNeedLocked` is false, it indicates we can skip locking the index key.
+		return flags.HasNeedLocked()
+	}
+
+	// Force to lock the unique index key to ensure the correctness.
+	return true
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
