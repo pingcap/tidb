@@ -17,6 +17,7 @@ package tici
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -359,13 +360,13 @@ func (w *DataWriter) CloseFileWriter(ctx context.Context) error {
 // DataWriterGroup manages a group of TiCIDataWriter, each responsible for a fulltext index in a table.
 type DataWriterGroup struct {
 	writers  []*DataWriter
-	writable bool
+	writable atomic.Bool
 }
 
 // WriteHeader writes the header to all writers in the group.
 // commitTS is the commit timestamp to include in the header.
 func (g *DataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) error {
-	if !g.writable {
+	if !g.writable.Load() {
 		return nil
 	}
 	for _, w := range g.writers {
@@ -379,7 +380,7 @@ func (g *DataWriterGroup) WriteHeader(ctx context.Context, commitTS uint64) erro
 // WritePairs writes a batch of KV Pairs to all writers in the group.
 // Logs detailed errors for each writer using the logger.
 func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, count int) error {
-	if !g.writable {
+	if !g.writable.Load() {
 		return nil
 	}
 	logger := logutil.Logger(ctx)
@@ -398,7 +399,16 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, cou
 	return nil
 }
 
-// NewTiCIDataWriterGroup creates a new TiCIDataWriterGroup for all fulltext indexes in the given table.
+// NewTiCIDataWriterGroup constructs a DataWriterGroup covering all full-text
+// indexes of the given table.
+//
+// NOTE: The 'writable' flag is a temporary workaround. It aligns with the
+// current import-into implementation and how data and index engines are
+// handled. The fundamental limitation is that region jobs are created and
+// executed without access to engine-level context, leaving the system unaware
+// of which engine is currently being written. Addressing this would require
+// significant changes to the import-into interface and should be considered
+// in longer-term architectural improvements.
 func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) *DataWriterGroup {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
 	writers := make([]*DataWriter, 0, len(fulltextIndexes))
@@ -413,10 +423,10 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 	for _, idx := range fulltextIndexes {
 		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
 	}
-	return &DataWriterGroup{
-		writers:  writers,
-		writable: true,
-	}
+
+	g := &DataWriterGroup{writers: writers}
+	g.writable.Store(true)
+	return g
 }
 
 // SetTiCIDataWriterGroupWritable sets the writable state for the TiCIDataWriterGroup.
@@ -433,7 +443,7 @@ func SetTiCIDataWriterGroupWritable(
 	}
 
 	writable := engineID != IndexEngineID
-	g.writable = writable
+	g.writable.Store(writable)
 
 	logger := logutil.Logger(ctx)
 	if logger != nil {
@@ -448,7 +458,7 @@ func SetTiCIDataWriterGroupWritable(
 // InitTICIFileWriters initializes the ticiFileWriter for all writers in the group.
 // cloudStoreURI is the S3 URI, logger is taken from context.
 func (g *DataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
-	if !g.writable {
+	if !g.writable.Load() {
 		return nil
 	}
 	logger := logutil.Logger(ctx)
@@ -475,7 +485,7 @@ func (g *DataWriterGroup) GetCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) error {
-	if !g.writable {
+	if !g.writable.Load() {
 		return nil
 	}
 	for _, w := range g.writers {
@@ -492,7 +502,7 @@ func (g *DataWriterGroup) GetCloudStoragePath(
 func (g *DataWriterGroup) MarkPartitionUploadFinished(
 	ctx context.Context,
 ) error {
-	if !g.writable {
+	if !g.writable.Load() {
 		return nil
 	}
 	for _, w := range g.writers {
@@ -524,7 +534,7 @@ func (g *DataWriterGroup) MarkTableUploadFinished(
 
 // CloseFileWriters closes the underlying TICIFileWriter for each writer in the group.
 func (g *DataWriterGroup) CloseFileWriters(ctx context.Context) error {
-	if !g.writable {
+	if !g.writable.Load() {
 		return nil
 	}
 	logger := logutil.Logger(ctx)
