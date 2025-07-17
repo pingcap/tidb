@@ -360,3 +360,11 @@ func TestShowImportProgress(t *testing.T) {
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)
 	checkShowInfo("post-process", "0B", "0B", "N/A", "0B/s", "N/A", 100)
 }
+
+func TestFormatTime(t *testing.T) {
+	require.Equal(t, "1 d 00:00:00", importinto.FormatSecondAsTime(86400))
+	require.Equal(t, "2 d 00:00:01", importinto.FormatSecondAsTime(172801))
+	require.Equal(t, "23:59:59", importinto.FormatSecondAsTime(86399))
+	require.Equal(t, "00:59:59", importinto.FormatSecondAsTime(3599))
+	require.Equal(t, "08:00:00", importinto.FormatSecondAsTime(28800))
+}

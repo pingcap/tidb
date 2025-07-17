@@ -183,15 +183,16 @@ func (ri *RuntimeInfo) Percent() string {
 	return strconv.FormatInt(int64(percentage*100), 10)
 }
 
-func formatSecondToTime(sec int64) string {
-	days := sec / (24 * 3600)
-	hours := (sec % (24 * 3600)) / 3600
-	minutes := (sec % 3600) / 60
-	seconds := sec % 60
-	if days > 0 {
-		return fmt.Sprintf("%d d %02d:%02d:%02d", days, hours, minutes, seconds)
+// FormatSecondToTime formats the given seconds into the given format
+// If the duration is less than a day, it returns the time in HH:MM:SS format.
+// Otherwise, it returns the time in DD d HH:MM:SS format.
+func FormatSecondAsTime(sec int64) string {
+	day := ""
+	dur := time.Duration(sec) * time.Second
+	if dur.Hours() >= 24 {
+		day = fmt.Sprintf("%d d ", int(dur.Hours()/24))
 	}
-	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
 }
 
 // SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
@@ -205,7 +206,7 @@ func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
 	remainTime := notAvailable
 	if s > 0 && ri.Total > 0 {
 		remainSecond := max((ri.Total-ri.Processed)/s, 0)
-		remainTime = formatSecondToTime(remainSecond)
+		remainTime = FormatSecondAsTime(remainSecond)
 	}
 
 	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
