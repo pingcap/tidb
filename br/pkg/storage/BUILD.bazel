@@ -114,6 +114,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_sync//errgroup",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_mock//gomock",
     ],
 )

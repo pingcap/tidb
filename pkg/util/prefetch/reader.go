@@ -33,15 +33,18 @@ type Reader struct {
 
 	closed   bool
 	closedCh chan struct{}
+	// rangeSize is the size of the range of data that the reader is reading.
+	rangeSize int64
 }
 
 // NewReader creates a new Reader.
-func NewReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
+func NewReader(r io.ReadCloser, rangeSize int64, prefetchSize int) io.ReadCloser {
 	ret := &Reader{
-		r:        r,
-		bufCh:    make(chan []byte),
-		err:      nil,
-		closedCh: make(chan struct{}),
+		r:         r,
+		bufCh:     make(chan []byte),
+		err:       nil,
+		closedCh:  make(chan struct{}),
+		rangeSize: rangeSize,
 	}
 	ret.buf[0] = make([]byte, prefetchSize/2)
 	ret.buf[1] = make([]byte, prefetchSize/2)
@@ -52,21 +55,24 @@ func NewReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
 
 func (r *Reader) run() {
 	defer r.wg.Done()
+	var readSize int64
 	for {
 		r.bufIdx = (r.bufIdx + 1) % 2
 		buf := r.buf[r.bufIdx]
 		n, err := io.ReadFull(r.r, buf)
 		buf = buf[:n]
+		readSize += int64(n)
 		select {
 		case <-r.closedCh:
 			return
 		case r.bufCh <- buf:
 		}
 		if err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) {
-				// this is caused by io.ReadFull. Because we are prefetching, the buffer size may
-				// be larger that caller's need. So we return io.EOF instead. Let caller check
-				// its needed size to convert io.EOF to io.ErrUnexpectedEOF.
+			if errors.Is(err, io.ErrUnexpectedEOF) && readSize == r.rangeSize {
+				// this is caused by io.ReadFull. Because we are prefetching, the
+				// buffer size may be larger that caller's need. So convert to io.EOF.
+				// Note: the reader r.r.Read may also return io.ErrUnexpectedEOF,
+				// we need skip this case.
 				err = io.EOF
 			}
 			r.err = err
