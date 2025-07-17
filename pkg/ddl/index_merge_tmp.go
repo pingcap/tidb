@@ -183,6 +183,11 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 	var currentTxnStartTS uint64
 	oprStartTime := time.Now()
 	ctx = kv.WithInternalSourceAndTaskType(ctx, w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	bfCtx := w.GetCtx()
+	originBatchCnt := bfCtx.batchCnt
+	defer func() {
+		bfCtx.batchCnt = originBatchCnt
+	}()
 
 	attempts := 0
 	for {
@@ -245,14 +250,14 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 				if err := w.ddlCtx.isReorgRunnable(ctx, false); err != nil {
 					return taskCtx, errors.Trace(err)
 				}
-				if w.batchCnt > 1 {
-					w.batchCnt /= 2
+				if bfCtx.batchCnt > 1 {
+					bfCtx.batchCnt /= 2
 				}
 				w.conflictCounter.Add(1)
 				backoff := kv.BackOff(uint(attempts))
 				logutil.DDLLogger().Warn("temp index merge worker retry",
 					zap.Int64("jobID", taskRange.jobID),
-					zap.Int("batchCnt", w.batchCnt),
+					zap.Int("batchCnt", bfCtx.batchCnt),
 					zap.Int("attempts", attempts),
 					zap.Duration("backoff", time.Duration(backoff)),
 					zap.Uint64("startTS", currentTxnStartTS),
@@ -260,9 +265,6 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 				continue
 			}
 			return taskCtx, errors.Trace(err)
-		}
-		if attempts <= 1 {
-			w.batchCnt = min(int(vardef.GetDDLReorgBatchSize()), w.batchCnt*2)
 		}
 		break
 	}
