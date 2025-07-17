@@ -353,8 +353,6 @@ func TestEmptyTable(t *testing.T) {
 
 func TestAnalyze(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testkit.WithCascades(true)(testKit)
-
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t, t1, t2, t3")
 		testKit.MustExec("create table t (a int, b int)")
