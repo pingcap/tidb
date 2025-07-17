@@ -1379,7 +1379,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	// Filter out indexes that have higher EqCondCount when a subset index has the same columns as the superset
-	if !hasScanHint || !hasUseOrForce {
+	if !hasScanHint && !hasUseOrForce && !allMVIIndexPath && len(available) > 1 {
 		available = filterIndexesByEqCondCount(available)
 	}
 
@@ -1457,7 +1457,7 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 	return paths[:i]
 }
 
-// filterIndexesByEqCondCount filters out indexes that have higher EqCondCount values
+// filterIndexesByEqCondCount filters out indexes that have lower EqCondCount values
 // when a subset index has the same columns as the superset.
 func filterIndexesByEqCondCount(paths []*util.AccessPath) []*util.AccessPath {
 	if len(paths) <= 1 {
@@ -1466,7 +1466,7 @@ func filterIndexesByEqCondCount(paths []*util.AccessPath) []*util.AccessPath {
 
 	// Helper function to check if one index is a prefix of another
 	isIndexPrefix := func(idx1, idx2 *model.IndexInfo, minEq int) bool {
-		for i := 0; i < minEq; i++ {
+		for i := range minEq {
 			if idx1.Columns[i].Name.L != idx2.Columns[i].Name.L {
 				return false
 			}
