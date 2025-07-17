@@ -12,7 +12,6 @@ import (
 
 // concurrentDumpStringFields handles composite key chunking with multiple columns
 func (d *Dumper) concurrentDumpStringFields(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, fields []string, orderByClause string, estimatedCount uint64) error {
-	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
 
 	// Calculate total count and chunk parameters
@@ -247,13 +246,13 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			whereClause := buildUpperBoundWhereClause(orderByColumns, currentBoundary)
 			fullWhere := buildWhereCondition(conf, whereClause)
 			query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1, true)
+			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
 		} else {
 			// Intermediate chunk: between previousBoundary and currentBoundary
 			whereClause := buildBoundedWhereClause(orderByColumns, previousBoundary, currentBoundary)
 			fullWhere := buildWhereCondition(conf, whereClause)
 			query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1, true)
+			newTask = d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
 		}
 
 		// Send previous buffered chunk (now we know it's not the last)
@@ -289,7 +288,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		whereClause := buildLowerBoundWhereClause(orderByColumns, previousBoundary)
 		fullWhere := buildWhereCondition(conf, whereClause)
 		query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
-		finalTask := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1, true)
+		finalTask := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)
 
 		buffer = &bufferedChunk{
 			task:       finalTask,
@@ -309,7 +308,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			firstWhereClause = conf.Where
 		}
 		query := buildSelectQuery(db, tbl, selectField, "", firstWhereClause, orderByClause)
-		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), 0, 1, true)
+		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), 0, 1)
 
 		// Single chunk case - send immediately as we know it's the only one
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)

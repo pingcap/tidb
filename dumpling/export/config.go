@@ -166,6 +166,7 @@ type Config struct {
 	Databases         []string
 
 	TableFilter         filter.Filter `json:"-"`
+	IsStringChunking    bool          `json:"-"` // Non-persistent field indicating string chunking mode
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo

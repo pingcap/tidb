@@ -22,6 +22,7 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -41,6 +42,7 @@ func TestWritePolicyMeta(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -61,6 +63,7 @@ func TestWriteTableMeta(t *testing.T) {
 
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -83,6 +86,7 @@ func TestWriteViewMeta(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -111,6 +115,7 @@ func TestWriteTableData(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 
 	writer := createTestWriter(config, t)
 
@@ -126,7 +131,7 @@ func TestWriteTableData(t *testing.T) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true, false)
+	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true)
 	require.NoError(t, err)
 
 	p := path.Join(dir, "test.employee.000000000.sql")
@@ -147,7 +152,7 @@ func TestWriteTableData(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)")
 
 	tableIR = newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err = writer.WriteTableData(tableIR, tableIR, 0, 1, true, false)
+	err = writer.WriteTableData(tableIR, tableIR, 0, 1, true)
 	require.ErrorContains(t, err, "injected error: fail to close data file")
 }
 
@@ -155,6 +160,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 	config.FileSize = 50
 	specCmts := []string{
 		"/*!40101 SET NAMES binary*/;",
@@ -174,7 +180,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true, false)
+	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true)
 	require.NoError(t, err)
 
 	cases := map[string]string{
@@ -204,6 +210,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 	config.FileSize = 50
 	config.Rows = 4
 	specCmts := []string{
@@ -224,7 +231,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true, false)
+	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true)
 	require.NoError(t, err)
 
 	cases := map[string]string{
@@ -254,6 +261,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	dir := t.TempDir()
 	config := defaultConfigForTest(t)
 	config.OutputDirPath = dir
+	config.IsStringChunking = false
 	config.StatementSize = 50
 	config.StatementSize += uint64(len("INSERT INTO `employee` VALUES\n"))
 	var err error
@@ -274,7 +282,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("te%/st", "employee", data, specCmts, colTypes)
-	err = writer.WriteTableData(tableIR, tableIR, 0, 1, true, false)
+	err = writer.WriteTableData(tableIR, tableIR, 0, 1, true)
 	require.NoError(t, err)
 
 	// only with statement size
@@ -328,7 +336,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	}
 
 	tableIR = newMockTableIR("te%/st", "employee", data, specCmts, colTypes)
-	require.NoError(t, writer.WriteTableData(tableIR, tableIR, 0, 1, true, false))
+	require.NoError(t, writer.WriteTableData(tableIR, tableIR, 0, 1, true))
 	require.NoError(t, err)
 	for p, expected := range cases {
 		p = path.Join(config.OutputDirPath, p)

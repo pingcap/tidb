@@ -687,7 +687,7 @@ func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta Ta
 						return nil, nil
 					}
 				}
-				return d.newTaskTableData(meta, newMultiQueriesChunk(queries, colLen), 0, 1, false), nil
+				return d.newTaskTableData(meta, newMultiQueriesChunk(queries, colLen), 0, 1), nil
 			}
 			return nil, err
 		case task := <-tableChan:
@@ -699,7 +699,7 @@ func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta Ta
 func (d *Dumper) dumpWholeTableDirectly(tctx *tcontext.Context, meta TableMeta, taskChan chan<- Task, partition, orderByClause string, currentChunk, totalChunks int) error {
 	conf := d.conf
 	tableIR := SelectAllFromTable(conf, meta, partition, orderByClause)
-	task := d.newTaskTableData(meta, tableIR, currentChunk, totalChunks, false)
+	task := d.newTaskTableData(meta, tableIR, currentChunk, totalChunks)
 	ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 	if ctxDone {
 		return tctx.Err()
@@ -737,6 +737,9 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
 
+	// Initialize chunking mode to false (row chunking) by default
+	conf.IsStringChunking = false
+
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB &&
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
@@ -763,6 +766,9 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 			zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
+
+	// Set chunking mode based on field analysis
+	conf.IsStringChunking = isStringField
 
 	count := estimateCount(d.tctx, db, tbl, conn, field, conf)
 	tctx.L().Info("get estimated rows count",
@@ -831,7 +837,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		if len(nullValueCondition) > 0 {
 			nullValueCondition = ""
 		}
-		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), chunkIndex, int(totalChunks), false)
+		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), chunkIndex, int(totalChunks))
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
 			return tctx.Err()
@@ -1004,7 +1010,7 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 
 	for i, w := range where {
 		query := buildSelectQuery(db, tbl, selectField, partition, buildWhereCondition(conf, w), orderByClause)
-		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), i+startChunkIdx, totalChunk, false)
+		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), i+startChunkIdx, totalChunk)
 		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 		if ctxDone {
 			return tctx.Err()
@@ -1320,7 +1326,7 @@ func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *BaseConn, taskChan ch
 	conf := d.conf
 	meta := &tableMeta{}
 	data := newTableData(conf.SQL, 0, true)
-	task := d.newTaskTableData(meta, data, 0, 1, false)
+	task := d.newTaskTableData(meta, data, 0, 1)
 	c := detectEstimateRows(tctx, metaConn, fmt.Sprintf("EXPLAIN %s", conf.SQL), []string{"rows", "estRows", "count"})
 	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 	atomic.StoreInt64(&d.totalTables, int64(1))
@@ -1757,14 +1763,10 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	return nil
 }
 
-func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int, isStringChunking bool) *TaskTableData {
+func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	d.metrics.totalChunks.Add(1)
-	var task *TaskTableData
-	if isStringChunking {
-		task = NewTaskTableDataWithStringChunking(meta, data, currentChunk, totalChunks)
-	} else {
-		task = NewTaskTableData(meta, data, currentChunk, totalChunks)
-	}
+	// Chunking mode is already set at table level in concurrentDumpTable
+	task := NewTaskTableData(meta, data, currentChunk, totalChunks)
 	// Set IsLastChunk for known total chunks scenarios
 	if totalChunks > 0 {
 		task.IsLastChunk = (currentChunk == totalChunks-1)

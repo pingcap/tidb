@@ -54,12 +54,11 @@ type TaskPolicyMeta struct {
 // TaskTableData is a dumping table data task
 type TaskTableData struct {
 	Task
-	Meta             TableMeta
-	Data             TableDataIR
-	ChunkIndex       int
-	TotalChunks      int
-	IsLastChunk      bool // Flag to indicate if this is the last chunk
-	IsStringChunking bool // Flag to indicate if this uses string-based chunking
+	Meta        TableMeta
+	Data        TableDataIR
+	ChunkIndex  int
+	TotalChunks int
+	IsLastChunk bool // Flag to indicate if this is the last chunk
 }
 
 // NewTaskDatabaseMeta returns a new dumping database metadata task
@@ -109,24 +108,11 @@ func NewTaskPolicyMeta(policyName, createPolicySQL string) *TaskPolicyMeta {
 // NewTaskTableData returns a new dumpling table data task
 func NewTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	return &TaskTableData{
-		Meta:             meta,
-		Data:             data,
-		ChunkIndex:       currentChunk,
-		TotalChunks:      totalChunks,
-		IsLastChunk:      false, // Default to false, will be set explicitly when known
-		IsStringChunking: false, // Default to false (row chunking)
-	}
-}
-
-// NewTaskTableDataWithStringChunking returns a new dumping table data task for string chunking
-func NewTaskTableDataWithStringChunking(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
-	return &TaskTableData{
-		Meta:             meta,
-		Data:             data,
-		ChunkIndex:       currentChunk,
-		TotalChunks:      totalChunks,
-		IsLastChunk:      false, // Default to false, will be set explicitly when known
-		IsStringChunking: true,  // String chunking mode
+		Meta:        meta,
+		Data:        data,
+		ChunkIndex:  currentChunk,
+		TotalChunks: totalChunks,
+		IsLastChunk: false, // Default to false, will be set explicitly when known
 	}
 }
 
