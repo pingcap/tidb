@@ -100,21 +100,22 @@ func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (auto
 	// write a for loop to retry in case of etcd connection error.
 	var resp *clientv3.GetResponse
 	var err error
-	for range []int{0, 1} {
-		resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-		if len(resp.Kvs) == 0 {
-			// If the key is not found, it means the autoid service leader is not elected yet.
-			// We can retry to get the leader.
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		break
+	var bo backoffer
+retry:
+	resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, 0, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		select {
+		case <-ctx.Done():
+			return nil, 0, errors.Trace(ctx.Err())
+		default:
+			bo.Backoff()
+		}
+		goto retry
 	}
 
 	addr := string(resp.Kvs[0].Value)
@@ -175,7 +176,12 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			sp.resetConn(ver, err)
-			bo.Backoff()
+			select {
+			case <-ctx.Done():
+				return 0, 0, errors.Trace(ctx.Err())
+			default:
+				bo.Backoff()
+			}
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -192,7 +198,7 @@ retry:
 }
 
 const backoffMin = 5 * time.Millisecond
-const backoffMax = 5 * time.Second
+const backoffMax = 100 * time.Millisecond
 
 type backoffer struct {
 	time.Duration
