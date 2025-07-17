@@ -421,114 +421,132 @@ func TestIssue52687(t *testing.T) {
   c_ku44klry7o double NOT NULL,
   c_js835qkmjz tinyint(4) DEFAULT NULL,
   PRIMARY KEY (c_a1tv2));`)
-	tk.MustExec(`update t_kg74 set 
+	tk.MustExec(`update t_kg74 set
   c_eobbbypzbu = (t_kg74.c_js835qkmjz in (
-    select  
+    select
           (ref_0.c_yb_ <> 'mlp40j') as c0
-        from 
+        from
           t_yzyyqbo2u as ref_0
         where (89.25 && ref_0.c_pq4c1la6cv)
       union
-      (select  
-          ((cast(null as double) != 1382756095)) 
+      (select
+          ((cast(null as double) != 1382756095))
             and ((1=1 <> (EXISTS (
-                  select distinct 
-                      ref_2.c_zjmgh995_6 as c0, 
-                      ref_2.c_zjmgh995_6 as c1, 
-                      ref_2.c_kbcid as c2, 
-                      ref_1.c_r5axbk as c3, 
-                      -633150135 as c4, 
-                      ref_2.c_c4l as c5, 
-                      ref_1.c_fd7zeyfs49 as c6, 
-                      ref_1.c_nylhnz as c7, 
-                      ref_2.c_um as c8, 
+                  select distinct
+                      ref_2.c_zjmgh995_6 as c0,
+                      ref_2.c_zjmgh995_6 as c1,
+                      ref_2.c_kbcid as c2,
+                      ref_1.c_r5axbk as c3,
+                      -633150135 as c4,
+                      ref_2.c_c4l as c5,
+                      ref_1.c_fd7zeyfs49 as c6,
+                      ref_1.c_nylhnz as c7,
+                      ref_2.c_um as c8,
                       ref_2.c_c4l as c9
-                    from 
+                    from
                       t_yzyyqbo2u as ref_2
-                    where ((ref_1.c_ob5k0 <= ref_2.c_qkf4n)) 
+                    where ((ref_1.c_ob5k0 <= ref_2.c_qkf4n))
                       and ((EXISTS (
-                        select  
-                            ref_3.c_qkf4n as c0, 
-                            ref_3.c_kbcid as c1, 
-                            ref_3.c_qkf4n as c2, 
-                            ref_1.c_wpmmiv as c3, 
-                            ref_1.c_fd7zeyfs49 as c4, 
-                            ref_3.c_c4l as c5, 
-                            ref_1.c_r5axbk as c6, 
+                        select
+                            ref_3.c_qkf4n as c0,
+                            ref_3.c_kbcid as c1,
+                            ref_3.c_qkf4n as c2,
+                            ref_1.c_wpmmiv as c3,
+                            ref_1.c_fd7zeyfs49 as c4,
+                            ref_3.c_c4l as c5,
+                            ref_1.c_r5axbk as c6,
                             ref_3.c_kbcid as c7
-                          from 
+                          from
                             t_yzyyqbo2u as ref_3
-                          where ((ref_2.c_qkf4n >= ( 
-                              select distinct 
+                          where ((ref_2.c_qkf4n >= (
+                              select distinct
                                     ref_4.c_b5qjz_jj0 as c0
-                                  from 
+                                  from
                                     t_yzyyqbo2u as ref_4
                                   where (ref_3.c__x9cqrnb0 not in (
-                                    select  
+                                    select
                                           ref_5.c_ok as c0
-                                        from 
+                                        from
                                           t_q1 as ref_5
                                         where 1=1
                                       union
-                                      (select  
+                                      (select
                                           ref_6.c_b5qjz_jj0 as c0
-                                        from 
+                                        from
                                           t_yzyyqbo2u as ref_6
                                         where (ref_6.c_qkf4n not in (
-                                          select  
+                                          select
                                                 ref_7.c_um as c0
-                                              from 
+                                              from
                                                 t_yzyyqbo2u as ref_7
                                               where 1=1
                                             union
-                                            (select  
+                                            (select
                                                 ref_8.c_b5qjz_jj0 as c0
-                                              from 
+                                              from
                                                 t_yzyyqbo2u as ref_8
                                               where (ref_8.c_yb_ not like 'nrry%m')))))))
                                 union
-                                (select  
+                                (select
                                     ref_2.c_fujjmh8m2 as c0
-                                  from 
+                                  from
                                     t_q1 as ref_9
                                   where (ref_2.c_zjmgh995_6 like 'v8%3xn%_uc'))
-                                order by c0 limit 1))) 
+                                order by c0 limit 1)))
                             or ((ref_1.c_fulsthp7e in (
-                              select  
+                              select
                                     ref_10.c_ru as c0
-                                  from 
+                                  from
                                     t_q1 as ref_10
                                   where (55.34 >= 1580576276)
                                 union
-                                (select  
+                                (select
                                     ref_11.c_ru as c0
-                                  from 
+                                  from
                                     t_q1 as ref_11
                                   where (ref_11.c_ru in (
-                                    select distinct 
+                                    select distinct
                                           ref_12.c_zjmgh995_6 as c0
-                                        from 
+                                        from
                                           t_yzyyqbo2u as ref_12
                                         where 0<>0
                                       union
-                                      (select  
+                                      (select
                                           ref_13.c_zjmgh995_6 as c0
-                                        from 
+                                        from
                                           t_yzyyqbo2u as ref_13
                                         where ('q2chm8gfsa' = ref_13.c_yb_))))))))))))))) as c0
-        from 
+        from
           t_o9_7_f as ref_1
-        where (-9186514464458010455 <> 62.67)))), 
-  c_if = 'u1ah7', 
-  c_vqafa6o6 = (t_kg74.c_a1tv2 + (((t_kg74.c_a1tv2 between t_kg74.c_a1tv2 and t_kg74.c_a1tv2)) 
-        or (1=1)) 
-      and ((1288561802 <= t_kg74.c_a1tv2))), 
+        where (-9186514464458010455 <> 62.67)))),
+  c_if = 'u1ah7',
+  c_vqafa6o6 = (t_kg74.c_a1tv2 + (((t_kg74.c_a1tv2 between t_kg74.c_a1tv2 and t_kg74.c_a1tv2))
+        or (1=1))
+      and ((1288561802 <= t_kg74.c_a1tv2))),
   c_js835qkmjz = (t_kg74.c_vqafa6o6 in (
-    select  
+    select
         ref_14.c_z as c0
-      from 
+      from
         t_q1 as ref_14
       where (ref_14.c_z like 'o%fiah')))
 where (t_kg74.c_obnq8s7_s2 = case when (t_kg74.c_a1tv2 is NULL) then t_kg74.c_g else t_kg74.c_obnq8s7_s2 end
       );`)
+}
+
+func TestIssue58476(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE t3 (id int PRIMARY KEY,c1 varchar(256),c2 varchar(256) GENERATED ALWAYS AS (concat(c1, c1)) VIRTUAL,KEY (id));")
+	tk.MustExec("insert into t3(id, c1) values (50, 'c');")
+	tk.MustQuery("SELECT /*+ USE_INDEX_MERGE(`t3`)*/ id FROM `t3` WHERE c2 BETWEEN 'a' AND 'b' GROUP BY id HAVING id < 100 or id > 0;").Check(testkit.Rows())
+	tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(`t3`)*/ id FROM `t3` WHERE c2 BETWEEN 'a' AND 'b' GROUP BY id HAVING id < 100 or id > 0;").
+		Check(testkit.Rows(
+			`Projection 249.75 root  test.t3.id`,
+			`└─Selection 249.75 root  ge(test.t3.c2, "a"), le(test.t3.c2, "b")`,
+			`  └─Projection 9990.00 root  test.t3.id, test.t3.c2`,
+			`    └─IndexMerge 9990.00 root  type: union`,
+			`      ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t3, index:id(id) range:[-inf,100), keep order:false, stats:pseudo`,
+			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
+			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
