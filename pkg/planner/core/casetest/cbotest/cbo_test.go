@@ -352,71 +352,73 @@ func TestEmptyTable(t *testing.T) {
 }
 
 func TestAnalyze(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t, t1, t2, t3")
-	testKit.MustExec("create table t (a int, b int)")
-	testKit.MustExec("create index a on t (a)")
-	testKit.MustExec("create index b on t (b)")
-	testKit.MustExec("insert into t (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
-	testKit.MustExec("analyze table t")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testkit.WithCascades(true)(testKit)
 
-	testKit.MustExec("create table t1 (a int, b int)")
-	testKit.MustExec("create index a on t1 (a)")
-	testKit.MustExec("create index b on t1 (b)")
-	testKit.MustExec("insert into t1 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t, t1, t2, t3")
+		testKit.MustExec("create table t (a int, b int)")
+		testKit.MustExec("create index a on t (a)")
+		testKit.MustExec("create index b on t (b)")
+		testKit.MustExec("insert into t (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+		testKit.MustExec("analyze table t")
 
-	testKit.MustExec("create table t2 (a int, b int)")
-	testKit.MustExec("create index a on t2 (a)")
-	testKit.MustExec("create index b on t2 (b)")
-	testKit.MustExec("insert into t2 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
-	testKit.MustExec("analyze table t2 index a")
+		testKit.MustExec("create table t1 (a int, b int)")
+		testKit.MustExec("create index a on t1 (a)")
+		testKit.MustExec("create index b on t1 (b)")
+		testKit.MustExec("insert into t1 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 
-	testKit.MustExec("create table t3 (a int, b int)")
-	testKit.MustExec("create index a on t3 (a)")
+		testKit.MustExec("create table t2 (a int, b int)")
+		testKit.MustExec("create index a on t2 (a)")
+		testKit.MustExec("create index b on t2 (b)")
+		testKit.MustExec("insert into t2 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+		testKit.MustExec("analyze table t2 index a")
 
-	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
-	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
-	testKit.MustExec("create index a on t4 (a)")
-	testKit.MustExec("create index b on t4 (b)")
-	testKit.MustExec("insert into t4 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
-	testKit.MustExec("analyze table t4")
+		testKit.MustExec("create table t3 (a int, b int)")
+		testKit.MustExec("create index a on t3 (a)")
 
-	testKit.MustExec("create view v as select * from t")
-	_, err := testKit.Exec("analyze table v")
-	require.EqualError(t, err, "analyze view v is not supported now")
-	testKit.MustExec("drop view v")
+		testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
+		testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
+		testKit.MustExec("create index a on t4 (a)")
+		testKit.MustExec("create index b on t4 (b)")
+		testKit.MustExec("insert into t4 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+		testKit.MustExec("analyze table t4")
 
-	testKit.MustExec("create sequence seq")
-	_, err = testKit.Exec("analyze table seq")
-	require.EqualError(t, err, "analyze sequence seq is not supported now")
-	testKit.MustExec("drop sequence seq")
+		testKit.MustExec("create view v as select * from t")
+		_, err := testKit.Exec("analyze table v")
+		require.EqualError(t, err, "analyze view v is not supported now")
+		testKit.MustExec("drop view v")
 
-	var input, output []string
-	analyzeSuiteData := GetAnalyzeSuiteData()
-	analyzeSuiteData.LoadTestCases(t, &input, &output)
+		testKit.MustExec("create sequence seq")
+		_, err = testKit.Exec("analyze table seq")
+		require.EqualError(t, err, "analyze sequence seq is not supported now")
+		testKit.MustExec("drop sequence seq")
 
-	for i, tt := range input {
-		ctx := testKit.Session()
-		stmts, err := session.Parse(ctx, tt)
-		require.NoError(t, err)
-		require.Len(t, stmts, 1)
-		stmt := stmts[0]
-		err = executor.ResetContextOfStmt(ctx, stmt)
-		require.NoError(t, err)
-		ret := &core.PreprocessorReturn{}
-		nodeW := resolve.NewNodeW(stmt)
-		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
-		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
-		require.NoError(t, err)
-		planString := core.ToString(p)
-		testdata.OnRecord(func() {
-			output[i] = planString
-		})
-		require.Equalf(t, output[i], planString, "case: %v", tt)
-	}
+		var input, output []string
+		analyzeSuiteData := GetAnalyzeSuiteData()
+		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+
+		for i, tt := range input {
+			ctx := testKit.Session()
+			stmts, err := session.Parse(ctx, tt)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			stmt := stmts[0]
+			err = executor.ResetContextOfStmt(ctx, stmt)
+			require.NoError(t, err)
+			ret := &core.PreprocessorReturn{}
+			nodeW := resolve.NewNodeW(stmt)
+			err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
+			require.NoError(t, err)
+			planString := core.ToString(p)
+			testdata.OnRecord(func() {
+				output[i] = planString
+			})
+			require.Equalf(t, output[i], planString, "case: %v", tt)
+		}
+	})
 }
 
 func TestOutdatedAnalyze(t *testing.T) {
