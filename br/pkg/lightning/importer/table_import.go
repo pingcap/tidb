@@ -40,6 +40,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/errno"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -722,6 +723,13 @@ ChunkLoop:
 			break
 		}
 
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			// TODO: use the compressed size of the chunk to conduct memory control
+			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkProcessor) {
@@ -1119,6 +1127,40 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
+}
+
+func getChunkCompressedSizeForParquet(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	store storage.ExternalStorage,
+) (int64, error) {
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+	if err != nil {
+		_ = reader.Close()
+		return 0, errors.Trace(err)
+	}
+	//nolint: errcheck
+	defer parser.Close()
+	err = parser.Reader.ReadFooter()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rowGroups := parser.Reader.Footer.GetRowGroups()
+	var maxRowGroupSize int64
+	for _, rowGroup := range rowGroups {
+		var rowGroupSize int64
+		columnChunks := rowGroup.GetColumns()
+		for _, columnChunk := range columnChunks {
+			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
+			rowGroupSize += columnChunkSize
+		}
+		maxRowGroupSize = mathutil.Max(maxRowGroupSize, rowGroupSize)
+	}
+	return maxRowGroupSize, nil
 }
 
 func parseColumnPermutations(
