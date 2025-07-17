@@ -181,7 +181,7 @@ func TestTiCIDataWriterGroup_WriteHeader(t *testing.T) {
 		mockFileWriter, _ := newStubTICIFileWriter(t, false)
 		w.ticiFileWriter = mockFileWriter
 	}
-	group.writable = true
+	group.writable.Store(true)
 	err := group.WriteHeader(ctx, 1)
 	assert.NoError(t, err)
 }
@@ -196,7 +196,7 @@ func TestTiCIDataWriterGroup_WritePairs(t *testing.T) {
 		mockFileWriter, _ := newStubTICIFileWriter(t, false)
 		w.ticiFileWriter = mockFileWriter
 	}
-	group.writable = true
+	group.writable.Store(true)
 	pairs := []*sst.Pair{{Key: []byte("k"), Value: []byte("v")}}
 	err := group.WritePairs(ctx, pairs, 1)
 	assert.NoError(t, err)
@@ -213,7 +213,7 @@ func TestTiCIDataWriterGroup_WritePairs_Fail(t *testing.T) {
 		mockWriter.fail = true
 		w.ticiFileWriter = mockFileWriter
 	}
-	group.writable = true
+	group.writable.Store(true)
 	pairs := []*sst.Pair{{Key: []byte("k"), Value: []byte("v")}}
 	err := group.WritePairs(ctx, pairs, 1)
 	assert.Error(t, err)
@@ -227,29 +227,32 @@ func TestSetTiCIDataWriterGroupWritable(t *testing.T) {
 	group := NewTiCIDataWriterGroup(ctx, tbl, "testdb")
 	engineUUID := uuid.New()
 	SetTiCIDataWriterGroupWritable(ctx, group, engineUUID, 0)
-	assert.True(t, group.writable)
+	assert.True(t, group.writable.Load())
 	SetTiCIDataWriterGroupWritable(ctx, group, engineUUID, IndexEngineID)
-	assert.False(t, group.writable)
+	assert.False(t, group.writable.Load())
 	SetTiCIDataWriterGroupWritable(ctx, nil, engineUUID, 0) // should not panic
 }
 
 func TestTiCIDataWriterGroup_InitTICIFileWriters_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &DataWriterGroup{writable: false}
+	group := &DataWriterGroup{}
+	group.writable.Store(false)
 	err := group.InitTICIFileWriters(ctx)
 	assert.NoError(t, err)
 }
 
 func TestTiCIDataWriterGroup_GetCloudStoragePath_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &DataWriterGroup{writable: false}
+	group := &DataWriterGroup{}
+	group.writable.Store(false)
 	err := group.GetCloudStoragePath(ctx, nil, nil)
 	assert.NoError(t, err)
 }
 
 func TestTiCIDataWriterGroup_MarkPartitionUploadFinished_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &DataWriterGroup{writable: false}
+	group := &DataWriterGroup{}
+	group.writable.Store(false)
 	err := group.MarkPartitionUploadFinished(ctx)
 	assert.NoError(t, err)
 }
@@ -280,7 +283,8 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 
 func TestTiCIDataWriterGroup_CloseFileWriters_NotWritable(t *testing.T) {
 	ctx := context.Background()
-	group := &DataWriterGroup{writable: false}
+	group := &DataWriterGroup{}
+	group.writable.Store(false)
 	err := group.CloseFileWriters(ctx)
 	assert.NoError(t, err)
 }
