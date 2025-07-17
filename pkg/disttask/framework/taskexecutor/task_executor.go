@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -443,7 +442,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskCtx, subtaskCancel := context.WithCancel(e.stepCtx)
-	subtaskCtx = llog.NewContext(subtaskCtx, log.Logger{Logger: logger})
+	subtaskCtx = llog.NewContext(subtaskCtx, llog.Logger{Logger: logger})
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
 
