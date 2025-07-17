@@ -72,17 +72,17 @@ func (p *PhysicalUnionScan) ExplainInfo() string {
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalUnionScan)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(op.Conditions, nil)
-	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone()
+	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(p.Conditions, nil)
+	if p.HandleCols != nil {
+		cloned.HandleCols = p.HandleCols.Clone()
 	}
 	return cloned, true
 }
