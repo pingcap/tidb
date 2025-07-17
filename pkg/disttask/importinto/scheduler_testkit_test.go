@@ -238,9 +238,10 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{
-			Type:  proto.ImportInto,
-			Step:  proto.StepInit,
-			State: proto.TaskStatePending,
+			Type:        proto.ImportInto,
+			Step:        proto.StepInit,
+			State:       proto.TaskStatePending,
+			Concurrency: 8,
 		},
 		Meta:            bs,
 		StateUpdateTime: time.Now(),

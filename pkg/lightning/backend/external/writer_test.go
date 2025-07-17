@@ -835,3 +835,41 @@ func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(s
 		require.Empty(t, summary.ConflictInfo.Files)
 	})
 }
+
+func TestGetAdjustedMergeSortOverlapThreshold(t *testing.T) {
+	tests := []struct {
+		concurrency int
+		want        int64
+	}{
+		{1, 250},
+		{2, 250},
+		{4, 1000},
+		{6, 1000},
+		{8, 4000},
+		{16, 4000},
+	}
+	for _, tt := range tests {
+		if got := GetAdjustedMergeSortOverlapThreshold(tt.concurrency); got != tt.want {
+			t.Errorf("GetAdjustedMergeSortOverlapThreshold() = %v, want %v", got, tt.want)
+		}
+	}
+}
+
+func TestGetAdjustedMergeSortFileCountStep(t *testing.T) {
+	tests := []struct {
+		concurrency int
+		want        int
+	}{
+		{1, 250},
+		{2, 250},
+		{4, 1000},
+		{6, 1000},
+		{8, 4000},
+		{16, 4000},
+	}
+	for _, tt := range tests {
+		if got := GetAdjustedMergeSortFileCountStep(tt.concurrency); got != tt.want {
+			t.Errorf("GetAdjustedMergeSortFileCountStep() = %v, want %v", got, tt.want)
+		}
+	}
+}
