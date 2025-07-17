@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 	"go.uber.org/mock/gomock"
 )
 
@@ -856,8 +857,6 @@ func (s *s3Suite) expectedCalls(ctx context.Context, t *testing.T, data []byte, 
 	}
 }
 
-<<<<<<< HEAD
-=======
 type mockFailReader struct {
 	r         io.Reader
 	failCount *atomic.Int32
@@ -869,39 +868,6 @@ func (f *mockFailReader) Read(p []byte) (n int, err error) {
 		return 0, errors.New("mock read error")
 	}
 	return f.r.Read(p)
-}
-
-func TestS3RangeReaderRetryRead(t *testing.T) {
-	s := createS3Suite(t)
-	ctx := aws.BackgroundContext()
-	content := []byte("0123456789")
-	var failCount atomic.Int32
-	s.s3.EXPECT().GetObjectWithContext(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
-			var start int
-			_, err := fmt.Sscanf(*input.Range, "bytes=%d-", &start)
-			require.NoError(t, err)
-			requestedBytes := content[start:]
-			return &s3.GetObjectOutput{
-				Body:         io.NopCloser(&mockFailReader{r: bytes.NewReader(requestedBytes), failCount: &failCount}),
-				ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", start, len(content)-1, len(content))),
-			}, nil
-		}).Times(2)
-	reader, err := s.storage.Open(ctx, "random", &ReaderOption{StartOffset: aws.Int64(3)})
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, reader.Close())
-	}()
-	slice := make([]byte, 2)
-	n, err := reader.Read(slice)
-	require.NoError(t, err)
-	require.Equal(t, 2, n)
-	require.Equal(t, []byte("34"), slice)
-	failCount.Store(1)
-	n, err = reader.Read(slice)
-	require.NoError(t, err)
-	require.Equal(t, 2, n)
-	require.Equal(t, []byte("56"), slice)
 }
 
 func TestS3RangeReaderShouldNotRetryWhenContextCancelled(t *testing.T) {
@@ -937,7 +903,6 @@ func TestS3RangeReaderShouldNotRetryWhenContextCancelled(t *testing.T) {
 	require.Zero(t, n)
 }
 
->>>>>>> 0f5ba8fbaab (prefetch: fix underlying unexpected-eof taken as EOF (#59752))
 // TestS3ReaderWithRetryEOF check the Read with retry and end with io.EOF.
 func TestS3ReaderWithRetryEOF(t *testing.T) {
 	s := createS3Suite(t)
