@@ -2570,6 +2570,11 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
+	// update keyspace to be user specified
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
+
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
 	if err != nil {
