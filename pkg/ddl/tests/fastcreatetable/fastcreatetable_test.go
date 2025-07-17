@@ -130,7 +130,7 @@ func TestMergedJob(t *testing.T) {
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
-		tk1.MustExecToErr("create table t1(id int AUTO_INCREMENT, c int) AUTO_INCREMENT 100")
+		tk1.MustExecToErr("create table t1(id int AUTO_INCREMENT, c int) AUTO_INCREMENT 1000")
 	})
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
@@ -147,7 +147,7 @@ func TestMergedJob(t *testing.T) {
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
-		tk1.MustExec("create table t1(id int AUTO_INCREMENT, c int) AUTO_INCREMENT 1000")
+		tk1.MustExec("create table t1(id int AUTO_INCREMENT, c int) AUTO_INCREMENT 100")
 	})
 	wg.Run(func() {
 		tk1 := testkit.NewTestKit(t, store)
@@ -164,6 +164,7 @@ func TestMergedJob(t *testing.T) {
 	close(startSchedule)
 	wg.Wait()
 
+	// Test the correctness of auto id after failed merge job 2
 	tk.MustExec("insert into test.t1(c) values(1)")
-	tk.MustQuery("select * from test.t1").Check(testkit.Rows("1001 1"))
+	tk.MustQuery("select * from test.t1").Check(testkit.Rows("100 1"))
 }
