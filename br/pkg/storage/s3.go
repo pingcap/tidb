@@ -307,7 +307,11 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
-	if qs.Endpoint != "" {
+	// ⚠️ Do NOT set a global endpoint in the AWS config.
+	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
+	// as it overrides the STS endpoint and causes authentication to fail.
+	// See: https://github.com/aws/aws-sdk-go/issues/3972
+	if len(qs.Endpoint) != 0 && qs.Provider != "aws" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
 	if opts.HTTPClient != nil {
@@ -355,6 +359,9 @@ func NewS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		s3CliConfigs = append(s3CliConfigs,
 			aws.NewConfig().WithCredentials(creds),
 		)
+	}
+	if len(qs.Endpoint) != 0 && qs.Provider == "aws" {
+		s3CliConfigs = append(s3CliConfigs, aws.NewConfig().WithEndpoint(qs.Endpoint))
 	}
 	c := s3.New(ses, s3CliConfigs...)
 
