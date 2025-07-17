@@ -3384,15 +3384,6 @@ func getGEAndLogicalApply(super base.LogicalPlan) (ge *memo.GroupExpression, app
 // exhaustPhysicalPlans4LogicalApply generates the physical plan for a logical apply.
 func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	ge, la := getGEAndLogicalApply(super)
-	defer func() {
-		r := recover()
-		if r != nil {
-			fmt.Println(1)
-		}
-	}()
-	if ge != nil {
-		fmt.Println(1)
-	}
 	_, _, schema0, _ := getJoinChildStatsAndSchema(ge, la)
 	if !prop.AllColsFromSchema(schema0) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
