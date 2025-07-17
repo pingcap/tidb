@@ -766,11 +766,13 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 // lockForAppend implements two-phase locking for append migration operations:
 // 1. Acquire read lock on main path (allows coexistence with restore)
 // 2. Acquire write lock on append path (prevents concurrent appends)
-func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (readLock, appendLock storage.RemoteLock, err error) {
+func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
+	readLock, appendLock storage.RemoteLock, err error) {
 	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
 	readLock, err = storage.LockWithRetry(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)")
 	if err != nil {
-		return storage.RemoteLock{}, storage.RemoteLock{}, errors.Annotate(err, "failed to acquire read lock for append operation")
+		return storage.RemoteLock{}, storage.RemoteLock{}, errors.Annotate(err,
+			"failed to acquire read lock for append operation")
 	}
 
 	// Phase 2: Acquire write lock on append path to prevent concurrent appends
