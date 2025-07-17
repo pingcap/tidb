@@ -315,6 +315,7 @@ func (em *engineManager) closeEngine(
 			ts = oracle.ComposeTS(physical, logical)
 		}
 		externalEngine := external.NewExternalEngine(
+			ctx,
 			store,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,

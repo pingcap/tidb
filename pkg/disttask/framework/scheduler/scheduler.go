@@ -98,6 +98,7 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
+	ctx = logutil.WithFields(ctx, zap.Int64("task-id", task.ID))
 	s := &BaseScheduler{
 		ctx:    ctx,
 		Param:  param,

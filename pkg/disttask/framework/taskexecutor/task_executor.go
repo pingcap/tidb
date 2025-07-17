@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -122,6 +123,7 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 		logger = logger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
+	subCtx = logutil.WithFields(subCtx, zap.Int64("taskID", task.ID), zap.String("taskKey", task.Key))
 	taskExecutorImpl := &BaseTaskExecutor{
 		Param:  param,
 		ctx:    subCtx,
@@ -441,6 +443,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskCtx, subtaskCancel := context.WithCancel(e.stepCtx)
+	subtaskCtx = llog.NewContext(subtaskCtx, log.Logger{Logger: logger})
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
 

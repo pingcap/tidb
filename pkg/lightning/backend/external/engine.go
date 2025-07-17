@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -107,7 +107,7 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 	}
 	b.droppedSizePerFile = nil
 
-	logutil.Logger(ctx).Info("building memKVsAndBuffers",
+	log.FromContext(ctx).Info("building memKVsAndBuffers",
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
@@ -168,6 +168,7 @@ const (
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
+	ctx context.Context,
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
@@ -186,7 +187,7 @@ func NewExternalEngine(
 ) *Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
-	logutil.BgLogger().Info("create external engine",
+	log.FromContext(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
@@ -270,7 +271,7 @@ func getFilesReadConcurrency(
 		}
 		// only log for files with expected concurrency > 1, to avoid too many logs
 		if expectedConc > 1 {
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+			log.FromContext(ctx).Info("found hotspot file in getFilesReadConcurrency",
 				zap.String("filename", statsFiles[i]),
 				zap.Uint64("startOffset", startOffs[i]),
 				zap.Uint64("endOffset", endOffs[i]),
@@ -281,7 +282,7 @@ func getFilesReadConcurrency(
 	}
 	// Note: this is the file size of the range group, KV size is smaller, as we
 	// need additional 8*2 for each KV.
-	logutil.Logger(ctx).Info("estimated file size of this range group",
+	log.FromContext(ctx).Info("estimated file size of this range group",
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
@@ -390,7 +391,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		}
 		deduplicateDur = time.Since(start)
 	}
-	logutil.Logger(ctx).Info("load range batch done",
+	log.FromContext(ctx).Info("load range batch done",
 		zap.Duration("readDur", readDur),
 		zap.Duration("sortDur", sortDur),
 		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize),
@@ -462,7 +463,7 @@ func (e *Engine) LoadIngestData(
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		rangeBatchSize = val.(int)
 	})
-	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
+	log.FromContext(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
 	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+rangeBatchSize, len(e.jobKeys))
@@ -489,7 +490,7 @@ func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
 		Concurrency: 1,
 		PartSize:    3 * MinUploadPartSize})
 	if err != nil {
-		logutil.Logger(ctx).Info("create dup writer failed", zap.Error(err))
+		log.FromContext(ctx).Info("create dup writer failed", zap.Error(err))
 		return err
 	}
 	e.dupFile = dupFile
@@ -506,7 +507,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	e.dupKVStore, e.dupWriter = nil, nil
 	kvStore.finish()
 	if err := writer.Close(ctx); err != nil {
-		logutil.Logger(ctx).Info("close dup writer failed", zap.Error(err))
+		log.FromContext(ctx).Info("close dup writer failed", zap.Error(err))
 		return err
 	}
 	return nil
