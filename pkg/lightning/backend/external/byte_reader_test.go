@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"net/http/httptest"
 	"testing"
@@ -189,7 +190,7 @@ func TestUnexpectedEOF(t *testing.T) {
 func TestEmptyContent(t *testing.T) {
 	ms := &mockExtStore{src: []byte{}}
 	_, err := newByteReader(context.Background(), ms, 100)
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 
 	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
 	defer clean()
@@ -204,7 +205,7 @@ func TestEmptyContent(t *testing.T) {
 		return rsc
 	}
 	_, err = newByteReader(context.Background(), newRsc(), 100)
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 }
 
 func TestSwitchMode(t *testing.T) {
@@ -260,7 +261,7 @@ func TestSwitchMode(t *testing.T) {
 			}
 		}
 		key, val, err := kvReader.nextKV()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
