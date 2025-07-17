@@ -126,7 +126,7 @@ func (tm *TableForeignKeyRecordManager) RemoveForeignKeys(tableInfo *model.Table
 	}
 	for key, fkRecord := range tm.referredFKRecordMap {
 		if model.IsIndexPrefixCovered(tableInfo, indexInfo, fkRecord.ParentCols...) {
-			delete(tm.fkRecordMap, key)
+			delete(tm.referredFKRecordMap, key)
 		}
 	}
 }

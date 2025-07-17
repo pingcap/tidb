@@ -202,6 +202,7 @@ func (i *IngestRecorder) UpdateIndexInfo(ctx context.Context, infoSchema infosch
 		}
 		finalForeignKeyManager.Merge(tableForeignKeyManager)
 	}
+	i.foreignKeyRecordManager = finalForeignKeyManager
 	return nil
 }
 

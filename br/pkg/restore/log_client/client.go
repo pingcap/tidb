@@ -1730,6 +1730,11 @@ func (rc *LogClient) RepairIngestIndex(
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.Inject("failed-before-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed before repair ingest index"))
+		}
+	})
 	eg, ectx = errgroup.WithContext(ctx)
 	mp := console.StartMultiProgress()
 	for _, sql := range sqls {
@@ -1792,6 +1797,11 @@ func (rc *LogClient) RepairIngestIndex(
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.Inject("failed-after-repair-ingest-index", func(v failpoint.Value) {
+		if v != nil && v.(bool) {
+			failpoint.Return(errors.New("failed after repair ingest index"))
+		}
+	})
 
 	return nil
 }
