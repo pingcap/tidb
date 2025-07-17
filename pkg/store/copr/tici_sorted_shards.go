@@ -16,6 +16,7 @@ package copr
 
 import (
 	"bytes"
+	"time"
 
 	"github.com/google/btree"
 )
@@ -78,10 +79,14 @@ func (s *SortedShards) SearchByKey(key []byte, isEndKey bool) (r *ShardWithAddr)
 
 // AscendGreaterOrEqual iterates over shards that start at or after the specified start key,
 func (s *SortedShards) AscendGreaterOrEqual(startKey, endKey []byte, limit int) (shards []*ShardWithAddr) {
+	now := time.Now().Unix()
 	lastStartKey := startKey
 	s.b.AscendGreaterOrEqual(newBtreeSearchItem(startKey), func(item *btreeItem) bool {
 		shard := item.cachedShard
 		if len(endKey) > 0 && bytes.Compare(shard.StartKey, endKey) >= 0 {
+			return false
+		}
+		if !shard.CheckShardCacheTTL(now) {
 			return false
 		}
 		if !shard.Contains(lastStartKey) { // uncached hole
