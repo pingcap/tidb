@@ -275,7 +275,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str += ToString(paritalPlan)
 		}
 		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
-	case *PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalIndexJoin:
 		last := len(idxs) - 1

@@ -238,6 +238,12 @@ var Attach2Task4PhysicalSelection func(pp base.PhysicalPlan, tasks ...base.Task)
 var GetPlanCostVer14PhysicalSelection func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
+// Attach2Task4PhysicalUnionScan will be called by PhysicalUnionScan in physicalOp pkg.
+var Attach2Task4PhysicalUnionScan func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// ResolveIndices4PhysicalUnionScan will be called by PhysicalUnionScan in physicalOp pkg.
+var ResolveIndices4PhysicalUnionScan func(pp base.PhysicalPlan) (err error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
