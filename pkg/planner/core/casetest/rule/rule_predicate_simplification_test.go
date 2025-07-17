@@ -54,6 +54,19 @@ func TestPredicateSimplification(tt *testing.T) {
     c2 VARCHAR(64) NOT NULL,
     PRIMARY KEY (c1, c2)
 );`)
+		tk.MustExec(`CREATE TABLE t7c899916 (
+  col_37 text COLLATE gbk_bin DEFAULT NULL,
+  col_38 datetime DEFAULT CURRENT_TIMESTAMP,
+  col_39 tinyint unsigned NOT NULL,
+  col_40 json NOT NULL,
+  col_41 char(140) COLLATE gbk_bin NOT NULL,
+  col_42 json DEFAULT NULL,
+  col_43 tinytext COLLATE gbk_bin DEFAULT NULL,
+  col_44 json DEFAULT NULL,
+  col_45 date DEFAULT '2010-01-29',
+  col_46 char(221) COLLATE gbk_bin DEFAULT NULL,
+  UNIQUE KEY idx_15 (col_41,col_39,col_38)
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin`)
 		// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.
 		var input []string
 		var output []struct {
