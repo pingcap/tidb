@@ -17,10 +17,6 @@ func (d *Dumper) concurrentDumpStringFields(tctx *tcontext.Context, conn *BaseCo
 
 	// Calculate total count and chunk parameters
 	totalCount := int64(estimatedCount)
-	if totalCount <= 0 {
-		totalCount = int64(conf.Rows) * 5 // Conservative fallback
-	}
-
 	chunkSize := int64(d.conf.Rows)
 	if totalCount <= chunkSize {
 		tctx.L().Info("table too small for chunking, using sequential dump",
