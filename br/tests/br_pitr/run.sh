@@ -77,6 +77,7 @@ restart_services_allowing_huge_index
 echo "run pitr"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
 
+<<<<<<< HEAD
 # check something in downstream cluster
 echo "check br log"
 check_contains "restore log success summary"
@@ -89,3 +90,67 @@ expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_cou
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
 ## check feature compatibility between PITR and accelerate indexing
 bash $CUR/check/check_ingest_repair.sh
+=======
+check_result
+
+# start a new cluster for incremental + log
+echo "restart a services"
+restart_services
+
+echo "run snapshot restore#2"
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
+
+echo "run incremental restore + log restore"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" > $res_file 2>&1
+
+check_result
+
+# start a new cluster for incremental + log
+echo "restart a services"
+restart_services
+
+echo "run snapshot restore#3"
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
+
+echo "run incremental restore but failed"
+restore_fail=0
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/inc_fail" || restore_fail=1
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
+
+echo "corrupt a log file"
+filename=$(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta" | tail -n 1)
+filename_temp=$filename"_temp"
+filename_bak=$filename"_bak"
+echo "corruption" > $filename_temp
+cat $filename >> $filename_temp
+
+# file lost
+mv $filename $filename_bak
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
+
+# file corruption
+mv $filename_temp $filename
+truncate --size=-11 $filename
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success' 
+    exit 1
+fi
+>>>>>>> 5399ca70da9 (br: fix br integration test (#53836))
