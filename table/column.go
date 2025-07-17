@@ -535,7 +535,7 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *m
 // But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
-		if !sc.BadNullAsWarning {
+		if !sc.NoDefaultAsWarning {
 			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 		}
 		if !mysql.HasNotNullFlag(col.GetFlag()) {
@@ -661,7 +661,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, ar
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	if sc.BadNullAsWarning {
+	if sc.NoDefaultAsWarning {
 		var err error
 		if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 			err = ErrNoDefaultValue.FastGenByArgs(col.Name)

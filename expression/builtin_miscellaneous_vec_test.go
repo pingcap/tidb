@@ -152,6 +152,7 @@ func TestSleepVectorized(t *testing.T) {
 
 	// non-strict model
 	sessVars.StmtCtx.BadNullAsWarning = true
+	sessVars.StmtCtx.NoDefaultAsWarning = true
 	input.AppendFloat64(0, 1)
 	err = f.vecEvalInt(input, result)
 	require.NoError(t, err)
@@ -185,6 +186,7 @@ func TestSleepVectorized(t *testing.T) {
 
 	// for error case under the strict model
 	sessVars.StmtCtx.BadNullAsWarning = false
+	sessVars.StmtCtx.NoDefaultAsWarning = false
 	input.Reset()
 	input.AppendNull(0)
 	err = f.vecEvalInt(input, result)
