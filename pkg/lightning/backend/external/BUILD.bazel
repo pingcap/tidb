@@ -37,11 +37,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/size",
-<<<<<<< HEAD
-=======
         "@com_github_aws_aws_sdk_go//aws",
-        "@com_github_cockroachdb_pebble//:pebble",
->>>>>>> 0f5ba8fbaab (prefetch: fix underlying unexpected-eof taken as EOF (#59752))
         "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_jfcg_sorty_v2//:sorty",

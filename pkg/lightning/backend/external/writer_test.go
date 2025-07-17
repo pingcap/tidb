@@ -232,71 +232,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err := writer.Close(ctx)
-<<<<<<< HEAD
 	require.ErrorContains(t, err, "found duplicate key")
-=======
-	require.NoError(t, err)
-
-	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = mergeOverlappingFilesImpl(
-		ctx,
-		[]string{"/test/0/0"},
-		memStore,
-		100,
-		"/test2",
-		"mergeID",
-		1000,
-		1000,
-		8*1024,
-		1*size.MB,
-		2,
-		nil,
-		false,
-	)
-	require.NoError(t, err)
-
-	keys := make([][]byte, 0, kvCount)
-	values := make([][]byte, 0, kvCount)
-
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
-	require.NoError(t, err)
-	for i := 0; i < kvCount; i++ {
-		key, value, err := kvReader.nextKV()
-		require.NoError(t, err)
-		clonedKey := make([]byte, len(key))
-		copy(clonedKey, key)
-		clonedVal := make([]byte, len(value))
-		copy(clonedVal, value)
-		keys = append(keys, clonedKey)
-		values = append(values, clonedVal)
-	}
-	_, _, err = kvReader.nextKV()
-	require.ErrorIs(t, err, io.EOF)
-	require.NoError(t, kvReader.Close())
-
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
-	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
-		duplicateDetection: true,
-		duplicateDB:        db,
-		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		keys:               keys,
-		values:             values,
-		ts:                 123,
-	}
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	iter := data.NewIter(ctx, nil, nil, pool)
-
-	for iter.First(); iter.Valid(); iter.Next() {
-	}
-	err = iter.Error()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "found duplicate key")
->>>>>>> 0f5ba8fbaab (prefetch: fix underlying unexpected-eof taken as EOF (#59752))
 }
 
 func TestMultiFileStat(t *testing.T) {
