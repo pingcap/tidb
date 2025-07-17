@@ -62,7 +62,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
-	_ base.PhysicalPlan = &PhysicalTableDual{}
+	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
 	_ base.PhysicalPlan = &physicalop.NominalSort{}
@@ -2257,40 +2257,6 @@ func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
 	}
 
 	return p.BasePhysicalPlan.MemoryUsage()
-}
-
-// PhysicalTableDual is the physical operator of dual.
-type PhysicalTableDual struct {
-	physicalop.PhysicalSchemaProducer
-
-	RowCount int
-
-	// names is used for OutputNames() method. Dual may be inited when building point get plan.
-	// So it needs to hold names for itself.
-	names []*types.FieldName
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() types.NameSlice {
-	return p.names
-}
-
-// SetOutputNames sets the outputting name by the given slice.
-func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
-	p.names = names
-}
-
-// MemoryUsage return the memory usage of PhysicalTableDual
-func (p *PhysicalTableDual) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfSlice + int64(cap(p.names))*size.SizeOfPointer
-	for _, name := range p.names {
-		sum += name.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalWindow is the physical operator of window function.

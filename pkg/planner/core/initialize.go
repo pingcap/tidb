@@ -34,13 +34,6 @@ func (p PhysicalProjection) Init(ctx base.PlanContext, stats *property.StatsInfo
 	return &p
 }
 
-// Init initializes PhysicalTableDual.
-func (p PhysicalTableDual) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalTableDual {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalMaxOneRow.
 func (p PhysicalMaxOneRow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalMaxOneRow {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
