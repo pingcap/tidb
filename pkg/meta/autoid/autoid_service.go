@@ -117,6 +117,7 @@ retry:
 		}
 		goto retry
 	}
+	bo.Reset()
 
 	addr := string(resp.Kvs[0].Value)
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -150,6 +151,8 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
 	defer r.End()
 
+	logutil.BgLogger().Info("alloc autoid",
+		zap.Int64("dbID", sp.dbID))
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 	}
