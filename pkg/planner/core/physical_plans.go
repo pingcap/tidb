@@ -80,7 +80,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
-	_ base.PhysicalPlan = &PhysicalUnionScan{}
+	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
 	_ base.PhysicalPlan = &PhysicalWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
@@ -2184,40 +2184,6 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 	}
 
 	return p.basePhysicalAgg.MemoryUsage()
-}
-
-// PhysicalUnionScan represents a union scan operator.
-type PhysicalUnionScan struct {
-	physicalop.BasePhysicalPlan
-
-	Conditions []expression.Expression
-
-	HandleCols util.HandleCols
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalUnionScan
-func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice
-	if p.HandleCols != nil {
-		sum += p.HandleCols.MemoryUsage()
-	}
-	for _, cond := range p.Conditions {
-		sum += cond.MemoryUsage()
-	}
-	return
 }
 
 // IsPartition returns true and partition ID if it works on a partition.

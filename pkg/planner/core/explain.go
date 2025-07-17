@@ -414,11 +414,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog

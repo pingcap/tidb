@@ -12,6 +12,7 @@ go_library(
         "physical_table_dual.go",
         "physical_topn.go",
         "physical_union_all.go",
+        "physical_union_scan.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",
     visibility = ["//visibility:public"],
