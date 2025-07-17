@@ -421,8 +421,14 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
-	noMatch := !isInExplicitPartitions(pi, partIdx, p.PartitionNames)
-	if err != nil || noMatch || partIdx < 0 {
+
+	// partIdx can be -1 more to check issue #62458
+	noMatch := false
+	if err == nil {
+		noMatch = !isInExplicitPartitions(pi, partIdx, p.PartitionNames)
+	}
+
+	if noMatch || partIdx < 0 {
 		// TODO: check BatchPointGet as well!
 		partIdx = -1
 		p.PartitionIdx = &partIdx
@@ -675,6 +681,7 @@ func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr)
 	if len(names) == 0 {
 		return true
 	}
+	println("Checking partition!!!!!!!!!!!!!!!!!!", idx, "in", pi.Definitions)
 	s := pi.Definitions[idx].Name.L
 	for _, name := range names {
 		if s == name.L {
