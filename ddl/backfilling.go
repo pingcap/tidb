@@ -422,6 +422,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
 		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
+	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
 	return ranges, nil
 }
 
@@ -534,6 +535,7 @@ func handleOneResult(result *backfillResult, scheduler backfillScheduler, consum
 				logutil.BgLogger().Warn("[ddl] update reorg meta failed",
 					zap.Int64("job ID", reorgInfo.ID), zap.Error(err))
 			}
+			failpoint.InjectCall("afterUpdateReorgMeta")
 		}
 		// We try to adjust the worker size regularly to reduce
 		// the overhead of loading the DDL related global variables.
@@ -681,7 +683,7 @@ func SetBackfillTaskChanSizeForTest(n int) {
 //
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) error {
+func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.PhysicalTable, bfWorkerType backfillerType, reorgInfo *reorgInfo) (err error) {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 
