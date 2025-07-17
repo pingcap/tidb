@@ -73,3 +73,7 @@ func (Glue) GetVersion() string {
 func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
 	return nil
 }
+
+func (Glue) GetClient() glue.GlueClient {
+	return glue.ClientCLP
+}
