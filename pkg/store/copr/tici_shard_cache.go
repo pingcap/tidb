@@ -75,6 +75,7 @@ func (s *ShardWithAddr) invalidate() {
 	s.ttl.Store(expiredTTL)
 }
 
+// CheckShardCacheTTL checks if the shard cache is still valid based on the provided timestamp.
 func (s *ShardWithAddr) CheckShardCacheTTL(ts int64) bool {
 	for {
 		oldTTL := s.ttl.Load()
@@ -528,6 +529,7 @@ func (mu *shardIndexMu) insertShardToCache(cachedShard *ShardWithAddr, invalidat
 	return true
 }
 
+// InvalidateCachedShard invalidates the cached shard with the given shardID.
 func (s *TiCIShardCache) InvalidateCachedShard(shardID uint64) {
 	logutil.BgLogger().Info("InvalidateCachedShard", zap.Uint64("shardID", shardID))
 	cachedShard := s.GetCachedShardWithRLock(shardID)
@@ -537,6 +539,7 @@ func (s *TiCIShardCache) InvalidateCachedShard(shardID uint64) {
 	cachedShard.invalidate()
 }
 
+// GetCachedShardWithRLock retrieves the cached shard with the given shardID using a read lock.
 func (s *TiCIShardCache) GetCachedShardWithRLock(shardID uint64) *ShardWithAddr {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
