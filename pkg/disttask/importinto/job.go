@@ -183,7 +183,7 @@ func (ri *RuntimeInfo) Percent() string {
 	return strconv.FormatInt(int64(percentage*100), 10)
 }
 
-// FormatSecondToTime formats the given seconds into the given format
+// FormatSecondAsTime formats the given seconds into the given format
 // If the duration is less than a day, it returns the time in HH:MM:SS format.
 // Otherwise, it returns the time in DD d HH:MM:SS format.
 func FormatSecondAsTime(sec int64) string {
