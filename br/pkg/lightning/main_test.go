@@ -14,6 +14,7 @@
 
 package lightning
 
+<<<<<<< HEAD:br/pkg/lightning/main_test.go
 import (
 	"os"
 	"testing"
@@ -21,4 +22,15 @@ import (
 
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
+=======
+var longTests = map[string][]string{
+	"pkg/ttl/ttlworker": {
+		"TestParallelLockNewJob",
+		"TestParallelLockNewTask",
+		"TestJobManagerWithFault",
+	},
+	"pkg/ttl/cache": {
+		"TestRegionDisappearDuringSplitRange",
+	},
+>>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530)):tools/check/longtests.go
 }
