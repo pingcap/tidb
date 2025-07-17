@@ -25,12 +25,12 @@ import (
 )
 
 type mockClient struct {
-	shards []ShardWithAddr
+	shards []*ShardWithAddr
 }
 
 func newMockClient() *mockClient {
-	shards := make([]ShardWithAddr, 0)
-	shards = append(shards, ShardWithAddr{
+	shards := make([]*ShardWithAddr, 0)
+	shards = append(shards, &ShardWithAddr{
 		Shard: Shard{
 			ShardID:  100,
 			Epoch:    0,
@@ -42,7 +42,7 @@ func newMockClient() *mockClient {
 		},
 	})
 	for i := range 10 {
-		shards = append(shards, ShardWithAddr{
+		shards = append(shards, &ShardWithAddr{
 			Shard: Shard{
 				ShardID:  uint64(i),
 				Epoch:    uint64(i),
@@ -55,7 +55,7 @@ func newMockClient() *mockClient {
 		})
 	}
 
-	shards = append(shards, ShardWithAddr{
+	shards = append(shards, &ShardWithAddr{
 		Shard: Shard{
 			ShardID:  200,
 			Epoch:    0,
@@ -69,7 +69,7 @@ func newMockClient() *mockClient {
 	return &mockClient{shards: shards}
 }
 
-func (m *mockClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []ShardWithAddr, err error) {
+func (m *mockClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []*ShardWithAddr, err error) {
 	need := make([]bool, len(m.shards))
 
 	for _, keyRange := range keyRanges {
