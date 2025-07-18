@@ -177,6 +177,8 @@ HashAgg	5325.33	root		group by:Column#14, Column#15, funcs:firstrow(Column#14)->
         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 create table t1(id int, value int);
 create table t2(id int, value int);
+INSERT INTO t1 (id, value) VALUES (10, 0),(20, 0),(30, 0);
+INSERT INTO t2 (id, value) VALUES (10, 100), (10, 200), (10, 300), (20, 400), (30, 500);
 explain format='brief' update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
@@ -189,3 +191,17 @@ Update	N/A	root		N/A
     └─TableReader(Probe)	10.00	root		data:Selection
       └─Selection	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t1.id, 10)
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+select * from t1;
+id	value
+10	3
+20	0
+30	0
+select * from t2;
+id	value
+10	100
+10	200
+10	300
+20	400
+30	500
+drop table if exists t1, t2;
