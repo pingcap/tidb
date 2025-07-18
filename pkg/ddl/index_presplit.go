@@ -144,8 +144,6 @@ func getSplitIdxPhysicalKeysFromValueList(
 	destKeys = getSplitIdxPhysicalStartAndOtherIdxKeys(tblInfo, idxInfo, physicalID, destKeys)
 	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
 	sc := sctx.GetSessionVars().StmtCtx
-	///nolint: forbidigo
-	fmt.Print(sctx.GetSessionVars().StmtCtx)
 	for _, v := range splitDatum {
 		idxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), v, kv.IntHandle(math.MinInt64), nil)
 		if err != nil {
