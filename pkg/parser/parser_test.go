@@ -3031,6 +3031,9 @@ func TestDDL(t *testing.T) {
 		{"create table t (i int default (0))", true, "CREATE TABLE `t` (`i` INT DEFAULT 0)"},
 		{"create table t (i int default (-1))", true, "CREATE TABLE `t` (`i` INT DEFAULT -1)"},
 		{"create table t (i int default (+1))", true, "CREATE TABLE `t` (`i` INT DEFAULT +1)"},
+		// For column default expression with column reference
+		{"create table t (a int, b int, c char(33) default (b))", true, "CREATE TABLE `t` (`a` INT,`b` INT,`c` CHAR(33) DEFAULT (`b`))"},
+		{"create table t (a int, b int, c char(33) default `b`)", false, ""},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
