@@ -84,6 +84,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 			jobState = rs[0][11].(string)
 			return jobState == model.JobStateSynced.String()
 		}, 10*time.Second, 200*time.Millisecond, "job state should be done")
+		tk.MustExec("use test")
 		tk.MustExec("admin check table t;")
 	})
 }
