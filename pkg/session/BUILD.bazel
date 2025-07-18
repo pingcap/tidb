@@ -36,6 +36,7 @@ go_library(
         "//pkg/meta",
         "//pkg/metrics",
         "//pkg/owner",
+        "//pkg/param",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
