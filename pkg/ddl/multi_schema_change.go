@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
@@ -65,6 +66,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			}
 			proxyJob := sub.ToProxyJob(job, i)
 			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+			jobCtx.logger.Warn("[cbc] onMultiSchemaChange run Revertible job", zap.Int64("jobID", job.ID), zap.Int64("ver", ver))
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -91,6 +93,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
 			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob)
+			jobCtx.logger.Warn("[cbc] onMultiSchemaChange execute proxyJob", zap.Int64("jobID", job.ID), zap.Int64("proxyJobVer", proxyJobVer))
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -140,6 +143,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		}
 		proxyJob := sub.ToProxyJob(job, i)
 		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+		jobCtx.logger.Warn("[cbc] onMultiSchemaChange run non-Revertible", zap.Int64("jobID", job.ID), zap.Int64("ver", ver))
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}

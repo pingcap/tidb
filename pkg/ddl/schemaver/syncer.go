@@ -92,8 +92,8 @@ type Syncer interface {
 type nodeVersions struct {
 	sync.Mutex
 	nodeVersions map[string]int64
-	// onceMatchFn is used to check if all the servers report the least version.
-	// If all the servers report the least version, i.e. return true, it will be
+	// onceMatchFn is used to check if all the servers report the latest version.
+	// If all the servers report the latest version, i.e. return true, it will be
 	// set to nil.
 	onceMatchFn func(map[string]int64) bool
 }
@@ -290,6 +290,8 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 		path = s.selfSchemaVerPath
 		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyRetryUnlimited, path, ver,
 			clientv3.WithLease(s.loadSession().Lease()))
+		logutil.DDLLogger().Warn("[cbc] UpdateSelfVersion", zap.Int64("jobID", jobID),
+			zap.Int64("version", version), zap.Stack("UpdateSelfVersion"))
 	}
 
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -333,9 +335,9 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCheckAllVersions, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	// If MDL is disabled, updatedMap is a cache. We need to ensure all the keys equal to the least version.
+	// If MDL is disabled, updatedMap is a cache. We need to ensure all the keys equal to the latest version.
 	// We can skip checking the key if it is checked in the cache(set by the previous loop).
-	// If MDL is enabled, updatedMap is used to check if all the servers report the least version.
+	// If MDL is enabled, updatedMap is used to check if all the servers report the latest version.
 	// updatedMap is initialed to record all the server in every loop. We delete a server from the map if it gets the metadata lock(the key version equal the given version.
 	// updatedMap should be empty if all the servers get the metadata lock.
 	updatedMap := make(map[string]string)
@@ -422,7 +424,7 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 					continue
 				}
 
-				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt, true)
+				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt)
 				if !succ {
 					break
 				}
@@ -564,14 +566,14 @@ func decodeJobVersionEvent(kv *mvccpb.KeyValue, tp mvccpb.Event_EventType, prefi
 	return jobID, parts[1], schemaVer, true
 }
 
-func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, nodeAlive bool) bool {
+func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int) bool {
 	ver, err := strconv.Atoi(val)
 	if err != nil {
 		logutil.DDLLogger().Info("syncer check all versions, convert value to int failed, continue checking.",
 			zap.String("ddl", key), zap.String("value", val), zap.Error(err))
 		return false
 	}
-	if int64(ver) < latestVer && nodeAlive {
+	if int64(ver) < latestVer {
 		if notMatchVerCnt%intervalCnt == 0 {
 			logutil.DDLLogger().Info("syncer check all versions, someone is not synced, continue checking",
 				zap.String("ddl", key), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
