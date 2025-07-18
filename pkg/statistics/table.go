@@ -463,9 +463,45 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
+<<<<<<< HEAD
 type neededStatsMap struct {
 	items map[model.TableItemID]struct{}
 	m     sync.RWMutex
+=======
+// ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
+// The Column should be visible in the table and really has analyzed statistics in the storage.
+// Also, if the stats has been loaded into the memory, we also don't need to load it.
+// We return the Column together with the checking result, to avoid accessing the map multiple times.
+// The first bool is whether we need to load it into memory. The second bool is whether this column has stats in the system table or not.
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+	if t.Pseudo {
+		return nil, false, false
+	}
+	// when we use non-lite init stats, it cannot init the stats for common columns.
+	// so we need to force to load the stats.
+	col, ok := t.columns[id]
+	if !ok {
+		return nil, true, true
+	}
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
+
+	// If it's not analyzed yet.
+	// The real check condition: !ok && !hashAnalyzed.
+	// After this check, we will always have ok && hasAnalyzed.
+	if !hasAnalyzed {
+		return nil, false, false
+	}
+
+	// Restore the condition from the simplified form:
+	// 1. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 2. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
+	if (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
+		return col, true, true
+	}
+
+	// Otherwise don't need load it.
+	return col, false, true
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 }
 
 func (n *neededStatsMap) AllItems() []model.TableItemID {
