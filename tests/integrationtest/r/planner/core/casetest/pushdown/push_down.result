@@ -22,18 +22,18 @@ Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl.a, planne
 explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1;
 id	estRows	task	access object	operator info
 IndexLookUp	1.00	root		limit embedded(offset:2, count:1)
-├─Limit(Build)	2.40	cop[tikv]		offset:0, count:3
-│ └─Selection	2.40	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl.c, 1)
-│   └─IndexRangeScan	3.00	cop[tikv]	table:tbl, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+├─Limit(Build)	3.00	cop[tikv]		offset:0, count:3
+│ └─Selection	3.00	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl.c, 1)
+│   └─IndexRangeScan	3.75	cop[tikv]	table:tbl, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
 └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl	keep order:false
 explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:2, count:1
 └─IndexLookUp	3.00	root		
-  ├─IndexRangeScan(Build)	3.01	cop[tikv]	table:tbl, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+  ├─IndexRangeScan(Build)	3.75	cop[tikv]	table:tbl, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
   └─Limit(Probe)	3.00	cop[tikv]		offset:0, count:3
     └─Selection	3.00	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl.a, 1)
-      └─TableRowIDScan	3.01	cop[tikv]	table:tbl	keep order:false
+      └─TableRowIDScan	3.75	cop[tikv]	table:tbl	keep order:false
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)));
