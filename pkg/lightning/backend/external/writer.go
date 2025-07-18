@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tikv/client-go/v2/tikv"
@@ -52,10 +53,10 @@ var (
 	// TODO need data on AWS and other machine types
 	maxUploadWorkersPerThread = 8
 
-	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
-	// if the overlap ratio is greater than this threshold, we will merge the files.
-	MergeSortOverlapThreshold int64 = 4000
-	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
+	// mergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
+	// if the overlap ratio is greater than this threshold, we will merge the files. Note: Use GetAdjustedMergeSortOverlapThreshold() instead.
+	mergeSortOverlapThreshold int64 = 4000
+	// MergeSortFileCountStep is the step of file count when we split the sorted kv files. Note: Use GetAdjustedMergeSortFileCountStep() instead.
 	MergeSortFileCountStep = 4000
 	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
 	MergeSortMaxSubtaskTargetFiles = 16
@@ -67,6 +68,30 @@ const (
 	// DefaultBlockSize is the default block size for writer.
 	DefaultBlockSize = 16 * units.MiB
 )
+
+// GetAdjustedMergeSortOverlapThreshold adjusts the merge sort overlap threshold based on concurrency.
+func GetAdjustedMergeSortOverlapThreshold(concurrency int) int64 {
+	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
+	if concurrency < 4 {
+		return 250
+	} else if concurrency < 8 {
+		return 1000
+	} else {
+		return mergeSortOverlapThreshold
+	}
+}
+
+// GetAdjustedMergeSortFileCountStep adjusts the merge sort file count step based on concurrency.
+func GetAdjustedMergeSortFileCountStep(concurrency int) int {
+	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
+	if concurrency < 4 {
+		return 250
+	} else if concurrency < 8 {
+		return 1000
+	} else {
+		return MergeSortFileCountStep
+	}
+}
 
 // GetAdjustedBlockSize gets the block size after alignment.
 func GetAdjustedBlockSize(totalBufSize uint64, defBlockSize int) int {

@@ -197,6 +197,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
+		ThreadCnt: 8,
 	}
 	p := &LogicalPlan{
 		Plan: importer.Plan{
@@ -308,6 +309,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
+		ThreadCnt: 8,
 	}, &LogicalPlan{}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
