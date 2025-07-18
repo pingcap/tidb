@@ -19,7 +19,7 @@ tikv_importer_branch="release-5.0"
 tikv_sha1_url="${file_server_url}/download/refs/pingcap/tikv/${branch}/sha1"
 pd_sha1_url="${file_server_url}/download/refs/pingcap/pd/${branch}/sha1"
 tiflash_sha1_url="${file_server_url}/download/refs/pingcap/tiflash/${branch}/sha1"
-ticdc_sha1_url="${file_server_url}/download/refs/pingcap/ticdc/${branch}/sha1"
+ticdc_sha1_url="${file_server_url}/download/refs/pingcap/cdc/${branch}/sha1"
 tikv_importer_sha1_url="${file_server_url}/download/refs/pingcap/importer/${tikv_importer_branch}/sha1"
 
 pd_sha1=$(curl "$pd_sha1_url")
@@ -29,11 +29,11 @@ tikv_importer_sha1=$(curl "$tikv_importer_sha1_url")
 ticdc_sha1=$(curl "$ticdc_sha1_url")
 
 # download pd / tikv / tiflash binary build from tibuid multibranch pipeline
-pd_download_url="${file_server_url}/download/builds/pingcap/pd/${pd_sha1}/centos7/pd-server.tar.gz"
-tikv_download_url="${file_server_url}/download/builds/pingcap/tikv/${tikv_sha1}/centos7/tikv-server.tar.gz"
-tiflash_download_url="${file_server_url}/download/builds/pingcap/tiflash/${branch}/${tiflash_sha1}/centos7/tiflash.tar.gz"
+pd_download_url="${file_server_url}/download/builds/pingcap/pd/${branch}/${pd_sha1}/linux-amd64/pd-server.tar.gz"
+tikv_download_url="${file_server_url}/download/builds/pingcap/tikv/${branch}/${tikv_sha1}/linux-amd64/tikv-server.tar.gz"
+tiflash_download_url="${file_server_url}/download/builds/pingcap/tiflash/${branch}/${tiflash_sha1}/linux-amd64/tiflash.tar.gz"
 tikv_importer_download_url="${file_server_url}/download/builds/pingcap/importer/${tikv_importer_sha1}/centos7/importer.tar.gz"
-ticdc_download_url="${file_server_url}/download/builds/pingcap/ticdc/${ticdc_sha1}/centos7/ticdc-linux-amd64.tar.gz"
+ticdc_download_url="${file_server_url}/download/builds/pingcap/cdc/${branch}/${ticdc_sha1}/linux-amd64/cdc.tar.gz"
 
 
 # download some dependencies tool binary from file server
@@ -72,14 +72,13 @@ function main() {
     mkdir tmp
     
     #PD server
+    # TODO: need pd-ctl
     download "$pd_download_url" "pd-server.tar.gz" "tmp/pd-server.tar.gz"
-    tar -xzf tmp/pd-server.tar.gz -C third_bin --wildcards 'bin/*'
-    mv third_bin/bin/* third_bin/ 
+    tar -xzf tmp/pd-server.tar.gz -C third_bin 'pd-server'
 
     #TiKV server
     download "$tikv_download_url" "tikv-server.tar.gz" "tmp/tikv-server.tar.gz"
-    tar -xzf tmp/tikv-server.tar.gz -C third_bin --wildcards 'bin/*'
-    mv third_bin/bin/* third_bin/
+    tar -xzf tmp/tikv-server.tar.gz -C third_bin 'tikv-server'
 
     #TiFlash
     download "$tiflash_download_url" "tiflash.tar.gz" "tmp/tiflash.tar.gz"
@@ -94,9 +93,8 @@ function main() {
 
     #TiCDC
     download "$ticdc_download_url" "ticdc-linux-amd64.tar.gz" "tmp/ticdc-linux-amd64.tar.gz"
-    tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin --wildcards '*/bin/*'
-    mv third_bin/ticdc-linux-amd64/bin/* third_bin/
-    rm -rf third_bin/ticdc-linux-amd64
+    tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin --wildcards 'cdc'
+
 
     download "$minio_url" "minio" "third_bin/minio"
     download "$go_ycsb_url" "go-ycsb" "third_bin/go-ycsb"
