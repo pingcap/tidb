@@ -256,7 +256,7 @@ func createLocalBackend(
 	var raftKV2SwitchModeDuration time.Duration
 	backendConfig := local.NewBackendConfig(cfg.lightning, int(litRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
 	if adjustedWorkerConcurrency > 0 {
-		backendConfig.WorkerConcurrency = adjustedWorkerConcurrency
+		backendConfig.WorkerConcurrency.Store(int32(adjustedWorkerConcurrency))
 	}
 	return local.NewBackend(ctx, tls, backendConfig, pdSvcDiscovery)
 }

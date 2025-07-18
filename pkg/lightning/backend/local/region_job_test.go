@@ -20,11 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -338,4 +341,167 @@ func TestNewRegionJobs(t *testing.T) {
 			require.Equal(t, c.jobKeys[i+1], j.keyRange.End, "case %d", caseIdx)
 		}
 	}
+}
+
+func TestWorkerPoolWithVariousErrorSource(t *testing.T) {
+	var (
+		workGroup       *util.ErrorGroupWithRecover
+		workerCtx       context.Context
+		jobToWorkerCh   chan *regionJob
+		jobFromWorkerCh chan *regionJob
+		jobWg           sync.WaitGroup
+		op              *jobOperator
+	)
+
+	local := &Backend{
+		writeLimiter: newStoreWriteLimiter(0),
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: toAtomic(4),
+		},
+	}
+
+	generator := func(mockErr bool) error {
+		counter := 0
+		for i := 0; i < 4; i++ {
+			jobWg.Add(1)
+			job := &regionJob{}
+			select {
+			case jobToWorkerCh <- job:
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("dispatcher error")
+				}
+			case <-workerCtx.Done():
+				job.done(&jobWg)
+				return nil
+			}
+		}
+		return nil
+	}
+
+	drainer := func(mockErr bool) error {
+		counter := 0
+		for {
+			select {
+			case job, ok := <-jobFromWorkerCh:
+				if !ok {
+					return nil
+				}
+				job.done(&jobWg)
+				counter++
+				if mockErr && counter > 2 {
+					return errors.Errorf("drainer error")
+				}
+			case <-workerCtx.Done():
+				return nil
+			}
+		}
+	}
+
+	resetFn := func() {
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh = make(chan *regionJob)
+		jobFromWorkerCh = make(chan *regionJob)
+		jobWg = sync.WaitGroup{}
+
+		op = newRegionJobOperator(
+			workerCtx, workGroup, &jobWg, local,
+			jobToWorkerCh, jobFromWorkerCh,
+		)
+	}
+
+	t.Run("happy path", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed", "return")
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed")
+
+		resetFn()
+		require.NoError(t, op.Open())
+
+		workGroup.Go(func() error {
+			return drainer(false)
+		})
+
+		workGroup.Go(func() error {
+			if err := generator(false); err != nil {
+				return err
+			}
+			jobWg.Wait()
+			return op.Close()
+		})
+
+		require.NoError(t, workGroup.Wait())
+		require.NoError(t, op.Close())
+	})
+
+	t.Run("drainer error", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed", "return")
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed")
+
+		resetFn()
+		require.NoError(t, op.Open())
+
+		workGroup.Go(func() error {
+			return drainer(true)
+		})
+
+		workGroup.Go(func() error {
+			if err := generator(false); err != nil {
+				return err
+			}
+			jobWg.Wait()
+			return op.Close()
+		})
+
+		err := workGroup.Wait()
+		require.NoError(t, op.Close())
+		require.Error(t, err, "should get the error from drainer")
+	})
+
+	t.Run("generator error", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed", "return")
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed")
+
+		resetFn()
+		require.NoError(t, op.Open())
+
+		workGroup.Go(func() error {
+			return drainer(false)
+		})
+
+		workGroup.Go(func() error {
+			if err := generator(true); err != nil {
+				return err
+			}
+			jobWg.Wait()
+			return op.Close()
+		})
+
+		err := workGroup.Wait()
+		require.NoError(t, op.Close())
+		require.Error(t, err, "should get the error from generator")
+	})
+
+	t.Run("worker pool error", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectPanicForRegionJob", "return")
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectPanicForRegionJob")
+
+		resetFn()
+		require.NoError(t, op.Open())
+
+		workGroup.Go(func() error {
+			return drainer(false)
+		})
+
+		workGroup.Go(func() error {
+			if err := generator(false); err != nil {
+				return err
+			}
+			jobWg.Wait()
+			return op.Close()
+		})
+
+		err := workGroup.Wait()
+		require.Error(t, op.Close())
+		require.Error(t, err, "should get the error from worker pool")
+	})
 }

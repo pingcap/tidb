@@ -439,7 +439,7 @@ func (b *ingestBackfillScheduler) currentWorkerSize() int {
 
 func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 	readerCnt, writer := b.expectedWorkerSize()
-	b.writerPool.Tune(int32(writer))
+	b.writerPool.Tune(int32(writer), false)
 	b.copReqSenderPool.adjustSize(readerCnt)
 	return nil
 }

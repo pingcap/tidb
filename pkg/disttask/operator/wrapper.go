@@ -15,58 +15,81 @@
 package operator
 
 import (
-	"context"
 	"fmt"
 
 	"golang.org/x/sync/errgroup"
 )
 
-type simpleSource[T comparable] struct {
-	errGroup  errgroup.Group
-	generator func() T
-	sink      DataChannel[T]
+// SimpleDataSource is a simple operator which use the given input slice as the data source.
+type SimpleDataSource[T any] struct {
+	ctx      *Context
+	errGroup *errgroup.Group
+	inputs   []T
+	target   DataChannel[T]
 }
 
-func newSimpleSource[T comparable](generator func() T) *simpleSource[T] {
-	return &simpleSource[T]{generator: generator}
+// NewSimpleDataSource creates a new SimpleOperator with the given inputs.
+// The input Operator.Context is used to quit this operator.
+// As the source of the pipeline, this operator should be able to quit
+// if any of the downstream operators encounter an error or panic.
+// So we need to call ctx.OnError in other operators when they encounter
+// an error or panic.
+func NewSimpleDataSource[T any](
+	ctx *Context,
+	inputs []T,
+) *SimpleDataSource[T] {
+	return &SimpleDataSource[T]{
+		inputs:   inputs,
+		errGroup: &errgroup.Group{},
+		ctx:      ctx,
+	}
 }
 
-func (s *simpleSource[T]) Open() error {
+// Open implements the Operator interface.
+func (s *SimpleDataSource[T]) Open() error {
 	s.errGroup.Go(func() error {
-		var zT T
-		for {
-			res := s.generator()
-			if res == zT {
-				break
+		for _, input := range s.inputs {
+			select {
+			case s.target.Channel() <- input:
+			case <-s.ctx.Done():
+				return s.ctx.Err()
 			}
-			s.sink.Channel() <- res
 		}
-		s.sink.Finish()
+
 		return nil
 	})
 	return nil
 }
 
-func (s *simpleSource[T]) Close() error {
-	return s.errGroup.Wait()
+// Close implements the Operator interface.
+func (s *SimpleDataSource[T]) Close() error {
+	//nolint: errcheck
+	s.errGroup.Wait()
+	close(s.target.Channel())
+	return s.ctx.OperatorErr()
 }
 
-func (s *simpleSource[T]) SetSink(ch DataChannel[T]) {
-	s.sink = ch
+// String implements the Operator interface.
+func (*SimpleDataSource[T]) String() string {
+	var zT T
+	return fmt.Sprintf("SimpleDataSource[%T]", zT)
 }
 
-func (*simpleSource[T]) String() string {
-	return "simpleSource"
+// SetSink implements the WithSink interface.
+func (s *SimpleDataSource[T]) SetSink(ch DataChannel[T]) {
+	s.target = ch
 }
 
 type simpleSink[R any] struct {
+	ctx      *Context
 	errGroup errgroup.Group
 	drainer  func(R)
 	source   DataChannel[R]
 }
 
-func newSimpleSink[R any](drainer func(R)) *simpleSink[R] {
+func newSimpleSink[R any](ctx *Context, drainer func(R)) *simpleSink[R] {
 	return &simpleSink[R]{
+		ctx:     ctx,
 		drainer: drainer,
 	}
 }
@@ -74,18 +97,24 @@ func newSimpleSink[R any](drainer func(R)) *simpleSink[R] {
 func (s *simpleSink[R]) Open() error {
 	s.errGroup.Go(func() error {
 		for {
-			data, ok := <-s.source.Channel()
-			if !ok {
-				return nil
+			select {
+			case <-s.ctx.Done():
+				return s.ctx.Err()
+			case data, ok := <-s.source.Channel():
+				if !ok {
+					return nil
+				}
+				s.drainer(data)
 			}
-			s.drainer(data)
 		}
 	})
 	return nil
 }
 
 func (s *simpleSink[R]) Close() error {
-	return s.errGroup.Wait()
+	//nolint: errcheck
+	s.errGroup.Wait()
+	return s.ctx.OperatorErr()
 }
 
 func (s *simpleSink[T]) SetSource(ch DataChannel[T]) {
@@ -104,8 +133,12 @@ func (s *simpleOperator[T, R]) String() string {
 	return fmt.Sprintf("simpleOperator(%s)", s.AsyncOperator.String())
 }
 
-func newSimpleOperator[T, R any](transform func(task T) R, concurrency int) *simpleOperator[T, R] {
-	asyncOp := NewAsyncOperatorWithTransform(context.Background(), "simple", concurrency, transform)
+func newSimpleOperator[T any, R any](
+	ctx *Context,
+	transform func(task T) R,
+	concurrency int,
+) *simpleOperator[T, R] {
+	asyncOp := NewAsyncOperatorWithTransform(ctx, "simple", concurrency, transform)
 	return &simpleOperator[T, R]{
 		AsyncOperator: asyncOp,
 	}
