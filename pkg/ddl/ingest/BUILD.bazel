@@ -6,6 +6,7 @@ go_library(
         "backend.go",
         "backend_mgr.go",
         "checkpoint.go",
+        "collector.go",
         "config.go",
         "disk_root.go",
         "engine.go",
@@ -34,7 +35,13 @@ go_library(
         "//pkg/ddl/util",
         "//pkg/kv",
         "//pkg/meta",
+<<<<<<< HEAD
         "//pkg/metrics",
+=======
+        "//pkg/meta/model",
+        "//pkg/metrics",
+        "//pkg/owner",
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
@@ -48,6 +55,12 @@ go_library(
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+<<<<<<< HEAD
+=======
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
         "@com_github_tikv_client_go_v2//util",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_client_v3//concurrency",
