@@ -3510,6 +3510,7 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	pcte.SetSchema(p.Schema())
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
 		pcte.readerReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
+		pcte.source = PhysicalCTESource{IDForStorage: p.Cte.IDForStorage}.Init(p.SCtx(), p.StatsInfo(), pcte.Schema())
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, 1, nil
 		}
