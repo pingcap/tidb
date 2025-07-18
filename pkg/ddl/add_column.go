@@ -52,6 +52,9 @@ import (
 )
 
 func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	defer func() {
+		jobCtx.logger.Warn("[cbc] onAddColumn", zap.Int64("jobID", job.ID), zap.Int64("ver", ver))
+	}()
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropColumn(jobCtx, job)

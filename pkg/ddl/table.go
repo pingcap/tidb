@@ -1320,6 +1320,10 @@ func updateVersionAndTableInfo(jobCtx *jobContext, job *model.Job, tblInfo *mode
 		default:
 		}
 	})
+	logutil.DDLLogger().Warn("[cbc] updateVersionAndTableInfo",
+		zap.Int64("jobID", job.ID), zap.Bool("shouldUpdateVer", shouldUpdateVer),
+		zap.Stack("stack"),
+	)
 	if shouldUpdateVer && (job.MultiSchemaInfo == nil || !job.MultiSchemaInfo.SkipVersion) {
 		ver, err = updateSchemaVersion(jobCtx, job, multiInfos...)
 		if err != nil {

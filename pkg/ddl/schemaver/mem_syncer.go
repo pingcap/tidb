@@ -22,8 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 const checkVersionsInterval = 2 * time.Millisecond
@@ -68,6 +70,7 @@ func (s *MemSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version in
 			failpoint.Return(errors.New("mock update mdl to etcd error"))
 		}
 	})
+	logutil.DDLLogger().Warn("[cbc] UpdateSelfVersion", zap.Int64("jobID", jobID), zap.Int64("version", version), zap.Bool("enableMDL", vardef.EnableMDL.Load()))
 	if vardef.EnableMDL.Load() {
 		s.mdlSchemaVersions.Store(jobID, version)
 	} else {

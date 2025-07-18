@@ -137,6 +137,9 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 }
 
 func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	defer func() {
+		jobCtx.logger.Warn("[cbc] onDropColumn", zap.Int64("jobID", job.ID), zap.Int64("ver", ver))
+	}()
 	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {

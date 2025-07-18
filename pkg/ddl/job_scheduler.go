@@ -593,6 +593,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	}
 
 	schemaVer, err := wk.transitOneJobStep(jobCtx, jobW)
+	jobCtx.logger.Warn("[cbc] transitOneJobStep", zap.Int64("jobID", job.ID), zap.Int64("schemaVer", schemaVer))
 	if err != nil {
 		jobCtx.logger.Info("transit one job step failed", zap.Error(err), zap.Stringer("job", job))
 		return err

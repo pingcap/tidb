@@ -18,7 +18,9 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -845,6 +847,43 @@ func TestMultiSchemaChangeMDLView(t *testing.T) {
 	tk1.MustQuery("select count(*) from mysql.tidb_mdl_view;").Check(testkit.Rows("0"))
 
 	tk.MustExec("commit;")
+}
+
+func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock = on;")
+	tk.MustExec("create table t(col1 int, col2 int, col3 int);")
+	tk.MustExec("set global tidb_enable_metadata_lock = off;")
+	defer func() {
+		tk.MustExec("set global tidb_enable_metadata_lock = default;")
+	}()
+
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{"drop column", "alter table t drop column col2, add column col5 int"},
+		{"add column", "alter table t add column col4 int, drop column col3"},
+		{"modify column", "alter table t modify column col4 varchar(8), modify column col5 varchar(8)"},
+		{"add index", "alter table t add index (col4), add index (col5)"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				require.Eventually(t, func() bool {
+					res := tk.MustQuery("admin show ddl jobs 1").Rows()
+					return res[0][11] == "synced"
+				}, 3*time.Second, 500*time.Millisecond)
+			}()
+			tk.MustExec(tc.sql)
+			wg.Wait()
+		})
+	}
 }
 
 type cancelOnceHook struct {
