@@ -128,7 +128,7 @@ func (*ImplMemTableScan) OnImplement(
 ) ([]memo.Implementation, error) {
 	logic := expr.ExprNode.(*logicalop.LogicalMemTable)
 	logicProp := expr.Group.Prop
-	physical := plannercore.PhysicalMemTable{
+	physical := physicalop.PhysicalMemTable{
 		DBName:    logic.DBName,
 		Table:     logic.TableInfo,
 		Columns:   logic.TableInfo.Columns,

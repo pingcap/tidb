@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"math"
 	"regexp"
 	"slices"
@@ -819,7 +820,7 @@ func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -955,7 +956,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *HotRegionsHistoryTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1071,7 +1072,7 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (startTime, endTim
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *MetricTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1431,7 +1432,7 @@ func (e *TableStorageStatsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *SlowQueryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1558,7 +1559,7 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
