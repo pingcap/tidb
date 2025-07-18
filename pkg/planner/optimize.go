@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -148,6 +150,48 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 		if !allowed {
 			return nil, nil, errors.Trace(plannererrors.ErrSQLInReadOnlyMode)
+		}
+	}
+
+	if execStmt, ok2 := node.Node.(*ast.ExecuteStmt); ok2 {
+		prepStmt, err := core.GetPreparedStmt(execStmt, sessVars)
+		if err != nil {
+			return nil, nil, err
+		}
+		if prepStmt.PointGet.Executor != nil {
+			pointGet := prepStmt.PointGet.Plan
+			if pointGet != nil {
+				var params []expression.Expression
+				if execStmt.BinaryArgs != nil {
+					// TODO(lance6716): this branch is not optimized yet
+					params = execStmt.BinaryArgs.([]expression.Expression)
+					err = core.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), false, prepStmt.Params, params)
+					if err != nil {
+						return nil, nil, err
+					}
+				} else {
+					sessVars.PlanCacheParams.Reset()
+					for _, expr := range execStmt.UsingVars {
+						v := expr.(*ast.VariableExpr)
+						name := strings.ToLower(v.Name)
+						val, ok := sessVars.UserVars.GetUserVarVal(name)
+						if !ok {
+							return nil, nil, errors.Errorf("user var %s not found", name)
+						}
+						sessVars.PlanCacheParams.Append(val)
+					}
+					if pointGet.Rebuild(pctx) == nil {
+						execPlan := &core.Execute{
+							Name:     execStmt.Name,
+							Plan:     pointGet,
+							PrepStmt: prepStmt,
+							Stmt:     prepStmt.PreparedAst.Stmt,
+						}
+						sessVars.FoundInPlanCache = true
+						return execPlan, pointGet.OutputNames(), nil
+					}
+				}
+			}
 		}
 	}
 

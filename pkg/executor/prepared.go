@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -166,7 +165,6 @@ type ExecuteExec struct {
 
 	is            infoschema.InfoSchema
 	name          string
-	usingVars     []expression.Expression
 	stmtExec      exec.Executor
 	stmt          ast.StmtNode
 	plan          base.Plan
