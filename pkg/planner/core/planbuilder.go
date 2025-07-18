@@ -4530,9 +4530,10 @@ var (
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
 	}
 
-	// ImportIntoFieldMap store the oapping from field names to their indices.
-	// This structure is used to avoid hardcoding field indices in tests, so that adding new fields
-	// does not require modifying many test cases.
+	// ImportIntoFieldMap store the mapping from field names to their indices.
+	// As there are many test cases that use the index to check the result from
+	// `SHOW IMPORT JOBS`, this structure is used to avoid hardcoding these indexs,
+	// so adding new fields does not require modifying all the tests.
 	ImportIntoFieldMap = make(map[string]int)
 
 	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
