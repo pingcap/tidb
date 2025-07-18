@@ -1893,6 +1893,12 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				case ast.TableOptionEngineAttribute:
 					err = dbterror.ErrUnsupportedEngineAttribute
 				case ast.TableOptionRowFormat:
+				case ast.TableOptionCompression:
+					// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'
+					if strings.ToUpper(opt.StrValue) != "NONE" {
+						return dbterror.ErrUnsupportedAlterTableOption.GenWithStackByArgs()
+					}
+					// COMPRESSION='NONE' is supported but currently no-op
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool
