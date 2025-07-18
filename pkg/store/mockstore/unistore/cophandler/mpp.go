@@ -54,8 +54,8 @@ const (
 )
 
 type mppExecBuilder struct {
-	sctx     sessionctx.Context
-	dbReader *dbreader.DBReader
+	sctx       sessionctx.Context
+	dbReader   *dbreader.DBReader
 	mppCtx     *MPPCtx
 	dagReq     *tipb.DAGRequest
 	dagCtx     *dagContext

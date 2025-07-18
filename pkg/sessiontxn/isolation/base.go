@@ -58,8 +58,8 @@ import (
 // or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
 type baseTxnContextProvider struct {
 	// States that should be initialized when baseTxnContextProvider is created and should not be changed after that
-	sctx                  sessionctx.Context
-	causalConsistencyOnly bool
+	sctx                   sessionctx.Context
+	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
 	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)

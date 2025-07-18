@@ -54,8 +54,8 @@ type RevokeExec struct {
 	Level      *ast.GrantLevel
 	Users      []*ast.UserSpec
 
-	ctx sessionctx.Context
-	is  infoschema.InfoSchema
+	ctx  sessionctx.Context
+	is   infoschema.InfoSchema
 	done bool
 }
 

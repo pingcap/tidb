@@ -216,8 +216,8 @@ const (
 )
 
 type baseJoiner struct {
-	ctx        sessionctx.Context
-	conditions []expression.Expression
+	ctx          sessionctx.Context
+	conditions   []expression.Expression
 	defaultInner chunk.Row
 	outerIsRight bool
 	chk          *chunk.Chunk

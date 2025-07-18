@@ -42,9 +42,9 @@ import (
 //     And receive MPP status for better err msg and correct stats for Limit.
 //  5. mppIterator: Send or receive MPP RPC.
 type ExecutorWithRetry struct {
-	coord kv.MppCoordinator
-	sctx  sessionctx.Context
-	is    infoschema.InfoSchema
+	coord      kv.MppCoordinator
+	sctx       sessionctx.Context
+	is         infoschema.InfoSchema
 	plan       plannercore.PhysicalPlan
 	ctx        context.Context
 	memTracker *memory.Tracker

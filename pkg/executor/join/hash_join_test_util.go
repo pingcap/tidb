@@ -34,8 +34,8 @@ import (
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 type hashJoinInfo struct {
-	ctx    sessionctx.Context
-	schema *expression.Schema
+	ctx                   sessionctx.Context
+	schema                *expression.Schema
 	leftExec, rightExec   exec.Executor
 	joinType              logicalop.JoinType
 	rightAsBuildSide      bool

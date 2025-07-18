@@ -101,8 +101,8 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx sessionctx.Context
-	is  infoschema.InfoSchema
+	ctx     sessionctx.Context
+	is      infoschema.InfoSchema
 	err     error // err is set when there is error happened during Executor building process.
 	hasLock bool
 	Ti      *TelemetryInfo

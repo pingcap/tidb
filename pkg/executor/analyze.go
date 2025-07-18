@@ -545,8 +545,8 @@ type analyzeTask struct {
 }
 
 type baseAnalyzeExec struct {
-	ctx     sessionctx.Context
-	tableID statistics.AnalyzeTableID
+	ctx         sessionctx.Context
+	tableID     statistics.AnalyzeTableID
 	concurrency int
 	analyzePB   *tipb.AnalyzeReq
 	opts        map[ast.AnalyzeOptionType]uint64

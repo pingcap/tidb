@@ -1673,8 +1673,8 @@ type DDLJobsReaderExec struct {
 	DDLJobRetriever
 
 	cacheJobs []*model.Job
-	is   infoschema.InfoSchema
-	sess sessionctx.Context
+	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 // Open implements the Executor Next interface.

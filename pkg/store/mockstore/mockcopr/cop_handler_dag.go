@@ -440,8 +440,8 @@ func (h coprHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 type evalContext struct {
 	colIDs      map[int64]int
 	columnInfos []*tipb.ColumnInfo
-	fieldTps []*types.FieldType
-	sctx     sessionctx.Context
+	fieldTps    []*types.FieldType
+	sctx        sessionctx.Context
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {

@@ -584,9 +584,9 @@ func BenchmarkWindowFunctionsWithSlidingWindow(b *testing.B) {
 type hashJoinTestCase struct {
 	rows               int
 	cols               []*types.FieldType
-	concurrency int
-	ctx         sessionctx.Context
-	keyIdx      []int
+	concurrency        int
+	ctx                sessionctx.Context
+	keyIdx             []int
 	joinType           logicalop.JoinType
 	disk               bool
 	useOuterToBuild    bool

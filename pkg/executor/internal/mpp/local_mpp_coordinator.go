@@ -109,9 +109,9 @@ type mppRequestReport struct {
 
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
 type localMppCoordinator struct {
-	ctx        context.Context
-	sessionCtx sessionctx.Context
-	is         infoschema.InfoSchema
+	ctx          context.Context
+	sessionCtx   sessionctx.Context
+	is           infoschema.InfoSchema
 	originalPlan base.PhysicalPlan
 	reqMap       map[int64]*mppRequestReport
 

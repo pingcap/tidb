@@ -1137,8 +1137,8 @@ func (w *BuildWorkerV1) BuildHashTableForList(buildSideResultCh <-chan *chunk.Ch
 type NestedLoopApplyExec struct {
 	exec.BaseExecutor
 
-	Sctx      sessionctx.Context
-	innerRows []chunk.Row
+	Sctx        sessionctx.Context
+	innerRows   []chunk.Row
 	cursor      int
 	InnerExec   exec.Executor
 	OuterExec   exec.Executor

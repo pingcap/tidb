@@ -1013,9 +1013,9 @@ type inconsistencyTestKit struct {
 	*testkit.AsyncTestKit
 	uniqueIndex table.Index
 	plainIndex  table.Index
-	ctx  context.Context
-	sctx sessionctx.Context
-	t    *testing.T
+	ctx         context.Context
+	sctx        sessionctx.Context
+	t           *testing.T
 }
 
 type kitOpt struct {

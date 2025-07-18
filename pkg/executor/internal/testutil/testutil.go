@@ -43,8 +43,8 @@ import (
 
 // MockDataSourceParameters mpcks data source parameters
 type MockDataSourceParameters struct {
-	Ctx        sessionctx.Context
-	DataSchema *expression.Schema
+	Ctx         sessionctx.Context
+	DataSchema  *expression.Schema
 	GenDataFunc func(row int, typ *types.FieldType) any
 	Ndvs        []int
 	Orders      []bool

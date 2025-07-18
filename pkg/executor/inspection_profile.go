@@ -33,8 +33,8 @@ const (
 )
 
 type profileBuilder struct {
-	sctx  sessionctx.Context
-	idMap map[string]uint64
+	sctx        sessionctx.Context
+	idMap       map[string]uint64
 	idAllocator uint64
 	totalValue  float64
 	uniqueMap   map[string]struct{}

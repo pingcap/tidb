@@ -106,8 +106,8 @@ type tasksAndFrags struct {
 }
 
 type mppTaskGenerator struct {
-	ctx     sessionctx.Context
-	startTS uint64
+	ctx        sessionctx.Context
+	startTS    uint64
 	gatherID   uint64
 	mppQueryID kv.MPPQueryID
 	is         infoschema.InfoSchema

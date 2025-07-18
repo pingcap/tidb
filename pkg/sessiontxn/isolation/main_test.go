@@ -57,8 +57,8 @@ func getOracleTS(t testing.TB, sctx sessionctx.Context) uint64 {
 }
 
 type txnAssert[T sessiontxn.TxnContextProvider] struct {
-	sctx      sessionctx.Context
-	isolation string
+	sctx                  sessionctx.Context
+	isolation             string
 	minStartTime          time.Time
 	active                bool
 	inTxn                 bool

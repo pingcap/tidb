@@ -244,8 +244,8 @@ func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context)
 }
 
 type processRowContext struct {
-	ctx   sessionctx.Context
-	chunk *chunk.Chunk
+	ctx                    sessionctx.Context
+	chunk                  *chunk.Chunk
 	rowPos                 int
 	keyColPos              int
 	aggFuncNum             int

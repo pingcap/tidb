@@ -27,8 +27,8 @@ import (
 
 // AggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type AggTestCase struct {
-	Ctx      sessionctx.Context
-	ExecType string
+	Ctx              sessionctx.Context
+	ExecType         string
 	AggFunc          string
 	GroupByNDV       int
 	Rows             int

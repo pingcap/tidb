@@ -29,8 +29,8 @@ import (
 
 // WindowTestCase has a fixed schema (col Double, partitionBy LongLong, rawData VarString(16), col LongLong).
 type WindowTestCase struct {
-	Ctx   sessionctx.Context
-	Frame *logicalop.WindowFrame
+	Ctx              sessionctx.Context
+	Frame            *logicalop.WindowFrame
 	WindowFunc       string
 	RawDataSmall     string
 	Columns          []*expression.Column

@@ -140,9 +140,9 @@ type innerMergeWorker struct {
 
 	taskCh            <-chan *lookUpMergeJoinTask
 	joinChkResourceCh chan *chunk.Chunk
-	outerMergeCtx OuterMergeCtx
-	ctx           sessionctx.Context
-	innerExec     exec.Executor
+	outerMergeCtx     OuterMergeCtx
+	ctx               sessionctx.Context
+	innerExec         exec.Executor
 	joiner            Joiner
 	retFieldTypes     []*types.FieldType
 

@@ -28,4 +28,3 @@ type SessionStatesHandler interface {
 	// DecodeSessionStates decodes a map into session states.
 	DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error
 }
-

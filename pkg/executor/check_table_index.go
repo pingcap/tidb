@@ -305,8 +305,8 @@ func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, wo
 }
 
 type checkIndexWorker struct {
-	sctx   sessionctx.Context
-	dbName string
+	sctx       sessionctx.Context
+	dbName     string
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	e          *FastCheckTableExec

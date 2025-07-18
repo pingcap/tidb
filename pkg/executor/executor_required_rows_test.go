@@ -48,8 +48,8 @@ import (
 type requiredRowsDataSource struct {
 	exec.BaseExecutor
 	totalRows int
-	count int
-	ctx   sessionctx.Context
+	count     int
+	ctx       sessionctx.Context
 
 	expectedRowsRet []int
 	numNextCalled   int

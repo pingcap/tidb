@@ -176,8 +176,8 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 type analyzeIndexProcessor struct {
 	skipVal
 
-	sctx   sessionctx.Context
-	colLen int
+	sctx         sessionctx.Context
+	colLen       int
 	statsBuilder *statistics.SortedBuilder
 	cms          *statistics.CMSketch
 	fms          *statistics.FMSketch

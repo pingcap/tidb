@@ -75,8 +75,8 @@ type rowSampler interface {
 }
 
 type tableRegionSampler struct {
-	ctx   sessionctx.Context
-	table table.Table
+	ctx             sessionctx.Context
+	table           table.Table
 	startTS         uint64
 	physicalTableID int64
 	partTables      []table.PartitionedTable

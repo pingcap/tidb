@@ -46,8 +46,8 @@ type ShowDDLJobsExec struct {
 	DDLJobRetriever
 
 	jobNumber int
-	is   infoschema.InfoSchema
-	sess sessionctx.Context
+	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 var _ exec.Executor = &ShowDDLJobsExec{}

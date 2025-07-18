@@ -50,8 +50,8 @@ var (
 )
 
 type memIndexReader struct {
-	ctx   sessionctx.Context
-	index *model.IndexInfo
+	ctx            sessionctx.Context
+	index          *model.IndexInfo
 	table          *model.TableInfo
 	kvRanges       []kv.KeyRange
 	conditions     []expression.Expression
@@ -235,8 +235,8 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 }
 
 type memTableReader struct {
-	ctx   sessionctx.Context
-	table *model.TableInfo
+	ctx           sessionctx.Context
+	table         *model.TableInfo
 	columns       []*model.ColumnInfo
 	kvRanges      []kv.KeyRange
 	conditions    []expression.Expression
@@ -316,8 +316,8 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 
 // txnMemBufferIter implements a kv.Iterator, it is an iterator that combines the membuffer data and snapshot data.
 type txnMemBufferIter struct {
-	sctx     sessionctx.Context
-	kvRanges []kv.KeyRange
+	sctx       sessionctx.Context
+	kvRanges   []kv.KeyRange
 	cacheTable kv.MemBuffer
 	txn        kv.Transaction
 	idx        int
@@ -689,8 +689,8 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 }
 
 type memIndexLookUpReader struct {
-	ctx   sessionctx.Context
-	index *model.IndexInfo
+	ctx           sessionctx.Context
+	index         *model.IndexInfo
 	columns       []*model.ColumnInfo
 	table         table.Table
 	conditions    []expression.Expression
@@ -811,8 +811,8 @@ func (*memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
 }
 
 type memIndexMergeReader struct {
-	ctx     sessionctx.Context
-	columns []*model.ColumnInfo
+	ctx              sessionctx.Context
+	columns          []*model.ColumnInfo
 	table            table.Table
 	conditions       []expression.Expression
 	retFieldTypes    []*types.FieldType

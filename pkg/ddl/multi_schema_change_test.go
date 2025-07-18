@@ -851,8 +851,8 @@ type cancelOnceHook struct {
 	store     kv.Storage
 	triggered bool
 	cancelErr error
-	pred func(job *model.Job) bool
-	s    sessionctx.Context
+	pred      func(job *model.Job) bool
+	s         sessionctx.Context
 }
 
 func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {

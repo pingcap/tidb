@@ -81,8 +81,8 @@ type server struct {
 type ddlSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	s   sessionapi.Session
-	ctx sessionctx.Context
+	s     sessionapi.Session
+	ctx   sessionctx.Context
 
 	m     sync.Mutex
 	procs []*server

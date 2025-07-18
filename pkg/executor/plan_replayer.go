@@ -68,8 +68,8 @@ type PlanReplayerDumpInfo struct {
 	StartTS           uint64
 	Path              string
 	File              *os.File
-	FileName string
-	ctx      sessionctx.Context
+	FileName          string
+	ctx               sessionctx.Context
 }
 
 // Next implements the Executor Next interface.

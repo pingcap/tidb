@@ -48,8 +48,8 @@ func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpMgr *Checkp
 
 // MockBackendCtx is a mock backend context.
 type MockBackendCtx struct {
-	sessCtx sessionctx.Context
-	mu      sync.Mutex
+	sessCtx       sessionctx.Context
+	mu            sync.Mutex
 	jobID         int64
 	checkpointMgr *CheckpointManager
 }

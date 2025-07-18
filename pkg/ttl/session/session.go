@@ -72,8 +72,8 @@ type Session interface {
 }
 
 type session struct {
-	sctx    sessionctx.Context
-	sqlExec sqlexec.SQLExecutor
+	sctx       sessionctx.Context
+	sqlExec    sqlexec.SQLExecutor
 	avoidReuse func()
 }
 

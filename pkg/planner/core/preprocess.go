@@ -230,9 +230,9 @@ func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	ctx  context.Context
-	sctx sessionctx.Context
-	flag preprocessorFlag
+	ctx    context.Context
+	sctx   sessionctx.Context
+	flag   preprocessorFlag
 	stmtTp byte
 	showTp ast.ShowStmtType
 

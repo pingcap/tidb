@@ -27,8 +27,8 @@ import (
 
 // LimitCase is the limit case
 type LimitCase struct {
-	Ctx             sessionctx.Context
-	ChildUsedSchema []bool
+	Ctx                   sessionctx.Context
+	ChildUsedSchema       []bool
 	Rows                  int
 	Offset                int
 	Count                 int

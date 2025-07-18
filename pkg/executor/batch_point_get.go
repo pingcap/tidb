@@ -523,8 +523,8 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 }
 
 type cacheBatchGetter struct {
-	ctx sessionctx.Context
-	tid int64
+	ctx      sessionctx.Context
+	tid      int64
 	snapshot kv.Snapshot
 }
 

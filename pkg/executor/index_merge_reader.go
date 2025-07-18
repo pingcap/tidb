@@ -609,9 +609,9 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 }
 
 type partialTableWorker struct {
-	stats     *IndexMergeRuntimeStat
-	sc        sessionctx.Context
-	batchSize int
+	stats              *IndexMergeRuntimeStat
+	sc                 sessionctx.Context
+	batchSize          int
 	maxBatchSize       int
 	maxChunkSize       int
 	tableReader        exec.Executor
@@ -1663,9 +1663,9 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 }
 
 type partialIndexWorker struct {
-	stats *IndexMergeRuntimeStat
-	sc    sessionctx.Context
-	idxID int
+	stats              *IndexMergeRuntimeStat
+	sc                 sessionctx.Context
+	idxID              int
 	batchSize          int
 	maxBatchSize       int
 	maxChunkSize       int
