@@ -12,6 +12,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/parser/mysql",
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
@@ -29,7 +30,7 @@ go_test(
     ],
     embed = [":ingestrec"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "//br/pkg/utiltest",
         "//pkg/kv",

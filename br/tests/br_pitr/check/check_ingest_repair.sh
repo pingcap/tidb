@@ -110,13 +110,21 @@ check_contains "ON DELETE CASCADE ON UPDATE CASCADE"
 
 ## check table test.pairs16
 run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs16_parent';"
-check_contains "RESCNT: 2"
+check_contains "RESCNT: 3"
 run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs16_child';"
-check_contains "RESCNT: 2"
+check_contains "RESCNT: 3"
 run_sql "SELECT * FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs16_child' AND CONSTRAINT_TYPE = 'FOREIGN KEY';"
 check_contains "CONSTRAINT_NAME: fk_0"
 run_sql "SHOW CREATE TABLE test.pairs16_child;"
 check_contains "ON DELETE CASCADE ON UPDATE CASCADE"
+
+## check table test.pairs17
+run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs17_parent';"
+check_contains "RESCNT: 3"
+run_sql "SELECT * FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs17_child' AND CONSTRAINT_TYPE = 'FOREIGN KEY';"
+check_contains "CONSTRAINT_NAME: fk_0"
+run_sql "SHOW CREATE TABLE test.pairs17_child;"
+check_contains "ON DELETE CASCADE"
 
 # adjust some index to be visible
 run_sql "ALTER TABLE test.pairs ALTER INDEX i1 VISIBLE;"

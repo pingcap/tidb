@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 type ForeignKeyRecordKey struct {
@@ -99,10 +100,22 @@ func NewForeignKeyRecordManagerForTables(
 	tableFKs := tableInfo.ForeignKeys
 	tableReferredFKs := infoSchema.GetTableReferredForeignKeys(dbName.L, tableInfo.Name.L)
 	for _, tableFK := range tableFKs {
+		if tableInfo.PKIsHandle && len(tableFK.Cols) == 1 {
+			refColInfo := model.FindColumnInfo(tableInfo.Columns, tableFK.Cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				continue
+			}
+		}
 		key, value := newForeignKeyRecordKey(dbName.O, tableInfo.Name.O, tableFK)
 		tm.fkRecordMap[key] = value
 	}
 	for _, tableReferredFK := range tableReferredFKs {
+		if tableInfo.PKIsHandle && len(tableReferredFK.Cols) == 1 {
+			refColInfo := model.FindColumnInfo(tableInfo.Columns, tableReferredFK.Cols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				continue
+			}
+		}
 		childTableInfo, err := infoSchema.TableByName(ctx, tableReferredFK.ChildSchema, tableReferredFK.ChildTable)
 		if err != nil {
 			return nil, errors.Trace(err)

@@ -77,3 +77,8 @@ CREATE TABLE test.pairs16_child (id int, pid int, index i1(pid, id));
 INSERT INTO test.pairs16_parent VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
 INSERT INTO test.pairs16_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
 
+-- test foreign key constraint 5
+CREATE TABLE test.pairs17_parent (id int primary key, pid int);
+CREATE TABLE test.pairs17_child (id int, pid int, index i1(pid), foreign key (pid) references test.pairs17_parent (id) on delete cascade);
+INSERT INTO test.pairs17_parent VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+INSERT INTO test.pairs17_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);

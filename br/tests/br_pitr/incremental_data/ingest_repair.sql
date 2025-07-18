@@ -70,3 +70,6 @@ ALTER TABLE test.pairs15_child ADD CONSTRAINT fk_0 FOREIGN KEY (pid) REFERENCES 
 ALTER TABLE test.pairs16_parent ADD INDEX i2 (id);
 ALTER TABLE test.pairs16_child ADD INDEX i2 (pid);
 ALTER TABLE test.pairs16_child ADD CONSTRAINT fk_0 FOREIGN KEY (pid) REFERENCES test.pairs16_parent (id) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- test foreign key constraint 5
+ALTER TABLE test.pairs17_parent ADD INDEX i2(id, pid);
