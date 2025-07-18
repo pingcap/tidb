@@ -20,6 +20,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -715,5 +716,81 @@ func TestNULLNotEqualWithOthers(t *testing.T) {
 		result, err := d.Compare(sc, &nullDatum, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.NotEqual(t, 0, result)
+	}
+}
+
+func TestDatumsToString(t *testing.T) {
+	datums := []Datum{
+		NewIntDatum(1),
+		NewUintDatum(2),
+		NewFloat32Datum(-3.1111111),
+		NewFloat64Datum(4.123),
+		NewDatum(math.Inf(5)),
+		NewDecimalDatum(NewDecFromStringForTest("6.6")),
+		NewStringDatum("abc"),
+		NewCollationStringDatum("", charset.CollationBin),
+		NewDurationDatum(Duration{Duration: time.Duration(11111)}),
+		NewTimeDatum(ZeroTime),
+		NewBytesDatum([]byte("xxx")),
+		NewBinaryLiteralDatum([]byte{}),
+		NewJSONDatum(CreateBinaryJSON(nil)),
+		MinNotNullDatum(),
+		MaxValueDatum(),
+	}
+	str, err := DatumsToString(datums, true)
+	require.NoError(t, err)
+	require.Equal(t, str, `(1, 2, -3.1111112, 4.123, +Inf, 6.6, "abc", "", 00:00:00, 0000-00-00 00:00:00, xxx, , null, -inf, +inf)`)
+}
+
+func BenchmarkDatumsToString(b *testing.B) {
+	datums := []Datum{
+		NewIntDatum(1),
+		NewUintDatum(2),
+		NewFloat32Datum(-3.1111111),
+		NewFloat64Datum(4.123),
+		NewDatum(math.Inf(5)),
+		NewDecimalDatum(NewDecFromStringForTest("6.66666")),
+		NewStringDatum("dklsfjkaslnfwoiewlkfjaslkfjljs"),
+		NewCollationStringDatum("1234567890-=12345656789", charset.CollationBin),
+		NewDurationDatum(Duration{Duration: time.Duration(11111)}),
+		NewTimeDatum(ZeroTime),
+		NewBytesDatum([]byte("xxxxxxxxxxxxxxxxxxxxxxx")),
+		NewBinaryLiteralDatum([]byte{}),
+		NewJSONDatum(CreateBinaryJSON(nil)),
+		MinNotNullDatum(),
+		MaxValueDatum(),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := DatumsToString(datums, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDatumsToStringStr(b *testing.B) {
+	datums := []Datum{
+		NewStringDatum(strings.Repeat("1", 512)),
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := DatumsToString(datums, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkDatumsToStringLongStr(b *testing.B) {
+	datums := []Datum{
+		NewStringDatum(strings.Repeat("1", 1024*10)), // 10KB
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := DatumsToString(datums, true)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
