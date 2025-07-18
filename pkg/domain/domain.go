@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -1552,6 +1553,13 @@ func (do *Domain) InitDistTaskLoop() error {
 		}()
 		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID)
 	}, "distTaskFrameworkLoop")
+	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		logger := logutil.BgLogger()
+		return local.InitializeRateLimiterParam(m, logger)
+	}); err != nil {
+		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+	}
 	return nil
 }
 
