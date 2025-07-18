@@ -288,13 +288,3 @@ func TestIssue61303VirtualGenerateColumnSubstitute(t *testing.T) {
 	tk.MustExec("insert ignore into t1(c0) values (null);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
 }
-
-func TestIssue51700(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(id int, value int);")
-	tk.MustExec("create table t2(id int, value int);")
-	tk.MustQuery(`explain update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;`).Check(testkit.Rows("1 10"))
-}
