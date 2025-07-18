@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -807,6 +808,13 @@ func NewLineFieldsInfo(fieldsInfo *ast.FieldsClause, linesInfo *ast.LinesClause)
 	return e
 }
 
+// ExecuteInfo store explain info for JSON encode
+type ExecuteInfo struct {
+	Time        string `json:"time",omitempty`
+	Loops       int32  `json:"loops",omitempty`
+	Concurrency int32  `json:omitempty`
+}
+
 // ExplainInfoForEncode store explain info for JSON encode
 type ExplainInfoForEncode struct {
 	ID                  string                  `json:"id"`
@@ -814,7 +822,7 @@ type ExplainInfoForEncode struct {
 	ActRows             string                  `json:"actRows,omitempty"`
 	TaskType            string                  `json:"taskType"`
 	AccessObject        string                  `json:"accessObject,omitempty"`
-	ExecuteInfo         string                  `json:"executeInfo,omitempty"`
+	ExecuteInfo         ExecuteInfo             `json:"executeInfo,omitempty"`
 	OperatorInfo        string                  `json:"operatorInfo,omitempty"`
 	EstCost             string                  `json:"estCost,omitempty"`
 	CostFormula         string                  `json:"costFormula,omitempty"`
@@ -1154,6 +1162,36 @@ func getExplainIDAndTaskTp(flatOp *FlatOperator) (taskTp, textTreeExplainID stri
 	return
 }
 
+func getRuntimeInfoJSON(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows string, analyzeInfo ExecuteInfo, memoryInfo, diskInfo string) {
+	if runtimeStatsColl == nil {
+		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if runtimeStatsColl == nil {
+			return
+		}
+	}
+	rootStats, copStats, memTracker, diskTracker := getRuntimeInfo(ctx, p, runtimeStatsColl)
+	actRows = "0"
+	memoryInfo = "N/A"
+	diskInfo = "N/A"
+	if rootStats != nil {
+		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
+		analyzeInfo.Time = rootStats.GetConsume()
+		analyzeInfo.Loops = rootStats.GetLoops()
+	}
+	if copStats != nil {
+		actRows = strconv.FormatInt(copStats.GetActRows(), 10)
+		// analyzeInfo.Time = copStats.String()
+		// analyzeInfo.Loops = 123456
+	}
+	if memTracker != nil {
+		memoryInfo = memTracker.FormatBytes(memTracker.MaxConsumed())
+	}
+	if diskTracker != nil {
+		diskInfo = diskTracker.FormatBytes(diskTracker.MaxConsumed())
+	}
+	return
+}
+
 func getRuntimeInfoStr(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
 	if runtimeStatsColl == nil {
 		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
@@ -1261,7 +1299,7 @@ func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explai
 	}
 
 	if e.Analyze || e.RuntimeStatsColl != nil {
-		jsonRow.ActRows, jsonRow.ExecuteInfo, jsonRow.MemoryInfo, jsonRow.DiskInfo = getRuntimeInfoStr(e.SCtx(), p, e.RuntimeStatsColl)
+		jsonRow.ActRows, jsonRow.ExecuteInfo, jsonRow.MemoryInfo, jsonRow.DiskInfo = getRuntimeInfoJSON(e.SCtx(), p, e.RuntimeStatsColl)
 	}
 	return jsonRow
 }
