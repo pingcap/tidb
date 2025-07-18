@@ -1,3 +1,9 @@
+# This is a configuration file for golangci-lint to check ddl package,
+# which is used to check if there are usages of GetSessionVars in new PRs.
+# Currently, only files under pkg/ddl are checked, subfolders are not included.
+# But it's sufficient, because most of the code related to DDL execution is 
+# included.
+
 version: "2"
 
 issues:
@@ -15,8 +21,10 @@ linters:
         linters: [forbidigo]
       - path: executor\.go
         linters: [forbidigo]
+      - path: job_submitter\.go
+        linters: [forbidigo]
   settings:
     forbidigo:
       forbid:
         - pattern: GetSessionVars
-          msg: Please check if the usage of GetSessionVars is appropriate
+          msg: Please check if the usage of GetSessionVars is appropriate, you can add //nolint:forbidigo to ignore this check if necessary.
