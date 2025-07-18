@@ -548,14 +548,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			args := refExprArr.Result()
-			slices.SortFunc(args, func(a, b Expression) int {
-				if _, ok := a.(*Column); ok {
-					return -1
-				}
-				return 1
-			})
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, args...)
+			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
 			if err != nil {
 				return true, true, v
 			}
