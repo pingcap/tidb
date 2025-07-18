@@ -76,7 +76,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -499,6 +501,11 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
+	err := b.checkSEMStmt(node.Node)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build might be called recursively, right now they all share the same resolve
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
@@ -575,8 +582,6 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildDropBindPlan(x)
 	case *ast.SetBindingStmt:
 		return b.buildSetBindingStatusPlan(x)
-	case *ast.ChangeStmt:
-		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
 		return b.buildSplitRegion(x)
 	case *ast.DistributeTableStmt:
@@ -598,13 +603,6 @@ func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) 
 	}
 	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
-}
-
-func (*PlanBuilder) buildChange(v *ast.ChangeStmt) (base.Plan, error) {
-	exe := &Change{
-		ChangeStmt: v,
-	}
-	return exe, nil
 }
 
 func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (base.Plan, error) {
@@ -4668,7 +4666,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = storage.IsLocal(u)
-		if sem.IsEnabled() {
+		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
@@ -5684,7 +5682,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
-	if sem.IsEnabled() {
+	if semv1.IsEnabled() {
 		return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("SELECT INTO")
 	}
 	selectIntoInfo := sel.SelectIntoOpt
@@ -6295,4 +6293,26 @@ func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, e
 		return 0, fmt.Errorf("the value %v for %s is invalid", v.Value.GetValue(), opt.Name)
 	}
 	return maxWriteSpeed, nil
+}
+
+func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
+	if !semv2.IsEnabled() {
+		return nil
+	}
+
+	stmtNode, ok := stmt.(ast.StmtNode)
+	intest.Assert(ok, "node.Node should be ast.StmtNode, but got %T", stmt)
+	if !semv2.IsRestrictedSQL(stmtNode) {
+		return nil
+	}
+
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	hasPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_SQL_ADMIN", false)
+
+	if hasPriv {
+		return nil
+	}
+
+	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
 }

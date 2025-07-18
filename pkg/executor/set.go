@@ -40,7 +40,8 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/tikv/client-go/v2/oracle/oracles"
 	"go.uber.org/zap"
 )
@@ -133,6 +134,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 				}
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
 			}
+		}
+	}
+
+	// Check read-only system variables in SEM mode.
+	if semv2.IsEnabled() && semv2.IsReadOnlyVariable(v.Name) {
+		pm := privilege.GetPrivilegeManager(e.Ctx())
+		if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
 		}
 	}
 
