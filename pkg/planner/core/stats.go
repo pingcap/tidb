@@ -151,7 +151,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
 	// but where the other index also has a higher eqOrInCondCount
 	if maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20 {
-		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths, maxEqOrIn)
+		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -731,7 +731,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 
 // pruneIndexesByPrefixAndEqOrInCondCount prunes indexes that have the same prefix as other indexes
 // with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
-func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn int) []*util.AccessPath {
+func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
