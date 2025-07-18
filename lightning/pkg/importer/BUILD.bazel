@@ -74,6 +74,7 @@ go_library(
         "//pkg/util/engine",
         "//pkg/util/etcd",
         "//pkg/util/extsort",
+        "//pkg/util/logutil",
         "//pkg/util/redact",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",

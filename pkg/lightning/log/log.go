@@ -75,6 +75,11 @@ type Logger struct {
 	*zap.Logger
 }
 
+// Wrap wraps a zap.Logger into a Logger.
+func Wrap(logger *zap.Logger) Logger {
+	return Logger{Logger: logger}
+}
+
 // logger for lightning, different from tidb logger.
 var (
 	appLogger = Logger{zap.NewNop()}
@@ -294,22 +299,4 @@ func (task *Task) End2(level zapcore.Level, err error, extraFields ...zap.Field)
 		ce.Write(append(extraFields, zap.Duration("takeTime", elapsed), errField)...)
 	}
 	return elapsed
-}
-
-type ctxKeyType struct{}
-
-var ctxKey ctxKeyType
-
-// NewContext returns a new context with the provided logger.
-func NewContext(ctx context.Context, logger Logger) context.Context {
-	return context.WithValue(ctx, ctxKey, logger)
-}
-
-// FromContext returns the logger stored in the context.
-func FromContext(ctx context.Context) Logger {
-	m, ok := ctx.Value(ctxKey).(Logger)
-	if !ok {
-		return appLogger
-	}
-	return m
 }

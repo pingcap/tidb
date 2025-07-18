@@ -507,7 +507,7 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 			FieldTypes: []*types.FieldType{},
 		},
 	}
-	opCtx, cancel := NewDistTaskOperatorCtx(context.Background(), 1, 1)
+	opCtx, cancel := NewDistTaskOperatorCtx(context.Background())
 	w := tableScanWorker{
 		copCtx:        copCtx,
 		ctx:           opCtx,

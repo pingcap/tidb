@@ -386,6 +386,14 @@ func WithFields(ctx context.Context, fields ...zap.Field) context.Context {
 	return context.WithValue(ctx, CtxLogKey, logger)
 }
 
+// WithLogger attaches a logger to context.
+func WithLogger(ctx context.Context, logger *zap.Logger) context.Context {
+	if logger == nil {
+		logger = log.L()
+	}
+	return context.WithValue(ctx, CtxLogKey, logger)
+}
+
 // TraceEventKey presents the TraceEventKey in span log.
 const TraceEventKey = "event"
 

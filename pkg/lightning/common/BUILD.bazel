@@ -38,6 +38,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/dbutil",
         "//pkg/util/format",
+        "//pkg/util/logutil",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",

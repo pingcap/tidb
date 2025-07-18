@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
@@ -63,7 +64,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 		if err != nil {
-			log.FromContext(ctx).Warn("failed to extract table schema",
+			logutil.Logger(ctx).Warn("failed to extract table schema",
 				zap.String("Path", m.SchemaFile.FileMeta.Path),
 				log.ShortError(err),
 			)
@@ -129,7 +130,7 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	}
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
-		log.FromContext(ctx).Error("failed to extract table schema",
+		logutil.Logger(ctx).Error("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
 			log.ShortError(err),
 		)
@@ -326,7 +327,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
 
-	fileRouter, err := NewFileRouter(fileRouteRules, log.FromContext(ctx))
+	fileRouter, err := NewFileRouter(fileRouteRules, log.Wrap(logutil.Logger(ctx)))
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
 	}
@@ -577,7 +578,7 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 
 func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*FileInfo, error) {
 	path, size := f.Path, f.Size
-	logger := log.FromContext(ctx).With(zap.String("path", path))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("path", path))
 	res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 	if err != nil {
 		return nil, errors.Annotatef(err, "apply file routing on file '%s' failed", path)
@@ -888,7 +889,7 @@ func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store
 	}
 	compressRatio, err := SampleFileCompressRatio(ctx, fileMeta, store)
 	if err != nil {
-		log.FromContext(ctx).Error("fail to calculate data file compress ratio",
+		logutil.Logger(ctx).Error("fail to calculate data file compress ratio",
 			zap.String("category", "loader"),
 			zap.String("path", fileMeta.Path),
 			zap.Stringer("type", fileMeta.Type), zap.Error(err),

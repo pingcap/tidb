@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -263,7 +264,7 @@ func (be EngineManager) OpenEngine(
 	engineID int32,
 ) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, int64(engineID))
-	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
+	logger := makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID)
 
 	if err := be.backend.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
@@ -344,7 +345,7 @@ func (be EngineManager) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *Engi
 	engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
 		backend: be.backend,
-		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
+		logger:  makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID),
 		uuid:    engineUUID,
 		id:      id,
 	}.unsafeClose(ctx, cfg)
