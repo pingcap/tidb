@@ -2091,6 +2091,15 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 				physicalIDs = append(physicalIDs, p.ID)
 			}
 		}
+		for _, p := range pi.Definitions {
+			if len(p.SubDefinitions) > 0 {
+				for _, subDef := range p.SubDefinitions {
+					if subDef.ID > 0 {
+						physicalIDs = append(physicalIDs, subDef.ID)
+					}
+				}
+			}
+		}
 		// when table has global index, show the logical table region.
 		for _, index := range tb.Meta().Indices {
 			if index.Global {

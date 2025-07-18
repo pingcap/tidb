@@ -1256,6 +1256,9 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 	if len(tblName.PartitionNames) > 0 {
 		return nil
 	}
+	if pi := tbl.GetPartitionInfo(); pi != nil && pi.Sub != nil {
+		return nil
+	}
 
 	for _, col := range tbl.Columns {
 		if col.IsGenerated() || col.State != model.StatePublic {
@@ -1364,6 +1367,9 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if pi := tbl.GetPartitionInfo(); pi != nil && pi.Sub != nil {
+		return nil
+	}
 
 	var pkColOffset int
 	for i, col := range tbl.Columns {
