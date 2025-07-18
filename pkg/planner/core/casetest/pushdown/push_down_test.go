@@ -45,7 +45,6 @@ func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
 		Available: true,
 	}
 
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	var input []string
@@ -85,7 +84,6 @@ func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 		Available: true,
 	}
 
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	var input []string
@@ -109,7 +107,7 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
@@ -142,7 +140,7 @@ func TestPushDownProjectionForTiFlashCoprocessor(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)))")
 	tk.MustExec("analyze table t")
@@ -196,7 +194,6 @@ func TestSelPushDownTiFlash(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {

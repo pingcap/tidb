@@ -90,7 +90,6 @@ func TestCostModelTraceVer2(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(vals, ", ")))
 	tk.MustExec("analyze table t")
-	tk.MustExec("set @@tidb_cost_model_version=2")
 
 	for _, q := range []string{
 		"select * from t",

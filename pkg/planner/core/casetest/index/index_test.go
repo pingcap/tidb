@@ -42,7 +42,7 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
   KEY idx1 (c1),
   KEY idx2 (c1,c2(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t2(a int, b varchar(10), index idx(b(5)))")
 	tk.MustExec("create table t3(a int, b varchar(10), c int, primary key (a, b(5)) clustered)")
 	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
