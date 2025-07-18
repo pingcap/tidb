@@ -18,7 +18,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",

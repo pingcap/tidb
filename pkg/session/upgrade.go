@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -468,7 +468,7 @@ const (
 // less than the version in this struct
 type versionedUpgradeFunction struct {
 	version int64
-	fn      func(sessiontypes.Session, int64)
+	fn      func(sessionapi.Session, int64)
 }
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -652,7 +652,7 @@ var (
 )
 
 // upgradeToVer2 updates to version 2.
-func upgradeToVer2(s sessiontypes.Session, _ int64) {
+func upgradeToVer2(s sessionapi.Session, _ int64) {
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
 	distSQLVars := []string{vardef.TiDBDistSQLScanConcurrency}
@@ -667,34 +667,34 @@ func upgradeToVer2(s sessiontypes.Session, _ int64) {
 }
 
 // upgradeToVer3 updates to version 3.
-func upgradeToVer3(s sessiontypes.Session, _ int64) {
+func upgradeToVer3(s sessionapi.Session, _ int64) {
 	// Version 3 fix tx_read_only variable value.
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET variable_value = '0' WHERE variable_name = 'tx_read_only';", mysql.SystemDB, mysql.GlobalVariablesTable)
 }
 
 // upgradeToVer4 updates to version 4.
-func upgradeToVer4(s sessiontypes.Session, _ int64) {
+func upgradeToVer4(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateStatsMetaTable)
 }
 
-func upgradeToVer5(s sessiontypes.Session, _ int64) {
+func upgradeToVer5(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateStatsColsTable)
 	mustExecute(s, CreateStatsBucketsTable)
 }
 
-func upgradeToVer6(s sessiontypes.Session, _ int64) {
+func upgradeToVer6(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Super_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Super_priv='Y'")
 }
 
-func upgradeToVer7(s sessiontypes.Session, _ int64) {
+func upgradeToVer7(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Process_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Process_priv='Y'")
 }
 
-func upgradeToVer8(s sessiontypes.Session, ver int64) {
+func upgradeToVer8(s sessionapi.Session, ver int64) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
 	if _, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
@@ -703,13 +703,13 @@ func upgradeToVer8(s sessiontypes.Session, ver int64) {
 	upgradeToVer7(s, ver)
 }
 
-func upgradeToVer9(s sessiontypes.Session, _ int64) {
+func upgradeToVer9(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Trigger_priv='Y'")
 }
 
-func doReentrantDDL(s sessiontypes.Session, sql string, ignorableErrs ...error) {
+func doReentrantDDL(s sessionapi.Session, sql string, ignorableErrs ...error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql)
@@ -724,7 +724,7 @@ func doReentrantDDL(s sessiontypes.Session, sql string, ignorableErrs ...error) 
 	}
 }
 
-func upgradeToVer10(s sessiontypes.Session, _ int64) {
+func upgradeToVer10(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets CHANGE COLUMN `value` `upper_bound` BLOB NOT NULL", infoschema.ErrColumnNotExists, infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `lower_bound` BLOB", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `null_count` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
@@ -732,12 +732,12 @@ func upgradeToVer10(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN use_count_to_estimate", dbterror.ErrCantDropFieldOrKey)
 }
 
-func upgradeToVer11(s sessiontypes.Session, _ int64) {
+func upgradeToVer11(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET References_priv='Y'")
 }
 
-func upgradeToVer12(s sessiontypes.Session, _ int64) {
+func upgradeToVer12(s sessionapi.Session, _ int64) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "BEGIN")
 	terror.MustNil(err)
@@ -779,7 +779,7 @@ func upgradeToVer12(s sessiontypes.Session, _ int64) {
 	mustExecute(s, "COMMIT")
 }
 
-func upgradeToVer13(s sessiontypes.Session, _ int64) {
+func upgradeToVer13(s sessionapi.Session, _ int64) {
 	sqls := []string{
 		"ALTER TABLE mysql.user ADD COLUMN `Create_tmp_table_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Super_priv`",
 		"ALTER TABLE mysql.user ADD COLUMN `Lock_tables_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
@@ -796,7 +796,7 @@ func upgradeToVer13(s sessiontypes.Session, _ int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_view_priv='Y',Show_view_priv='Y' WHERE Create_priv='Y'")
 }
 
-func upgradeToVer14(s sessiontypes.Session, _ int64) {
+func upgradeToVer14(s sessionapi.Session, _ int64) {
 	sqls := []string{
 		"ALTER TABLE mysql.db ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`",
 		"ALTER TABLE mysql.db ADD COLUMN `Create_tmp_table_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Alter_priv`",
@@ -813,34 +813,34 @@ func upgradeToVer14(s sessiontypes.Session, _ int64) {
 	}
 }
 
-func upgradeToVer15(s sessiontypes.Session, _ int64) {
+func upgradeToVer15(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateGCDeleteRangeTable)
 }
 
-func upgradeToVer16(s sessiontypes.Session, _ int64) {
+func upgradeToVer16(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `cm_sketch` BLOB", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer17(s sessiontypes.Session, _ int64) {
+func upgradeToVer17(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
 }
 
-func upgradeToVer18(s sessiontypes.Session, _ int64) {
+func upgradeToVer18(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer19(s sessiontypes.Session, _ int64) {
+func upgradeToVer19(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY User CHAR(32)")
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY User CHAR(32)")
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY User CHAR(32)")
 }
 
-func upgradeToVer20(s sessiontypes.Session, _ int64) {
+func upgradeToVer20(s sessionapi.Session, _ int64) {
 	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
 	doReentrantDDL(s, CreateStatsFeedbackTable)
 }
 
-func upgradeToVer21(s sessiontypes.Session, _ int64) {
+func upgradeToVer21(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", dbterror.ErrCantDropFieldOrKey)
@@ -848,16 +848,16 @@ func upgradeToVer21(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", dbterror.ErrCantDropFieldOrKey)
 }
 
-func upgradeToVer22(s sessiontypes.Session, _ int64) {
+func upgradeToVer22(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `stats_ver` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer23(s sessiontypes.Session, _ int64) {
+func upgradeToVer23(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `flag` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 // writeSystemTZ writes system timezone info into mysql.tidb
-func writeSystemTZ(s sessiontypes.Session) {
+func writeSystemTZ(s sessionapi.Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Global System Timezone.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB,
 		mysql.TiDBTable,
@@ -868,18 +868,18 @@ func writeSystemTZ(s sessiontypes.Session) {
 }
 
 // upgradeToVer24 initializes `System` timezone according to docs/design/2018-09-10-adding-tz-env.md
-func upgradeToVer24(s sessiontypes.Session, _ int64) {
+func upgradeToVer24(s sessionapi.Session, _ int64) {
 	writeSystemTZ(s)
 }
 
 // upgradeToVer25 updates tidb_max_chunk_size to new low bound value 32 if previous value is small than 32.
-func upgradeToVer25(s sessiontypes.Session, _ int64) {
+func upgradeToVer25(s sessionapi.Session, _ int64) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s' AND VARIABLE_VALUE < %[4]d",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBMaxChunkSize, vardef.DefInitChunkSize)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer26(s sessiontypes.Session, _ int64) {
+func upgradeToVer26(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateRoleEdgesTable)
 	mustExecute(s, CreateDefaultRolesTable)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_role_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
@@ -891,15 +891,15 @@ func upgradeToVer26(s sessiontypes.Session, _ int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_view_priv='Y',Show_view_priv='Y' WHERE Create_priv='Y'")
 }
 
-func upgradeToVer27(s sessiontypes.Session, _ int64) {
+func upgradeToVer27(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` DOUBLE NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer28(s sessiontypes.Session, _ int64) {
+func upgradeToVer28(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateBindInfoTable)
 }
 
-func upgradeToVer29(s sessiontypes.Session, ver int64) {
+func upgradeToVer29(s sessionapi.Session, ver int64) {
 	// upgradeToVer29 only need to be run when the current version is 28.
 	if ver != version28 {
 		return
@@ -909,51 +909,51 @@ func upgradeToVer29(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX sql_index (original_sql(1024),default_db(1024))", dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer30(s sessiontypes.Session, _ int64) {
+func upgradeToVer30(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateStatsTopNTable)
 }
 
-func upgradeToVer31(s sessiontypes.Session, _ int64) {
+func upgradeToVer31(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` BLOB DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer32(s sessiontypes.Session, _ int64) {
+func upgradeToVer32(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
 }
 
-func upgradeToVer33(s sessiontypes.Session, _ int64) {
+func upgradeToVer33(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateExprPushdownBlacklist)
 }
 
-func upgradeToVer34(s sessiontypes.Session, _ int64) {
+func upgradeToVer34(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateOptRuleBlacklist)
 }
 
-func upgradeToVer35(s sessiontypes.Session, _ int64) {
+func upgradeToVer35(s sessionapi.Session, _ int64) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_NAME = '%s' WHERE VARIABLE_NAME = 'tidb_back_off_weight'",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBBackOffWeight)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer36(s sessiontypes.Session, _ int64) {
+func upgradeToVer36(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Shutdown_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	// A root user will have those privileges after upgrading.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' WHERE Super_priv='Y'")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tmp_table_priv='Y',Lock_tables_priv='Y',Create_routine_priv='Y',Alter_routine_priv='Y',Event_priv='Y' WHERE Super_priv='Y'")
 }
 
-func upgradeToVer37(s sessiontypes.Session, _ int64) {
+func upgradeToVer37(s sessionapi.Session, _ int64) {
 	// when upgrade from old tidb and no 'tidb_enable_window_function' in GLOBAL_VARIABLES, init it with 0.
 	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableWindowFunction, 0)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer38(s sessiontypes.Session, _ int64) {
+func upgradeToVer38(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateGlobalPrivTable)
 }
 
-func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
+func writeNewCollationParameter(s sessionapi.Session, flag bool) {
 	comment := "If the new collations are enabled. Do not edit it."
 	b := varFalse
 	if flag {
@@ -964,30 +964,30 @@ func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
 	)
 }
 
-func upgradeToVer40(s sessiontypes.Session, _ int64) {
+func upgradeToVer40(s sessionapi.Session, _ int64) {
 	// There is no way to enable new collation for an existing TiDB cluster.
 	writeNewCollationParameter(s, false)
 }
 
-func upgradeToVer41(s sessiontypes.Session, _ int64) {
+func upgradeToVer41(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `password` `authentication_string` TEXT", infoschema.ErrColumnExists, infoschema.ErrColumnNotExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `password` TEXT as (`authentication_string`)", infoschema.ErrColumnExists)
 }
 
 // writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
-func writeDefaultExprPushDownBlacklist(s sessiontypes.Session) {
+func writeDefaultExprPushDownBlacklist(s sessionapi.Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
 		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add')")
 }
 
-func upgradeToVer42(s sessiontypes.Session, _ int64) {
+func upgradeToVer42(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` CHAR(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` VARCHAR(200)", infoschema.ErrColumnExists)
 	writeDefaultExprPushDownBlacklist(s)
 }
 
 // Convert statement summary global variables to non-empty values.
-func writeStmtSummaryVars(s sessiontypes.Session) {
+func writeStmtSummaryVars(s sessionapi.Session) {
 	sql := "UPDATE %n.%n SET variable_value= %? WHERE variable_name= %? AND variable_value=''"
 	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(vardef.DefTiDBEnableStmtSummary), vardef.TiDBEnableStmtSummary)
 	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, variable.BoolToOnOff(vardef.DefTiDBStmtSummaryInternalQuery), vardef.TiDBStmtSummaryInternalQuery)
@@ -997,48 +997,48 @@ func writeStmtSummaryVars(s sessiontypes.Session) {
 	mustExecute(s, sql, mysql.SystemDB, mysql.GlobalVariablesTable, strconv.FormatUint(uint64(vardef.DefTiDBStmtSummaryMaxSQLLength), 10), vardef.TiDBStmtSummaryMaxSQLLength)
 }
 
-func upgradeToVer43(s sessiontypes.Session, _ int64) {
+func upgradeToVer43(s sessionapi.Session, _ int64) {
 	writeStmtSummaryVars(s)
 }
 
-func upgradeToVer44(s sessiontypes.Session, _ int64) {
+func upgradeToVer44(s sessionapi.Session, _ int64) {
 	mustExecute(s, "DELETE FROM mysql.global_variables where variable_name = \"tidb_isolation_read_engines\"")
 }
 
-func upgradeToVer45(s sessiontypes.Session, _ int64) {
+func upgradeToVer45(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Config_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' WHERE Super_priv='Y'")
 }
 
 // In v3.1.1, we wrongly replace the context of upgradeToVer39 with upgradeToVer44. If we upgrade from v3.1.1 to a newer version,
 // upgradeToVer39 will be missed. So we redo upgradeToVer39 here to make sure the upgrading from v3.1.1 succeed.
-func upgradeToVer46(s sessiontypes.Session, _ int64) {
+func upgradeToVer46(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' WHERE Super_priv='Y'")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' WHERE Super_priv='Y'")
 }
 
-func upgradeToVer47(s sessiontypes.Session, _ int64) {
+func upgradeToVer47(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer50(s sessiontypes.Session, _ int64) {
+func upgradeToVer50(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateSchemaIndexUsageTable)
 }
 
-func upgradeToVer52(s sessiontypes.Session, _ int64) {
+func upgradeToVer52(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
 }
 
-func upgradeToVer53(s sessiontypes.Session, _ int64) {
+func upgradeToVer53(s sessionapi.Session, _ int64) {
 	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
 	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableStrictDoubleTypeCheck, 0)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer54(s sessiontypes.Session, ver int64) {
+func upgradeToVer54(s sessionapi.Session, ver int64) {
 	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
 	// default in v4.0.
 	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version38) to
@@ -1060,7 +1060,7 @@ func upgradeToVer54(s sessiontypes.Session, ver int64) {
 // When cherry-pick upgradeToVer52 to v4.0, we wrongly name it upgradeToVer48.
 // If we upgrade from v4.0 to a newer version, the real upgradeToVer48 will be missed.
 // So we redo upgradeToVer48 here to make sure the upgrading from v4.0 succeeds.
-func upgradeToVer55(s sessiontypes.Session, _ int64) {
+func upgradeToVer55(s sessionapi.Session, _ int64) {
 	defValues := map[string]string{
 		vardef.TiDBIndexLookupConcurrency:     "4",
 		vardef.TiDBIndexLookupJoinConcurrency: "4",
@@ -1107,27 +1107,27 @@ func upgradeToVer55(s sessiontypes.Session, _ int64) {
 // When cherry-pick upgradeToVer54 to v4.0, we wrongly name it upgradeToVer49.
 // If we upgrade from v4.0 to a newer version, the real upgradeToVer49 will be missed.
 // So we redo upgradeToVer49 here to make sure the upgrading from v4.0 succeeds.
-func upgradeToVer56(s sessiontypes.Session, _ int64) {
+func upgradeToVer56(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateStatsExtended)
 }
 
-func upgradeToVer57(s sessiontypes.Session, _ int64) {
+func upgradeToVer57(s sessionapi.Session, _ int64) {
 	insertBuiltinBindInfoRow(s)
 }
 
-func initBindInfoTable(s sessiontypes.Session) {
+func initBindInfoTable(s sessionapi.Session) {
 	mustExecute(s, CreateBindInfoTable)
 	insertBuiltinBindInfoRow(s)
 }
 
-func insertBuiltinBindInfoRow(s sessiontypes.Session) {
+func insertBuiltinBindInfoRow(s sessionapi.Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
 						VALUES (%?, %?, "mysql", %?, "0000-00-00 00:00:00", "0000-00-00 00:00:00", "", "", %?)`,
 		bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.StatusBuiltin, bindinfo.StatusBuiltin,
 	)
 }
 
-func upgradeToVer59(s sessiontypes.Session, _ int64) {
+func upgradeToVer59(s sessionapi.Session, _ int64) {
 	// The oom-action default value is log by default in v3.0, and cancel by
 	// default in v4.0.11+.
 	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version59) to
@@ -1139,7 +1139,7 @@ func upgradeToVer59(s sessiontypes.Session, _ int64) {
 	writeOOMAction(s)
 }
 
-func upgradeToVer60(s sessiontypes.Session, _ int64) {
+func upgradeToVer60(s sessionapi.Session, _ int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.stats_extended")
 	doReentrantDDL(s, CreateStatsExtended)
 }
@@ -1153,7 +1153,7 @@ type bindInfo struct {
 	source     string
 }
 
-func upgradeToVer67(s sessiontypes.Session, _ int64) {
+func upgradeToVer67(s sessionapi.Session, _ int64) {
 	bindMap := make(map[string]bindInfo)
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
@@ -1245,67 +1245,67 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 	}
 }
 
-func writeMemoryQuotaQuery(s sessiontypes.Session) {
+func writeMemoryQuotaQuery(s sessionapi.Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30,
 	)
 }
 
-func upgradeToVer62(s sessiontypes.Session, _ int64) {
+func upgradeToVer62(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer63(s sessiontypes.Session, _ int64) {
+func upgradeToVer63(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
 }
 
-func upgradeToVer64(s sessiontypes.Session, _ int64) {
+func upgradeToVer64(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y' where Super_priv='Y'")
 }
 
-func upgradeToVer65(s sessiontypes.Session, _ int64) {
+func upgradeToVer65(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateStatsFMSketchTable)
 }
 
-func upgradeToVer66(s sessiontypes.Session, _ int64) {
+func upgradeToVer66(s sessionapi.Session, _ int64) {
 	mustExecute(s, "set @@global.tidb_track_aggregate_memory_usage = 1")
 }
 
-func upgradeToVer68(s sessiontypes.Session, _ int64) {
+func upgradeToVer68(s sessionapi.Session, _ int64) {
 	mustExecute(s, "DELETE FROM mysql.global_variables where VARIABLE_NAME = 'tidb_enable_clustered_index' and VARIABLE_VALUE = 'OFF'")
 }
 
-func upgradeToVer69(s sessiontypes.Session, _ int64) {
+func upgradeToVer69(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateGlobalGrantsTable)
 }
 
-func upgradeToVer70(s sessiontypes.Session, _ int64) {
+func upgradeToVer70(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN plugin CHAR(64) AFTER authentication_string", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
 }
 
-func upgradeToVer71(s sessiontypes.Session, _ int64) {
+func upgradeToVer71(s sessionapi.Session, _ int64) {
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
 }
 
-func upgradeToVer72(s sessiontypes.Session, _ int64) {
+func upgradeToVer72(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN snapshot BIGINT(64) UNSIGNED NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer73(s sessiontypes.Session, _ int64) {
+func upgradeToVer73(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
 }
 
-func upgradeToVer74(s sessiontypes.Session, _ int64) {
+func upgradeToVer74(s sessionapi.Session, _ int64) {
 	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
 	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", vardef.DefTiDBStmtSummaryMaxStmtCount))
 }
 
-func upgradeToVer75(s sessiontypes.Session, _ int64) {
+func upgradeToVer75(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(255)")
 	doReentrantDDL(s, "ALTER TABLE mysql.global_priv MODIFY COLUMN Host CHAR(255)")
 	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY COLUMN Host CHAR(255)")
@@ -1313,25 +1313,25 @@ func upgradeToVer75(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
 }
 
-func upgradeToVer76(s sessiontypes.Session, _ int64) {
+func upgradeToVer76(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
 }
 
-func upgradeToVer77(s sessiontypes.Session, _ int64) {
+func upgradeToVer77(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateColumnStatsUsageTable)
 }
 
-func upgradeToVer78(s sessiontypes.Session, _ int64) {
+func upgradeToVer78(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
 }
 
-func upgradeToVer79(s sessiontypes.Session, _ int64) {
+func upgradeToVer79(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateTableCacheMetaTable)
 }
 
-func upgradeToVer80(s sessiontypes.Session, _ int64) {
+func upgradeToVer80(s sessionapi.Session, _ int64) {
 	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 1)
@@ -1339,42 +1339,42 @@ func upgradeToVer80(s sessiontypes.Session, _ int64) {
 
 // For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
 // This helps minimize query plan regressions.
-func upgradeToVer81(s sessiontypes.Session, _ int64) {
+func upgradeToVer81(s sessionapi.Session, _ int64) {
 	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_enable_index_merge | off".
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableIndexMerge, vardef.Off)
 }
 
-func upgradeToVer82(s sessiontypes.Session, _ int64) {
+func upgradeToVer82(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateAnalyzeOptionsTable)
 }
 
-func upgradeToVer83(s sessiontypes.Session, _ int64) {
+func upgradeToVer83(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateStatsHistory)
 }
 
-func upgradeToVer84(s sessiontypes.Session, _ int64) {
+func upgradeToVer84(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateStatsMetaHistory)
 }
 
-func upgradeToVer85(s sessiontypes.Session, _ int64) {
+func upgradeToVer85(s sessionapi.Session, _ int64) {
 	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.StatusEnabled, bindinfo.StatusUsing))
 }
 
-func upgradeToVer86(s sessiontypes.Session, _ int64) {
+func upgradeToVer86(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
 }
 
-func upgradeToVer87(s sessiontypes.Session, _ int64) {
+func upgradeToVer87(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateAnalyzeJobs)
 }
 
-func upgradeToVer88(s sessiontypes.Session, _ int64) {
+func upgradeToVer88(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_slave_priv` `Repl_slave_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Execute_priv`")
 	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_client_priv` `Repl_client_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`")
 }
 
-func upgradeToVer89(s sessiontypes.Session, _ int64) {
+func upgradeToVer89(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateAdvisoryLocks)
 }
 
@@ -1384,7 +1384,7 @@ func upgradeToVer89(s sessiontypes.Session, _ int64) {
 // (not guaranteed to be the same on all servers), and writes a message
 // to the error log. The message is important since the behavior is weird
 // (changes to the config file will no longer take effect past this point).
-func importConfigOption(s sessiontypes.Session, configName, svName, valStr string) {
+func importConfigOption(s sessionapi.Session, configName, svName, valStr string) {
 	message := fmt.Sprintf("%s is now configured by the system variable %s. One-time importing the value specified in tidb.toml file", configName, svName)
 	logutil.BgLogger().Warn(message, zap.String("value", valStr))
 	// We use insert ignore, since if its a duplicate we don't want to overwrite any user-set values.
@@ -1393,7 +1393,7 @@ func importConfigOption(s sessiontypes.Session, configName, svName, valStr strin
 	mustExecute(s, sql)
 }
 
-func upgradeToVer90(s sessiontypes.Session, _ int64) {
+func upgradeToVer90(s sessionapi.Session, _ int64) {
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
 	importConfigOption(s, "enable-batch-dml", vardef.TiDBEnableBatchDML, valStr)
 	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
@@ -1408,7 +1408,7 @@ func upgradeToVer90(s sessiontypes.Session, _ int64) {
 	importConfigOption(s, "oom-action", vardef.TiDBMemOOMAction, valStr)
 }
 
-func upgradeToVer91(s sessiontypes.Session, _ int64) {
+func upgradeToVer91(s sessionapi.Session, _ int64) {
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().PreparedPlanCache.Enabled)
 	importConfigOption(s, "prepared-plan-cache.enable", vardef.TiDBEnablePrepPlanCache, valStr)
 
@@ -1419,35 +1419,35 @@ func upgradeToVer91(s sessiontypes.Session, _ int64) {
 	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", vardef.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
 }
 
-func upgradeToVer93(s sessiontypes.Session, _ int64) {
+func upgradeToVer93(s sessionapi.Session, _ int64) {
 	valStr := variable.BoolToOnOff(config.GetGlobalConfig().OOMUseTmpStorage)
 	importConfigOption(s, "oom-use-tmp-storage", vardef.TiDBEnableTmpStorageOnOOM, valStr)
 }
 
-func upgradeToVer94(s sessiontypes.Session, _ int64) {
+func upgradeToVer94(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateMDLView)
 }
 
-func upgradeToVer95(s sessiontypes.Session, _ int64) {
+func upgradeToVer95(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `User_attributes` JSON")
 }
 
-func upgradeToVer97(s sessiontypes.Session, _ int64) {
+func upgradeToVer97(s sessionapi.Session, _ int64) {
 	// Check if tidb_opt_range_max_size exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_opt_range_max_size | 0" since this is the old behavior before we introduce this variable.
 	initGlobalVariableIfNotExists(s, vardef.TiDBOptRangeMaxSize, 0)
 }
 
-func upgradeToVer98(s sessiontypes.Session, _ int64) {
+func upgradeToVer98(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Token_issuer` varchar(255)")
 }
 
-func upgradeToVer99Before(s sessiontypes.Session) {
+func upgradeToVer99Before(s sessionapi.Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableMDL, 0)
 }
 
-func upgradeToVer99After(s sessiontypes.Session) {
+func upgradeToVer99After(s sessionapi.Session) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
@@ -1458,80 +1458,80 @@ func upgradeToVer99After(s sessiontypes.Session) {
 	terror.MustNil(err)
 }
 
-func upgradeToVer100(s sessiontypes.Session, _ int64) {
+func upgradeToVer100(s sessionapi.Session, _ int64) {
 	valStr := strconv.Itoa(int(config.GetGlobalConfig().Performance.ServerMemoryQuota))
 	importConfigOption(s, "performance.server-memory-quota", vardef.TiDBServerMemoryLimit, valStr)
 }
 
-func upgradeToVer101(s sessiontypes.Session, _ int64) {
+func upgradeToVer101(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreatePlanReplayerStatusTable)
 }
 
-func upgradeToVer102(s sessiontypes.Session, _ int64) {
+func upgradeToVer102(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreatePlanReplayerTaskTable)
 }
 
-func upgradeToVer103(s sessiontypes.Session, _ int64) {
+func upgradeToVer103(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateStatsTableLocked)
 }
 
-func upgradeToVer104(s sessiontypes.Session, _ int64) {
+func upgradeToVer104(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `sql_digest` varchar(64)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN IF NOT EXISTS `plan_digest` varchar(64)")
 }
 
 // For users that upgrade TiDB from a pre-6.0 version, we want to disable tidb cost model2 by default to keep plans unchanged.
-func upgradeToVer105(s sessiontypes.Session, _ int64) {
+func upgradeToVer105(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBCostModelVersion, "1")
 }
 
-func upgradeToVer106(s sessiontypes.Session, _ int64) {
+func upgradeToVer106(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreatePasswordHistory)
 	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_history` smallint unsigned  DEFAULT NULL AFTER `Create_Tablespace_Priv` ")
 	doReentrantDDL(s, "Alter table mysql.user add COLUMN IF NOT EXISTS `Password_reuse_time` smallint unsigned DEFAULT NULL AFTER `Password_reuse_history`")
 }
 
-func upgradeToVer107(s sessiontypes.Session, _ int64) {
+func upgradeToVer107(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_expired` ENUM('N','Y') NOT NULL DEFAULT 'N'")
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_last_changed` TIMESTAMP DEFAULT CURRENT_TIMESTAMP()")
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Password_lifetime` SMALLINT UNSIGNED DEFAULT NULL")
 }
 
-func upgradeToVer108(s sessiontypes.Session, _ int64) {
+func upgradeToVer108(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateTTLTableStatus)
 }
 
 // For users that upgrade TiDB from a 6.2-6.4 version, we want to disable tidb gc_aware_memory_track by default.
-func upgradeToVer109(s sessiontypes.Session, _ int64) {
+func upgradeToVer109(s sessionapi.Session, _ int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableGCAwareMemoryTrack, 0)
 }
 
 // For users that upgrade TiDB from a 5.4-6.4 version, we want to enable tidb tidb_stats_load_pseudo_timeout by default.
-func upgradeToVer110(s sessiontypes.Session, _ int64) {
+func upgradeToVer110(s sessionapi.Session, _ int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBStatsLoadPseudoTimeout, 1)
 }
 
-func upgradeToVer130(s sessiontypes.Session, _ int64) {
+func upgradeToVer130(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD COLUMN IF NOT EXISTS `source` varchar(40) NOT NULL after `version`;")
 }
 
-func upgradeToVer131(s sessiontypes.Session, _ int64) {
+func upgradeToVer131(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateTTLTask)
 	doReentrantDDL(s, CreateTTLJobHistory)
 }
 
-func upgradeToVer132(s sessiontypes.Session, _ int64) {
+func upgradeToVer132(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateMDLView)
 }
 
-func upgradeToVer133(s sessiontypes.Session, _ int64) {
+func upgradeToVer133(s sessionapi.Session, _ int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n set VARIABLE_VALUE = %? where VARIABLE_NAME = %? and VARIABLE_VALUE = %?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.DefTiDBServerMemoryLimit, vardef.TiDBServerMemoryLimit, "0")
 }
 
-func upgradeToVer134(s sessiontypes.Session, _ int64) {
+func upgradeToVer134(s sessionapi.Session, _ int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.ForeignKeyChecks, vardef.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableForeignKey, vardef.On)
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBEnableHistoricalStats, vardef.On)
@@ -1540,35 +1540,35 @@ func upgradeToVer134(s sessiontypes.Session, _ int64) {
 }
 
 // For users that upgrade TiDB from a pre-7.0 version, we want to set tidb_opt_advanced_join_hint to off by default to keep plans unchanged.
-func upgradeToVer135(s sessiontypes.Session, _ int64) {
+func upgradeToVer135(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBOptAdvancedJoinHint, false)
 }
 
-func upgradeToVer136(s sessiontypes.Session, _ int64) {
+func upgradeToVer136(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateGlobalTask)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX namespace", dbterror.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer137(_ sessiontypes.Session, _ int64) {
+func upgradeToVer137(_ sessionapi.Session, _ int64) {
 	// NOOP, we don't depend on ddl to init the default group due to backward compatible issue.
 }
 
 // For users that upgrade TiDB from a version below 7.0, we want to enable tidb tidb_enable_null_aware_anti_join by default.
-func upgradeToVer138(s sessiontypes.Session, _ int64) {
+func upgradeToVer138(s sessionapi.Session, _ int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBOptimizerEnableNAAJ, vardef.On)
 }
 
-func upgradeToVer139(sessiontypes.Session, int64) {}
+func upgradeToVer139(sessionapi.Session, int64) {}
 
-func upgradeToVer140(s sessiontypes.Session, _ int64) {
+func upgradeToVer140(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `task_key` VARCHAR(256) NOT NULL AFTER `id`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD UNIQUE KEY task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
 // upgradeToVer141 sets the value of `tidb_session_plan_cache_size` as `tidb_prepared_plan_cache_size` for compatibility,
 // and update tidb_load_based_replica_read_threshold from 0 to 4.
-func upgradeToVer141(s sessiontypes.Session, _ int64) {
+func upgradeToVer141(s sessionapi.Session, _ int64) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBPrepPlanCacheSize)
@@ -1589,55 +1589,55 @@ func upgradeToVer141(s sessiontypes.Session, _ int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBLoadBasedReplicaReadThreshold, vardef.DefTiDBLoadBasedReplicaReadThreshold.String())
 }
 
-func upgradeToVer142(s sessiontypes.Session, _ int64) {
+func upgradeToVer142(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNonPreparedPlanCache, vardef.Off)
 }
 
-func upgradeToVer143(s sessiontypes.Session, _ int64) {
+func upgradeToVer143(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer144(s sessiontypes.Session, _ int64) {
+func upgradeToVer144(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheInvalidationOnFreshStats, vardef.Off)
 }
 
-func upgradeToVer146(s sessiontypes.Session, _ int64) {
+func upgradeToVer146(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer167(s sessiontypes.Session, _ int64) {
+func upgradeToVer167(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer168(s sessiontypes.Session, _ int64) {
+func upgradeToVer168(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateImportJobs)
 }
 
-func upgradeToVer169(s sessiontypes.Session, _ int64) {
+func upgradeToVer169(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateRunawayTable)
 }
 
-func upgradeToVer170(s sessiontypes.Session, _ int64) {
+func upgradeToVer170(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateTimers)
 }
 
-func upgradeToVer171(s sessiontypes.Session, _ int64) {
+func upgradeToVer171(s sessionapi.Session, _ int64) {
 	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
 }
 
-func upgradeToVer172(s sessiontypes.Session, _ int64) {
+func upgradeToVer172(s sessionapi.Session, _ int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
 	mustExecute(s, CreateRunawayWatchTable)
 	mustExecute(s, CreateDoneRunawayWatchTable)
 }
 
-func upgradeToVer173(s sessiontypes.Session, _ int64) {
+func upgradeToVer173(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer174(s sessiontypes.Session, _ int64) {
+func upgradeToVer174(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history DROP INDEX `namespace`", dbterror.ErrCantDropFieldOrKey)
@@ -1649,7 +1649,7 @@ func upgradeToVer174(s sessiontypes.Session, _ int64) {
 // the issue #44298 that bindings for `in (?)` can't work for `in (?, ?, ?)`.
 // After this update, multiple bindings may have the same `original_sql`, but it's OK, and
 // for safety, don't remove duplicated bindings when upgrading.
-func upgradeToVer175(s sessiontypes.Session, _ int64) {
+func upgradeToVer175(s sessionapi.Session, _ int64) {
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 	defer func() {
@@ -1697,11 +1697,11 @@ func upgradeToVer175(s sessiontypes.Session, _ int64) {
 	}
 }
 
-func upgradeToVer176(s sessiontypes.Session, _ int64) {
+func upgradeToVer176(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateGlobalTaskHistory)
 }
 
-func upgradeToVer177(s sessiontypes.Session, _ int64) {
+func upgradeToVer177(s sessionapi.Session, _ int64) {
 	// ignore error when upgrading from v7.4 to higher version.
 	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
 	err := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAsyncMergeGlobalStats, vardef.Off)
@@ -1711,7 +1711,7 @@ func upgradeToVer177(s sessiontypes.Session, _ int64) {
 }
 
 // writeDDLTableVersion writes mDDLTableVersion into mysql.tidb
-func writeDDLTableVersion(s sessiontypes.Session) {
+func writeDDLTableVersion(s sessionapi.Session) {
 	var err error
 	var ddlTableVersion meta.DDLTableVersion
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -1729,15 +1729,15 @@ func writeDDLTableVersion(s sessiontypes.Session) {
 	)
 }
 
-func upgradeToVer178(s sessiontypes.Session, _ int64) {
+func upgradeToVer178(s sessionapi.Session, _ int64) {
 	writeDDLTableVersion(s)
 }
 
-func upgradeToVer179(s sessiontypes.Session, _ int64) {
+func upgradeToVer179(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
-func upgradeToVer190(s sessiontypes.Session, _ int64) {
+func upgradeToVer190(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
@@ -1766,47 +1766,47 @@ func upgradeToVer190(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
 }
 
-func upgradeToVer191(s sessiontypes.Session, _ int64) {
+func upgradeToVer191(s sessionapi.Session, _ int64) {
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
 		mysql.SystemDB, mysql.GlobalVariablesTable,
 		vardef.TiDBTxnMode, vardef.OptimisticTxnMode)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer192(s sessiontypes.Session, _ int64) {
+func upgradeToVer192(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateRequestUnitByGroupTable)
 }
 
-func upgradeToVer193(s sessiontypes.Session, _ int64) {
+func upgradeToVer193(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateMDLView)
 }
 
-func upgradeToVer194(s sessiontypes.Session, _ int64) {
+func upgradeToVer194(s sessionapi.Session, _ int64) {
 	mustExecute(s, "DROP TABLE IF EXISTS mysql.load_data_jobs")
 }
 
-func upgradeToVer195(s sessiontypes.Session, _ int64) {
+func upgradeToVer195(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, DropMySQLIndexUsageTable)
 }
 
-func upgradeToVer196(s sessiontypes.Session, _ int64) {
+func upgradeToVer196(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer197(s sessiontypes.Session, _ int64) {
+func upgradeToVer197(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateMDLView)
 }
 
-func upgradeToVer198(s sessiontypes.Session, _ int64) {
+func upgradeToVer198(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer209(s sessiontypes.Session, _ int64) {
+func upgradeToVer209(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBResourceControlStrictMode, vardef.Off)
 }
 
-func upgradeToVer210(s sessiontypes.Session, _ int64) {
+func upgradeToVer210(s sessionapi.Session, _ int64) {
 	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
 	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeColumnOptions, ast.AllColumns.String())
@@ -1816,11 +1816,11 @@ func upgradeToVer210(s sessiontypes.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBOptProjectionPushDown, vardef.Off)
 }
 
-func upgradeToVer211(s sessiontypes.Session, _ int64) {
+func upgradeToVer211(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer212(s sessiontypes.Session, ver int64) {
+func upgradeToVer212(s sessionapi.Session, ver int64) {
 	// need to ensure curVersion has the column before rename.
 	// version169 created `tidb_runaway_queries` table
 	// version172 created `tidb_runaway_watch` and `tidb_runaway_watch_done` tables
@@ -1851,35 +1851,35 @@ func upgradeToVer212(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `tidb_server`;", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer213(s sessiontypes.Session, _ int64) {
+func upgradeToVer213(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreatePITRIDMap)
 }
 
-func upgradeToVer214(s sessiontypes.Session, _ int64) {
+func upgradeToVer214(s sessionapi.Session, _ int64) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	mustExecute(s, CreateKernelOptionsTable)
 }
 
-func upgradeToVer215(s sessiontypes.Session, _ int64) {
+func upgradeToVer215(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBEnableINLJoinInnerMultiPattern, vardef.Off)
 }
 
-func upgradeToVer216(s sessiontypes.Session, _ int64) {
+func upgradeToVer216(s sessionapi.Session, _ int64) {
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
 	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
 }
 
-func upgradeToVer217(s sessiontypes.Session, _ int64) {
+func upgradeToVer217(s sessionapi.Session, _ int64) {
 	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
 	// Otherwise do nothing.
 	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
 }
 
-func upgradeToVer218(_ sessiontypes.Session, _ int64) {
+func upgradeToVer218(_ sessionapi.Session, _ int64) {
 	// empty, just make lint happy.
 }
 
-func upgradeToVer239(s sessiontypes.Session, _ int64) {
+func upgradeToVer239(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
@@ -1894,12 +1894,12 @@ const (
 	addAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
 )
 
-func upgradeToVer240(s sessiontypes.Session, _ int64) {
+func upgradeToVer240(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer241(s sessiontypes.Session, _ int64) {
+func upgradeToVer241(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
@@ -1910,7 +1910,7 @@ func upgradeToVer241(s sessiontypes.Session, _ int64) {
 }
 
 // writeClusterID writes cluster id into mysql.tidb
-func writeClusterID(s sessiontypes.Session) {
+func writeClusterID(s sessionapi.Session) {
 	clusterID := s.GetStore().GetClusterID()
 
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1922,28 +1922,28 @@ func writeClusterID(s sessiontypes.Session) {
 	)
 }
 
-func upgradeToVer242(s sessiontypes.Session, _ int64) {
+func upgradeToVer242(s sessionapi.Session, _ int64) {
 	writeClusterID(s)
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
 }
 
-func upgradeToVer243(s sessiontypes.Session, _ int64) {
+func upgradeToVer243(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer244(s sessiontypes.Session, _ int64) {
+func upgradeToVer244(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
-func upgradeToVer245(s sessiontypes.Session, _ int64) {
+func upgradeToVer245(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN original_sql LONGTEXT NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN bind_sql LONGTEXT NOT NULL")
 }
 
-func upgradeToVer246(s sessiontypes.Session, _ int64) {
+func upgradeToVer246(s sessionapi.Session, _ int64) {
 	// log duplicated digests that will be set to null.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx,
@@ -1993,21 +1993,21 @@ func upgradeToVer246(s sessiontypes.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX digest_index(plan_digest, sql_digest)", dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer247(s sessiontypes.Session, _ int64) {
+func upgradeToVer247(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer248(s sessiontypes.Session, _ int64) {
+func upgradeToVer248(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
 }
 
-func upgradeToVer249(s sessiontypes.Session, _ int64) {
+func upgradeToVer249(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateRestoreRegistryTable)
 }
 
-func upgradeToVer250(s sessiontypes.Session, _ int64) {
+func upgradeToVer250(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `keyspace` varchar(64) DEFAULT '' AFTER `extra_params`", infoschema.ErrColumnExists)

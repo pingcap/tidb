@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,7 +74,7 @@ func (j job) String(redacted string) string {
 }
 
 // HandleNonTransactionalDML is the entry point for a non-transactional DML statement
-func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) (sqlexec.RecordSet, error) {
+func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session) (sqlexec.RecordSet, error) {
 	sessVars := se.GetSessionVars()
 	originalReadStaleness := se.GetSessionVars().ReadStaleness
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
@@ -131,7 +131,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 //
 // Note: this is not a comprehensive check.
 // We do this to help user prevent some easy mistakes, at an acceptable maintenance cost.
-func checkConstraintWithShardColumn(se sessiontypes.Session, stmt *ast.NonTransactionalDMLStmt,
+func checkConstraintWithShardColumn(se sessionapi.Session, stmt *ast.NonTransactionalDMLStmt,
 	tableName *ast.TableName, shardColumnInfo *model.ColumnInfo, tableSources []*ast.TableSource) error {
 	switch s := stmt.DMLStmt.(type) {
 	case *ast.UpdateStmt:
@@ -150,7 +150,7 @@ func checkConstraintWithShardColumn(se sessiontypes.Session, stmt *ast.NonTransa
 }
 
 // shard column should not be updated.
-func checkUpdateShardColumn(se sessiontypes.Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
+func checkUpdateShardColumn(se sessionapi.Session, assignments []*ast.Assignment, shardColumnInfo *model.ColumnInfo,
 	tableName *ast.TableName, tableSources []*ast.TableSource, isUpdate bool) error {
 	// if the table has alias, the alias is used in assignments, and we should use aliased name to compare
 	aliasedShardColumnTableName := tableName.Name.L
@@ -180,7 +180,7 @@ func checkUpdateShardColumn(se sessiontypes.Session, assignments []*ast.Assignme
 	return nil
 }
 
-func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session) error {
+func checkConstraint(stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session) error {
 	sessVars := se.GetSessionVars()
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
 		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
@@ -258,7 +258,7 @@ func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
 
 // single-threaded worker. work on the key range [start, end]
 func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
-	tableName *resolve.TableNameW, se sessiontypes.Session, originalCondition ast.ExprNode) ([]string, error) {
+	tableName *resolve.TableNameW, se sessionapi.Session, originalCondition ast.ExprNode) ([]string, error) {
 	// prepare for the construction of statement
 	var shardColumnRefer *resolve.ResultField
 	var shardColumnType types.FieldType
@@ -333,7 +333,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	return splitStmts, nil
 }
 
-func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se sessiontypes.Session, dryRun bool) string {
+func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se sessionapi.Session, dryRun bool) string {
 	var whereCondition ast.ExprNode
 
 	if job.start.IsNull() {
@@ -435,7 +435,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 	return ""
 }
 
-func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session,
+func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session,
 	selectSQL string, shardColumnInfo *model.ColumnInfo, memTracker *memory.Tracker) ([]job, error) {
 	var shardColumnCollate string
 	if shardColumnInfo != nil {
@@ -530,7 +530,7 @@ func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size i
 	return jobs
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *resolve.Context, se sessiontypes.Session) (
+func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *resolve.Context, se sessionapi.Session) (
 	*ast.TableName, string, *model.ColumnInfo, []*ast.TableSource, error) {
 	// only use the first table
 	join, ok := stmt.DMLStmt.TableRefsJoin()
@@ -577,7 +577,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDMLStmt, resolveCtx *resolve.Conte
 	return tableName, selectSQL, shardColumnInfo, tableSources, nil
 }
 
-func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Session, tableSources []*ast.TableSource,
+func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessionapi.Session, tableSources []*ast.TableSource,
 	leftMostTableName *ast.TableName, leftMostTableSource *ast.TableSource) (
 	*model.ColumnInfo, *ast.TableName, error) {
 	var indexed bool

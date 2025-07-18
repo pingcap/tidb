@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storepkg "github.com/pingcap/tidb/pkg/store"
@@ -811,7 +811,7 @@ const (
 var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
 
 // bootstrap initiates system DB for a store.
-func bootstrap(s sessiontypes.Session) {
+func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
@@ -890,7 +890,7 @@ func DisableRunBootstrapSQLFileInTest() {
 	}
 }
 
-func checkBootstrapped(s sessiontypes.Session) (bool, error) {
+func checkBootstrapped(s sessionapi.Session) (bool, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	//  Check if system db exists.
 	_, err := s.ExecuteInternal(ctx, "USE %n", mysql.SystemDB)
@@ -918,7 +918,7 @@ func checkBootstrapped(s sessiontypes.Session) (bool, error) {
 
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
-func getTiDBVar(s sessiontypes.Session, name string) (sVal string, isNull bool, e error) {
+func getTiDBVar(s sessionapi.Session, name string) (sVal string, isNull bool, e error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME= %?`,
 		mysql.SystemDB,
@@ -979,7 +979,7 @@ func acquireLock(store kv.Storage) (func(), error) {
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
-func upgrade(s sessiontypes.Session) {
+func upgrade(s sessionapi.Session) {
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
@@ -1043,7 +1043,7 @@ func upgrade(s sessiontypes.Session) {
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
-func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
+func initGlobalVariableIfNotExists(s sessionapi.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	terror.MustNil(err)
@@ -1055,7 +1055,7 @@ func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any)
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, val)
 }
 
-func writeOOMAction(s sessiontypes.Session) {
+func writeOOMAction(s sessionapi.Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, vardef.OOMActionLog, comment, vardef.OOMActionLog,
@@ -1063,7 +1063,7 @@ func writeOOMAction(s sessiontypes.Session) {
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
-func updateBootstrapVer(s sessiontypes.Session) {
+func updateBootstrapVer(s sessionapi.Session) {
 	// Update bootstrap version.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion,
@@ -1071,7 +1071,7 @@ func updateBootstrapVer(s sessiontypes.Session) {
 }
 
 // getBootstrapVersion gets bootstrap version from mysql.tidb table;
-func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
+func getBootstrapVersion(s sessionapi.Session) (int64, error) {
 	sVal, isNull, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1083,7 +1083,7 @@ func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
 }
 
 // doDDLWorks executes DDL statements in bootstrap stage.
-func doDDLWorks(s sessiontypes.Session) {
+func doDDLWorks(s sessionapi.Session) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 	// Create system db.
@@ -1200,7 +1200,7 @@ func doDDLWorks(s sessiontypes.Session) {
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
 // It is useful for setting the initial value of GLOBAL variables.
-func doBootstrapSQLFile(s sessiontypes.Session) error {
+func doBootstrapSQLFile(s sessionapi.Session) error {
 	sqlFile := config.GetGlobalConfig().InitializeSQLFile
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if sqlFile == "" {
@@ -1239,7 +1239,7 @@ func doBootstrapSQLFile(s sessiontypes.Session) error {
 
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
-func doDMLWorks(s sessiontypes.Session) {
+func doDMLWorks(s sessionapi.Session) {
 	mustExecute(s, "BEGIN")
 	if config.GetGlobalConfig().Security.SecureBootstrap {
 		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
@@ -1315,7 +1315,7 @@ func doDMLWorks(s sessiontypes.Session) {
 	}
 }
 
-func mustExecute(s sessiontypes.Session, sql string, args ...any) {
+func mustExecute(s sessionapi.Session, sql string, args ...any) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)

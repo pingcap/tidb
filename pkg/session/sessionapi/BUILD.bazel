@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "types",
-    srcs = ["sesson_interface.go"],
-    importpath = "github.com/pingcap/tidb/pkg/session/types",
+    name = "sessionapi",
+    srcs = ["session.go"],
+    importpath = "github.com/pingcap/tidb/pkg/session/sessionapi",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
