@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -164,7 +163,7 @@ func BenchmarkGetPlanCost(b *testing.B) {
 }
 
 func TestTableScanCostWithForce(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -207,7 +206,7 @@ func TestTableScanCostWithForce(t *testing.T) {
 }
 
 func TestOptimizerCostFactors(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
