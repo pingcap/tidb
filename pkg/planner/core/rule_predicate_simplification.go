@@ -37,6 +37,13 @@ const (
 	otherPredicate
 )
 
+// FindPredicateType determines the type of predicate represented by a given expression.
+// It analyzes the provided expression and returns a column (if applicable) and a corresponding predicate type.
+// The function handles different expression types, including constants, scalar functions, and their specific cases:
+// - Logical operators (`OR` and `AND`).
+// - Comparison operators (`EQ`, `NE`, `LT`, `GT`, `LE`, `GE`).
+// - IN predicates with a list of constants.
+// If the expression doesn't match any of these recognized patterns, it returns an `otherPredicate` type.
 func findPredicateType(expr expression.Expression) (*expression.Column, predicateType) {
 	switch v := expr.(type) {
 	case *expression.ScalarFunction:
@@ -129,16 +136,24 @@ func applyPredicateSimplification(sctx sessionctx.Context, predicates []expressi
 			jthPredicate := predicates[j]
 			iCol, iType := findPredicateType(ithPredicate)
 			jCol, jType := findPredicateType(jthPredicate)
+			maybeOverOptimized4PlanCache := expression.MaybeOverOptimized4PlanCacheForMultiExpression(
+				sctx,
+				ithPredicate,
+				jthPredicate)
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(jthPredicate, ithPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					}
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(ithPredicate, jthPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					if maybeOverOptimized4PlanCache {
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					}
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
