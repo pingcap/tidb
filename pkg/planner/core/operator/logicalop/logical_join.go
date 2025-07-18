@@ -209,7 +209,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	if !p.SCtx().GetSessionVars().InRestrictedSQL {
 		fmt.Println("wwz")
 	}
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
