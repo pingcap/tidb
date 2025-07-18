@@ -701,6 +701,7 @@ const (
 		table_name VARCHAR(64) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		created_by VARCHAR(300) NOT NULL,
+		group_key VARCHAR(300) DEFAULT NULL,
 		parameters text NOT NULL,
 		source_file_size bigint(64) NOT NULL,
 		status VARCHAR(64) NOT NULL,
