@@ -148,6 +148,9 @@ func WriteInsert(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
+	_ int,
+	_ int,
+	isLastChunk bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
@@ -222,10 +225,14 @@ func WriteInsert(
 	}
 	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
 
+	isFirstChunk := true
 	for fileRowIter.HasNext() {
-		wp.currentStatementSize = 0
-		bf.WriteString(insertStatementPrefix)
-		wp.AddFileSize(insertStatementPrefixLen)
+		if isFirstChunk {
+			wp.currentStatementSize = 0
+			bf.WriteString(insertStatementPrefix)
+			wp.AddFileSize(insertStatementPrefixLen)
+			isFirstChunk = false
+		}
 
 		for fileRowIter.HasNext() {
 			lastBfSize := bf.Len()
@@ -246,10 +253,18 @@ func WriteInsert(
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()
-			if fileRowIter.HasNext() && !shouldSwitch {
+
+			// Determine row terminator based on chunk position and remaining rows
+			hasMoreRows := fileRowIter.HasNext() && !shouldSwitch
+
+			if hasMoreRows {
 				bf.WriteString(",\n")
-			} else {
+			} else if isLastChunk || !cfg.IsStringChunking {
+				// End with semicolon for last chunk OR when not in string chunking mode
 				bf.WriteString(";\n")
+			} else {
+				// Not last chunk in string chunking mode, end with comma for concatenation
+				bf.WriteString(",\n")
 			}
 			if bf.Len() >= lengthLimit {
 				select {
@@ -268,6 +283,10 @@ func WriteInsert(
 			}
 
 			if shouldSwitch {
+				wp.currentStatementSize = 0
+				// For statement size switching, only reset to write prefix if we're in the first chunk
+				// and this is the first statement in that chunk
+				isFirstChunk = true
 				break
 			}
 		}
@@ -289,6 +308,8 @@ func WriteInsert(
 }
 
 // WriteInsertInCsv writes TableDataIR to a storage.ExternalFileWriter in csv type
+// Note: isLastChunk parameter is not used for CSV format since CSV doesn't require
+// statement-level concatenation logic (each row is independently terminated)
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -296,6 +317,9 @@ func WriteInsertInCsv(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
+	_ int,
+	_ int,
+	_ bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
@@ -655,12 +679,15 @@ func (f FileFormat) WriteInsert(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
+	chunkIndex int,
+	totalChunks int,
+	isLastChunk bool,
 ) (uint64, error) {
 	switch f {
 	case FileFormatSQLText:
-		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics)
+		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk)
 	case FileFormatCSV:
-		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics)
+		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}
