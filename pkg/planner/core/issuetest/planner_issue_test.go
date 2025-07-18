@@ -288,3 +288,9 @@ func TestIssue61303VirtualGenerateColumnSubstitute(t *testing.T) {
 	tk.MustExec("insert ignore into t1(c0) values (null);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
 }
+
+func TestIssue45956(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show databases WHERE TRUE IN (SELECT TRUE) < ALL (SELECT TRUE);").Check(testkit.Rows("INFORMATION_SCHEMA"))
+}
