@@ -308,7 +308,7 @@ type ASTArgs struct {
 }
 
 // StepSummary records the number of data involved in each step.
-// The data stored might be inaccurate, such as the number of rows in encode step,
+// The data stored might be inaccurate, such as the number of rows in encode step.
 type StepSummary struct {
 	Bytes  int64 `json:"input-bytes,omitempty"`
 	RowCnt int64 `json:"input-rows,omitempty"`

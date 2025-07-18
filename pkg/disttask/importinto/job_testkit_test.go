@@ -143,6 +143,8 @@ func TestSubmitTaskNextgen(t *testing.T) {
 }
 
 func TestGetTaskImportedRows(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -152,10 +154,9 @@ func TestGetTaskImportedRows(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 
-	mgr := storage.NewTaskManager(pool)
-	storage.SetTaskManager(mgr)
-	manager, err := storage.GetTaskManager()
-	require.NoError(t, err)
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// local sort
 	taskMeta := importinto.TaskMeta{
@@ -171,6 +172,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 			RowCnt: 1000,
 		},
 	}
+	var err error
 	taskMeta.TaskResult, err = json.Marshal(taskSummary)
 	require.NoError(t, err)
 
@@ -245,6 +247,8 @@ func TestGetTaskImportedRows(t *testing.T) {
 }
 
 func TestShowImportProgress(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
 	fmap := plannercore.ImportIntoFieldMap
 
 	store := testkit.CreateMockStore(t)
@@ -256,10 +260,9 @@ func TestShowImportProgress(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 
-	mgr := storage.NewTaskManager(pool)
-	storage.SetTaskManager(mgr)
-	manager, err := storage.GetTaskManager()
-	require.NoError(t, err)
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
 
 	// global sort
 	taskMeta := importinto.TaskMeta{
@@ -275,6 +278,7 @@ func TestShowImportProgress(t *testing.T) {
 		ImportedRows:  100,
 	}
 
+	var err error
 	taskMeta.TaskResult, err = json.Marshal(taskSummary)
 	require.NoError(t, err)
 	bytes, err := json.Marshal(taskMeta)
