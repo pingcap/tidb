@@ -412,9 +412,13 @@ func (w *worker) runReorgJob(
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			if err != nil {
-				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+				logutil.DDLLogger().Warn("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+				logutil.DDLLogger().Info("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount))
 			}
 
 			// Update a job's warnings.

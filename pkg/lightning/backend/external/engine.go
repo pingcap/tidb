@@ -168,6 +168,7 @@ const (
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
+	ctx context.Context,
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
@@ -186,7 +187,7 @@ func NewExternalEngine(
 ) *Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
-	logutil.BgLogger().Info("create external engine",
+	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
@@ -489,7 +490,7 @@ func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
 		Concurrency: 1,
 		PartSize:    3 * MinUploadPartSize})
 	if err != nil {
-		logutil.Logger(ctx).Info("create dup writer failed", zap.Error(err))
+		logutil.Logger(ctx).Error("create dup writer failed", zap.Error(err))
 		return err
 	}
 	e.dupFile = dupFile
@@ -506,7 +507,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	e.dupKVStore, e.dupWriter = nil, nil
 	kvStore.finish()
 	if err := writer.Close(ctx); err != nil {
-		logutil.Logger(ctx).Info("close dup writer failed", zap.Error(err))
+		logutil.Logger(ctx).Error("close dup writer failed", zap.Error(err))
 		return err
 	}
 	return nil
