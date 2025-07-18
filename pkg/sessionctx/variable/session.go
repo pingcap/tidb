@@ -2257,6 +2257,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		CostModelVersion:              DefTiDBCostModelVer,
 		inCallProcedure: struct {
 			inCall bool
 			num    int
