@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -2256,6 +2257,31 @@ func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	return txnManager.GetStmtReadTS()
 }
 
+func (b *executorBuilder) tryGetLazyStartTS() *LazyStartTS {
+	if b.forDataReaderBuilder ||
+		b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		return nil
+	}
+	ctxProvider := sessiontxn.GetTxnManager(b.ctx).GetContextProvider()
+	if optimisticTxnCtxProvider, ok := ctxProvider.(*isolation.OptimisticTxnContextProvider); ok && optimisticTxnCtxProvider != nil && optimisticTxnCtxProvider.TryOptimizeWithMaxTS {
+		return &LazyStartTS{ctx: b.ctx}
+	}
+	return nil
+}
+
+// LazyStartTS uses to get startTS lazily.
+type LazyStartTS struct {
+	ctx sessionctx.Context
+}
+
+func (ls *LazyStartTS) getStartTS(tryUseMaxTS bool) (uint64, error) {
+	txnManager := sessiontxn.GetTxnManager(ls.ctx)
+	if tryUseMaxTS {
+		return uint64(math.MaxUint64), nil
+	}
+	return txnManager.GetStmtReadTS()
+}
+
 // getSnapshot get the appropriate snapshot from txnManager and set
 // the relevant snapshot options before return.
 func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
@@ -3750,9 +3776,13 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		return nil, err
+	lazyStartTS := b.tryGetLazyStartTS()
+	startTS := uint64(0)
+	if lazyStartTS == nil {
+		startTS, err = b.getSnapshotTS()
+		if err != nil {
+			return nil, err
+		}
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
@@ -3778,6 +3808,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		tablePlan:                  v.GetTablePlan(),
 		storeType:                  v.StoreType,
 		batchCop:                   v.ReadReqType == plannercore.BatchCop,
+	}
+	if lazyStartTS != nil {
+		e.getStartTS = lazyStartTS.getStartTS
 	}
 	e.buildVirtualColumnInfo()
 
@@ -4089,9 +4122,14 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		physicalTableID = is.Table.ID
 	}
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		return nil, err
+
+	lazyStartTS := b.tryGetLazyStartTS()
+	startTS := uint64(0)
+	if lazyStartTS == nil {
+		startTS, err = b.getSnapshotTS()
+		if err != nil {
+			return nil, err
+		}
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
@@ -4119,6 +4157,9 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		colLens:                    is.IdxColLens,
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
+	}
+	if lazyStartTS != nil {
+		e.getStartTS = lazyStartTS.getStartTS
 	}
 
 	for _, col := range v.OutputColumns {
