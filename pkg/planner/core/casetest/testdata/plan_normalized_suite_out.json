@@ -408,9 +408,9 @@
       {
         "SQL": "explain format='brief' select a from t1 where a>2",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
+          " TableReader         root         ", 
+          " └─ExchangeSender    cop[tiflash] ", 
+          "   └─Selection       cop[tiflash] gt(test.t1.a, ?)", 
           "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
