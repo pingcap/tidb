@@ -8761,7 +8761,6 @@ SumExpr:
 |	builtinGroupConcat '(' BuggyDefaultFalseDistinctOpt ExpressionList OrderByOptional OptGConcatSeparator ')' OptWindowingClause
 	{
 		args := $4.([]ast.ExprNode)
-		args = append(args, $6.(ast.ExprNode))
 		if $8 != nil {
 			$$ = &ast.WindowFuncExpr{Name: $1, Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
 		} else {
@@ -8769,6 +8768,9 @@ SumExpr:
 			if $5 != nil {
 				agg.Order = $5.(*ast.OrderByClause)
 			}
+			if $6 != nil {
+            	agg.Separator = $6.(ast.ExprNode)
+        	}
 			$$ = agg
 		}
 	}
@@ -8878,9 +8880,9 @@ SumExpr:
 	}
 
 OptGConcatSeparator:
-	{
-		$$ = ast.NewValueExpr(",", "", "")
-	}
+    {
+        $$ = nil
+    }
 |	"SEPARATOR" stringLit
 	{
 		$$ = ast.NewValueExpr($2, "", "")
