@@ -1740,9 +1740,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		task.memUsage = memUsage
 		task.memTracker.Consume(memUsage)
 	}
-	handleCnt := len(task.handles) + len(task.rows)
-	if cap(task.rows) < handleCnt {
-		task.rows = append(make([]chunk.Row, 0, handleCnt), task.rows...)
+	handleCnt := len(task.handles)
+	if totalCnt := handleCnt + len(task.pushDownTableRows); cap(task.rows) < totalCnt {
+		task.rows = append(make([]chunk.Row, 0, totalCnt), task.rows...)
 	}
 	for {
 		chk := exec.TryNewCacheChunk(tableReader)
@@ -1816,15 +1816,19 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			}
 
 			task.rows = newRows
-			task.pushDownTableRows = tableRows{}
 		}
+	} else if len(task.pushDownTableRows) > 0 {
+		task.rows = append(task.rows, task.pushDownTableRows...)
 	}
 
-	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&
+	lookupRows := task.rows[:len(task.rows)-len(task.pushDownTableRows)]
+	task.pushDownTableRows = nil
+
+	if handleCnt != len(lookupRows) && !util.HasCancelled(ctx) &&
 		!w.idxLookup.weakConsistency {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
-			for _, row := range task.rows {
+			for _, row := range lookupRows {
 				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 				if err != nil {
 					return err
@@ -1842,7 +1846,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				Storage:         w.idxLookup.storage,
 			}).ReportLookupInconsistent(ctx,
 				handleCnt,
-				len(task.rows),
+				len(lookupRows),
 				missHds,
 				task.handles,
 				nil,
