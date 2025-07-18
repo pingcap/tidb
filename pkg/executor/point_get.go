@@ -883,6 +883,16 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 		return nil
 	}
 
+	// For string columns with collations, we should fall back to row data fetch
+	// because the index values might not preserve the original case/format
+	for _, col := range schema.Columns {
+		if col.RetType.EvalType() == types.ETString {
+			// For string columns, especially with case-insensitive collations,
+			// the index key values may not match the stored values exactly
+			return e.buildResultFromRowData(ctx, req, schema, sctx)
+		}
+	}
+
 	// Map index columns to their positions in the schema
 	idxColMap := make(map[int64]types.Datum)
 	for i, idxCol := range e.idxInfo.Columns {
