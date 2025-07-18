@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -39,6 +40,20 @@ var (
 )
 
 func startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {
+	// Ensure the directory exists
+	if err := os.MkdirAll(*tmpPath, 0755); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Check if binary exists, if not use the path relative to GOPATH
+	if _, err := os.Stat(*tidbBinaryPath); os.IsNotExist(err) {
+		gopath := os.Getenv("GOPATH")
+		if gopath == "" {
+			gopath = filepath.Join(os.Getenv("HOME"), "go")
+		}
+		*tidbBinaryPath = filepath.Join(gopath, "bin", "tidb-server")
+	}
+
 	cmd = exec.Command(*tidbBinaryPath,
 		"--store=mocktikv",
 		fmt.Sprintf("--path=%s/mocktikv", *tmpPath),
