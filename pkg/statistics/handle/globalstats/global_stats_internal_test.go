@@ -40,8 +40,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
-		"0 20",  // global: g.count = p0.count + p1.count
-		"0 9",   // p0
+		"0 20", // global: g.count = p0.count + p1.count
+		"0 9",  // p0
 		"0 11")) // p1
 
 	tk.MustQuery("show stats_topn where table_name='tint' and is_index=0").Check(testkit.Rows(
@@ -71,7 +71,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("select distinct_count, null_count, tot_col_size from mysql.stats_histograms where is_index=0 order by table_id asc").Check(
 		testkit.Rows("12 1 19", // global, g = p0 + p1
-			"5 1 8",   // p0
+			"5 1 8", // p0
 			"7 0 11")) // p1
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
@@ -85,7 +85,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("select distinct_count, null_count from mysql.stats_histograms where is_index=1 order by table_id asc").Check(
 		testkit.Rows("12 1", // global, g = p0 + p1
-			"5 1",  // p0
+			"5 1", // p0
 			"7 0")) // p1
 
 	// double + (column + index with 1 column)
@@ -404,7 +404,6 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-
 	// Disable auto analyze to ensure that stats are not automatically collected
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 
