@@ -65,7 +65,7 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
 func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
-	if _, ok := s.(StrongConsisency); !ok {
+	if _, ok := s.(StrongConsistency); !ok {
 		log.Warn("The external storage implementation doesn't provide a strong consistency guarantee. "+
 			"Please avoid concurrently accessing it if possible.",
 			zap.String("type", fmt.Sprintf("%T", s)))
