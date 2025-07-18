@@ -215,26 +215,19 @@ func WriteInsert(
 
 	selectedField := meta.SelectedField()
 
-	// Determine if we should write INSERT prefix based on chunk position
-	// For string chunking, only first chunk gets prefix; for row chunking, each chunk is independent
-	shouldWritePrefix := (chunkIndex == 0) || !cfg.IsStringChunking
-
-	var insertStatementPrefixLen uint64
-	if shouldWritePrefix {
-		// if has generated column
-		if selectedField != "" && selectedField != "*" {
-			insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
-				wrapBackTicks(escapeString(meta.TableName())), selectedField)
-		} else {
-			insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
-				wrapBackTicks(escapeString(meta.TableName())))
-		}
-		insertStatementPrefixLen = uint64(len(insertStatementPrefix))
+	// if has generated column
+	if selectedField != "" && selectedField != "*" {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
+			wrapBackTicks(escapeString(meta.TableName())), selectedField)
+	} else {
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
+			wrapBackTicks(escapeString(meta.TableName())))
 	}
+	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
 
 	isFirstChunk := true
 	for fileRowIter.HasNext() {
-		if isFirstChunk && shouldWritePrefix {
+		if isFirstChunk {
 			wp.currentStatementSize = 0
 			bf.WriteString(insertStatementPrefix)
 			wp.AddFileSize(insertStatementPrefixLen)
@@ -293,7 +286,7 @@ func WriteInsert(
 				wp.currentStatementSize = 0
 				// For statement size switching, only reset to write prefix if we're in the first chunk
 				// and this is the first statement in that chunk
-				isFirstChunk = shouldWritePrefix
+				isFirstChunk = true
 				break
 			}
 		}
