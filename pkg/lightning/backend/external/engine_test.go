@@ -385,4 +385,14 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		e.UpdateResource(context.Background(), 8, 1024)
 		require.NoError(t, eg.Wait())
 	})
+
+	t.Run("increase concurrency after loading all data", func(t *testing.T) {
+		resetFn()
+		// Wait all data being loaded and increase concurrency
+		require.Eventually(t, func() bool {
+			return finished.Load() >= 16
+		}, 3*time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 8, 1024)
+		require.NoError(t, eg.Wait())
+	})
 }
