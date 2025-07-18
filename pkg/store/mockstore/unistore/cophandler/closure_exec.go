@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
@@ -184,7 +184,7 @@ func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closure
 	return ce, nil
 }
 
-func convertToExprs(sctx sessionctx.Context, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+func convertToExprs(sctx sessionapi.Context, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
 		e, err := expression.PBToExpr(sctx.GetExprCtx(), expr, fieldTps)

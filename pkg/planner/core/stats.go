@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -720,7 +720,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 }
 
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
-func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) {
+func loadTableStats(ctx sessionapi.Context, tblInfo *model.TableInfo, pid int64) {
 	statsRecord := ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	if statsRecord.GetUsedInfo(pid) != nil {
 		return

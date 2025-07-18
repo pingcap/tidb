@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -61,7 +61,7 @@ type PessimisticRCTxnContextProvider struct {
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
-func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRCTxnContextProvider {
+func NewPessimisticRCTxnContextProvider(sctx sessionapi.Context, causalConsistencyOnly bool) *PessimisticRCTxnContextProvider {
 	provider := &PessimisticRCTxnContextProvider{
 		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
 			baseTxnContextProvider: baseTxnContextProvider{
@@ -105,7 +105,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 }
 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
-func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
+func NeedSetRCCheckTSFlag(ctx sessionapi.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	if sessionVars.ConnectionID > 0 && vardef.EnableRCReadCheckTS.Load() &&
 		sessionVars.InTxn() && !sessionVars.RetryInfo.Retrying &&
@@ -270,7 +270,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 }
 
 // planSkipGetTsoFromPD identifies the plans which don't need get newest ts from PD.
-func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWriteStmt bool) bool {
+func planSkipGetTsoFromPD(sctx sessionapi.Context, plan base.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
 		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -123,7 +123,7 @@ func mockSelectResult(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvRe
 	}, nil
 }
 
-func buildTableReader(sctx sessionctx.Context) exec.Executor {
+func buildTableReader(sctx sessionapi.Context) exec.Executor {
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
@@ -141,7 +141,7 @@ func buildTableReader(sctx sessionctx.Context) exec.Executor {
 	return e
 }
 
-func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
+func buildMockDAGRequest(sctx sessionapi.Context) *tipb.DAGRequest {
 	req, err := builder.ConstructDAGReq(sctx, []base.PhysicalPlan{&core.PhysicalTableScan{
 		Columns: []*model.ColumnInfo{},
 		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
@@ -153,7 +153,7 @@ func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 	return req
 }
 
-func buildMockBaseExec(sctx sessionctx.Context) exec.BaseExecutorV2 {
+func buildMockBaseExec(sctx sessionapi.Context) exec.BaseExecutorV2 {
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
@@ -206,7 +206,7 @@ func TestTableReaderRequiredRows(t *testing.T) {
 	}
 }
 
-func buildIndexReader(sctx sessionctx.Context) exec.Executor {
+func buildIndexReader(sctx sessionapi.Context) exec.Executor {
 	e := &IndexReaderExecutor{
 		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
 		BaseExecutorV2:             buildMockBaseExec(sctx),

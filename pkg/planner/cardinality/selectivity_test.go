@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -87,7 +87,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	require.NoError(b, err)
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
-	sctx := testKit.Session().(sessionctx.Context)
+	sctx := testKit.Session().(sessionapi.Context)
 	stmts, err := session.Parse(sctx, sql)
 	require.NoErrorf(b, err, "error %v, for expr %s", err, exprs)
 	require.Len(b, stmts, 1)
@@ -544,7 +544,7 @@ func TestSelectivity(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
-		sctx := testKit.Session().(sessionctx.Context)
+		sctx := testKit.Session().(sessionapi.Context)
 		stmts, err := session.Parse(sctx, sql)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Len(t, stmts, 1)
@@ -603,7 +603,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	for i, tt := range input {
-		sctx := testKit.Session().(sessionctx.Context)
+		sctx := testKit.Session().(sessionapi.Context)
 		stmts, err := session.Parse(sctx, tt)
 		require.NoErrorf(t, err, "error %v, for sql %s", err, tt)
 		require.Len(t, stmts, 1)

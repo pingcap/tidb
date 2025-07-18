@@ -17,7 +17,7 @@ package lockstats
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -37,7 +37,7 @@ const (
 // - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
 func RemoveLockedTables(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tables map[int64]*types.StatsLockTable,
 ) (string, error) {
 	// Load tables to check locked before delete.
@@ -92,7 +92,7 @@ func RemoveLockedTables(
 // - pidNames: partition ids of which will be unlocked.
 // Return the message of skipped tables and error.
 func RemoveLockedPartitions(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tid int64,
 	tableName string,
 	pidNames map[int64]string,
@@ -139,7 +139,7 @@ func RemoveLockedPartitions(
 	return msg, err
 }
 
-func updateDelta(sctx sessionctx.Context, count, modifyCount int64, tid int64) error {
+func updateDelta(sctx sessionapi.Context, count, modifyCount int64, tid int64) error {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func updateDelta(sctx sessionctx.Context, count, modifyCount int64, tid int64) e
 	return nil
 }
 
-func updateStatsAndUnlockTable(sctx sessionctx.Context, tid int64) error {
+func updateStatsAndUnlockTable(sctx sessionapi.Context, tid int64) error {
 	count, modifyCount, err := getStatsDeltaFromTableLocked(sctx, tid)
 	if err != nil {
 		return err
@@ -177,7 +177,7 @@ func updateStatsAndUnlockTable(sctx sessionctx.Context, tid int64) error {
 }
 
 // updateStatsAndUnlockPartition also update the stats to the table level.
-func updateStatsAndUnlockPartition(sctx sessionctx.Context, partitionID int64, tid int64) error {
+func updateStatsAndUnlockPartition(sctx sessionapi.Context, partitionID int64, tid int64) error {
 	count, modifyCount, err := getStatsDeltaFromTableLocked(sctx, partitionID)
 	if err != nil {
 		return err
@@ -199,7 +199,7 @@ func updateStatsAndUnlockPartition(sctx sessionctx.Context, partitionID int64, t
 }
 
 // getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
-func getStatsDeltaFromTableLocked(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, err error) {
+func getStatsDeltaFromTableLocked(sctx sessionapi.Context, tableID int64) (count, modifyCount int64, err error) {
 	rows, _, err := util.ExecRows(
 		sctx,
 		selectDeltaSQL, tableID,

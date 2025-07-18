@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -31,7 +32,7 @@ import (
 var _ Processor = &staleReadProcessor{}
 
 // StalenessTSEvaluator is a function to get staleness ts
-type StalenessTSEvaluator func(ctx context.Context, sctx sessionctx.Context) (uint64, error)
+type StalenessTSEvaluator func(ctx context.Context, sctx sessionapi.Context) (uint64, error)
 
 // Processor is an interface used to process stale read
 type Processor interface {
@@ -52,7 +53,7 @@ type Processor interface {
 
 type baseProcessor struct {
 	ctx        context.Context
-	sctx       sessionctx.Context
+	sctx       sessionapi.Context
 	txnManager sessiontxn.TxnManager
 
 	evaluated   bool
@@ -61,7 +62,7 @@ type baseProcessor struct {
 	is          infoschema.InfoSchema
 }
 
-func (p *baseProcessor) init(ctx context.Context, sctx sessionctx.Context) {
+func (p *baseProcessor) init(ctx context.Context, sctx sessionapi.Context) {
 	p.ctx = ctx
 	p.sctx = sctx
 	p.txnManager = sessiontxn.GetTxnManager(sctx)
@@ -101,7 +102,7 @@ func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
 		return err
 	}
 
-	return p.setEvaluatedValues(ts, is, func(_ context.Context, sctx sessionctx.Context) (uint64, error) {
+	return p.setEvaluatedValues(ts, is, func(_ context.Context, sctx sessionapi.Context) (uint64, error) {
 		return ts, nil
 	})
 }
@@ -148,7 +149,7 @@ type staleReadProcessor struct {
 }
 
 // NewStaleReadProcessor creates a new stale read processor
-func NewStaleReadProcessor(ctx context.Context, sctx sessionctx.Context) Processor {
+func NewStaleReadProcessor(ctx context.Context, sctx sessionapi.Context) Processor {
 	p := &staleReadProcessor{}
 	p.init(ctx, sctx)
 	return p
@@ -168,7 +169,7 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	}
 
 	// If `stmtAsOfTS` is not 0, it means we use 'select ... from xxx as of timestamp ...'
-	evaluateTS := func(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	evaluateTS := func(ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 		return parseAndValidateAsOf(ctx, p.sctx, tn.AsOf)
 	}
 	stmtAsOfTS, err := evaluateTS(p.ctx, p.sctx)
@@ -276,7 +277,7 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, eval
 	return p.setAsNonStaleRead()
 }
 
-func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *ast.AsOfClause) (uint64, error) {
+func parseAndValidateAsOf(ctx context.Context, sctx sessionapi.Context, asOf *ast.AsOfClause) (uint64, error) {
 	if asOf == nil {
 		return 0, nil
 	}
@@ -293,18 +294,18 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 	return ts, nil
 }
 
-func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluator {
+func getTsEvaluatorFromReadStaleness(sctx sessionapi.Context) StalenessTSEvaluator {
 	readStaleness := sctx.GetSessionVars().ReadStaleness
 	if readStaleness == 0 {
 		return nil
 	}
 
-	return func(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	return func(ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 		return CalculateTsWithReadStaleness(ctx, sctx, readStaleness)
 	}
 }
 
-func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+func getTSFromExternalTS(ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 	if sctx.GetSessionVars().EnableExternalTSRead && !sctx.GetSessionVars().InRestrictedSQL {
 		externalTimestamp, err := GetExternalTimestamp(ctx, sctx.GetSessionVars().StmtCtx)
 		if err != nil {
@@ -317,7 +318,7 @@ func getTSFromExternalTS(ctx context.Context, sctx sessionctx.Context) (uint64, 
 }
 
 // GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
-func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+func GetSessionSnapshotInfoSchema(sctx sessionapi.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
 	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return nil, err

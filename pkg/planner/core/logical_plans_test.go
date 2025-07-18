@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -52,7 +52,7 @@ import (
 type plannerSuite struct {
 	p    *parser.Parser
 	is   infoschema.InfoSchema
-	sctx sessionctx.Context
+	sctx sessionapi.Context
 	ctx  base.PlanContext
 }
 
@@ -64,11 +64,11 @@ func (p *plannerSuite) GetIS() infoschema.InfoSchema {
 	return p.is
 }
 
-func (p *plannerSuite) GetSCtx() sessionctx.Context {
+func (p *plannerSuite) GetSCtx() sessionapi.Context {
 	return p.sctx
 }
 
-func CreatePlannerSuite(sctx sessionctx.Context, is infoschema.InfoSchema) (s *plannerSuite) {
+func CreatePlannerSuite(sctx sessionapi.Context, is infoschema.InfoSchema) (s *plannerSuite) {
 	s = new(plannerSuite)
 	s.is = is
 	s.p = parser.New()

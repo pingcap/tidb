@@ -15,7 +15,7 @@ go_test(
         "//pkg/executor",
         "//pkg/lightning/mydump",
         "//pkg/meta/autoid",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/testkit",
         "//pkg/util/dbterror/exeerrors",
         "@com_github_stretchr_testify//require",

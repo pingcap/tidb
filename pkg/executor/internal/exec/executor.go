@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -357,13 +357,13 @@ func (e *BaseExecutorV2) BuildNewBaseExecutorV2(stmtRuntimeStatsColl *execdetail
 type BaseExecutor struct {
 	_ constructor.Constructor `ctor:"NewBaseExecutor"`
 
-	ctx sessionctx.Context
+	ctx sessionapi.Context
 
 	BaseExecutorV2
 }
 
 // NewBaseExecutor creates a new BaseExecutor instance.
-func NewBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) BaseExecutor {
+func NewBaseExecutor(ctx sessionapi.Context, schema *expression.Schema, id int, children ...Executor) BaseExecutor {
 	return BaseExecutor{
 		ctx:            ctx,
 		BaseExecutorV2: NewBaseExecutorV2(ctx.GetSessionVars(), schema, id, children...),
@@ -371,7 +371,7 @@ func NewBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 }
 
 // Ctx return ```sessionctx.Context``` of Executor
-func (e *BaseExecutor) Ctx() sessionctx.Context {
+func (e *BaseExecutor) Ctx() sessionapi.Context {
 	return e.ctx
 }
 
@@ -382,20 +382,20 @@ func (e *BaseExecutor) UpdateDeltaForTableID(id int64) {
 }
 
 // GetSysSession gets a system session context from executor.
-func (e *BaseExecutor) GetSysSession() (sessionctx.Context, error) {
+func (e *BaseExecutor) GetSysSession() (sessionapi.Context, error) {
 	dom := domain.GetDomain(e.Ctx())
 	sysSessionPool := dom.SysSessionPool()
 	ctx, err := sysSessionPool.Get()
 	if err != nil {
 		return nil, err
 	}
-	restrictedCtx := ctx.(sessionctx.Context)
+	restrictedCtx := ctx.(sessionapi.Context)
 	restrictedCtx.GetSessionVars().InRestrictedSQL = true
 	return restrictedCtx, nil
 }
 
 // ReleaseSysSession releases a system session context to executor.
-func (e *BaseExecutor) ReleaseSysSession(ctx context.Context, sctx sessionctx.Context) {
+func (e *BaseExecutor) ReleaseSysSession(ctx context.Context, sctx sessionapi.Context) {
 	if sctx == nil {
 		return
 	}

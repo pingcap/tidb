@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -101,7 +101,7 @@ func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
 }
 
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
-func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
+func ValidateFlashbackTS(ctx context.Context, sctx sessionapi.Context, flashBackTS uint64) error {
 	currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return errors.Errorf("fail to validate flashback timestamp: %v", err)
@@ -143,7 +143,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 	return gcutil.ValidateSnapshotWithGCSafePoint(flashBackTS, gcSafePoint)
 }
 
-func getGlobalSysVarAsBool(sess sessionctx.Context, name string) (bool, error) {
+func getGlobalSysVarAsBool(sess sessionapi.Context, name string) (bool, error) {
 	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -151,7 +151,7 @@ func getGlobalSysVarAsBool(sess sessionctx.Context, name string) (bool, error) {
 	return variable.TiDBOptOn(val), nil
 }
 
-func setGlobalSysVarFromBool(ctx context.Context, sess sessionctx.Context, name string, value bool) error {
+func setGlobalSysVarFromBool(ctx context.Context, sess sessionapi.Context, name string, value bool) error {
 	sv := vardef.On
 	if !value {
 		sv = vardef.Off
@@ -186,7 +186,7 @@ func checkSystemSchemaID(t meta.Reader, schemaID int64, flashbackTSString string
 	return nil
 }
 
-func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
+func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionapi.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
 	}
@@ -362,7 +362,7 @@ func mergeContinuousKeyRanges(schemaKeyRanges []keyRangeMayExclude) []kv.KeyRang
 // getFlashbackKeyRanges get keyRanges for flashback cluster.
 // It contains all non system table key ranges and meta data key ranges.
 // The time complexity is O(nlogn).
-func getFlashbackKeyRanges(ctx context.Context, sess sessionctx.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
+func getFlashbackKeyRanges(ctx context.Context, sess sessionapi.Context, flashbackTS uint64) ([]kv.KeyRange, error) {
 	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	schemas := is.AllSchemas()
 

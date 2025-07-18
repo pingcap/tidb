@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -121,7 +121,7 @@ type outerMergeWorker struct {
 
 	lookup *IndexLookUpMergeJoin
 
-	ctx      sessionctx.Context
+	ctx      sessionapi.Context
 	executor exec.Executor
 
 	maxBatchSize int
@@ -140,9 +140,9 @@ type innerMergeWorker struct {
 
 	taskCh            <-chan *lookUpMergeJoinTask
 	joinChkResourceCh chan *chunk.Chunk
-	outerMergeCtx     OuterMergeCtx
-	ctx               sessionctx.Context
-	innerExec         exec.Executor
+	outerMergeCtx OuterMergeCtx
+	ctx           sessionapi.Context
+	innerExec     exec.Executor
 	joiner            Joiner
 	retFieldTypes     []*types.FieldType
 

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -60,7 +60,7 @@ var (
 )
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(sctx sessionctx.Context, err error) error {
+func finishTransaction(sctx sessionapi.Context, err error) error {
 	if err == nil {
 		_, _, err = ExecRows(sctx, "COMMIT")
 	} else {
@@ -76,7 +76,7 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionapi.Context) error, flags ...int) (err error) {
 	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	se, err := pool.Get()
 	if err != nil {
@@ -90,7 +90,7 @@ func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Conte
 			pool.Destroy(se)
 		}
 	}()
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 		return errors.Trace(err)
 	}
@@ -110,7 +110,7 @@ func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Conte
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
-func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+func UpdateSCtxVarsForStats(sctx sessionapi.Context) error {
 	// async merge global stats
 	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
 	if err != nil {
@@ -188,7 +188,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
 func GetCurrentPruneMode(pool util.DestroyableSessionPool) (mode string, err error) {
-	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+	err = CallWithSCtx(pool, func(sctx sessionapi.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil
 	})
@@ -196,7 +196,7 @@ func GetCurrentPruneMode(pool util.DestroyableSessionPool) (mode string, err err
 }
 
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
-func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
+func WrapTxn(sctx sessionapi.Context, f func(sctx sessionapi.Context) error) (err error) {
 	// TODO: check whether this sctx is already in a txn
 	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
@@ -209,7 +209,7 @@ func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (er
 }
 
 // GetStartTS gets the start ts from current transaction.
-func GetStartTS(sctx sessionctx.Context) (uint64, error) {
+func GetStartTS(sctx sessionapi.Context) (uint64, error) {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -218,14 +218,14 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 }
 
 // Exec is a helper function to execute sql and return RecordSet.
-func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+func Exec(sctx sessionapi.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
 	return ExecWithCtx(StatsCtx, sctx, sql, args...)
 }
 
 // ExecWithCtx is a helper function to execute sql and return RecordSet.
 func ExecWithCtx(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	sql string,
 	args ...any,
 ) (sqlexec.RecordSet, error) {
@@ -235,7 +235,7 @@ func ExecWithCtx(
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+func ExecRows(sctx sessionapi.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	failpoint.Inject("ExecRowsTimeout", func() {
 		failpoint.Return(nil, nil, errors.New("inject timeout error"))
 	})
@@ -245,7 +245,7 @@ func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 // ExecRowsWithCtx is a helper function to execute sql and return rows and fields.
 func ExecRowsWithCtx(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	sql string,
 	args ...any,
 ) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
@@ -262,7 +262,7 @@ func ExecRowsWithCtx(
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+func ExecWithOpts(sctx sessionapi.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }

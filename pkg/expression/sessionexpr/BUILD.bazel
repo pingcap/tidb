@@ -15,7 +15,7 @@ go_library(
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/privilege",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/types",

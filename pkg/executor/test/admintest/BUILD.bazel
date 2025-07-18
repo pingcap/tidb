@@ -21,7 +21,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/server",
         "//pkg/session",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/table",
         "//pkg/table/tables",

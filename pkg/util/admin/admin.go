@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -68,7 +68,7 @@ const (
 // It returns the count greater type, the index offset and an error.
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error and the corresponding index's offset.
-func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
+func CheckIndicesCount(ctx sessionapi.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
 	originOptUseInvisibleIdx := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
@@ -117,7 +117,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+func CheckRecordAndIndex(ctx context.Context, sessCtx sessionapi.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
@@ -193,7 +193,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 	return nil
 }
 
-func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
+func makeRowDecoder(t table.Table, sctx sessionapi.Context) (*decoder.RowDecoder, error) {
 	dbName := ast.NewCIStr(sctx.GetSessionVars().CurrentDB)
 	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
@@ -205,7 +205,7 @@ func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder
 	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, isGlobalIndex bool, fn table.RecordIterFunc) error {
+func iterRecords(sessCtx sessionapi.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, isGlobalIndex bool, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 

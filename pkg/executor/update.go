@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -253,7 +253,7 @@ func (e *UpdateExec) exec(
 		bAssignFlag[i] = flag >= 0
 	}
 
-	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, _ *types.Datum, err error) error {
+	errorHandler := func(sctx sessionapi.Context, assign *expression.Assignment, _ *types.Datum, err error) error {
 		return handleUpdateError(sctx, assign.ColName, assign.Col.ToInfo(), rowIdx, err)
 	}
 
@@ -459,7 +459,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
+func handleUpdateError(sctx sessionapi.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}

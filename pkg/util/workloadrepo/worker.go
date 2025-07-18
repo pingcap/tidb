@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -239,7 +239,7 @@ func StopRepository() {
 	workerCtx.sesspool = nil
 }
 
-func runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) (v []chunk.Row, e error) {
+func runQuery(ctx context.Context, sctx sessionapi.Context, sql string, args ...any) (v []chunk.Row, e error) {
 	defer func() {
 		logutil.BgLogger().Debug("workload repository execute SQL", zap.String("sql", sql), zap.NamedError("err", e))
 	}()
@@ -256,7 +256,7 @@ func runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...
 	return nil, err
 }
 
-func execRetry(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
+func execRetry(ctx context.Context, sctx sessionapi.Context, sql string, args ...any) ([]chunk.Row, error) {
 	var errs [5]error
 	for i := range errs {
 		res, err := runQuery(ctx, sctx, sql, args...)

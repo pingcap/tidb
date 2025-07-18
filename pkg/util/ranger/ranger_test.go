@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -1861,7 +1861,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 }
 
-func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {
+func getSelectionFromQuery(t *testing.T, sctx sessionapi.Context, sql string) *logicalop.LogicalSelection {
 	ctx := context.Background()
 	stmts, err := session.Parse(sctx, sql)
 	require.NoError(t, err)
@@ -1885,7 +1885,7 @@ func checkDetachRangeResult(t *testing.T, res *ranger.DetachRangeResult, expecte
 	require.Equal(t, expectedRanges, fmt.Sprintf("%v", res.Ranges))
 }
 
-func checkRangeFallbackAndReset(t *testing.T, sctx sessionctx.Context, expectedRangeFallback bool) {
+func checkRangeFallbackAndReset(t *testing.T, sctx sessionapi.Context, expectedRangeFallback bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	hasRangeFallbackWarn := false
 	for _, warn := range stmtCtx.GetWarnings() {

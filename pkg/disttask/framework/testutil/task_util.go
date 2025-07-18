@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -39,7 +39,7 @@ func InsertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step pro
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	var id int64
-	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+	require.NoError(t, gm.WithNewSession(func(se sessionapi.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
 			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
@@ -80,7 +80,7 @@ func InsertSubtaskWithSummary(
 	summaryBytes, err := json.Marshal(summary)
 	require.NoError(t, err)
 
-	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+	require.NoError(t, gm.WithNewSession(func(se sessionapi.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+",start_time"+`) values`+
 			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', %?, CURRENT_TIMESTAMP())`,

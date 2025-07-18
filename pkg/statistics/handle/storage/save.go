@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -44,7 +44,7 @@ const batchInsertSize = 10
 // maxInsertLength is the length limit for internal insert SQL.
 const maxInsertLength = 1024 * 1024
 
-func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, topN *statistics.TopN) error {
+func saveTopNToStorage(sctx sessionapi.Context, tableID int64, isIndex int, histID int64, topN *statistics.TopN) error {
 	if topN == nil {
 		return nil
 	}
@@ -72,7 +72,7 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 	return nil
 }
 
-func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (err error) {
+func saveBucketsToStorage(sctx sessionapi.Context, tableID int64, isIndex int, hg *statistics.Histogram) (err error) {
 	if hg == nil {
 		return
 	}
@@ -116,7 +116,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 }
 
 // SaveAnalyzeResultToStorage saves the analyze result to the storage.
-func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
+func SaveAnalyzeResultToStorage(sctx sessionapi.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
@@ -308,7 +308,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
 func SaveColOrIdxStatsToStorage(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tableID int64,
 	count, modifyCount int64,
 	isIndex int,
@@ -368,7 +368,7 @@ func SaveColOrIdxStatsToStorage(
 
 // SaveMetaToStorage will batch save stats_meta to storage.
 func SaveMetaToStorage(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	refreshLastHistVer bool,
 	metaUpdates []statstypes.MetaUpdate,
 ) (uint64, error) {
@@ -400,7 +400,7 @@ func SaveMetaToStorage(
 // updates version.
 func InsertColStats2KV(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	physicalID int64,
 	colInfos []*model.ColumnInfo,
 ) (uint64, error) {
@@ -492,7 +492,7 @@ func InsertColStats2KV(
 // to this table.
 func InsertTableStats2KV(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	info *model.TableInfo,
 	physicalID int64,
 ) (uint64, error) {

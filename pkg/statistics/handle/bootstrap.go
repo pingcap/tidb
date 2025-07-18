@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -331,7 +331,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		}
 	}()
 
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	sql := genInitStatsHistogramsSQL(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
@@ -443,7 +443,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 			h.Pool.SPool().Destroy(se)
 		}
 	}()
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	sql := genInitStatsTopNSQLForIndexes(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
@@ -631,7 +631,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 			h.Pool.SPool().Destroy(se)
 		}
 	}()
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	sql := genInitStatsBucketsSQLForIndexes(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {

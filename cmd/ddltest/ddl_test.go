@@ -43,8 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store"
@@ -81,8 +80,8 @@ type server struct {
 type ddlSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	s     sessiontypes.Session
-	ctx   sessionctx.Context
+	s     sessionapi.Session
+	ctx   sessionapi.Context
 
 	m     sync.Mutex
 	procs []*server
@@ -112,7 +111,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	s.s, err = session.CreateSession(s.store)
 	require.NoError(t, err)
 
-	s.ctx = s.s.(sessionctx.Context)
+	s.ctx = s.s.(sessionapi.Context)
 	goCtx := goctx.Background()
 	_, err = s.s.Execute(goCtx, "create database if not exists test_ddl")
 	require.NoError(t, err)
@@ -134,7 +133,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	require.NoError(t, err)
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
-	s.ctx = s.s.(sessionctx.Context)
+	s.ctx = s.s.(sessionapi.Context)
 	_, err = s.s.Execute(goCtx, "use test_ddl")
 	require.NoError(t, err)
 

@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -412,7 +412,7 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 	return checkAddColumnTooManyColumns(len(t.Cols()) + len(info.AddColumns) - len(info.DropColumns))
 }
 
-func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job) {
+func appendMultiChangeWarningsToOwnerCtx(ctx sessionapi.Context, job *model.Job) {
 	if job.MultiSchemaInfo == nil || job.Type != model.ActionMultiSchemaChange {
 		return
 	}

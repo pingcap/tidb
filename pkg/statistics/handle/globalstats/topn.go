@@ -20,14 +20,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
 )
 
-func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
+func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionapi.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {

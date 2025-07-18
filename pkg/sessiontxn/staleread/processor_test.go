@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -242,7 +242,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 
 	// execute prepared stmt with ts evaluator
 	processor := createProcessor(t, tk.Session())
-	err := processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	err := processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 
 	// will get an error when ts evaluator fails
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 		return 0, errors.New("mock error")
 	})
 	require.Error(t, err)
@@ -275,7 +275,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	// prepared ts is not allowed when @@txn_read_ts is set
 	tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", p1.dt))
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.Error(t, err)
@@ -296,7 +296,7 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	// `@@tidb_read_staleness` will be ignored when `as of` or `@@tx_read_ts`
 	tk.MustExec("set @@tidb_read_staleness=-100")
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.NoError(t, err)
@@ -379,7 +379,7 @@ func TestStaleReadProcessorInTxn(t *testing.T) {
 
 	// return an error when execute prepared stmt with as of
 	processor = createProcessor(t, tk.Session())
-	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	err = processor.OnExecutePreparedStmt(func(_ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 		return p1.ts, nil
 	})
 	require.Error(t, err)
@@ -420,7 +420,7 @@ func TestStaleReadProcessorInTxn(t *testing.T) {
 	tk.MustExec("set @@tidb_read_staleness=''")
 }
 
-func createProcessor(t *testing.T, se sessionctx.Context) staleread.Processor {
+func createProcessor(t *testing.T, se sessionapi.Context) staleread.Processor {
 	processor := staleread.NewStaleReadProcessor(context.Background(), se)
 	require.False(t, processor.IsStaleness())
 	require.Equal(t, uint64(0), processor.GetStalenessReadTS())

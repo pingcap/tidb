@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
 // QueryPlanCostHook is used to calculate the cost of the query plan on this sctx.
 // This hook is used to avoid cyclic import.
-var QueryPlanCostHook func(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error)
+var QueryPlanCostHook func(sctx sessionapi.Context, stmt ast.StmtNode) (float64, error)
 
 // Optimizer is the interface of a what-if optimizer.
 // This interface encapsulates all methods the Index Advisor needs to interact with the TiDB optimizer.
@@ -61,11 +61,11 @@ type Optimizer interface {
 
 // optimizerImpl is the implementation of Optimizer.
 type optimizerImpl struct {
-	sctx sessionctx.Context
+	sctx sessionapi.Context
 }
 
 // NewOptimizer creates a new Optimizer.
-func NewOptimizer(sctx sessionctx.Context) Optimizer {
+func NewOptimizer(sctx sessionapi.Context) Optimizer {
 	return &optimizerImpl{sctx}
 }
 

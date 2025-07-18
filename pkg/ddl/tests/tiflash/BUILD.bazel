@@ -21,7 +21,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/session",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/store/gcworker",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/unistore",

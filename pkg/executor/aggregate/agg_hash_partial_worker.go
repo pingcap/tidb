@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/twmb/murmur3"
@@ -35,7 +35,7 @@ import (
 type HashAggPartialWorker struct {
 	baseHashAggWorker
 	idForTest int
-	ctx       sessionctx.Context
+	ctx       sessionapi.Context
 
 	inputCh        chan *chunk.Chunk
 	outputChs      []chan *aggfuncs.AggPartialResultMapper
@@ -83,7 +83,7 @@ func (w *HashAggPartialWorker) getChildInput() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
+func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionapi.Context, hasError *bool, needShuffle *bool) bool {
 	if w.spillHelper.checkError() {
 		*hasError = true
 		return false
@@ -186,7 +186,7 @@ func (w *HashAggPartialWorker) finalizeWorkerProcess(needShuffle bool, finalConc
 	}
 }
 
-func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
+func (w *HashAggPartialWorker) run(ctx sessionapi.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
 	hasError := false
 	needShuffle := false
@@ -257,7 +257,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 	return w.partialResultsBuffer
 }
 
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *chunk.Chunk, finalConcurrency int) (err error) {
+func (w *HashAggPartialWorker) updatePartialResult(ctx sessionapi.Context, chk *chunk.Chunk, finalConcurrency int) (err error) {
 	memSize := getGroupKeyMemUsage(w.groupKeyBuf)
 	w.groupKeyBuf, err = GetGroupKey(w.ctx, chk, w.groupKeyBuf, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)

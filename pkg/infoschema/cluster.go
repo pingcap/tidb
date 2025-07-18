@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -156,7 +156,7 @@ func IsClusterTableByName(dbName, tableName string) bool {
 }
 
 // AppendHostInfoToRows appends host info to the rows.
-func AppendHostInfoToRows(ctx sessionctx.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+func AppendHostInfoToRows(ctx sessionapi.Context, rows [][]types.Datum) ([][]types.Datum, error) {
 	addr, err := GetInstanceAddr(ctx)
 	if err != nil {
 		return nil, err
@@ -171,7 +171,7 @@ func AppendHostInfoToRows(ctx sessionctx.Context, rows [][]types.Datum) ([][]typ
 }
 
 // GetInstanceAddr gets the instance address.
-func GetInstanceAddr(ctx sessionctx.Context) (string, error) {
+func GetInstanceAddr(ctx sessionapi.Context) (string, error) {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return "", err

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -52,7 +52,7 @@ type HashAggFinalWorker struct {
 	restoredAggResultMapperMem int64
 }
 
-func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
+func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionapi.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
 	w.intestDuringFinalWorkerRun(&err)
 	return ret, restoredMem, err
@@ -80,7 +80,7 @@ func (w *HashAggFinalWorker) initBInMap() {
 	}
 }
 
-func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input *aggfuncs.AggPartialResultMapper) error {
+func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionapi.Context, input *aggfuncs.AggPartialResultMapper) error {
 	// As the w.partialResultMap is empty when we get the first input.
 	// So it's better to directly assign the input to w.partialResultMap
 	if len(w.partialResultMap) == 0 {
@@ -120,7 +120,7 @@ func (w *HashAggFinalWorker) handleNewGroupKey(key string, value []aggfuncs.Part
 	w.partialResultMap[key] = value
 }
 
-func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
+func (w *HashAggFinalWorker) consumeIntermData(sctx sessionapi.Context) error {
 	for {
 		input, ok := w.getPartialInput()
 		if !ok {
@@ -135,7 +135,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	}
 }
 
-func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) {
+func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionapi.Context, result *chunk.Chunk) {
 	var finished bool
 	exprCtx := sctx.GetExprCtx()
 	for _, results := range w.partialResultMap {
@@ -159,7 +159,7 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 	}
 }
 
-func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
+func (w *HashAggFinalWorker) sendFinalResult(sctx sessionapi.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
 	updateWaitTime(w.stats, waitStart)
@@ -193,7 +193,7 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 }
 
-func (w *HashAggFinalWorker) restoreDataFromDisk(sctx sessionctx.Context) (eof bool, hasError bool) {
+func (w *HashAggFinalWorker) restoreDataFromDisk(sctx sessionapi.Context) (eof bool, hasError bool) {
 	var err error
 
 	// Since data is restored partition by partition, only one partition is in memory at any given time.
@@ -221,7 +221,7 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, partialWorkerWaiter *sync.WaitGroup) {
+func (w *HashAggFinalWorker) run(ctx sessionapi.Context, waitGroup *sync.WaitGroup, partialWorkerWaiter *sync.WaitGroup) {
 	start := time.Now()
 	defer w.cleanup(start, waitGroup)
 

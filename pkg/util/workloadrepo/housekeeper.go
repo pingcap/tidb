@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -40,7 +40,7 @@ func calcNextTick(now time.Time) time.Duration {
 	return next.Sub(now)
 }
 
-func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *repositoryTable, sess sessionctx.Context, now time.Time) error {
+func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *repositoryTable, sess sessionapi.Context, now time.Time) error {
 	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 	if err != nil {
 		logutil.BgLogger().Info("workload repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
@@ -66,7 +66,7 @@ func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *reposit
 	return nil
 }
 
-func (w *worker) createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
+func (w *worker) createAllPartitions(ctx context.Context, sess sessionapi.Context, is infoschema.InfoSchema, now time.Time) error {
 	for _, tbl := range w.workloadTables {
 		if err := createPartition(ctx, is, &tbl, sess, now); err != nil {
 			return err
@@ -76,7 +76,7 @@ func (w *worker) createAllPartitions(ctx context.Context, sess sessionctx.Contex
 }
 
 func dropOldPartition(ctx context.Context, is infoschema.InfoSchema,
-	tbl *repositoryTable, now time.Time, retention int, sess sessionctx.Context) error {
+	tbl *repositoryTable, now time.Time, retention int, sess sessionapi.Context) error {
 	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 	if err != nil {
 		return fmt.Errorf("workload repository could not find table `%s`: %v", tbl.destTable, err)
@@ -109,7 +109,7 @@ func dropOldPartition(ctx context.Context, is infoschema.InfoSchema,
 	return nil
 }
 
-func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time, retention int) error {
+func (w *worker) dropOldPartitions(ctx context.Context, sess sessionapi.Context, is infoschema.InfoSchema, now time.Time, retention int) error {
 	if retention == 0 {
 		// disabled housekeeping
 		return nil
@@ -135,7 +135,7 @@ func (w *worker) getHouseKeeper(ctx context.Context, fn func(time.Time) time.Dur
 
 		_sessctx := w.getSessionWithRetry()
 		defer w.sesspool.Put(_sessctx)
-		sess := _sessctx.(sessionctx.Context)
+		sess := _sessctx.(sessionapi.Context)
 
 		for {
 			select {

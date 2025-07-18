@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -5599,7 +5600,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 // for `explain [analyze] <plan_digest>` statements.
 func getHintedStmtThroughPlanDigest(ctx base.PlanContext, planDigest string) (stmt ast.StmtNode, err error) {
 	err = domain.GetDomain(ctx).AdvancedSysSessionPool().WithSession(func(se *syssession.Session) error {
-		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+		return se.WithSessionContext(func(sctx sessionapi.Context) error {
 			defer func(warnings []stmtctx.SQLWarn) {
 				sctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
 			}(sctx.GetSessionVars().StmtCtx.GetWarnings())

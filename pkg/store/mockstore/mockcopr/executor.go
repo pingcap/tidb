@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -404,7 +404,7 @@ func (e *selectionExec) Counts() []int64 {
 }
 
 // evalBool evaluates expression to a boolean value.
-func evalBool(exprs []expression.Expression, row []types.Datum, ctx sessionctx.Context) (bool, error) {
+func evalBool(exprs []expression.Expression, row []types.Datum, ctx sessionapi.Context) (bool, error) {
 	for _, expr := range exprs {
 		data, err := expr.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
@@ -661,7 +661,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	return values, nil
 }
 
-func convertToExprs(sctx sessionctx.Context, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+func convertToExprs(sctx sessionapi.Context, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
 		e, err := expression.PBToExpr(sctx.GetExprCtx(), expr, fieldTps)

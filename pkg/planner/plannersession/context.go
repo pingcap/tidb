@@ -17,25 +17,25 @@ package plannersession
 import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var _ planctx.PlanContext = struct {
-	sessionctx.Context
+	sessionapi.Context
 	*PlanCtxExtended
 }{}
 
 // PlanCtxExtended provides extended method for session context to implement `PlanContext`
 type PlanCtxExtended struct {
-	sctx                   sessionctx.Context
+	sctx                   sessionapi.Context
 	nullRejectCheckExprCtx *exprctx.NullRejectCheckExprContext
 	readonlyUserVars       map[string]struct{}
 }
 
 // NewPlanCtxExtended creates a new PlanCtxExtended.
-func NewPlanCtxExtended(sctx sessionctx.Context) *PlanCtxExtended {
+func NewPlanCtxExtended(sctx sessionapi.Context) *PlanCtxExtended {
 	return &PlanCtxExtended{
 		sctx:                   sctx,
 		nullRejectCheckExprCtx: exprctx.WithNullRejectCheck(sctx.GetExprCtx()),

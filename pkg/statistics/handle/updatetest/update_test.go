@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -749,7 +749,7 @@ func TestStatsVariables(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
-	sctx := tk.Session().(sessionctx.Context)
+	sctx := tk.Session().(sessionapi.Context)
 
 	pruneMode, err := util.GetCurrentPruneMode(h.SPool())
 	require.NoError(t, err)

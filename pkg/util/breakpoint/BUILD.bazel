@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/breakpoint",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/util/stringutil",
         "@com_github_pingcap_failpoint//:failpoint",
     ],

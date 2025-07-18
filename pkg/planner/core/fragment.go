@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -106,8 +106,8 @@ type tasksAndFrags struct {
 }
 
 type mppTaskGenerator struct {
-	ctx        sessionctx.Context
-	startTS    uint64
+	ctx     sessionapi.Context
+	startTS uint64
 	gatherID   uint64
 	mppQueryID kv.MPPQueryID
 	is         infoschema.InfoSchema
@@ -124,7 +124,7 @@ type mppTaskGenerator struct {
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID uint64,
+func GenerateRootMPPTasks(ctx sessionapi.Context, startTs uint64, mppGatherID uint64,
 	mppQueryID kv.MPPQueryID, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, []kv.KeyRange, map[string]bool, error) {
 	g := &mppTaskGenerator{
 		ctx:              ctx,
@@ -148,7 +148,7 @@ func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, mppGatherID ui
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id when the query finished.
-func AllocMPPTaskID(ctx sessionctx.Context) int64 {
+func AllocMPPTaskID(ctx sessionapi.Context) int64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
 	return mppQueryInfo.AllocatedMPPTaskID.Add(1)
 }

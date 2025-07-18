@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pkg/errors"
 )
 
@@ -42,7 +42,7 @@ var (
 	AllOptions = []string{OptMaxNumIndex, OptMaxIndexColumns, OptMaxNumQuery, OptTimeout}
 )
 
-func fillOption(sctx sessionctx.Context, opt *Option, userOptions []ast.RecommendIndexOption) error {
+func fillOption(sctx sessionapi.Context, opt *Option, userOptions []ast.RecommendIndexOption) error {
 	vals, _, err := GetOptions(sctx, AllOptions...)
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func fillOption(sctx sessionctx.Context, opt *Option, userOptions []ast.Recommen
 }
 
 // SetOptions sets the values of options.
-func SetOptions(sctx sessionctx.Context, options ...ast.RecommendIndexOption) error {
+func SetOptions(sctx sessionapi.Context, options ...ast.RecommendIndexOption) error {
 	for _, opt := range options {
 		if err := SetOption(sctx, opt.Option, opt.Value); err != nil {
 			return err
@@ -114,7 +114,7 @@ func optionVal(opt string, val ast.ValueExpr) (string, error) {
 }
 
 // SetOption sets the value of an option.
-func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
+func SetOption(sctx sessionapi.Context, opt string, val ast.ValueExpr) error {
 	v, err := optionVal(opt, val)
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func SetOption(sctx sessionctx.Context, opt string, val ast.ValueExpr) error {
 }
 
 // GetOptions gets the values of options.
-func GetOptions(sctx sessionctx.Context, opts ...string) (vals, desc map[string]string, err error) {
+func GetOptions(sctx sessionapi.Context, opts ...string) (vals, desc map[string]string, err error) {
 	template := `SELECT name, value FROM mysql.tidb_kernel_options WHERE module = '%v' AND name in (%v)`
 	var optStrs string
 	for i, opt := range opts {

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -34,14 +34,14 @@ import (
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
 type StalenessTxnContextProvider struct {
 	ctx  context.Context
-	sctx sessionctx.Context
+	sctx sessionapi.Context
 	is   infoschema.InfoSchema
 	ts   uint64
 	txn  kv.Transaction
 }
 
 // NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider
-func NewStalenessTxnContextProvider(sctx sessionctx.Context, ts uint64, is infoschema.InfoSchema) *StalenessTxnContextProvider {
+func NewStalenessTxnContextProvider(sctx sessionapi.Context, ts uint64, is infoschema.InfoSchema) *StalenessTxnContextProvider {
 	return &StalenessTxnContextProvider{
 		sctx: sctx,
 		is:   is,

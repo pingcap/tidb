@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -127,7 +127,7 @@ func TestIndexChange(t *testing.T) {
 	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: noneTable.Meta()})
 }
 
-func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {
+func checkIndexExists(ctx sessionapi.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {
 	idx := tbl.Indices()[0]
 	txn, err := ctx.Txn(true)
 	if err != nil {
@@ -147,7 +147,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, h
 	return nil
 }
 
-func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
+func checkAddWriteOnlyForAddIndex(ctx sessionapi.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
 	txn, err := newTxn(ctx)
 	if err != nil {
@@ -220,7 +220,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	return nil
 }
 
-func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
+func checkAddPublicForAddIndex(ctx sessionapi.Context, writeTbl, publicTbl table.Table) error {
 	var err1 error
 	// WriteOnlyTable: insert t values (6, 6)
 	txn, err := newTxn(ctx)
@@ -307,7 +307,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 	return txn.Commit(context.Background())
 }
 
-func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
+func checkDropWriteOnly(ctx sessionapi.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
 	txn, err := newTxn(ctx)
 	if err != nil {
@@ -347,7 +347,7 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	return txn.Commit(context.Background())
 }
 
-func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
+func checkDropDeleteOnly(ctx sessionapi.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
 	txn, err := newTxn(ctx)
 	if err != nil {

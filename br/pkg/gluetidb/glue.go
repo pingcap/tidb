@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -56,12 +56,12 @@ type Glue struct {
 	startDomainMu *sync.Mutex
 }
 
-func WrapSession(se sessiontypes.Session) glue.Session {
+func WrapSession(se sessionapi.Session) glue.Session {
 	return &tidbSession{se: se}
 }
 
 type tidbSession struct {
-	se sessiontypes.Session
+	se sessionapi.Session
 }
 
 // GetDomain implements glue.Glue.
@@ -118,7 +118,7 @@ func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	return dom.Start(ddl.Normal)
 }
 
-func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {
+func (g Glue) createTypesSession(store kv.Storage) (sessionapi.Session, error) {
 	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -193,7 +193,7 @@ func (Glue) GetClient() glue.GlueClient {
 }
 
 // GetSessionCtx implements glue.Glue
-func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
+func (gs *tidbSession) GetSessionCtx() sessionapi.Context {
 	return gs.se
 }
 

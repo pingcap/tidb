@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -42,9 +42,9 @@ import (
 //     And receive MPP status for better err msg and correct stats for Limit.
 //  5. mppIterator: Send or receive MPP RPC.
 type ExecutorWithRetry struct {
-	coord      kv.MppCoordinator
-	sctx       sessionctx.Context
-	is         infoschema.InfoSchema
+	coord kv.MppCoordinator
+	sctx  sessionapi.Context
+	is    infoschema.InfoSchema
 	plan       plannercore.PhysicalPlan
 	ctx        context.Context
 	memTracker *memory.Tracker
@@ -68,7 +68,7 @@ type ExecutorWithRetry struct {
 var _ kv.Response = &ExecutorWithRetry{}
 
 // NewExecutorWithRetry create ExecutorWithRetry.
-func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
+func NewExecutorWithRetry(ctx context.Context, sctx sessionapi.Context, parentTracker *memory.Tracker, planIDs []int,
 	plan plannercore.PhysicalPlan, startTS uint64, queryID kv.MPPQueryID,
 	is infoschema.InfoSchema) (*ExecutorWithRetry, error) {
 	// TODO: After add row info in tipb.DataPacket, we can use row count as capacity.
@@ -241,7 +241,7 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 	return nil
 }
 
-func allocMPPGatherID(ctx sessionctx.Context) uint64 {
+func allocMPPGatherID(ctx sessionapi.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
 	return mppQueryInfo.AllocatedMPPGatherID.Add(1)
 }

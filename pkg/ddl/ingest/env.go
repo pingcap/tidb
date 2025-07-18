@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -127,7 +127,7 @@ func GenIngestTempDataDir() (string, error) {
 // CleanUpTempDir is used to remove the stale index data.
 // This function gets running DDL jobs from `mysql.tidb_ddl_job` and
 // it only removes the folders that related to finished jobs.
-func CleanUpTempDir(ctx context.Context, se sessionctx.Context, path string) {
+func CleanUpTempDir(ctx context.Context, se sessionapi.Context, path string) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such file") {

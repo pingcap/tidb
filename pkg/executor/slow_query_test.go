@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -42,7 +42,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
+func parseLog(retriever *slowQueryRetriever, sctx sessionapi.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever.taskList = make(chan slowLogTask, 100)
 	ctx := context.Background()
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
@@ -73,7 +73,7 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	return &slowQueryRetriever{outputCols: tbl.Meta().Columns}, nil
 }
 
-func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
+func parseSlowLog(sctx sessionapi.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever, err := newSlowQueryRetriever()
 	if err != nil {
 		return nil, err

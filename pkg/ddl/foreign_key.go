@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -148,7 +148,7 @@ func allocateFKIndexID(tblInfo *model.TableInfo) int64 {
 	return tblInfo.MaxForeignKeyID
 }
 
-func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
+func checkTableForeignKeysValid(sctx sessionapi.Context, is infoschema.InfoSchema, schema string, tbInfo *model.TableInfo) error {
 	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}

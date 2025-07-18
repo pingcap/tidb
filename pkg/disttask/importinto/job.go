@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -80,7 +80,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	var (
 		jobID, taskID int64
 	)
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+	if err = taskManager.WithNewTxn(ctx, func(se sessionapi.Context) error {
 		var err2 error
 		exec := se.GetSQLExecutor()
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
@@ -112,7 +112,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		if err2 != nil {
 			return 0, nil, err2
 		}
-		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
 			logicalPlan.JobID = jobID
 			planCtx.SessionCtx = se
 			planCtx.TaskKey = TaskKey(jobID)

@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -52,7 +52,7 @@ func NewDDLHandler(
 }
 
 // HandleDDLEvent begins to process a ddl task.
-func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
+func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionapi.Context, s *notifier.SchemaChangeEvent) error {
 	// Ideally, we shouldn't allow any errors to be ignored, but for now, some queries can fail.
 	// Temporarily ignore the error and we need to check all queries to ensure they are correct.
 	if err := h.sub.handle(ctx, sctx, s); err != nil {
@@ -78,7 +78,7 @@ func (h *ddlHandlerImpl) DDLEventCh() chan *notifier.SchemaChangeEvent {
 
 // UpdateStatsWithCountDeltaAndModifyCountDeltaForTest updates the global stats with the given count delta and modify count delta.
 func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
@@ -96,7 +96,7 @@ func UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(
 // Only used by some special DDLs, such as exchange partition.
 func updateStatsWithCountDeltaAndModifyCountDelta(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {

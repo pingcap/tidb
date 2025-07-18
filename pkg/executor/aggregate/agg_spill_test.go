@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -183,14 +183,14 @@ func getSchema() *expression.Schema {
 	return expression.NewSchema(getColumns()...)
 }
 
-func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSourceParameters {
+func getMockDataSourceParameters(ctx sessionapi.Context) testutil.MockDataSourceParameters {
 	return testutil.MockDataSourceParameters{
 		DataSchema: getSchema(),
 		Ctx:        ctx,
 	}
 }
 
-func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
+func buildHashAggExecutor(t *testing.T, ctx sessionapi.Context, child exec.Executor) *aggregate.HashAggExec {
 	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}

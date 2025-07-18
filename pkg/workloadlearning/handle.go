@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -139,7 +139,7 @@ func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSch
 			handle.sysSessionPool.Destroy(se)
 		}
 	}()
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
 
@@ -265,7 +265,7 @@ func (handle *Handle) SaveTableReadCostMetrics(metrics map[int64]*TableReadCostM
 			handle.sysSessionPool.Destroy(se)
 		}
 	}()
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
 	// begin a new txn

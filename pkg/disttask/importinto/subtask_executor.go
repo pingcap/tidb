@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -153,7 +153,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	if err != nil {
 		return err
 	}
-	return taskManager.WithNewSession(func(se sessionctx.Context) error {
+	return taskManager.WithNewSession(func(se sessionapi.Context) error {
 		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
 			func() (*local.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)

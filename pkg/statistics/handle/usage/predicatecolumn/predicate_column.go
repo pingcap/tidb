@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -34,7 +34,7 @@ import (
 )
 
 // loadColumnStatsUsage is a helper function to load column stats usage information from disk.
-func loadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location, query string, args ...any) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
+func loadColumnStatsUsage(sctx sessionapi.Context, loc *time.Location, query string, args ...any) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
 	rows, _, err := utilstats.ExecRows(sctx, query, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -68,19 +68,19 @@ func loadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location, query str
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
+func LoadColumnStatsUsage(sctx sessionapi.Context, loc *time.Location) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
 	query := "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage"
 	return loadColumnStatsUsage(sctx, loc, query)
 }
 
 // LoadColumnStatsUsageForTable loads column stats usage information for a specific table from disk.
-func LoadColumnStatsUsageForTable(sctx sessionctx.Context, loc *time.Location, tableID int64) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
+func LoadColumnStatsUsageForTable(sctx sessionapi.Context, loc *time.Location, tableID int64) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
 	query := "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %?"
 	return loadColumnStatsUsage(sctx, loc, query, tableID)
 }
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error) {
+func GetPredicateColumns(sctx sessionapi.Context, tableID int64) ([]int64, error) {
 	// Each time we retrieve the predicate columns, we also attempt to remove any column stats usage information whose column is dropped.
 	err := cleanupDroppedColumnStatsUsage(sctx, tableID)
 	if err != nil {
@@ -108,7 +108,7 @@ func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error
 }
 
 // cleanupDroppedColumnStatsUsage deletes the column stats usage information whose column is dropped.
-func cleanupDroppedColumnStatsUsage(sctx sessionctx.Context, tableID int64) error {
+func cleanupDroppedColumnStatsUsage(sctx sessionapi.Context, tableID int64) error {
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	table, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
@@ -136,7 +136,7 @@ func cleanupDroppedColumnStatsUsage(sctx sessionctx.Context, tableID int64) erro
 
 // SaveColumnStatsUsageForTable saves column stats usage information for a specific table to disk.
 func SaveColumnStatsUsageForTable(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	colStatsUsage map[model.TableItemID]statstypes.ColStatsTimeInfo,
 ) error {
 	for colID, statsUsage := range colStatsUsage {
@@ -161,7 +161,7 @@ func SaveColumnStatsUsageForTable(
 }
 
 // CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-func CollectColumnsInExtendedStats(sctx sessionctx.Context, tableID int64) ([]int64, error) {
+func CollectColumnsInExtendedStats(sctx sessionapi.Context, tableID int64) ([]int64, error) {
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
 	rows, _, err := utilstats.ExecRows(sctx, sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
 	if err != nil {

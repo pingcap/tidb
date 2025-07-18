@@ -30,7 +30,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/session",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/statistics/handle/ddl/testutil",

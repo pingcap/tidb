@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -32,7 +32,7 @@ import (
 )
 
 // generate anti semi join result using nested loop
-func genAntiSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
+func genAntiSemiJoinResult(t *testing.T, sessCtx sessionapi.Context, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int,
 	otherConditions expression.CNFExprs, resultTypes []*types.FieldType) []*chunk.Chunk {
 	returnChks := make([]*chunk.Chunk, 0, 1)
@@ -105,7 +105,7 @@ func constructInput(col0 *[]any, col1 *[]any, col0Nulls *[]bool, col1Nulls *[]bo
 	*col1Nulls = append(*col1Nulls, col1Null)
 }
 
-func buildNotInAntiSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column) (*testutil.MockDataSource, *testutil.MockDataSource, []chunk.Row) {
+func buildNotInAntiSemiDataSourceAndExpectResult(ctx sessionapi.Context, leftCols []*expression.Column, rightCols []*expression.Column) (*testutil.MockDataSource, *testutil.MockDataSource, []chunk.Row) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 

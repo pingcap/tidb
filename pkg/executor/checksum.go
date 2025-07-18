@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -216,7 +216,7 @@ func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64
 	}
 }
 
-func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, error) {
+func (c *checksumContext) buildTasks(ctx sessionapi.Context) ([]*checksumTask, error) {
 	var partDefs []model.PartitionDefinition
 	if part := c.tableInfo.Partition; part != nil {
 		partDefs = part.Definitions
@@ -237,7 +237,7 @@ func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, e
 }
 
 func (c *checksumContext) appendRequest4PhysicalTable(
-	ctx sessionctx.Context,
+	ctx sessionapi.Context,
 	tableID int64,
 	physicalTableID int64,
 	reqs *[]*checksumTask,
@@ -272,7 +272,7 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 	return nil
 }
 
-func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, physicalTableID int64) (*kv.Request, error) {
+func (c *checksumContext) buildTableRequest(ctx sessionapi.Context, physicalTableID int64) (*kv.Request, error) {
 	checksum := &tipb.ChecksumRequest{
 		ScanOn:    tipb.ChecksumScanOn_Table,
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
@@ -296,7 +296,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, physicalTabl
 		Build()
 }
 
-func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, physicalTableID int64, indexInfo *model.IndexInfo) (*kv.Request, error) {
+func (c *checksumContext) buildIndexRequest(ctx sessionapi.Context, physicalTableID int64, indexInfo *model.IndexInfo) (*kv.Request, error) {
 	checksum := &tipb.ChecksumRequest{
 		ScanOn:    tipb.ChecksumScanOn_Index,
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
@@ -319,7 +319,7 @@ func (c *checksumContext) handleResponse(update *tipb.ChecksumResponse) {
 	updateChecksumResponse(c.response, update)
 }
 
-func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
+func getChecksumTableConcurrency(ctx sessionapi.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
 	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBChecksumTableConcurrency)
 	if err != nil {

@@ -50,9 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -769,13 +768,13 @@ type SchemaTableStorage struct {
 }
 
 func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *ast.CIStr, table *ast.CIStr) (messages []*SchemaTableStorage, err error) {
-	var s sessiontypes.Session
+	var s sessionapi.Session
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
 	}
 	defer s.Close()
 
-	sctx := s.(sessionctx.Context)
+	sctx := s.(sessionapi.Context)
 	condition := make([]string, 0)
 	params := make([]any, 0)
 

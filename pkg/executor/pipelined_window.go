@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -244,7 +244,7 @@ func (e *PipelinedWindowExec) finish() {
 	e.whole = true
 }
 
-func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
+func (e *PipelinedWindowExec) getStart(ctx sessionapi.Context) (uint64, error) {
 	if e.start.UnBounded {
 		return 0, nil
 	}
@@ -284,7 +284,7 @@ func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 	}
 }
 
-func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
+func (e *PipelinedWindowExec) getEnd(ctx sessionapi.Context) (uint64, error) {
 	if e.end.UnBounded {
 		return e.rowCnt, nil
 	}
@@ -326,7 +326,7 @@ func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 
 // produce produces rows and append it to chk, return produced means number of rows appended into chunk, available means
 // number of rows processed but not fetched
-func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, remained uint64) (produced uint64, err error) {
+func (e *PipelinedWindowExec) produce(ctx sessionapi.Context, chk *chunk.Chunk, remained uint64) (produced uint64, err error) {
 	var (
 		start  uint64
 		end    uint64
@@ -414,7 +414,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 	return
 }
 
-func (e *PipelinedWindowExec) enoughToProduce(ctx sessionctx.Context) (enough bool, err error) {
+func (e *PipelinedWindowExec) enoughToProduce(ctx sessionapi.Context) (enough bool, err error) {
 	if e.curRowIdx >= e.rowCnt {
 		return false, nil
 	}

@@ -68,7 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -101,8 +101,8 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx     sessionctx.Context
-	is      infoschema.InfoSchema
+	ctx sessionapi.Context
+	is  infoschema.InfoSchema
 	err     error // err is set when there is error happened during Executor building process.
 	hasLock bool
 	Ti      *TelemetryInfo
@@ -135,7 +135,7 @@ type CTEStorages struct {
 	Producer  *cteProducer
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
+func newExecutorBuilder(ctx sessionapi.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
 	txnManager := sessiontxn.GetTxnManager(ctx)
 	return &executorBuilder{
 		ctx:              ctx,
@@ -154,7 +154,7 @@ type MockExecutorBuilder struct {
 }
 
 // NewMockExecutorBuilderForTest is ONLY used in test.
-func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *MockExecutorBuilder {
+func NewMockExecutorBuilderForTest(ctx sessionapi.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
 		executorBuilder: newExecutorBuilder(ctx, is, ti)}
 }
@@ -2277,7 +2277,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 }
 
 // InitSnapshotWithSessCtx initialize snapshot using session context
-func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnReplicaReadTypePtr *string) {
+func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionapi.Context, txnReplicaReadTypePtr *string) {
 	sessVars := ctx.GetSessionVars()
 	replicaReadType := sessVars.GetReplicaRead()
 	var txnReplicaReadType string
@@ -2904,7 +2904,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 	return updateExec
 }
 
-func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
+func getAssignFlag(ctx sessionapi.Context, v *plannercore.Update, schemaLen int) ([]int, error) {
 	assignFlag := make([]int, schemaLen)
 	for i := range assignFlag {
 		assignFlag[i] = -1
@@ -4203,7 +4203,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 // buildIndexReq is designed to create a DAG for index request.
 // If len(ByItems) != 0 means index request should return related columns
 // to sort result rows in TiDB side for partition tables.
-func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
+func buildIndexReq(ctx sessionapi.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
@@ -4460,10 +4460,10 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 }
 
 type tableStatsPreloader interface {
-	LoadTableStats(sessionctx.Context)
+	LoadTableStats(sessionapi.Context)
 }
 
-func buildIndexUsageReporter(ctx sessionctx.Context, plan tableStatsPreloader, loadStats bool) (indexUsageReporter *exec.IndexUsageReporter) {
+func buildIndexUsageReporter(ctx sessionapi.Context, plan tableStatsPreloader, loadStats bool) (indexUsageReporter *exec.IndexUsageReporter) {
 	sc := ctx.GetSessionVars().StmtCtx
 	if ctx.GetSessionVars().StmtCtx.IndexUsageCollector != nil &&
 		sc.RuntimeStatsColl != nil {
@@ -5436,7 +5436,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 }
 
 // NewRowDecoder creates a chunk decoder for new row format row value decode.
-func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
+func NewRowDecoder(ctx sessionapi.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
 	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		for _, col := range tbl.Columns {
 			if col.ID == colID {
@@ -5601,7 +5601,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	return e
 }
 
-func newReplicaReadAdjuster(ctx sessionctx.Context, avgRowSize float64) txnkv.ReplicaReadAdjuster {
+func newReplicaReadAdjuster(ctx sessionapi.Context, avgRowSize float64) txnkv.ReplicaReadAdjuster {
 	return func(count int) (tikv.StoreSelectorOption, clientkv.ReplicaReadType) {
 		if int64(avgRowSize*float64(count)) >= ctx.GetSessionVars().ReplicaClosestReadThreshold {
 			return tikv.WithMatchLabels([]*metapb.StoreLabel{
@@ -5636,7 +5636,7 @@ func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, p
 	return builder.once.condPruneResult, builder.once.err
 }
 
-func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
+func partitionPruning(ctx sessionapi.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
 	var pruningConds []expression.Expression
 	var partitionNames []ast.CIStr
 	var columns []*expression.Column
@@ -5671,7 +5671,7 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPa
 	return ret, nil
 }
 
-func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, physPlanPartInfo *plannercore.PhysPlanPartInfo) (map[int64]struct{}, error) {
+func getPartitionIDsAfterPruning(ctx sessionapi.Context, tbl table.PartitionedTable, physPlanPartInfo *plannercore.PhysPlanPartInfo) (map[int64]struct{}, error) {
 	if physPlanPartInfo == nil {
 		return nil, errors.New("physPlanPartInfo in getPartitionIDsAfterPruning must not be nil")
 	}

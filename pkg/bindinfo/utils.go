@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -35,7 +35,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func callWithSCtx(sPool util.DestroyableSessionPool, wrapTxn bool, f func(sctx sessionctx.Context) error) (err error) {
+func callWithSCtx(sPool util.DestroyableSessionPool, wrapTxn bool, f func(sctx sessionapi.Context) error) (err error) {
 	resource, err := sPool.Get()
 	if err != nil {
 		return err
@@ -48,7 +48,7 @@ func callWithSCtx(sPool util.DestroyableSessionPool, wrapTxn bool, f func(sctx s
 			sPool.Destroy(resource)
 		}
 	}()
-	sctx := resource.(sessionctx.Context)
+	sctx := resource.(sessionapi.Context)
 	if wrapTxn {
 		if _, err = exec(sctx, "BEGIN PESSIMISTIC"); err != nil {
 			return
@@ -68,13 +68,13 @@ func callWithSCtx(sPool util.DestroyableSessionPool, wrapTxn bool, f func(sctx s
 }
 
 // exec is a helper function to execute sql and return RecordSet.
-func exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+func exec(sctx sessionapi.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
 	sqlExec := sctx.GetSQLExecutor()
 	return sqlExec.ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo), sql, args...)
 }
 
 // execRows is a helper function to execute sql and return rows and fields.
-func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+func execRows(sctx sessionapi.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
@@ -144,7 +144,7 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
        update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
        %s`, condition)
 
-	err = callWithSCtx(sPool, false, func(sctx sessionctx.Context) error {
+	err = callWithSCtx(sPool, false, func(sctx sessionapi.Context) error {
 		rows, _, err := execRows(sctx, selectStmt, args...)
 		if err != nil {
 			return err
@@ -190,7 +190,7 @@ func newBindingFromStorage(row chunk.Row) *Binding {
 }
 
 // getBindingPlanDigest does the best efforts to fill binding's plan_digest.
-func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (planDigest string) {
+func getBindingPlanDigest(sctx sessionapi.Context, schema, bindingSQL string) (planDigest string) {
 	defer func() {
 		if r := recover(); r != nil {
 			bindingLogger().Error("panic when filling plan digest for binding",

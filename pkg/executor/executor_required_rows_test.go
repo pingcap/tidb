@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -48,8 +48,8 @@ import (
 type requiredRowsDataSource struct {
 	exec.BaseExecutor
 	totalRows int
-	count     int
-	ctx       sessionctx.Context
+	count int
+	ctx   sessionapi.Context
 
 	expectedRowsRet []int
 	numNextCalled   int
@@ -57,14 +57,14 @@ type requiredRowsDataSource struct {
 	generator func(valType *types.FieldType) any
 }
 
-func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows int, expectedRowsRet []int,
+func newRequiredRowsDataSourceWithGenerator(ctx sessionapi.Context, totalRows int, expectedRowsRet []int,
 	gen func(valType *types.FieldType) any) *requiredRowsDataSource {
 	ds := newRequiredRowsDataSource(ctx, totalRows, expectedRowsRet)
 	ds.generator = gen
 	return ds
 }
 
-func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRowsRet []int) *requiredRowsDataSource {
+func newRequiredRowsDataSource(ctx sessionapi.Context, totalRows int, expectedRowsRet []int) *requiredRowsDataSource {
 	// the schema of output is fixed now, which is [Double, Long]
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
@@ -198,7 +198,7 @@ func TestLimitRequiredRows(t *testing.T) {
 	}
 }
 
-func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int) exec.Executor {
+func buildLimitExec(ctx sessionapi.Context, src exec.Executor, offset, count int) exec.Executor {
 	n := min(count, ctx.GetSessionVars().MaxChunkSize)
 	base := exec.NewBaseExecutor(ctx, src.Schema(), 0, src)
 	base.SetInitCap(n)
@@ -210,7 +210,7 @@ func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int
 	return limitExec
 }
 
-func defaultCtx() sessionctx.Context {
+func defaultCtx() sessionapi.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
@@ -282,7 +282,7 @@ func TestSortRequiredRows(t *testing.T) {
 	}
 }
 
-func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src exec.Executor) exec.Executor {
+func buildSortExec(sctx sessionapi.Context, byItems []*util.ByItems, src exec.Executor) exec.Executor {
 	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, src.Schema(), 0, src),
 		ByItems:      byItems,
@@ -389,7 +389,7 @@ func TestTopNRequiredRows(t *testing.T) {
 	}
 }
 
-func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src exec.Executor) exec.Executor {
+func buildTopNExec(ctx sessionapi.Context, offset, count int, byItems []*util.ByItems, src exec.Executor) exec.Executor {
 	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
 		ByItems:      byItems,
@@ -483,7 +483,7 @@ func TestSelectionRequiredRows(t *testing.T) {
 	}
 }
 
-func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
+func buildSelectionExec(ctx sessionapi.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
 		selectionExecutorContext: newSelectionExecutorContext(ctx),
 		BaseExecutorV2:           exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
@@ -602,7 +602,7 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 	}
 }
 
-func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
+func buildProjectionExec(ctx sessionapi.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
 		projectionExecutorContext: newProjectionExecutorContext(ctx),
 		BaseExecutorV2:            exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
@@ -723,7 +723,7 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
+func buildMergeJoinExec(ctx sessionapi.Context, joinType logicalop.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
 	if joinType == logicalop.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}

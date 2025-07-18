@@ -16,12 +16,12 @@ package ddl
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // NewMetaBuildContextWithSctx creates a new MetaBuildContext with the given session context.
-func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild.Option) *metabuild.Context {
+func NewMetaBuildContextWithSctx(sctx sessionapi.Context, otherOpts ...metabuild.Option) *metabuild.Context {
 	intest.AssertNotNil(sctx)
 	sessVars := sctx.GetSessionVars()
 	intest.AssertNotNil(sessVars)

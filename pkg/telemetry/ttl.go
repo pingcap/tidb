@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -105,7 +105,7 @@ func (c *ttlUsageCounter) UpdateTableHistWithDelayTime(tblCnt int, hours int64) 
 	}
 }
 
-func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttlUsageCounter) {
+func getTTLUsageInfo(ctx context.Context, sctx sessionapi.Context) (counter *ttlUsageCounter) {
 	counter = &ttlUsageCounter{
 		TTLJobEnabled: vardef.EnableTTLJob.Load(),
 		TTLHistDate:   time.Now().Add(-24 * time.Hour).Format(time.DateOnly),

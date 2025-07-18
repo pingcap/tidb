@@ -22,7 +22,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -72,13 +72,13 @@ type Session interface {
 }
 
 type session struct {
-	sctx       sessionctx.Context
-	sqlExec    sqlexec.SQLExecutor
+	sctx    sessionapi.Context
+	sqlExec sqlexec.SQLExecutor
 	avoidReuse func()
 }
 
 // NewSession creates a new Session
-func NewSession(sctx sessionctx.Context, avoidReuse func()) Session {
+func NewSession(sctx sessionapi.Context, avoidReuse func()) Session {
 	intest.AssertNotNil(sctx)
 	intest.AssertNotNil(avoidReuse)
 	return &session{

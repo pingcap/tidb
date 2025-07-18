@@ -23,7 +23,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/planner/util/fixcontrol",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util/chunk",

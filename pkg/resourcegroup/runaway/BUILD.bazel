@@ -17,7 +17,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/terror",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/ttl/cache",
         "//pkg/ttl/sqlbuilder",
         "//pkg/types",

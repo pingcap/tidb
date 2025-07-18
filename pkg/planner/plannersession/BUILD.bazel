@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/expression/exprctx",
         "//pkg/planner/planctx",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessiontxn",
         "//pkg/util/intest",
     ],

@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -137,7 +137,7 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 		return
 	}
 	// Make sure the session is new.
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	if _, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback"); err != nil {
 		se.Close()

@@ -75,6 +75,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -475,7 +476,7 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 		return
 	}
 	// Make sure the session is new.
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	defer do.sysSessionPool.Put(se)
 	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
@@ -597,12 +598,12 @@ func NewDomainWithEtcdClient(
 		sysSessionPool: util.NewSessionPool(
 			capacity, factory,
 			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
+				_, ok := r.(sessionapi.Context)
 				intest.Assert(ok)
 				infosync.StoreInternalSession(r)
 			},
 			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
+				sctx, ok := r.(sessionapi.Context)
 				intest.Assert(ok)
 				intest.AssertFunc(func() bool {
 					txn, _ := sctx.Txn(false)
@@ -1336,7 +1337,7 @@ func (do *Domain) batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent)
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
+func (do *Domain) LoadPrivilegeLoop(sctx sessionapi.Context) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sctx.GetSessionVars().InRestrictedSQL = true
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "set @@autocommit = 1")
@@ -1414,7 +1415,7 @@ func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
 
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
-func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
+func (do *Domain) LoadSysVarCacheLoop(ctx sessionapi.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	err := do.rebuildSysVarCache(ctx)
 	if err != nil {
@@ -1604,7 +1605,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 
 // TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
 // in BootstrapSession.
-func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+func (do *Domain) TelemetryLoop(ctx sessionapi.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	err := telemetry.InitialRun(ctx)
 	if err != nil {
@@ -1637,7 +1638,7 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
-func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
+func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionapi.Context, workersSctxs []sessionapi.Context) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
@@ -1681,7 +1682,7 @@ func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroup
 }
 
 // SetupHistoricalStatsWorker setups worker
-func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
+func (do *Domain) SetupHistoricalStatsWorker(ctx sessionapi.Context) {
 	do.historicalStatsWorker = &HistoricalStatsWorker{
 		tblCH: make(chan int64, 16),
 		sctx:  ctx,
@@ -1689,13 +1690,13 @@ func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
 }
 
 // SetupDumpFileGCChecker setup sctx
-func (do *Domain) SetupDumpFileGCChecker(ctx sessionctx.Context) {
+func (do *Domain) SetupDumpFileGCChecker(ctx sessionapi.Context) {
 	do.dumpFileGcChecker.setupSctx(ctx)
 	do.dumpFileGcChecker.planReplayerTaskStatus = do.planReplayerHandle.status
 }
 
 // SetupExtractHandle setups extract handler
-func (do *Domain) SetupExtractHandle(sctxs []sessionctx.Context) {
+func (do *Domain) SetupExtractHandle(sctxs []sessionapi.Context) {
 	do.extractTaskHandle = newExtractHandler(do.ctx, sctxs)
 }
 
@@ -1840,7 +1841,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionapi.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
@@ -1874,7 +1875,7 @@ func (do *Domain) SetStatsUpdating(val bool) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionctx.Context) error {
+func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionapi.Context) error {
 	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
@@ -1885,7 +1886,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionct
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionapi.Context) error {
 	statsHandle, err := handle.NewHandle(
 		do.ctx,
 		initStatsCtx,
@@ -2930,7 +2931,7 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle,
 
 func init() {
 	initByLDFlagsForGlobalKill()
-	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+	telemetry.GetDomainInfoSchema = func(ctx sessionapi.Context) infoschema.InfoSchema {
 		return GetDomain(ctx).InfoSchema()
 	}
 }

@@ -54,7 +54,7 @@ go_library(
         "//pkg/resourcegroup",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/table/tables",
         "//pkg/util",
         "//pkg/util/backoff",

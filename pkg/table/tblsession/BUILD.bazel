@@ -10,7 +10,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/table/tblctx",

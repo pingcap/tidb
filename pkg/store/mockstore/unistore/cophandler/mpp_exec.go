@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -62,7 +62,7 @@ type mppExec interface {
 }
 
 type baseMPPExec struct {
-	sctx sessionctx.Context
+	sctx sessionapi.Context
 
 	mppCtx *MPPCtx
 

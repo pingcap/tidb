@@ -62,7 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -629,7 +629,7 @@ func onRenameIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(ctx sessionctx.Context, indexName ast.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+func validateAlterIndexVisibility(ctx sessionapi.Context, indexName ast.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
 	var idx *model.IndexInfo
 	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
@@ -1237,7 +1237,7 @@ SwitchIndexState:
 
 func checkIfTableReorgWorkCanSkip(
 	store kv.Storage,
-	sessCtx sessionctx.Context,
+	sessCtx sessionapi.Context,
 	tbl table.Table,
 	job *model.Job,
 ) bool {
@@ -1296,7 +1296,7 @@ func checkIfPhysicalTableIsEmpty(
 
 func checkIfTempIndexReorgWorkCanSkip(
 	store kv.Storage,
-	sessCtx sessionctx.Context,
+	sessCtx sessionapi.Context,
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
 	job *model.Job,

@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -102,7 +102,7 @@ func (j *StaticPartitionedTableAnalysisJob) Analyze(
 		}
 	}()
 
-	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionapi.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeStaticPartition:
 			success = j.analyzeStaticPartition(sctx, statsHandle, sysProcTracker)
@@ -145,7 +145,7 @@ func (j *StaticPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 // - Specified partition exists
 // - No recent failed analysis to avoid queue blocking
 func (j *StaticPartitionedTableAnalysisJob) ValidateAndPrepare(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 ) (bool, string) {
 	callFailureHook := func(needRetry bool) {
 		if j.failureHook != nil {
@@ -255,7 +255,7 @@ func (j *StaticPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 }
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
@@ -264,7 +264,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 }
 
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {

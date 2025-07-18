@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -255,7 +255,7 @@ func (j *TestJob) GetWeight() float64 {
 }
 
 // ValidateAndPrepare implements AnalysisJob.
-func (j *TestJob) ValidateAndPrepare(sctx sessionctx.Context) (bool, string) {
+func (j *TestJob) ValidateAndPrepare(sctx sessionapi.Context) (bool, string) {
 	panic("unimplemented")
 }
 

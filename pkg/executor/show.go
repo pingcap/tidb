@@ -59,7 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -300,7 +300,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 // visibleChecker checks if a stmt is visible for a certain user.
 type visibleChecker struct {
 	defaultDB string
-	ctx       sessionctx.Context
+	ctx       sessionapi.Context
 	is        infoschema.InfoSchema
 	manager   privilege.Manager
 	ok        bool
@@ -1069,11 +1069,11 @@ func getDefaultCollate(charsetName string) string {
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
-func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+func ConstructResultOfShowCreateTable(ctx sessionapi.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
 }
 
-func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+func constructResultOfShowCreateTable(ctx sessionapi.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1501,7 +1501,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 }
 
 // ConstructResultOfShowCreateSequence constructs the result for show create sequence.
-func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
+func ConstructResultOfShowCreateSequence(ctx sessionapi.Context, tableInfo *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
 	fmt.Fprintf(buf, "CREATE SEQUENCE %s ", stringutil.Escape(tableInfo.Name.O, sqlMode))
 	sequenceInfo := tableInfo.Sequence
@@ -1610,7 +1610,7 @@ func (e *ShowExec) fetchShowCreateView() error {
 	return nil
 }
 
-func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
+func fetchShowCreateTable4View(ctx sessionapi.Context, tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
 	if tb.View.Definer.AuthUsername == "" || tb.View.Definer.AuthHostname == "" {
@@ -1630,7 +1630,7 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
-func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error) {
+func ConstructResultOfShowCreateDatabase(ctx sessionapi.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error) {
 	sqlMode := ctx.GetSessionVars().SQLMode
 	var ifNotExistsStr string
 	if ifNotExists {
@@ -2389,7 +2389,7 @@ func (e *ShowExec) fetchShowBuiltins() error {
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	sessionStates := &sessionstates.SessionStates{}
-	err := e.Ctx().EncodeSessionStates(ctx, e.Ctx(), sessionStates)
+	err := e.Ctx().EncodeStates(ctx, sessionStates)
 	if err != nil {
 		return err
 	}
@@ -2592,7 +2592,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	}
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
-		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		if err = taskManager.WithNewSession(func(se sessionapi.Context) error {
 			exec := se.GetSQLExecutor()
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2603,7 +2603,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return handleImportJobInfo(ctx, info, e.result)
 	}
 	var infos []*importer.JobInfo
-	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionapi.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2623,7 +2623,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(ctx context.Context, sctx sessionapi.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}
@@ -2631,7 +2631,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
-	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
+	return runWithSystemSession(ctx, sctx, func(s sessionapi.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
 			plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
@@ -2654,7 +2654,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	})
 }
 
-func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
+func runWithSystemSession(ctx context.Context, sctx sessionapi.Context, fn func(sessionapi.Context) error) error {
 	b := exec.NewBaseExecutor(sctx, nil, 0)
 	sysCtx, err := b.GetSysSession()
 	if err != nil {

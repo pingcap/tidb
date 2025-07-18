@@ -24,7 +24,7 @@ go_library(
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/types",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/table/tblctx",

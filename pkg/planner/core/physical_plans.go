@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -161,7 +161,7 @@ type PhysicalTableReader struct {
 }
 
 // LoadTableStats loads the stats of the table read by this plan.
-func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
+func (p *PhysicalTableReader) LoadTableStats(ctx sessionapi.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	loadTableStats(ctx, ts.Table, ts.physicalTableID)
 }
@@ -448,7 +448,7 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 }
 
 // LoadTableStats preloads the stats data for the physical table
-func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
+func (p *PhysicalIndexReader) LoadTableStats(ctx sessionapi.Context) {
 	is := p.IndexPlans[0].(*PhysicalIndexScan)
 	loadTableStats(ctx, is.Table, is.physicalTableID)
 }
@@ -615,7 +615,7 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 }
 
 // LoadTableStats preloads the stats data for the physical table
-func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
+func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionapi.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	loadTableStats(ctx, ts.Table, ts.physicalTableID)
 }
@@ -722,7 +722,7 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 }
 
 // LoadTableStats preloads the stats data for the physical table
-func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
+func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionapi.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	loadTableStats(ctx, ts.Table, ts.physicalTableID)
 }

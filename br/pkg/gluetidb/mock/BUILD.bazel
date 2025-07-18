@@ -12,8 +12,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/session/types",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "@com_github_tikv_pd_client//:client",
     ],
 )

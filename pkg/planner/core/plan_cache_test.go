@@ -33,7 +33,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1128,7 +1128,7 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 
 	s := parser.New()
 	for _, sql := range []string{

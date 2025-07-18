@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -662,12 +662,12 @@ func (s *BaseScheduler) GetPreviousSubtaskSummary(taskID int64, step proto.Step)
 }
 
 // WithNewSession executes the function with a new session.
-func (s *BaseScheduler) WithNewSession(fn func(se sessionctx.Context) error) error {
+func (s *BaseScheduler) WithNewSession(fn func(se sessionapi.Context) error) error {
 	return s.taskMgr.WithNewSession(fn)
 }
 
 // WithNewTxn executes the fn in a new transaction.
-func (s *BaseScheduler) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
+func (s *BaseScheduler) WithNewTxn(ctx context.Context, fn func(se sessionapi.Context) error) error {
 	return s.taskMgr.WithNewTxn(ctx, fn)
 }
 

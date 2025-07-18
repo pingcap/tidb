@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -92,7 +92,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
 
 	// Test session variable states.
-	vars := tk.Session().(sessionctx.Context).GetSessionVars()
+	vars := tk.Session().(sessionapi.Context).GetSessionVars()
 	require.NoError(t, tk.Session().CommitTxn(context.TODO()))
 	tk.MustExec("set @@autocommit = 1")
 	require.False(t, vars.InTxn())
@@ -1006,7 +1006,7 @@ func TestSetCollationAndCharset(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	sessionVars := ctx.GetSessionVars()
 
 	cases := []struct {
@@ -1032,7 +1032,7 @@ func TestSetCollationAndCharset(t *testing.T) {
 
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	ctx = tk.Session().(sessionctx.Context)
+	ctx = tk.Session().(sessionapi.Context)
 	sessionVars = ctx.GetSessionVars()
 
 	for _, c := range cases {
@@ -1661,7 +1661,7 @@ func TestSetClusterConfig(t *testing.T) {
 		{ServerType: "scheduling", Address: "127.0.0.1:22479", StatusAddr: "127.0.0.1:22479"},
 	}
 	var serverInfoErr error
-	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
+	serverInfoFunc := func(sessionapi.Context) ([]infoschema.ServerInfo, error) {
 		return serversInfo, serverInfoErr
 	}
 	tk.Session().SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)

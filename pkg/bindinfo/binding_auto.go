@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -34,17 +34,17 @@ import (
 
 // CalculatePlanDigest is used to get the plan digest of this SQL.
 // This function will call the optimizer.
-var CalculatePlanDigest func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
+var CalculatePlanDigest func(sctx sessionapi.Context, stmt ast.StmtNode) (planDigest string, err error)
 
 // RecordRelevantOptVarsAndFixes is used to get the relevant optimizer variables for this SQL.
 // This function will call the optimizer.
-var RecordRelevantOptVarsAndFixes func(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error)
+var RecordRelevantOptVarsAndFixes func(sctx sessionapi.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error)
 
 // GenBriefPlanWithSCtx generates the plan for the given SQL statement under the given session context.
 // This function will call the optimizer, the output is same as "EXPLAIN FORMAT='brief' {SQL}".
 // PlanHintStr is a set of hints to reproduce this plan, which is used to create binding.
 // PlanText is the results of EXPLAIN of the current plan.
-var GenBriefPlanWithSCtx func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
+var GenBriefPlanWithSCtx func(sctx sessionapi.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
 // "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
@@ -130,7 +130,7 @@ func (ba *bindingAuto) recordIntoStmtStats(stmtSCtx base.PlanContext, plans []*B
 	currentUser := stmtSCtx.GetSessionVars().User
 	reproduciblePlans = make([]*BindingPlanInfo, 0, len(plans))
 	for _, plan := range plans {
-		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+		if err := callWithSCtx(ba.sPool, false, func(sctx sessionapi.Context) error {
 			vars := sctx.GetSessionVars()
 			defer func(db string, usePlanBaselines, inExplainExplore bool, user *auth.UserIdentity) {
 				vars.CurrentDB = db
@@ -175,7 +175,7 @@ func (ba *bindingAuto) runToGetExecInfo(plans []*BindingPlanInfo) error {
 			continue
 		}
 
-		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+		if err := callWithSCtx(ba.sPool, false, func(sctx sessionapi.Context) error {
 			vars := sctx.GetSessionVars()
 			defer func(db string, usePlanBaselines bool) {
 				vars.CurrentDB = db
@@ -239,7 +239,7 @@ func (ba *bindingAuto) getBindingPlanInfo(currentDB, sqlOrDigest, charset, colla
 
 		planDigest := binding.PlanDigest
 		if planDigest == "" {
-			if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+			if err := callWithSCtx(ba.sPool, false, func(sctx sessionapi.Context) error {
 				planDigest = getBindingPlanDigest(sctx, binding.Db, binding.BindSQL)
 				return nil
 			}); err != nil {
@@ -309,7 +309,7 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
        from %v where plan_digest = '%v'`, stmtStatsTable, planDigest)
 
 	var rows []chunk.Row
-	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+	err = callWithSCtx(ba.sPool, false, func(sctx sessionapi.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
 		return err
 	})

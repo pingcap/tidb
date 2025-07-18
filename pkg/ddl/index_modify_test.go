@@ -36,8 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -804,7 +803,7 @@ func TestAddGlobalIndex(t *testing.T) {
 // checkGlobalIndexRow reads one record from global index and check. Only support int handle.
 func checkGlobalIndexRow(
 	t *testing.T,
-	ctx sessionctx.Context,
+	ctx sessionapi.Context,
 	tblInfo *model.TableInfo,
 	indexInfo *model.IndexInfo,
 	pid int64,
@@ -1106,7 +1105,7 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	ddl.ResultCounterForTest = nil
 }
 
-func getJobsBySQL(se sessiontypes.Session, tbl, condition string) ([]*model.Job, error) {
+func getJobsBySQL(se sessionapi.Session, tbl, condition string) ([]*model.Job, error) {
 	rs, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s %s", tbl, condition))
 	if err != nil {
 		return nil, errors.Trace(err)

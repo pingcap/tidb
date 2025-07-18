@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -129,7 +129,7 @@ func TestTransaction(t *testing.T) {
 	tk.MustQuery("select * from txn").Check(testkit.Rows("1", "2"))
 }
 
-func inTxn(ctx sessionctx.Context) bool {
+func inTxn(ctx sessionapi.Context) bool {
 	return ctx.GetSessionVars().InTxn()
 }
 
@@ -221,7 +221,7 @@ func TestRole(t *testing.T) {
 	dropRoleSQL = `DROP ROLE 'test'@'localhost', r_1, r_2;`
 	tk.MustExec(dropRoleSQL)
 
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
 	require.NotNil(t, tk.ExecToErr("SET ROLE role1, role2"))
 	tk.MustExec("SET ROLE ALL")
@@ -383,7 +383,7 @@ func TestUser(t *testing.T) {
 	sess, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tk.SetSession(sess)
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost", AuthHostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
@@ -519,7 +519,7 @@ func TestSetPwd(t *testing.T) {
 	sess, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tk.SetSession(sess)
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost", AuthUsername: "testpwd1", AuthHostname: "localhost"}
 	// Session user doesn't exist.
 	err = tk.ExecToErr(setPwdSQL)

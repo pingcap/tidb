@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
@@ -107,7 +107,7 @@ WHERE
         5380604989545853,5392427172834832,5419648071490001,5436430269421440,5438720576124743,5442272167466546,5443531545450195,5462404261617760,5484761325677647
     )
 `
-	sctx := testKit.Session().(sessionctx.Context)
+	sctx := testKit.Session().(sessionapi.Context)
 	stmts, err := session.Parse(sctx, longInListQuery)
 	require.NoError(b, err)
 	require.Len(b, stmts, 1)

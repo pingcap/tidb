@@ -9,7 +9,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/parser/terror",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",

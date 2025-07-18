@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -27,8 +27,8 @@ import (
 
 // LimitCase is the limit case
 type LimitCase struct {
-	Ctx                   sessionctx.Context
-	ChildUsedSchema       []bool
+	Ctx             sessionapi.Context
+	ChildUsedSchema []bool
 	Rows                  int
 	Offset                int
 	Count                 int
@@ -50,7 +50,7 @@ func (tc LimitCase) String() string {
 }
 
 // DefaultLimitTestCase returns default limit test case
-func DefaultLimitTestCase(ctx sessionctx.Context) *LimitCase {
+func DefaultLimitTestCase(ctx sessionapi.Context) *LimitCase {
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)

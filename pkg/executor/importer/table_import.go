@@ -48,7 +48,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
@@ -650,7 +650,7 @@ func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {
 }
 
 // ImportSelectedRows imports selected rows.
-func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.Context) (int64, error) {
+func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionapi.Context) (int64, error) {
 	var (
 		err                     error
 		dataEngine, indexEngine *backend.OpenedEngine
@@ -769,7 +769,7 @@ func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 
 // exported for testing.
 func PostProcess(
 	ctx context.Context,
-	se sessionctx.Context,
+	se sessionapi.Context,
 	maxIDs map[autoid.AllocatorType]int64,
 	plan *Plan,
 	localChecksum *verify.KVGroupChecksum,
@@ -888,7 +888,7 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 }
 
 // RemoteChecksumTableBySQL executes the SQL to get the remote checksum of the table.
-func RemoteChecksumTableBySQL(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+func RemoteChecksumTableBySQL(ctx context.Context, se sessionapi.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
 	var (
 		tableName                    = common.UniqueTable(plan.DBName, plan.TableInfo.Name.L)
 		sql                          = "ADMIN CHECKSUM TABLE " + tableName
@@ -998,7 +998,7 @@ func GetImportRootDir(tidbCfg *tidb.Config) string {
 // stats will be stored in the stat collector, and be applied to to mysql.stats_meta
 // in the domain.UpdateTableStatsLoop with a random interval between [1, 2) minutes.
 // These stats will stay in memory until the next flush, so it might be lost if the tidb-server restarts.
-func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, importedRows int64) error {
+func FlushTableStats(ctx context.Context, se sessionapi.Context, tableID int64, importedRows int64) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
 	}

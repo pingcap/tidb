@@ -24,7 +24,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -38,7 +38,7 @@ var globalPDHelperOnce sync.Once
 type PDHelper struct {
 	cacheForApproximateTableCountFromStorage *ttlcache.Cache[string, float64]
 
-	getApproximateTableCountFromStorageFunc func(ctx context.Context, sctx sessionctx.Context, tid int64, dbName, tableName, partitionName string) (float64, bool)
+	getApproximateTableCountFromStorageFunc func(ctx context.Context, sctx sessionapi.Context, tid int64, dbName, tableName, partitionName string) (float64, bool)
 	wg                                      util.WaitGroupWrapper
 }
 
@@ -72,7 +72,7 @@ func approximateTableCountKey(tid int64, dbName, tableName, partitionName string
 
 // GetApproximateTableCountFromStorage gets the approximate count of the table.
 func (p *PDHelper) GetApproximateTableCountFromStorage(
-	ctx context.Context, sctx sessionctx.Context,
+	ctx context.Context, sctx sessionapi.Context,
 	tid int64, dbName, tableName, partitionName string,
 ) (float64, bool) {
 	key := approximateTableCountKey(tid, dbName, tableName, partitionName)
@@ -85,7 +85,7 @@ func (p *PDHelper) GetApproximateTableCountFromStorage(
 }
 
 func getApproximateTableCountFromStorage(
-	ctx context.Context, sctx sessionctx.Context,
+	ctx context.Context, sctx sessionapi.Context,
 	tid int64, dbName, tableName, partitionName string,
 ) (float64, bool) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)

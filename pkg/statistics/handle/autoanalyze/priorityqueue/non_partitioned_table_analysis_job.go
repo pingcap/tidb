@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -97,7 +97,7 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 		}
 	}()
 
-	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionapi.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeTable:
 			success = j.analyzeTable(sctx, statsHandle, sysProcTracker)
@@ -129,7 +129,7 @@ func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 // - Table exists
 // - No recent failed analysis to avoid queue blocking
 func (j *NonPartitionedTableAnalysisJob) ValidateAndPrepare(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 ) (bool, string) {
 	callFailureHook := func(needRetry bool) {
 		if j.failureHook != nil {
@@ -219,7 +219,7 @@ func (j *NonPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 }
 
 func (j *NonPartitionedTableAnalysisJob) analyzeTable(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
@@ -236,7 +236,7 @@ func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeTable() (string, []any)
 }
 
 func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {

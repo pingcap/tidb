@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -851,8 +851,8 @@ type cancelOnceHook struct {
 	store     kv.Storage
 	triggered bool
 	cancelErr error
-	pred      func(job *model.Job) bool
-	s         sessionctx.Context
+	pred func(job *model.Job) bool
+	s    sessionapi.Context
 }
 
 func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {

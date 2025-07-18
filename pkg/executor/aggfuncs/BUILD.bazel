@@ -100,7 +100,7 @@ go_test(
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/planner/util",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

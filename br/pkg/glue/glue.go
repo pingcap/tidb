@@ -10,7 +10,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -60,7 +60,7 @@ type Session interface {
 	Close()
 	GetGlobalVariable(name string) (string, error)
 	GetGlobalSysVar(name string) (string, error)
-	GetSessionCtx() sessionctx.Context
+	GetSessionCtx() sessionapi.Context
 	AlterTableMode(ctx context.Context, schemaID int64, tableID int64, tableMode model.TableMode) error
 	RefreshMeta(ctx context.Context, args *model.RefreshMetaArgs) error
 }

@@ -17,7 +17,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/terror",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/table/tables",
         "//pkg/util/chunk",

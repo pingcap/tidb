@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 )
@@ -30,7 +30,7 @@ import (
 type BindingOperator interface {
 	// CreateBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
-	CreateBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
+	CreateBinding(sctx sessionapi.Context, bindings []*Binding) (err error)
 
 	// DropBinding drop Bindings to the storage and Bindings int the cache.
 	DropBinding(sqlDigests []string) (deletedRows uint64, err error)
@@ -56,7 +56,7 @@ func newBindingOperator(sPool util.DestroyableSessionPool, cache BindingCacheUpd
 
 // CreateBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+func (op *bindingOperator) CreateBinding(sctx sessionapi.Context, bindings []*Binding) (err error) {
 	for _, binding := range bindings {
 		if err := prepareHints(sctx, binding); err != nil {
 			return err
@@ -68,7 +68,7 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		}
 	}()
 
-	return callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
+	return callWithSCtx(op.sPool, true, func(sctx sessionapi.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -152,7 +152,7 @@ func (op *bindingOperator) DropBinding(sqlDigests []string) (deletedRows uint64,
 		}
 	}()
 
-	err = callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
+	err = callWithSCtx(op.sPool, true, func(sctx sessionapi.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -205,7 +205,7 @@ func (op *bindingOperator) SetBindingStatus(newStatus, sqlDigest string) (ok boo
 		}
 	}()
 
-	err = callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
+	err = callWithSCtx(op.sPool, true, func(sctx sessionapi.Context) error {
 		// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -223,7 +223,7 @@ func (op *bindingOperator) SetBindingStatus(newStatus, sqlDigest string) (ok boo
 
 // GCBinding physically removes the deleted bind records in mysql.bind_info.
 func (op *bindingOperator) GCBinding() (err error) {
-	return callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
+	return callWithSCtx(op.sPool, true, func(sctx sessionapi.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -244,7 +244,7 @@ func (op *bindingOperator) GCBinding() (err error) {
 // generally available later.
 // This lock would enforce the CREATE / DROP GLOBAL BINDING statements to be executed sequentially,
 // even if they come from different tidb instances.
-func lockBindInfoTable(sctx sessionctx.Context) error {
+func lockBindInfoTable(sctx sessionapi.Context) error {
 	// h.sctx already locked.
 	_, err := exec(sctx, LockBindInfoSQL)
 	return err

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -78,7 +78,7 @@ func (w *worker) etcdCAS(ctx context.Context, key, oval, nval string) error {
 	return nil
 }
 
-func queryMaxSnapID(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+func queryMaxSnapID(ctx context.Context, sctx sessionapi.Context) (uint64, error) {
 	query := sqlescape.MustEscapeSQL("SELECT MAX(`SNAP_ID`) FROM %n.%n", mysql.WorkloadSchema, histSnapshotsTable)
 	rs, err := runQuery(ctx, sctx, query)
 	if err != nil {
@@ -104,7 +104,7 @@ func (w *worker) getSnapID(ctx context.Context) (uint64, error) {
 	return strconv.ParseUint(snapIDStr, 10, 64)
 }
 
-func upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64) error {
+func upsertHistSnapshot(ctx context.Context, sctx sessionapi.Context, snapID uint64) error {
 	// TODO: fill DB_VER, WR_VER
 	snapshotsInsert := sqlescape.MustEscapeSQL("INSERT INTO %n.%n (`BEGIN_TIME`, `SNAP_ID`) VALUES (now(), %%?) ON DUPLICATE KEY UPDATE `BEGIN_TIME` = now()",
 		mysql.WorkloadSchema, histSnapshotsTable)
@@ -115,7 +115,7 @@ func upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uin
 func (w *worker) updateHistSnapshot(ctx context.Context, snapID uint64, errs []error) error {
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
-	sctx := _sessctx.(sessionctx.Context)
+	sctx := _sessctx.(sessionapi.Context)
 
 	var nerr any
 	if err := stderrors.Join(errs...); err != nil {
@@ -130,7 +130,7 @@ func (w *worker) updateHistSnapshot(ctx context.Context, snapID uint64, errs []e
 func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositoryTable) error {
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
-	sess := _sessctx.(sessionctx.Context)
+	sess := _sessctx.(sessionapi.Context)
 
 	if rt.insertStmt == "" {
 		if err := buildInsertQuery(ctx, sess, rt); err != nil {
@@ -150,7 +150,7 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 func (w *worker) takeSnapshot(ctx context.Context) (uint64, error) {
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
-	sess := _sessctx.(sessionctx.Context)
+	sess := _sessctx.(sessionapi.Context)
 
 	var snapID uint64
 	var err error

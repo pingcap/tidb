@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -46,7 +46,7 @@ type VerificationInfo struct {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+	ShowGrants(ctx context.Context, sctx sessionapi.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
@@ -100,7 +100,7 @@ type Manager interface {
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.
-	ActiveRoles(ctx context.Context, sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
+	ActiveRoles(ctx context.Context, sctx sessionapi.Context, roleList []*auth.RoleIdentity) (bool, string)
 
 	// FindEdge find if there is an edge between role and user.
 	FindEdge(ctx context.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
@@ -124,7 +124,7 @@ type Manager interface {
 const key keyType = 0
 
 // BindPrivilegeManager binds Manager to context.
-func BindPrivilegeManager(ctx sessionctx.Context, pc Manager) {
+func BindPrivilegeManager(ctx sessionapi.Context, pc Manager) {
 	ctx.SetValue(key, pc)
 }
 

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -33,13 +33,13 @@ import (
 // SessionBindingHandle is used to handle all session sql bind operations.
 type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
-	CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
+	CreateSessionBinding(sctx sessionapi.Context, bindings []*Binding) (err error)
 
 	// DropSessionBinding drops a binding by the sql digest.
 	DropSessionBinding(sqlDigests []string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
-	MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool)
+	MatchSessionBinding(sctx sessionapi.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool)
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindings []*Binding)
@@ -47,7 +47,7 @@ type SessionBindingHandle interface {
 	// Close closes the SessionBindingHandle.
 	Close()
 
-	sessionctx.SessionStatesHandler
+	sessionapi.SessionStatesHandler
 }
 
 // sessionBindingHandle is used to handle all session sql bind operations.
@@ -63,7 +63,7 @@ func NewSessionBindingHandle() SessionBindingHandle {
 
 // CreateSessionBinding creates a Bindings to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionapi.Context, bindings []*Binding) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, binding := range bindings {
@@ -98,7 +98,7 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
 }
 
 // MatchSessionBinding returns the matched binding for this statement.
-func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
+func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionapi.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	// session bindings in most cases is only used for test, so there should be many session bindings, so match
@@ -129,7 +129,7 @@ func (h *sessionBindingHandle) GetAllSessionBindings() (bindings []*Binding) {
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionapi.Context, sessionStates *sessionstates.SessionStates) error {
 	bindings := h.GetAllSessionBindings()
 	if len(bindings) == 0 {
 		return nil
@@ -143,7 +143,7 @@ func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionc
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessionapi.Context, sessionStates *sessionstates.SessionStates) error {
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}

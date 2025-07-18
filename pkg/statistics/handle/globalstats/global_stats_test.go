@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1012,7 +1012,7 @@ func TestEmptyHists(t *testing.T) {
 partition by hash( month(signed) )
 partitions 12;`)
 	tk.MustExec(`truncate table mysql.stats_histograms`)
-	se := tk.Session().(sessionctx.Context)
+	se := tk.Session().(sessionapi.Context)
 	infoSchema := dom.InfoSchema()
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)

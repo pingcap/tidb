@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/oracle"
@@ -32,7 +32,7 @@ const (
 )
 
 // CheckGCEnable is use to check whether GC is enable.
-func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
+func CheckGCEnable(ctx sessionapi.Context) (enable bool, err error) {
 	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBGCEnable)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -41,17 +41,17 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 }
 
 // DisableGC will disable GC enable variable.
-func DisableGC(ctx sessionctx.Context) error {
+func DisableGC(ctx sessionapi.Context) error {
 	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBGCEnable, vardef.Off)
 }
 
 // EnableGC will enable GC enable variable.
-func EnableGC(ctx sessionctx.Context) error {
+func EnableGC(ctx sessionapi.Context) error {
 	return ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBGCEnable, vardef.On)
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
-func ValidateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
+func ValidateSnapshot(ctx sessionapi.Context, snapshotTS uint64) error {
 	safePointTS, err := GetGCSafePoint(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -71,7 +71,7 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 }
 
 // GetGCSafePoint loads GC safe point time from mysql.tidb.
-func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
+func GetGCSafePoint(sctx sessionapi.Context) (uint64, error) {
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, selectVariableValueSQL, "tikv_gc_safe_point")

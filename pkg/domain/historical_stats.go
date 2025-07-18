@@ -22,7 +22,7 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -31,7 +31,7 @@ import (
 // HistoricalStatsWorker indicates for dump historical stats
 type HistoricalStatsWorker struct {
 	tblCH chan int64
-	sctx  sessionctx.Context
+	sctx  sessionapi.Context
 }
 
 // SendTblToDumpHistoricalStats send tableID to worker to dump historical stats

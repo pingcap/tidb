@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	ast "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -387,7 +388,7 @@ func testGetPolicyByIDFromMeta(t *testing.T, store kv.Storage, policyID int64) *
 	return policyInfo
 }
 
-func testGetPolicyByNameFromIS(t *testing.T, ctx sessionctx.Context, policy string) *model.PolicyInfo {
+func testGetPolicyByNameFromIS(t *testing.T, ctx sessionapi.Context, policy string) *model.PolicyInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
@@ -963,7 +964,7 @@ func TestDropPlacementPolicyInUse(t *testing.T) {
 	}
 }
 
-func testGetPolicyByName(t *testing.T, ctx sessionctx.Context, name string, mustExist bool) *model.PolicyInfo {
+func testGetPolicyByName(t *testing.T, ctx sessionapi.Context, name string, mustExist bool) *model.PolicyInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
@@ -1111,7 +1112,7 @@ func TestAlterTablePartitionWithPlacementPolicy(t *testing.T) {
 	require.Equal(t, policyX.ID, ptDef.PlacementPolicyRef.ID)
 }
 
-func testGetPartitionDefinitionsByName(t *testing.T, ctx sessionctx.Context, db string, table string, ptName string) model.PartitionDefinition {
+func testGetPartitionDefinitionsByName(t *testing.T, ctx sessionapi.Context, db string, table string, ptName string) model.PartitionDefinition {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()

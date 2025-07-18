@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -550,7 +550,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 }
 
 func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
-	var ctx sessionctx.Context
+	var ctx sessionapi.Context
 	ctx, err := w.sessPool.Get()
 	if err != nil {
 		return statistics.PseudoRowCount
@@ -1093,7 +1093,7 @@ type reorgHandler struct {
 }
 
 // NewReorgHandlerForTest creates a new reorgHandler, only used in test.
-func NewReorgHandlerForTest(se sessionctx.Context) *reorgHandler {
+func NewReorgHandlerForTest(se sessionapi.Context) *reorgHandler {
 	return newReorgHandler(sess.NewSession(se))
 }
 

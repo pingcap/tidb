@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // AsSctx converts PlanContext to sessionctx.Context.
-func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
-	sctx, ok := pctx.(sessionctx.Context)
+func AsSctx(pctx base.PlanContext) (sessionapi.Context, error) {
+	sctx, ok := pctx.(sessionapi.Context)
 	if !ok {
 		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
 	}

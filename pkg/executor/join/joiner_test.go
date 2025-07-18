@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func defaultCtx() sessionctx.Context {
+func defaultCtx() sessionapi.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize

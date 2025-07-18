@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -415,7 +415,7 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	return readers, nil
 }
 
-func hasTrafficPriv(sctx sessionctx.Context) (capturePriv, replayPriv bool) {
+func hasTrafficPriv(sctx sessionapi.Context) (capturePriv, replayPriv bool) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
 		return true, true

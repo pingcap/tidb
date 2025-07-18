@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -38,7 +38,7 @@ type LoadStatsExec struct {
 // LoadStatsInfo saves the information of loading statistic operation.
 type LoadStatsInfo struct {
 	Path string
-	Ctx  sessionctx.Context
+	Ctx  sessionapi.Context
 }
 
 // loadStatsVarKeyType is a dummy type to avoid naming collision in context.

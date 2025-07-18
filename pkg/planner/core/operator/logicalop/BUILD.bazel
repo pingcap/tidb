@@ -65,7 +65,7 @@ go_library(
         "//pkg/planner/util/optimizetrace/logicaltrace",
         "//pkg/planner/util/tablesampler",
         "//pkg/planner/util/utilfuncp",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/statistics",
         "//pkg/table",
         "//pkg/types",

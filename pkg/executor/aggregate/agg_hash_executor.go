@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -296,7 +296,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	}
 }
 
-func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
+func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionapi.Context) {
 	memUsage := int64(0)
 
 	for i := range partialConcurrency {
@@ -373,7 +373,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 	}
 }
 
-func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
+func (e *HashAggExec) initForParallelExec(ctx sessionapi.Context) error {
 	sessionVars := e.Ctx().GetSessionVars()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()

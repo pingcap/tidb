@@ -12,7 +12,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/duration",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn/staleread",
         "//pkg/util",

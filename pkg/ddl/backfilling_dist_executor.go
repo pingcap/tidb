@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
@@ -160,7 +160,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+		err = taskMgr.WithNewSession(func(se sessionapi.Context) error {
 			svr := se.GetSQLServer()
 			store, err = svr.GetKSStore(taskKS)
 			if err != nil {

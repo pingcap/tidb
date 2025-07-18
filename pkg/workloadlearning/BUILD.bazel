@@ -15,7 +15,7 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessiontxn",
         "//pkg/util",
         "//pkg/util/logutil",

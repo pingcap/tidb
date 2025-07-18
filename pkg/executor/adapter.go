@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -305,7 +306,7 @@ type ExecStmt struct {
 
 	StmtNode ast.StmtNode
 
-	Ctx sessionctx.Context
+	Ctx sessionapi.Context
 
 	// LowerPriority represents whether to lower the execution priority of a query.
 	LowerPriority     bool
@@ -1611,7 +1612,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 // Will return err in two situations:
 // 1. Got err when remove disk spill file.
 // 2. Some logical error like ref count of CTEStorage is less than 0.
-func resetCTEStorageMap(se sessionctx.Context) error {
+func resetCTEStorageMap(se sessionapi.Context) error {
 	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
 	if tmp == nil {
 		// Close() is already called, so no need to reset. Such as TraceExec.
@@ -1891,7 +1892,7 @@ func getFlatPlan(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPla
 	return nil
 }
 
-func getBinaryPlan(sCtx sessionctx.Context) string {
+func getBinaryPlan(sCtx sessionapi.Context) string {
 	stmtCtx := sCtx.GetSessionVars().StmtCtx
 	binaryPlan := stmtCtx.GetBinaryPlan()
 	if len(binaryPlan) > 0 {
@@ -2283,7 +2284,7 @@ func checkPlanReplayerContinuesCaptureValidStmt(stmtNode ast.StmtNode) bool {
 	}
 }
 
-func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+func checkPlanReplayerCaptureTask(sctx sessionapi.Context, stmtNode ast.StmtNode, startTS uint64) {
 	dom := domain.GetDomain(sctx)
 	if dom == nil {
 		return
@@ -2315,7 +2316,7 @@ func checkPlanReplayerCaptureTask(sctx sessionctx.Context, stmtNode ast.StmtNode
 	}
 }
 
-func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.StmtNode, startTS uint64) {
+func checkPlanReplayerContinuesCapture(sctx sessionapi.Context, stmtNode ast.StmtNode, startTS uint64) {
 	dom := domain.GetDomain(sctx)
 	if dom == nil {
 		return
@@ -2338,7 +2339,7 @@ func checkPlanReplayerContinuesCapture(sctx sessionctx.Context, stmtNode ast.Stm
 	sctx.GetSessionVars().AddPlanReplayerFinishedTaskKey(key)
 }
 
-func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.Context, stmtNode ast.StmtNode,
+func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionapi.Context, stmtNode ast.StmtNode,
 	startTS uint64, isContinuesCapture bool) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)

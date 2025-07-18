@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -177,7 +177,7 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	require.Equal(t, newTbInfo.AutoRandomBits, newAutoRandomBits)
 }
 
-func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+func seek(t table.PhysicalTable, ctx sessionapi.Context, h kv.Handle) (kv.Handle, bool, error) {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return nil, false, err
@@ -199,7 +199,7 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 	return handle, true, nil
 }
 
-func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
+func checkAddWriteOnly(ctx sessionapi.Context, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	txn, err := newTxn(ctx)
 	if err != nil {
@@ -295,7 +295,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.Table) error {
+func checkAddPublic(sctx sessionapi.Context, writeOnlyTable, publicTable table.Table) error {
 	// publicTable Insert t values (4, 4, 4)
 	txn, err := newTxn(sctx)
 	if err != nil {
@@ -345,7 +345,7 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	return nil
 }
 
-func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]string) error {
+func checkResult(ctx sessionapi.Context, t table.Table, cols []*table.Column, rows [][]string) error {
 	var gotRows [][]any
 	err := tables.IterRecords(t, ctx, cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
@@ -377,7 +377,7 @@ type historyJobArgs struct {
 	tblIDs map[int64]struct{}
 }
 
-func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
+func getSchemaVer(t *testing.T, ctx sessionapi.Context) int64 {
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
@@ -396,7 +396,7 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
+func checkHistoryJobArgs(t *testing.T, ctx sessionapi.Context, id int64, args *historyJobArgs) {
 	historyJob, err := ddl.GetHistoryJobByID(ctx, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
@@ -434,7 +434,7 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	}
 }
 
-func testNewContext(t *testing.T, store kv.Storage) sessionctx.Context {
+func testNewContext(t *testing.T, store kv.Storage) sessionapi.Context {
 	return testkit.NewSession(t, store)
 }
 
@@ -460,7 +460,7 @@ func TestIssue40135(t *testing.T) {
 	require.ErrorContains(t, checkErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
-func newTxn(ctx sessionctx.Context) (kv.Transaction, error) {
+func newTxn(ctx sessionapi.Context) (kv.Transaction, error) {
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	if err != nil {
 		return nil, err

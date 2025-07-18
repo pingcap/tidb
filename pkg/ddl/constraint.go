@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -364,7 +364,7 @@ func (w *worker) verifyRemainRecordsForCheckConstraint(
 		}
 	})
 	// Get sessionctx from ddl context resource pool in ddl worker.
-	var sctx sessionctx.Context
+	var sctx sessionapi.Context
 	sctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)

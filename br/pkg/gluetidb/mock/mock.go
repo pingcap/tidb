@@ -24,19 +24,18 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	pd "github.com/tikv/pd/client"
 )
 
 // mockSession is used for test.
 type mockSession struct {
-	se         sessiontypes.Session
+	se         sessionapi.Session
 	globalVars map[string]string
 }
 
 // GetSessionCtx implements glue.Glue
-func (s *mockSession) GetSessionCtx() sessionctx.Context {
+func (s *mockSession) GetSessionCtx() sessionapi.Context {
 	return s.se
 }
 
@@ -124,11 +123,11 @@ func (*mockSession) RefreshMeta(_ context.Context, _ *model.RefreshMetaArgs) err
 
 // MockGlue only used for test
 type MockGlue struct {
-	se         sessiontypes.Session
+	se         sessionapi.Session
 	GlobalVars map[string]string
 }
 
-func (m *MockGlue) SetSession(se sessiontypes.Session) {
+func (m *MockGlue) SetSession(se sessionapi.Session) {
 	m.se = se
 }
 

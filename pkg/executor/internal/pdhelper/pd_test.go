@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +34,7 @@ func (m *mockClient) getMissCnt() int {
 	return m.missCnt
 }
 
-func (m *mockClient) getFakeApproximateTableCountFromStorage(_ context.Context, _ sessionctx.Context, _ int64, _, _, _ string) (float64, bool) {
+func (m *mockClient) getFakeApproximateTableCountFromStorage(_ context.Context, _ sessionapi.Context, _ int64, _, _, _ string) (float64, bool) {
 	m.missCnt++
 	return 1.0, true
 }

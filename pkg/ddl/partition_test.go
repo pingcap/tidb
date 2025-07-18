@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -119,7 +120,7 @@ func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partN
 	}, &model.TablePartitionArgs{PartNames: partNames}
 }
 
-func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+func testDropPartition(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	job, args := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
@@ -142,7 +143,7 @@ func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, p
 	}, &model.TruncateTableArgs{OldPartitionIDs: pids, NewPartitionIDs: newIDs}
 }
 
-func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
+func testTruncatePartition(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
 	job, args := buildTruncatePartitionJob(dbInfo, tblInfo, pids, newIDs)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))

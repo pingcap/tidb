@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
 )
@@ -40,7 +41,7 @@ const (
 var SplitBatchCreateTableForTest = splitBatchCreateTable
 
 // showRestoredCreateDatabase shows the result of SHOW CREATE DATABASE from a dbInfo.
-func showRestoredCreateDatabase(sctx sessionctx.Context, db *model.DBInfo, brComment string) (string, error) {
+func showRestoredCreateDatabase(sctx sessionapi.Context, db *model.DBInfo, brComment string) (string, error) {
 	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateDatabase))
 	if len(brComment) > 0 {
 		// this can never fail.
@@ -53,7 +54,7 @@ func showRestoredCreateDatabase(sctx sessionctx.Context, db *model.DBInfo, brCom
 }
 
 // BRIECreateDatabase creates the database with OnExistIgnore option
-func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment string) error {
+func BRIECreateDatabase(sctx sessionapi.Context, schema *model.DBInfo, brComment string) error {
 	d := domain.GetDomain(sctx).DDLExecutor()
 	query, err := showRestoredCreateDatabase(sctx, schema, brComment)
 	if err != nil {
@@ -73,7 +74,7 @@ func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment
 }
 
 // showRestoredCreateTable shows the result of SHOW CREATE TABLE from a tableInfo.
-func showRestoredCreateTable(sctx sessionctx.Context, tbl *model.TableInfo, brComment string) (string, error) {
+func showRestoredCreateTable(sctx sessionapi.Context, tbl *model.TableInfo, brComment string) (string, error) {
 	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateTable))
 	if len(brComment) > 0 {
 		// this can never fail.
@@ -87,7 +88,7 @@ func showRestoredCreateTable(sctx sessionctx.Context, tbl *model.TableInfo, brCo
 
 // BRIECreateTable creates the table with OnExistIgnore option
 func BRIECreateTable(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	dbName ast.CIStr,
 	clonedTable *model.TableInfo,
 	brComment string,
@@ -113,7 +114,7 @@ func BRIECreateTable(
 
 // BRIECreateTables creates the tables with OnExistIgnore option in batch
 func BRIECreateTables(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	clonedTables map[string][]*model.TableInfo,
 	brComment string,
 	cs ...ddl.CreateTableOption,
@@ -154,7 +155,7 @@ func BRIECreateTables(
 // splitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
-func splitBatchCreateTable(sctx sessionctx.Context, schema ast.CIStr,
+func splitBatchCreateTable(sctx sessionapi.Context, schema ast.CIStr,
 	infos []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	var err error
 	d := domain.GetDomain(sctx).DDLExecutor()

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -42,7 +42,7 @@ type hashjoinWorkerResult struct {
 }
 
 type hashJoinCtxBase struct {
-	SessCtx        sessionctx.Context
+	SessCtx        sessionapi.Context
 	ChunkAllocPool chunk.Allocator
 	// Concurrency is the number of partition, build and join workers.
 	Concurrency  uint

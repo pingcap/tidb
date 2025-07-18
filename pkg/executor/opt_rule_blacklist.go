@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
@@ -37,7 +37,7 @@ func (e *ReloadOptRuleBlacklistExec) Next(context.Context, *chunk.Chunk) error {
 }
 
 // LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
-func LoadOptRuleBlacklist(ctx context.Context, sctx sessionctx.Context) (err error) {
+func LoadOptRuleBlacklist(ctx context.Context, sctx sessionapi.Context) (err error) {
 	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name from mysql.opt_rule_blacklist")
 	if err != nil {

@@ -20,15 +20,15 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
 // AggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type AggTestCase struct {
-	Ctx              sessionctx.Context
-	ExecType         string
+	Ctx      sessionapi.Context
+	ExecType string
 	AggFunc          string
 	GroupByNDV       int
 	Rows             int
@@ -52,7 +52,7 @@ func (a AggTestCase) String() string {
 }
 
 // DefaultAggTestCase returns default agg test case
-func DefaultAggTestCase(ctx sessionctx.Context, exec string) *AggTestCase {
+func DefaultAggTestCase(ctx sessionapi.Context, exec string) *AggTestCase {
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	// return &AggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}

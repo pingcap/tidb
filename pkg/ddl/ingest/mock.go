@@ -28,14 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
 
 // NewMockBackendCtx creates a MockBackendCtx.
-func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpMgr *CheckpointManager) BackendCtx {
+func NewMockBackendCtx(job *model.Job, sessCtx sessionapi.Context, cpMgr *CheckpointManager) BackendCtx {
 	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", job.ID))
 	mockCtx := &MockBackendCtx{
 		mu:            sync.Mutex{},
@@ -48,8 +48,8 @@ func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpMgr *Checkp
 
 // MockBackendCtx is a mock backend context.
 type MockBackendCtx struct {
-	sessCtx       sessionctx.Context
-	mu            sync.Mutex
+	sessCtx sessionapi.Context
+	mu      sync.Mutex
 	jobID         int64
 	checkpointMgr *CheckpointManager
 }
@@ -175,14 +175,14 @@ type MockWriteHook func(key, val []byte)
 
 // MockEngineInfo is a mock engine info.
 type MockEngineInfo struct {
-	sessCtx sessionctx.Context
+	sessCtx sessionapi.Context
 	mu      *sync.Mutex
 
 	onWrite MockWriteHook
 }
 
 // NewMockEngineInfo creates a new mock engine info.
-func NewMockEngineInfo(sessCtx sessionctx.Context) *MockEngineInfo {
+func NewMockEngineInfo(sessCtx sessionapi.Context) *MockEngineInfo {
 	return &MockEngineInfo{
 		sessCtx: sessCtx,
 		mu:      &sync.Mutex{},
@@ -211,7 +211,7 @@ func (m *MockEngineInfo) CreateWriter(id int, _ *backend.LocalWriterConfig) (Wri
 
 // MockWriter is a mock writer.
 type MockWriter struct {
-	sessCtx sessionctx.Context
+	sessCtx sessionapi.Context
 	mu      *sync.Mutex
 	onWrite MockWriteHook
 }

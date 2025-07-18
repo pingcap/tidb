@@ -15,7 +15,7 @@
 package applycache
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -43,7 +43,7 @@ func applyCacheKVMem(key applyCacheKey, value *chunk.List) int64 {
 }
 
 // NewApplyCache creates a new ApplyCache.
-func NewApplyCache(ctx sessionctx.Context) (*ApplyCache, error) {
+func NewApplyCache(ctx sessionapi.Context) (*ApplyCache, error) {
 	// since ApplyCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0.1, 0)

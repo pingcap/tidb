@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -338,7 +339,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), snapshotTS)
 }
 
-func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) error {
+func loadSnapshotInfoSchemaIfNeeded(sctx sessionapi.Context, snapshotTS uint64) error {
 	vars := sctx.GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil

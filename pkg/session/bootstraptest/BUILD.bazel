@@ -20,8 +20,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/server/handler",
         "//pkg/session",  #keep
-        "//pkg/session/types",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/testkit",  #keep
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -253,7 +253,7 @@ func (fb *FrameBound) ToPB(ctx *base.BuildPBContext) (*tipb.WindowFrameBound, er
 }
 
 // UpdateCompareCols will update CompareCols.
-func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
+func (fb *FrameBound) UpdateCompareCols(ctx sessionapi.Context, orderByCols []*expression.Column) error {
 	ectx := ctx.GetExprCtx().GetEvalCtx()
 
 	if len(fb.CalcFuncs) > 0 {

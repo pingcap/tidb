@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -124,7 +124,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			batchUpdates []*storage.DeltaUpdate
 		)
 		batchStart := time.Now()
-		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionapi.Context) error {
 			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
@@ -214,7 +214,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 //   - Records lock information for each table or partition.
 func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	is infoschema.InfoSchema,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	updates []*storage.DeltaUpdate,
 ) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
 	if len(updates) == 0 {
@@ -350,7 +350,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 			}
 		}
 		sqlescape.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
-		if err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		if err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionapi.Context) error {
 			_, _, err := utilstats.ExecRows(sctx, sql.String())
 			return err
 		}); err != nil {

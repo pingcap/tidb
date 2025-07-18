@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -405,7 +405,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 	job, err := pq.Pop()
 	require.NoError(t, err)
 	require.NotNil(t, job)
-	sctx := tk.Session().(sessionctx.Context)
+	sctx := tk.Session().(sessionapi.Context)
 	ok, _ := job.ValidateAndPrepare(sctx)
 	require.False(t, ok)
 

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -39,7 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,
+func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionapi.Context, tblID int64,
 	colName string, pos string, defaultValue any, dom *domain.Domain) int64 {
 	sql := fmt.Sprintf("alter table t1 add column %s int ", colName)
 	if defaultValue != nil {
@@ -57,7 +57,7 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 	return id
 }
 
-func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,
+func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionapi.Context, tblID int64,
 	colNames []string, positions []string, defaultValue any, dom *domain.Domain) int64 {
 	sql := "alter table t1 add column "
 	for i, colName := range colNames {
@@ -80,7 +80,7 @@ func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context
 	return id
 }
 
-func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, colName string, isError bool, dom *domain.Domain) int64 {
+func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionapi.Context, tblID int64, colName string, isError bool, dom *domain.Domain) int64 {
 	sql := fmt.Sprintf("alter table t1 drop column %s ", colName)
 	_, err := tk.Exec(sql)
 	if isError {
@@ -112,7 +112,7 @@ func testDropTable(tk *testkit.TestKit, t *testing.T, dbName, tblName string, do
 	return id
 }
 
-func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, unique bool, indexName string, colName string, dom *domain.Domain) int64 {
+func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionapi.Context, tblID int64, unique bool, indexName string, colName string, dom *domain.Domain) int64 {
 	un := ""
 	if unique {
 		un = "unique"
@@ -130,7 +130,7 @@ func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	return id
 }
 
-func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, colName []string, isError bool, dom *domain.Domain) int64 {
+func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionapi.Context, tblID int64, colName []string, isError bool, dom *domain.Domain) int64 {
 	sql := "alter table t1 drop column "
 	for i, name := range colName {
 		if i != 0 {
@@ -312,7 +312,7 @@ func TestColumnBasic(t *testing.T) {
 	testDropTable(tk, t, "test", "t1", dom)
 }
 
-func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle, col *table.Column, columnValue any, isExist bool) error {
+func checkColumnKVExist(ctx sessionapi.Context, t table.Table, handle kv.Handle, col *table.Column, columnValue any, isExist bool) error {
 	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -352,7 +352,7 @@ func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle,
 	return nil
 }
 
-func checkNoneColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, columnValue any, dom *domain.Domain) {
+func checkNoneColumn(t *testing.T, ctx sessionapi.Context, tableID int64, handle kv.Handle, col *table.Column, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	err := checkColumnKVExist(ctx, tbl, handle, col, columnValue, false)
 	require.NoError(t, err)
@@ -360,7 +360,7 @@ func checkNoneColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle
 	require.NoError(t, err)
 }
 
-func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
+func checkDeleteOnlyColumn(t *testing.T, ctx sessionapi.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	_, err := newTxn(ctx)
 	require.NoError(t, err)
@@ -423,7 +423,7 @@ func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, 
 	require.NoError(t, err)
 }
 
-func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
+func checkWriteOnlyColumn(t *testing.T, ctx sessionapi.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	_, err := newTxn(ctx)
 	require.NoError(t, err)
@@ -491,7 +491,7 @@ func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, h
 	require.NoError(t, err)
 }
 
-func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int64, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
+func checkReorganizationColumn(t *testing.T, ctx sessionapi.Context, tableID int64, col *table.Column, row []types.Datum, columnValue any, dom *domain.Domain) {
 	tbl := testGetTable(t, dom, tableID)
 	_, err := newTxn(ctx)
 	require.NoError(t, err)
@@ -553,7 +553,7 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	require.NoError(t, err)
 }
 
-func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newCol *table.Column, oldRow []types.Datum, columnValue any, dom *domain.Domain, columnCnt int) {
+func checkPublicColumn(t *testing.T, ctx sessionapi.Context, tableID int64, newCol *table.Column, oldRow []types.Datum, columnValue any, dom *domain.Domain, columnCnt int) {
 	tbl := testGetTable(t, dom, tableID)
 	_, err := newTxn(ctx)
 	require.NoError(t, err)

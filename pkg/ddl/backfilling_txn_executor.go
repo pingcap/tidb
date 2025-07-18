@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
@@ -196,7 +196,7 @@ func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReo
 }
 
 // initSessCtx initializes the session context. Be careful to the timezone.
-func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) error {
+func initSessCtx(sessCtx sessionapi.Context, reorgMeta *model.DDLReorgMeta) error {
 	// Correct the initial timezone.
 	tz := *time.UTC
 	sessCtx.GetSessionVars().TimeZone = &tz
@@ -224,7 +224,7 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	return nil
 }
 
-func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
+func restoreSessCtx(sessCtx sessionapi.Context) func(sessCtx sessionapi.Context) {
 	sv := sessCtx.GetSessionVars()
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
@@ -237,7 +237,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	typeFlags := sv.StmtCtx.TypeFlags()
 	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
-	return func(usedSessCtx sessionctx.Context) {
+	return func(usedSessCtx sessionapi.Context) {
 		uv := usedSessCtx.GetSessionVars()
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode

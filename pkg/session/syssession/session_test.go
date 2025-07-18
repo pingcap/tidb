@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -46,11 +46,11 @@ type mockOwner struct {
 	mock.Mock
 }
 
-func (m *mockOwner) onBecameOwner(sctx sessionctx.Context) error {
+func (m *mockOwner) onBecameOwner(sctx sessionapi.Context) error {
 	return m.Called(sctx).Error(0)
 }
 
-func (m *mockOwner) onResignOwner(sctx sessionctx.Context) error {
+func (m *mockOwner) onResignOwner(sctx sessionapi.Context) error {
 	return m.Called(sctx).Error(0)
 }
 
@@ -69,11 +69,11 @@ func (txn *mockTxn) String() string {
 }
 
 type mockPreparedFuture struct {
-	sessionctx.TxnFuture
+	sessionapi.TxnFuture
 }
 
 type mockSessionContext struct {
-	sessionctx.Context
+	sessionapi.Context
 	util.SessionManager
 	mock.Mock
 }
@@ -154,9 +154,9 @@ func (m *mockSessionContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExe
 	return m
 }
 
-func (m *mockSessionContext) GetPreparedTxnFuture() sessionctx.TxnFuture {
+func (m *mockSessionContext) GetPreparedTxnFuture() sessionapi.TxnFuture {
 	if arg := m.Called().Get(0); arg != nil {
-		return arg.(sessionctx.TxnFuture)
+		return arg.(sessionapi.TxnFuture)
 	}
 	return nil
 }
@@ -998,7 +998,7 @@ func TestSessionProxyMethods(t *testing.T) {
 		[]sqlexec.RecordSet{&mockRecordSet{v: 1}, &mockRecordSet{v: 2}}, errors.New("err"),
 		func(arg1 context.Context, arg2 string) (rs []sqlexec.RecordSet, err error) {
 			var execErr error
-			err = se.WithSessionContext(func(sctx sessionctx.Context) error {
+			err = se.WithSessionContext(func(sctx sessionapi.Context) error {
 				rs, execErr = sctx.GetSQLExecutor().Execute(arg1, arg2)
 				return execErr
 			})
@@ -1216,7 +1216,7 @@ func TestSessionThreadUnsafeOperations(t *testing.T) {
 		{
 			name: "WithSessionContext",
 			call: func(first bool) error {
-				err := se.WithSessionContext(func(got sessionctx.Context) error {
+				err := se.WithSessionContext(func(got sessionapi.Context) error {
 					require.Same(t, sctx, got)
 					onCalled(nil)
 					return nil

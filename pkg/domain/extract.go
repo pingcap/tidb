@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -76,7 +76,7 @@ type ExtractHandle struct {
 }
 
 // newExtractHandler new extract handler
-func newExtractHandler(ctx context.Context, sctxs []sessionctx.Context) *ExtractHandle {
+func newExtractHandler(ctx context.Context, sctxs []sessionapi.Context) *ExtractHandle {
 	h := &ExtractHandle{}
 	h.worker = newExtractWorker(ctx, sctxs[0], false)
 	return h
@@ -93,7 +93,7 @@ func (h *ExtractHandle) ExtractTask(ctx context.Context, task *ExtractTask) (str
 
 type extractWorker struct {
 	ctx                context.Context
-	sctx               sessionctx.Context
+	sctx               sessionapi.Context
 	isBackgroundWorker bool
 	sync.Mutex
 }
@@ -123,7 +123,7 @@ func NewExtractPlanTask(begin, end time.Time) *ExtractTask {
 
 func newExtractWorker(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	isBackgroundWorker bool,
 ) *extractWorker {
 	return &extractWorker{

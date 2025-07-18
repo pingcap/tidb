@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -59,7 +60,7 @@ import (
 )
 
 var (
-	_ sessionctx.Context  = (*Context)(nil)
+	_ sessionapi.Context  = (*Context)(nil)
 	_ planctx.PlanContext = (*Context)(nil)
 	_ sqlexec.SQLExecutor = (*Context)(nil)
 )
@@ -99,7 +100,7 @@ func (txn *wrapTxn) pending() bool {
 }
 
 // Wait creates a new kvTransaction
-func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+func (txn *wrapTxn) Wait(_ context.Context, sctx sessionapi.Context) (kv.Transaction, error) {
 	if !txn.validOrPending() {
 		return txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
@@ -391,7 +392,7 @@ func (*Context) GetBuiltinFunctionUsage() map[string]uint32 {
 func (*Context) BuiltinFunctionUsageInc(_ string) {}
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
-func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, error) {
+func (*Context) GetGlobalSysVar(_ sessionapi.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -400,7 +401,7 @@ func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, erro
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor SetGlobalSysVar interface.
-func (*Context) SetGlobalSysVar(_ sessionctx.Context, name string, value string) error {
+func (*Context) SetGlobalSysVar(_ sessionapi.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -573,7 +574,7 @@ func (c *Context) PrepareTSFuture(_ context.Context, future oracle.Future, _ str
 
 // GetPreparedTxnFuture returns the TxnFuture if it is prepared.
 // It returns nil otherwise.
-func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
+func (c *Context) GetPreparedTxnFuture() sessionapi.TxnFuture {
 	if !c.txn.validOrPending() {
 		return nil
 	}
@@ -605,13 +606,13 @@ func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
 }
 
-// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
-func (*Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// EncodeStates implements the sessionapi.Session interface
+func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 
-// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
-func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// DecodeStates implements the sessionapi.Session interface
+func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 

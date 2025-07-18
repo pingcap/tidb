@@ -78,7 +78,7 @@ go_test(
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/resourcegroup",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/store/copr",

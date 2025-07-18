@@ -32,7 +32,7 @@ go_test(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/session",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

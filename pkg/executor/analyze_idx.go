@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -297,7 +297,7 @@ func analyzeIndexNDVPushDown(idxExec *AnalyzeIndexExec) *statistics.AnalyzeResul
 }
 
 func updateIndexResult(
-	ctx sessionctx.Context,
+	ctx sessionapi.Context,
 	resp *tipb.AnalyzeIndexResp,
 	job *statistics.AnalyzeJob,
 	hist *statistics.Histogram,

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,7 +42,7 @@ import (
 
 func preSplitIndexRegions(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	allIndexInfos []*model.IndexInfo,
@@ -92,7 +92,7 @@ type splitArgs struct {
 }
 
 func getSplitIdxKeys(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	args *splitArgs,
@@ -107,7 +107,7 @@ func getSplitIdxKeys(
 }
 
 func getSplitIdxKeysFromValueList(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	byRows [][]types.Datum,
@@ -134,7 +134,7 @@ func getSplitIdxKeysFromValueList(
 }
 
 func getSplitIdxPhysicalKeysFromValueList(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	physicalID int64,
@@ -174,7 +174,7 @@ func getSplitIdxPhysicalStartAndOtherIdxKeys(
 }
 
 func getSplitIdxKeysFromBound(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	lower, upper []types.Datum,
@@ -198,7 +198,7 @@ func getSplitIdxKeysFromBound(
 }
 
 func getSplitIdxPhysicalKeysFromBound(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	physicalID int64,
@@ -249,7 +249,7 @@ func datumSliceToString(ds []types.Datum) string {
 
 func splitIndexRegionAndWait(
 	ctx context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
@@ -388,7 +388,7 @@ func evalConstExprNodes(
 
 func waitScatterRegionFinish(
 	ctxWithTimeout context.Context,
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	startTime time.Time,
 	store kv.SplittableStore,
 	regionIDs []uint64,

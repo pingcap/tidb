@@ -12,7 +12,7 @@ go_library(
         "//pkg/ddl/notifier",
         "//pkg/infoschema",
         "//pkg/meta/model",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/history",

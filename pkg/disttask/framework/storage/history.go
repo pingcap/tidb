@@ -21,13 +21,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
-func (*TaskManager) TransferSubtasks2HistoryWithSession(ctx context.Context, se sessionctx.Context, taskID int64) error {
+func (*TaskManager) TransferSubtasks2HistoryWithSession(ctx context.Context, se sessionapi.Context, taskID int64) error {
 	exec := se.GetSQLExecutor()
 	_, err := sqlexec.ExecSQL(ctx, exec, `insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?`, taskID)
 	if err != nil {
@@ -50,7 +50,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+	return mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
 		// sensitive data in meta might be redacted, need update first.
 		exec := se.GetSQLExecutor()
 		for _, t := range tasks {

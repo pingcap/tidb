@@ -13,7 +13,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/ast",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/util/stringutil",
     ],
 )
@@ -37,7 +37,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessiontxn/internal",
         "//pkg/sessiontxn/isolation",
         "//pkg/sessiontxn/staleread",

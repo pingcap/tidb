@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 )
 
 type telemetryData struct {
@@ -28,7 +28,7 @@ type telemetryData struct {
 	WindowedStats   []*windowData `json:"windowedStats"`
 }
 
-func generateTelemetryData(sctx sessionctx.Context) telemetryData {
+func generateTelemetryData(sctx sessionapi.Context) telemetryData {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry)
 	r := telemetryData{
 		ReportTimestamp: time.Now().Unix(),

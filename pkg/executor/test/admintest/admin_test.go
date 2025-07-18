@@ -35,7 +35,7 @@ import (
 	ast "github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -1014,7 +1014,7 @@ type inconsistencyTestKit struct {
 	uniqueIndex table.Index
 	plainIndex  table.Index
 	ctx         context.Context
-	sctx        sessionctx.Context
+	sctx        sessionapi.Context
 	t           *testing.T
 }
 

@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -141,7 +141,7 @@ type outerWorker struct {
 
 	lookup *IndexLookUpJoin
 
-	ctx      sessionctx.Context
+	ctx      sessionapi.Context
 	executor exec.Executor
 
 	maxBatchSize int
@@ -158,7 +158,7 @@ type innerWorker struct {
 
 	taskCh      <-chan *lookUpJoinTask
 	outerCtx    OuterCtx
-	ctx         sessionctx.Context
+	ctx         sessionapi.Context
 	executorChk *chunk.Chunk
 	lookup      *IndexLookUpJoin
 

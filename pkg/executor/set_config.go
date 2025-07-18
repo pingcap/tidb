@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -91,7 +91,7 @@ func (s *SetConfigExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	getServerFunc := infoschema.GetClusterServerInfo
 	if v := s.Ctx().Value(TestSetConfigServerInfoKey); v != nil {
-		getServerFunc = v.(func(sessionctx.Context) ([]infoschema.ServerInfo, error))
+		getServerFunc = v.(func(sessionapi.Context) ([]infoschema.ServerInfo, error))
 	}
 
 	serversInfo, err := getServerFunc(s.Ctx())
@@ -184,7 +184,7 @@ func isValidInstance(instance string) bool {
 //
 //	set config x key="val" ==> {"key":"val"}
 //	set config x key=233 ==> {"key":233}
-func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.Expression) (body string, err error) {
+func ConvertConfigItem2JSON(ctx sessionapi.Context, key string, val expression.Expression) (body string, err error) {
 	if val == nil {
 		return "", errors.Errorf("cannot set config to null")
 	}

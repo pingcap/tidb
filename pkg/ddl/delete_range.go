@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"go.uber.org/zap"
@@ -207,7 +207,7 @@ func (dr *delRange) doDelRangeWork() error {
 	return nil
 }
 
-func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
+func (dr *delRange) doTask(sctx sessionapi.Context, r util.DelRangeTask) error {
 	var oldStartKey, newStartKey kv.Key
 	oldStartKey = r.StartKey
 	for {
@@ -513,14 +513,14 @@ type DelRangeExecWrapper interface {
 // sessionDelRangeExecWrapper is a lightweight wrapper that implements the DelRangeExecWrapper interface and used for TiDB Server.
 // It consumes the delete ranges by directly insert rows into mysql.gc_delete_range.
 type sessionDelRangeExecWrapper struct {
-	sctx sessionctx.Context
+	sctx sessionapi.Context
 	ts   uint64
 
 	// temporary values
 	paramsList []any
 }
 
-func newDelRangeExecWrapper(sctx sessionctx.Context) DelRangeExecWrapper {
+func newDelRangeExecWrapper(sctx sessionapi.Context) DelRangeExecWrapper {
 	return &sessionDelRangeExecWrapper{
 		sctx:       sctx,
 		paramsList: nil,
@@ -559,7 +559,7 @@ func (sdr *sessionDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, s
 }
 
 // getNowTS gets the current timestamp, in TSO.
-func getNowTSO(ctx sessionctx.Context) (uint64, error) {
+func getNowTSO(ctx sessionapi.Context) (uint64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
 		return 0, errors.Trace(err)

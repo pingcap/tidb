@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -201,7 +201,7 @@ func TestDropTablePrivileges(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	ctx, _ := tk.Session().(sessionctx.Context)
+	ctx, _ := tk.Session().(sessionapi.Context)
 	tk.MustExec(`CREATE TABLE todrop(c int);`)
 	// ctx.GetSessionVars().User = "root@localhost"
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
@@ -2114,7 +2114,7 @@ func TestShowGrantsSQLMode(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
-	ctx, _ := tk.Session().(sessionctx.Context)
+	ctx, _ := tk.Session().(sessionapi.Context)
 	tk.MustExec(`CREATE USER 'show_sql_mode'@'localhost' identified by '123';`)
 	tk.MustExec(`GRANT Select ON test.* TO 'show_sql_mode'@'localhost';`)
 

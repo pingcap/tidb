@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -51,7 +51,7 @@ func indexPrefix(t table.PhysicalTable) kv.Key {
 	return tablecodec.GenTableIndexPrefix(t.GetPhysicalID())
 }
 
-func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
+func seek(t table.PhysicalTable, ctx sessionapi.Context, h kv.Handle) (kv.Handle, bool, error) {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return nil, false, err
@@ -162,7 +162,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) {
+func countEntriesWithPrefix(ctx sessionapi.Context, prefix []byte) (int, error) {
 	cnt := 0
 	txn, err := ctx.Txn(true)
 	if err != nil {

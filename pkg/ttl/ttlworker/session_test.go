@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/syssession"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -161,7 +161,7 @@ func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionP
 
 type mockSession struct {
 	t *testing.T
-	sessionctx.Context
+	sessionapi.Context
 	sessionVars        *variable.SessionVars
 	sessionInfoSchema  infoschema.InfoSchema
 	executeSQL         func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)

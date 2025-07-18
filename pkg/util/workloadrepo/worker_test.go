@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/slice"
@@ -573,7 +573,7 @@ func getTable(t *testing.T, tableName string, wrk *worker) *repositoryTable {
 }
 
 func validatePartitionsMatchExpected(ctx context.Context, t *testing.T,
-	sess sessionctx.Context, tbl *repositoryTable, partitions []time.Time) bool {
+	sess sessionapi.Context, tbl *repositoryTable, partitions []time.Time) bool {
 	// validate that the partitions exactly match as expected
 	ep := make(map[string]struct{})
 	for _, p := range partitions {
@@ -632,7 +632,7 @@ func buildPartitionString(partitions []time.Time) string {
 }
 
 func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit, tbl *repositoryTable,
-	sess sessionctx.Context, partitions []time.Time) {
+	sess sessionapi.Context, partitions []time.Time) {
 	createSQL, err := buildCreateQuery(ctx, sess, tbl)
 	require.NoError(t, err)
 	createSQL += buildPartitionString(partitions)
@@ -641,7 +641,7 @@ func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit
 }
 
 func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
-	sess sessionctx.Context, tk *testkit.TestKit, wrk *worker,
+	sess sessionapi.Context, tk *testkit.TestKit, wrk *worker,
 	firstTestFails bool, tableName string, partitions []time.Time, expectedParts []time.Time) {
 	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
@@ -667,7 +667,7 @@ func TestCreatePartition(t *testing.T) {
 	tk.MustExec("use WORKLOAD_SCHEMA")
 
 	_sessctx := wrk.getSessionWithRetry()
-	sess := _sessctx.(sessionctx.Context)
+	sess := _sessctx.(sessionapi.Context)
 
 	wrk.fillInTableNames()
 
@@ -716,7 +716,7 @@ func TestCreatePartition(t *testing.T) {
 }
 
 func validatePartitionDrop(ctx context.Context, now time.Time, t *testing.T,
-	sess sessionctx.Context, tk *testkit.TestKit, wrk *worker,
+	sess sessionapi.Context, tk *testkit.TestKit, wrk *worker,
 	tableName string, partitions []time.Time, retention int, shouldErr bool, expectedParts []time.Time) {
 	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
@@ -743,7 +743,7 @@ func TestDropOldPartitions(t *testing.T) {
 	tk.MustExec("use WORKLOAD_SCHEMA")
 
 	_sessctx := wrk.getSessionWithRetry()
-	sess := _sessctx.(sessionctx.Context)
+	sess := _sessctx.(sessionapi.Context)
 
 	wrk.fillInTableNames()
 
@@ -799,7 +799,7 @@ func TestAddNewPartitionsOnStart(t *testing.T) {
 	require.True(t, wrk.checkTablesExists(ctx, now))
 
 	_sessctx := wrk.getSessionWithRetry()
-	sess := _sessctx.(sessionctx.Context)
+	sess := _sessctx.(sessionapi.Context)
 	expectedParts := []time.Time{now, now.AddDate(0, 0, 1)}
 	for _, tbl := range wrk.workloadTables {
 		// check for now and now + 1 partitions
@@ -820,7 +820,7 @@ func TestHouseKeeperThread(t *testing.T) {
 	tk.MustExec("use WORKLOAD_SCHEMA")
 
 	_sessctx := wrk.getSessionWithRetry()
-	sess := _sessctx.(sessionctx.Context)
+	sess := _sessctx.(sessionapi.Context)
 
 	wrk.workloadTables = []repositoryTable{
 		{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
@@ -1017,7 +1017,7 @@ func TestRecoverSnapID(t *testing.T) {
 	}, time.Minute, 100*time.Millisecond)
 
 	// it is zero
-	newSnapID, err := queryMaxSnapID(ctx, worker.getSessionWithRetry().(sessionctx.Context))
+	newSnapID, err := queryMaxSnapID(ctx, worker.getSessionWithRetry().(sessionapi.Context))
 	require.Nil(t, err)
 	require.Equal(t, uint64(0), newSnapID)
 
@@ -1051,7 +1051,7 @@ func TestRecoverSnapID(t *testing.T) {
 	_, err = worker2.getSnapID(ctx)
 	require.EqualError(t, errKeyNotFound, err.Error())
 	// it is equal to the previous maximum snap id
-	newSnapID, err = queryMaxSnapID(ctx, worker2.getSessionWithRetry().(sessionctx.Context))
+	newSnapID, err = queryMaxSnapID(ctx, worker2.getSessionWithRetry().(sessionapi.Context))
 	require.Nil(t, err)
 	require.Equal(t, newSnapID, prevSnapID)
 

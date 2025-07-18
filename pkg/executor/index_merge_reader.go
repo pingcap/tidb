@@ -41,7 +41,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -609,9 +609,9 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 }
 
 type partialTableWorker struct {
-	stats              *IndexMergeRuntimeStat
-	sc                 sessionctx.Context
-	batchSize          int
+	stats     *IndexMergeRuntimeStat
+	sc        sessionapi.Context
+	batchSize int
 	maxBatchSize       int
 	maxChunkSize       int
 	tableReader        exec.Executor
@@ -1663,9 +1663,9 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 }
 
 type partialIndexWorker struct {
-	stats              *IndexMergeRuntimeStat
-	sc                 sessionctx.Context
-	idxID              int
+	stats *IndexMergeRuntimeStat
+	sc    sessionapi.Context
+	idxID int
 	batchSize          int
 	maxBatchSize       int
 	maxChunkSize       int

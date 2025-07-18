@@ -51,7 +51,7 @@ go_test(
         "//pkg/planner/util/fixcontrol",
         "//pkg/privilege/privileges",
         "//pkg/server",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",

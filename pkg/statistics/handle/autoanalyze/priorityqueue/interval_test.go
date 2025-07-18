@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -32,7 +32,7 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	tk.MustExec(session.CreateAnalyzeJobs)
 	// Empty table.
 	se := tk.Session()
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	avgDuration, err := priorityqueue.GetAverageAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition",
@@ -97,7 +97,7 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	tk.MustExec(session.CreateAnalyzeJobs)
 	// Empty table.
 	se := tk.Session()
-	sctx := se.(sessionctx.Context)
+	sctx := se.(sessionapi.Context)
 	lastFailedDuration, err := priorityqueue.GetLastFailedAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition",

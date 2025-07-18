@@ -40,7 +40,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",

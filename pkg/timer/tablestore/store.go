@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/syssession"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -62,7 +62,7 @@ func NewTableTimerStore(clusterID uint64, pool syssession.Pool, dbName, tblName 
 	}
 }
 
-func (s *tableTimerStoreCore) withSctx(fn func(sessionctx.Context) error) error {
+func (s *tableTimerStoreCore) withSctx(fn func(sessionapi.Context) error) error {
 	return s.withSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(fn)
 	})
@@ -121,7 +121,7 @@ func (s *tableTimerStoreCore) createWithSession(
 }
 
 func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) (r []*api.TimerRecord, _ error) {
-	err := s.withSctx(func(sctx sessionctx.Context) (internalErr error) {
+	err := s.withSctx(func(sctx sessionapi.Context) (internalErr error) {
 		r, internalErr = s.listWithSctx(ctx, sctx, cond)
 		return
 	})
@@ -129,7 +129,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) (r []*api
 }
 
 func (s *tableTimerStoreCore) listWithSctx(
-	ctx context.Context, sctx sessionctx.Context, cond api.Cond,
+	ctx context.Context, sctx sessionapi.Context, cond api.Cond,
 ) ([]*api.TimerRecord, error) {
 	if sessVars := sctx.GetSessionVars(); !sessVars.GetEnableIndexMerge() {
 		// Enable index merge is used to make sure filtering timers with tags quickly.

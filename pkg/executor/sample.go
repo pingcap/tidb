@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -75,8 +75,8 @@ type rowSampler interface {
 }
 
 type tableRegionSampler struct {
-	ctx             sessionctx.Context
-	table           table.Table
+	ctx   sessionapi.Context
+	table table.Table
 	startTS         uint64
 	physicalTableID int64
 	partTables      []table.PartitionedTable
@@ -92,7 +92,7 @@ type tableRegionSampler struct {
 }
 
 func newTableRegionSampler(
-	ctx sessionctx.Context,
+	ctx sessionapi.Context,
 	t table.Table,
 	startTs uint64,
 	pyhsicalTableID int64,

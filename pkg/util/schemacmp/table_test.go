@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	_ "github.com/pingcap/tidb/pkg/planner"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/schemacmp"
 	"github.com/stretchr/testify/require"
 )
 
-func toTableInfo(parser *parser.Parser, sctx sessionctx.Context, createTableStmt string) (*model.TableInfo, error) {
+func toTableInfo(parser *parser.Parser, sctx sessionapi.Context, createTableStmt string) (*model.TableInfo, error) {
 	node, err := parser.ParseOneStmt(createTableStmt, "", "")
 	if err != nil {
 		return nil, err

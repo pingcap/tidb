@@ -11,7 +11,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/owner",
         "//pkg/parser/ast",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/statistics/handle/usage/indexusage",

@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -440,8 +440,8 @@ func (h coprHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 type evalContext struct {
 	colIDs      map[int64]int
 	columnInfos []*tipb.ColumnInfo
-	fieldTps    []*types.FieldType
-	sctx        sessionctx.Context
+	fieldTps []*types.FieldType
+	sctx     sessionapi.Context
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
@@ -470,7 +470,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 }
 
 // flagsAndTzToSessionContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
-func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
+func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionapi.Context {
 	sctx := mock.NewContextDeprecated()
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -58,7 +58,7 @@ func NewStatsReadWriter(statsHandler statstypes.StatsHandle) statstypes.StatsRea
 
 // ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
 func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		return errors.Trace(ChangeGlobalStatsID(util.StatsCtx, sctx, from, to))
 	}, util.FlagWrapTxn)
 }
@@ -73,7 +73,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 		}
 	}()
 
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, physicalID)
 		if err != nil {
 			return errors.Trace(err)
@@ -112,7 +112,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 
 	// Update stats meta to avoid other nodes missing the delta update.
 	statsVer := uint64(0)
-	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
 		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
 			if val.(bool) {
@@ -144,7 +144,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	var statsVer uint64
 	start := time.Now()
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		statsVer, err = SaveAnalyzeResultToStorage(sctx, results, analyzeSnapshot)
 		return err
 	}, util.FlagWrapTxn)
@@ -173,7 +173,7 @@ func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.Analyze
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		count, modifyCount, _, err = StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 		return err
 	}, util.FlagWrapTxn)
@@ -182,7 +182,7 @@ func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, mo
 
 // TableStatsFromStorage loads table stats info from storage.
 func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		var ok bool
 		statsTbl, ok = s.statsHandler.Get(physicalID)
 		if !ok {
@@ -211,7 +211,7 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 ) (err error) {
 	var statsVer uint64
 	start := time.Now()
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		statsVer, err = SaveColOrIdxStatsToStorage(sctx, tableID,
 			count, modifyCount, isIndex, hg, cms, topN, statsVersion, updateAnalyzeTime)
 		return err
@@ -239,7 +239,7 @@ func (s *statsReadWriter) SaveMetaToStorage(
 ) (err error) {
 	intest.Assert(len(metaUpdates) > 0, "meta updates is empty")
 	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		statsVer, err = SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
 		return err
 	}, util.FlagWrapTxn)
@@ -256,7 +256,7 @@ func (s *statsReadWriter) SaveMetaToStorage(
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		statsVer, err = InsertExtendedStats(sctx, s.statsHandler, statsName, colIDs, tp, tableID, ifNotExists)
 		return err
 	}, util.FlagWrapTxn)
@@ -269,7 +269,7 @@ func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
 	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		statsVer, err = MarkExtendedStatsDeleted(sctx, s.statsHandler, statsName, tableID, ifExists)
 		return err
 	}, util.FlagWrapTxn)
@@ -282,7 +282,7 @@ func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int
 // SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
 func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
 	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		statsVer, err = SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
 		return err
 	}, util.FlagWrapTxn)
@@ -309,7 +309,7 @@ func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, pa
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 		return LoadNeededHistograms(sctx, is, s.statsHandler, loadFMSketch)
 	}, util.FlagWrapTxn)
@@ -318,7 +318,7 @@ func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err er
 
 // ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 func (s *statsReadWriter) ReloadExtendedStatistics() error {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		tables := make([]*statistics.Table, 0, s.statsHandler.Len())
 		for _, tbl := range s.statsHandler.Values() {
 			t, err := ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
@@ -339,7 +339,7 @@ func (s *statsReadWriter) DumpStatsToJSON(dbName string, tableInfo *model.TableI
 	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*statsutil.JSONTable, error) {
 	var snapshot uint64
 	if historyStatsExec != nil {
-		sctx := historyStatsExec.(sessionctx.Context)
+		sctx := historyStatsExec.(sessionapi.Context)
 		snapshot = sctx.GetSessionVars().SnapshotTS
 	}
 	return s.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
@@ -522,7 +522,7 @@ func (s *statsReadWriter) getTableHistoricalStatsToJSONWithFallback(
 }
 
 func (s *statsReadWriter) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *statsutil.JSONTable, exist bool, err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		jt, exist, err = TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
 		return err
 	}, util.FlagWrapTxn)
@@ -536,7 +536,7 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 		return nil, err
 	}
 	var jsonTbl *statsutil.JSONTable
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
 		if err != nil {
 			return err
@@ -715,7 +715,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 
 // SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
 func (s *statsReadWriter) SaveColumnStatsUsageToStorage(physicalID int64, predicateColumns []*statsutil.JSONPredicateColumn) error {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionapi.Context) error {
 		colStatsUsage := make(map[model.TableItemID]statstypes.ColStatsTimeInfo, len(predicateColumns))
 		for _, col := range predicateColumns {
 			if col == nil {

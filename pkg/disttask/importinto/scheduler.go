@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -183,7 +183,7 @@ func (sch *importScheduler) Init() (err error) {
 	}
 
 	if task.Keyspace != tidb.GetGlobalKeyspaceName() {
-		if err = sch.BaseScheduler.WithNewSession(func(se sessionctx.Context) error {
+		if err = sch.BaseScheduler.WithNewSession(func(se sessionapi.Context) error {
 			var err2 error
 			sch.taskKSSessPool, err2 = se.GetSQLServer().GetKSSessPool(task.Keyspace)
 			return err2
@@ -532,7 +532,7 @@ func (sch *importScheduler) startJob(ctx context.Context, logger *zap.Logger, ta
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err = handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionapi.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.StartJob(ctx, exec, taskMeta.JobID, jobStep)
 			})
@@ -553,7 +553,7 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionapi.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
 			})
@@ -574,7 +574,7 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionapi.Context) error {
 				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, int64(taskMeta.Result.LoadedRowCnt)); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
@@ -597,7 +597,7 @@ func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionapi.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 			})
@@ -617,7 +617,7 @@ func (sch *importScheduler) cancelJob(ctx context.Context, task *proto.Task,
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+			return true, taskManager.WithNewSession(func(se sessionapi.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.CancelJob(ctx, exec, meta.JobID)
 			})

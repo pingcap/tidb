@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -142,7 +142,7 @@ type planInfo struct {
 
 // LoadDataWorker does a LOAD DATA job.
 type LoadDataWorker struct {
-	UserSctx sessionctx.Context
+	UserSctx sessionapi.Context
 
 	controller *importer.LoadDataController
 	planInfo   planInfo
@@ -163,7 +163,7 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
 func NewLoadDataWorker(
-	userSctx sessionctx.Context,
+	userSctx sessionapi.Context,
 	plan *plannercore.LoadData,
 	tbl table.Table,
 ) (w *LoadDataWorker, err error) {

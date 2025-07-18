@@ -9,7 +9,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/statistics",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",

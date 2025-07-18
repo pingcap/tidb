@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -248,7 +249,7 @@ func TestBRIECreateDatabase(t *testing.T) {
 	tk.MustExec("use db_2")
 }
 
-func mockTableInfo(t *testing.T, sctx sessionctx.Context, createSQL string) *model.TableInfo {
+func mockTableInfo(t *testing.T, sctx sessionapi.Context, createSQL string) *model.TableInfo {
 	node, err := parser.New().ParseOneStmt(createSQL, "", "")
 	require.NoError(t, err)
 	info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)

@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -68,8 +68,8 @@ type PlanReplayerDumpInfo struct {
 	StartTS           uint64
 	Path              string
 	File              *os.File
-	FileName          string
-	ctx               sessionctx.Context
+	FileName string
+	ctx      sessionapi.Context
 }
 
 // Next implements the Executor Next interface.
@@ -231,7 +231,7 @@ type PlanReplayerLoadExec struct {
 // PlanReplayerLoadInfo contains file path and session context.
 type PlanReplayerLoadInfo struct {
 	Path string
-	Ctx  sessionctx.Context
+	Ctx  sessionapi.Context
 }
 
 type planReplayerDumpKeyType int
@@ -267,7 +267,7 @@ func (e *PlanReplayerLoadExec) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
+func loadSetTiFlashReplica(ctx sessionapi.Context, z *zip.Reader) error {
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, domain.PlanReplayerTiFlashReplicasFile) == 0 {
 			v, err := zipFile.Open()
@@ -305,7 +305,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
+func loadAllBindings(ctx sessionapi.Context, z *zip.Reader) error {
 	for _, f := range z.File {
 		if strings.Compare(f.Name, domain.PlanReplayerSessionBindingFile) == 0 {
 			err := loadBindings(ctx, f, true)
@@ -322,7 +322,7 @@ func loadAllBindings(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
+func loadBindings(ctx sessionapi.Context, f *zip.File, isSession bool) error {
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -364,7 +364,7 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 	return nil
 }
 
-func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
+func loadVariables(ctx sessionapi.Context, z *zip.Reader) error {
 	unLoadVars := make([]string, 0)
 	for _, zipFile := range z.File {
 		if strings.Compare(zipFile.Name, domain.PlanReplayerVariablesFile) == 0 {
@@ -409,7 +409,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 }
 
 // createSchemaAndItems creates schema and tables or views
-func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
+func createSchemaAndItems(ctx sessionapi.Context, f *zip.File) error {
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -444,7 +444,7 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	return nil
 }
 
-func loadStats(ctx sessionctx.Context, f *zip.File) error {
+func loadStats(ctx sessionapi.Context, f *zip.File) error {
 	jsonTbl := &util.JSONTable{}
 	r, err := f.Open()
 	if err != nil {

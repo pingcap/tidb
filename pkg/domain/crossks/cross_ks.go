@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
@@ -120,11 +120,11 @@ func (m *Manager) GetOrCreate(
 		sessPool: util.NewSessionPool(
 			crossKSSessPoolSize, ksSessFactoryGetter(ks),
 			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
+				_, ok := r.(sessionapi.Context)
 				intest.Assert(ok)
 			},
 			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
+				sctx, ok := r.(sessionapi.Context)
 				intest.Assert(ok)
 				intest.AssertFunc(func() bool {
 					txn, _ := sctx.Txn(false)

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -37,7 +37,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int, c int,d int,key ib (b),key ic (c))")
 	tk.MustExec("SET session tidb_enable_index_merge = ON;")
@@ -114,7 +114,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	tk.MustExec("use test")
 	tk.MustExec("create table customer2(c_id bigint);")
 	tk.MustExec("create table orders2(o_id bigint, c_id bigint);")
@@ -176,7 +176,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	p := parser.New()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(it int);")
 	sql := "select * from t"

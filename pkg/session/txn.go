@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -281,7 +281,7 @@ func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.txnFuture = future
 }
 
-func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Context) error {
+func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionapi.Context) error {
 	if txn.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -594,7 +594,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 }
 
 // Wait converts pending txn to valid
-func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionapi.Context) (kv.Transaction, error) {
 	if !txn.validOrPending() {
 		return txn, errors.AddStack(kv.ErrInvalidTxn)
 	}

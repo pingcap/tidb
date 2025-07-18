@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -205,7 +205,7 @@ type mockResponse struct {
 	count int
 	total int
 	batch int
-	ctx   sessionctx.Context
+	ctx   sessionapi.Context
 	sync.Mutex
 }
 
@@ -296,7 +296,7 @@ func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 // RespTime implements kv.ResultSubset interface.
 func (r *mockResultSubset) RespTime() time.Duration { return 0 }
 
-func newMockSessionContext() sessionctx.Context {
+func newMockSessionContext() sessionapi.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
@@ -314,7 +314,7 @@ func newMockSessionContext() sessionctx.Context {
 	return ctx
 }
 
-func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Context) (*selectResult, []*types.FieldType) {
+func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionapi.Context) (*selectResult, []*types.FieldType) {
 	request, _ := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -383,7 +383,7 @@ func testChunkSize(t *testing.T, response SelectResult, colTypes []*types.FieldT
 	require.Equal(t, 32, chk.NumRows())
 }
 
-func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx sessionctx.Context) (*selectResult, []*types.FieldType) {
+func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx sessionapi.Context) (*selectResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).

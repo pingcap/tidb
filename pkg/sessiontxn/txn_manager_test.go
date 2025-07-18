@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -55,14 +55,14 @@ func TestEnterNewTxn(t *testing.T) {
 		name    string
 		prepare func(t *testing.T)
 		request *sessiontxn.EnterNewTxnRequest
-		check   func(t *testing.T, sctx sessionctx.Context)
+		check   func(t *testing.T, sctx sessionapi.Context)
 	}{
 		{
 			name: "EnterNewTxnDefault",
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnDefault,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				txn := checkBasicActiveTxn(t, sctx)
 				checkInfoSchemaVersion(t, sctx, domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion())
 
@@ -83,7 +83,7 @@ func TestEnterNewTxn(t *testing.T) {
 			prepare: func(t *testing.T) {
 				tk.MustExec("set @@autocommit=0")
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				txn := checkBasicActiveTxn(t, sctx)
 				checkInfoSchemaVersion(t, sctx, domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion())
 
@@ -101,7 +101,7 @@ func TestEnterNewTxn(t *testing.T) {
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnWithBeginStmt,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnWithBeginStmt(t, sctx, false, true)
 			},
 		},
@@ -114,7 +114,7 @@ func TestEnterNewTxn(t *testing.T) {
 				Type:    sessiontxn.EnterNewTxnWithBeginStmt,
 				TxnMode: ast.Pessimistic,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnWithBeginStmt(t, sctx, true, true)
 			},
 		},
@@ -127,7 +127,7 @@ func TestEnterNewTxn(t *testing.T) {
 				Type:    sessiontxn.EnterNewTxnWithBeginStmt,
 				TxnMode: ast.Optimistic,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnWithBeginStmt(t, sctx, false, true)
 			},
 		},
@@ -140,7 +140,7 @@ func TestEnterNewTxn(t *testing.T) {
 				Type:    sessiontxn.EnterNewTxnWithBeginStmt,
 				TxnMode: ast.Pessimistic,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnWithBeginStmt(t, sctx, true, true)
 			},
 		},
@@ -150,7 +150,7 @@ func TestEnterNewTxn(t *testing.T) {
 				Type:                  sessiontxn.EnterNewTxnWithBeginStmt,
 				CausalConsistencyOnly: true,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnWithBeginStmt(t, sctx, false, false)
 			},
 		},
@@ -167,7 +167,7 @@ func TestEnterNewTxn(t *testing.T) {
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnWithBeginStmt,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnWithBeginStmt(t, sctx, false, true)
 			},
 		},
@@ -177,7 +177,7 @@ func TestEnterNewTxn(t *testing.T) {
 				Type:        sessiontxn.EnterNewTxnWithBeginStmt,
 				StaleReadTS: stalenessTS,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				txn := checkBasicActiveTxn(t, sctx)
 				require.Equal(t, stalenessTS, txn.StartTS())
 				is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
@@ -196,7 +196,7 @@ func TestEnterNewTxn(t *testing.T) {
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnBeforeStmt,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnBeforeStmt(t, sctx)
 				checkStmtTxnAfterActive(t, sctx)
 				require.True(t, sctx.GetSessionVars().TxnCtx.CouldRetry)
@@ -211,7 +211,7 @@ func TestEnterNewTxn(t *testing.T) {
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnBeforeStmt,
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkTxnBeforeStmt(t, sctx)
 				checkStmtTxnAfterActive(t, sctx)
 				require.False(t, sctx.GetSessionVars().TxnCtx.CouldRetry)
@@ -230,7 +230,7 @@ func TestEnterNewTxn(t *testing.T) {
 				Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
 				Provider: staleread.NewStalenessTxnContextProvider(tk.Session(), stalenessTS, nil),
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				checkNonActiveStalenessTxn(t, sctx, stalenessTS, is1)
 			},
 		},
@@ -298,7 +298,7 @@ func TestGetSnapshot(t *testing.T) {
 	cases := []struct {
 		isolation string
 		prepare   func(t *testing.T)
-		check     func(t *testing.T, sctx sessionctx.Context)
+		check     func(t *testing.T, sctx sessionapi.Context)
 	}{
 		{
 			isolation: "Pessimistic Repeatable Read",
@@ -306,7 +306,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustExec("set @@tx_isolation='REPEATABLE-READ'")
 				tk.MustExec("begin pessimistic")
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
 				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
@@ -336,7 +336,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
 				tk.MustExec("begin pessimistic")
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
 				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
@@ -365,7 +365,7 @@ func TestGetSnapshot(t *testing.T) {
 			prepare: func(t *testing.T) {
 				tk.MustExec("begin optimistic")
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
 				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
@@ -396,7 +396,7 @@ func TestGetSnapshot(t *testing.T) {
 				tk.MustExec("set tx_isolation = 'SERIALIZABLE'")
 				tk.MustExec("begin pessimistic")
 			},
-			check: func(t *testing.T, sctx sessionctx.Context) {
+			check: func(t *testing.T, sctx sessionapi.Context) {
 				ts, err := mgr.GetStmtReadTS()
 				require.NoError(t, err)
 				compareSnap := internal.GetSnapshotWithTS(sctx, ts, nil)
@@ -501,7 +501,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 	require.Equal(t, []byte("v1"), val)
 }
 
-func checkBasicActiveTxn(t *testing.T, sctx sessionctx.Context) kv.Transaction {
+func checkBasicActiveTxn(t *testing.T, sctx sessionapi.Context) kv.Transaction {
 	txn, err := sctx.Txn(false)
 	require.NoError(t, err)
 	require.True(t, txn.Valid())
@@ -514,7 +514,7 @@ func checkBasicActiveTxn(t *testing.T, sctx sessionctx.Context) kv.Transaction {
 	return txn
 }
 
-func checkTxnWithBeginStmt(t *testing.T, sctx sessionctx.Context, pessimistic, guaranteeLinear bool) {
+func checkTxnWithBeginStmt(t *testing.T, sctx sessionapi.Context, pessimistic, guaranteeLinear bool) {
 	txn := checkBasicActiveTxn(t, sctx)
 	checkInfoSchemaVersion(t, sctx, domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion())
 
@@ -527,7 +527,7 @@ func checkTxnWithBeginStmt(t *testing.T, sctx sessionctx.Context, pessimistic, g
 	require.Equal(t, guaranteeLinear, txn.GetOption(kv.GuaranteeLinearizability).(bool))
 }
 
-func checkTxnBeforeStmt(t *testing.T, sctx sessionctx.Context) {
+func checkTxnBeforeStmt(t *testing.T, sctx sessionapi.Context) {
 	txn, err := sctx.Txn(false)
 	require.NoError(t, err)
 	require.False(t, txn.Valid())
@@ -541,7 +541,7 @@ func checkTxnBeforeStmt(t *testing.T, sctx sessionctx.Context) {
 	require.False(t, sessVars.TxnCtx.IsStaleness)
 }
 
-func checkStmtTxnAfterActive(t *testing.T, sctx sessionctx.Context) {
+func checkStmtTxnAfterActive(t *testing.T, sctx sessionapi.Context) {
 	require.NoError(t, sessiontxn.GetTxnManager(sctx).AdviseWarmup())
 	_, err := sctx.Txn(true)
 	require.NoError(t, err)
@@ -553,7 +553,7 @@ func checkStmtTxnAfterActive(t *testing.T, sctx sessionctx.Context) {
 	require.False(t, sessVars.TxnCtx.IsStaleness)
 }
 
-func checkNonActiveStalenessTxn(t *testing.T, sctx sessionctx.Context, ts uint64, is infoschema.InfoSchema) {
+func checkNonActiveStalenessTxn(t *testing.T, sctx sessionapi.Context, ts uint64, is infoschema.InfoSchema) {
 	txn, err := sctx.Txn(false)
 	require.NoError(t, err)
 	require.False(t, txn.Valid())
@@ -566,7 +566,7 @@ func checkNonActiveStalenessTxn(t *testing.T, sctx sessionctx.Context, ts uint64
 	require.Equal(t, ts, readTS)
 }
 
-func checkInfoSchemaVersion(t *testing.T, sctx sessionctx.Context, ver int64) {
+func checkInfoSchemaVersion(t *testing.T, sctx sessionapi.Context, ver int64) {
 	is1, ok := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().(*infoschema.SessionExtendedInfoSchema)
 	require.True(t, ok)
 

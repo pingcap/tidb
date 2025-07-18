@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -87,7 +87,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
-func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
+func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionapi.Context, isPrepStmt bool,
 	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
@@ -255,7 +255,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
-func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
+func NewPlanCacheKey(sctx sessionapi.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
 	binding, ignored := bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 	if ignored {
 		return "", binding, false, "ignore plan cache by binding", nil
@@ -526,7 +526,7 @@ var planCacheHasherPool = sync.Pool{
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	stmt *PlanCacheStmt,
 	cacheKey string,
 	binding string,
@@ -651,7 +651,7 @@ type PlanCacheStmt struct {
 	SQLDigest           *parser.Digest
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
-	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
+	SnapshotTSEvaluator func(context.Context, sessionapi.Context) (uint64, error)
 
 	BindingInfo bindinfo.BindingMatchInfo
 
@@ -804,7 +804,7 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
-func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
+func parseParamTypes(sctx sessionapi.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
 	ectx := sctx.GetExprCtx().GetEvalCtx()
 	paramTypes = make([]*types.FieldType, 0, len(params))
 	for _, param := range params {

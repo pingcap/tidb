@@ -14,7 +14,7 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",

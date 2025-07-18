@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -30,14 +30,14 @@ import (
 
 // InitMeta insert the manager information into dist_framework_meta.
 func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string) error {
-	return mgr.WithNewSession(func(se sessionctx.Context) error {
+	return mgr.WithNewSession(func(se sessionapi.Context) error {
 		return mgr.InitMetaSession(ctx, se, tidbID, role)
 	})
 }
 
 // InitMetaSession insert the manager information into dist_framework_meta.
 // if the record exists, update the cpu_count and role.
-func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
+func (*TaskManager) InitMetaSession(ctx context.Context, se sessionapi.Context, execID string, role string) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+	return mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
 		deleteSQL := new(strings.Builder)
 		if err := sqlescape.FormatSQL(deleteSQL, "delete from mysql.dist_framework_meta where host in("); err != nil {
 			return err
@@ -100,7 +100,7 @@ func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, e
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nodes, err
 	}
-	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+	err := mgr.WithNewSession(func(se sessionapi.Context) error {
 		var err2 error
 		nodes, err2 = mgr.getAllNodesWithSession(ctx, se)
 		return err2
@@ -108,7 +108,7 @@ func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, e
 	return nodes, err
 }
 
-func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
+func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionapi.Context) ([]proto.ManagedNode, error) {
 	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		select host, role, cpu_count
 		from mysql.dist_framework_meta
@@ -161,7 +161,7 @@ func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int
 // GetCPUCountOfNode gets the cpu count of node.
 func (mgr *TaskManager) GetCPUCountOfNode(ctx context.Context) (int, error) {
 	var cnt int
-	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+	err := mgr.WithNewSession(func(se sessionapi.Context) error {
 		var err2 error
 		cnt, err2 = mgr.getCPUCountOfNode(ctx, se)
 		return err2
@@ -171,7 +171,7 @@ func (mgr *TaskManager) GetCPUCountOfNode(ctx context.Context) (int, error) {
 
 // getCPUCountOfNode gets the cpu count of managed node.
 // returns error when there's no node or no node has valid cpu count.
-func (mgr *TaskManager) getCPUCountOfNode(ctx context.Context, se sessionctx.Context) (int, error) {
+func (mgr *TaskManager) getCPUCountOfNode(ctx context.Context, se sessionapi.Context) (int, error) {
 	nodes, err := mgr.getAllNodesWithSession(ctx, se)
 	if err != nil {
 		return 0, err

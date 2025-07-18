@@ -16,7 +16,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/server",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "@com_github_pingcap_failpoint//:failpoint",

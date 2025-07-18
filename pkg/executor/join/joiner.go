@@ -17,7 +17,7 @@ package join
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -136,7 +136,7 @@ func JoinerType(j Joiner) logicalop.JoinType {
 }
 
 // NewJoiner create a joiner
-func NewJoiner(ctx sessionctx.Context, joinType logicalop.JoinType,
+func NewJoiner(ctx sessionapi.Context, joinType logicalop.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType, childrenUsed [][]int, isNA bool) Joiner {
 	base := baseJoiner{
@@ -216,8 +216,8 @@ const (
 )
 
 type baseJoiner struct {
-	ctx          sessionctx.Context
-	conditions   []expression.Expression
+	ctx        sessionapi.Context
+	conditions []expression.Expression
 	defaultInner chunk.Row
 	outerIsRight bool
 	chk          *chunk.Chunk

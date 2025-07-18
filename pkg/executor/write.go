@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -77,12 +77,12 @@ var (
  *  3. err (error): error in the update.
  */
 func updateRecord(
-	ctx context.Context, sctx sessionctx.Context,
+	ctx context.Context, sctx sessionapi.Context,
 	h kv.Handle, oldData, newData []types.Datum,
 	offset int,
 	assignments []*expression.Assignment,
 	evalBuffer chunk.MutRow,
-	errorHandler func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error,
+	errorHandler func(sctx sessionapi.Context, assign *expression.Assignment, val *types.Datum, err error) error,
 	modified []bool,
 	t table.Table,
 	onDup bool,
@@ -353,7 +353,7 @@ const (
 )
 
 func addUnchangedKeysForLockByRow(
-	sctx sessionctx.Context, t table.Table, h kv.Handle, row []types.Datum, keySet int,
+	sctx sessionapi.Context, t table.Table, h kv.Handle, row []types.Datum, keySet int,
 ) (int, error) {
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	if !txnCtx.IsPessimistic || keySet == 0 {
@@ -406,7 +406,7 @@ func addUnchangedKeysForLockByRow(
 }
 
 func rebaseAutoRandomValue(
-	ctx context.Context, sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column,
+	ctx context.Context, sctx sessionapi.Context, t table.Table, newData *types.Datum, col *table.Column,
 ) error {
 	tableInfo := t.Meta()
 	if !tableInfo.ContainsAutoRandomBits() {
@@ -435,7 +435,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 
 // checkRowForExchangePartition is only used for ExchangePartition by non-partitionTable during write only state.
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
-func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
+func checkRowForExchangePartition(sctx sessionapi.Context, row []types.Datum, tbl *model.TableInfo) error {
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pt, tableFound := is.TableByID(context.Background(), tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -60,7 +60,7 @@ var CallOnStmtRetryCount stringutil.StringerStr = "callOnStmtRetryCount"
 var AssertLockErr stringutil.StringerStr = "assertLockError"
 
 // RecordAssert is used only for test
-func RecordAssert(sctx sessionctx.Context, name string, value any) {
+func RecordAssert(sctx sessionapi.Context, name string, value any) {
 	records, ok := sctx.Value(AssertRecordsKey).(map[string]any)
 	if !ok {
 		records = make(map[string]any)
@@ -70,7 +70,7 @@ func RecordAssert(sctx sessionctx.Context, name string, value any) {
 }
 
 // AssertTxnManagerInfoSchema is used only for test
-func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is any) {
+func AssertTxnManagerInfoSchema(sctx sessionapi.Context, is any) {
 	assertVersion := func(expected any) {
 		if expected == nil {
 			return
@@ -99,7 +99,7 @@ func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is any) {
 }
 
 // AssertTxnManagerReadTS is used only for test
-func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
+func AssertTxnManagerReadTS(sctx sessionapi.Context, expected uint64) {
 	actual, err := GetTxnManager(sctx).GetStmtReadTS()
 	if err != nil {
 		panic(err)
@@ -111,7 +111,7 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 }
 
 // AddAssertEntranceForLockError is used only for test
-func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
+func AddAssertEntranceForLockError(sctx sessionapi.Context, name string) {
 	records, ok := sctx.Value(AssertLockErr).(map[string]int)
 	if !ok {
 		records = make(map[string]int)
@@ -126,7 +126,7 @@ func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
 
 // TsoRequestCountInc is used only for test
 // When it is called, there is a tso cmd request.
-func TsoRequestCountInc(sctx sessionctx.Context) {
+func TsoRequestCountInc(sctx sessionapi.Context) {
 	count, ok := sctx.Value(TsoRequestCount).(uint64)
 	if !ok {
 		count = 0
@@ -137,7 +137,7 @@ func TsoRequestCountInc(sctx sessionctx.Context) {
 
 // TsoWaitCountInc is used only for test
 // When it is called, there is a waiting tso operation
-func TsoWaitCountInc(sctx sessionctx.Context) {
+func TsoWaitCountInc(sctx sessionapi.Context) {
 	count, ok := sctx.Value(TsoWaitCount).(uint64)
 	if !ok {
 		count = 0
@@ -147,7 +147,7 @@ func TsoWaitCountInc(sctx sessionctx.Context) {
 }
 
 // TsoUseConstantCountInc is used to test constant tso count
-func TsoUseConstantCountInc(sctx sessionctx.Context) {
+func TsoUseConstantCountInc(sctx sessionapi.Context) {
 	count, ok := sctx.Value(TsoUseConstantCount).(uint64)
 	if !ok {
 		count = 0
@@ -158,7 +158,7 @@ func TsoUseConstantCountInc(sctx sessionctx.Context) {
 
 // OnStmtRetryCountInc is used only for test.
 // When it is called, there is calling `(p *PessimisticRCTxnContextProvider) OnStmtRetry`.
-func OnStmtRetryCountInc(sctx sessionctx.Context) {
+func OnStmtRetryCountInc(sctx sessionapi.Context) {
 	count, ok := sctx.Value(CallOnStmtRetryCount).(int)
 	if !ok {
 		count = 0
@@ -168,7 +168,7 @@ func OnStmtRetryCountInc(sctx sessionctx.Context) {
 }
 
 // ExecTestHook is used only for test. It consumes hookKey in session wait do what it gets from it.
-func ExecTestHook(sctx sessionctx.Context, hookKey fmt.Stringer) {
+func ExecTestHook(sctx sessionapi.Context, hookKey fmt.Stringer) {
 	c := sctx.Value(hookKey)
 	if ch, ok := c.(chan func()); ok {
 		select {

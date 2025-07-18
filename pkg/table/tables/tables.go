@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -975,7 +975,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 }
 
 // RowWithCols is used to get the corresponding column datum values with the given handle.
-func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
+func RowWithCols(t table.Table, ctx sessionapi.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
 	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), h)
 	txn, err := ctx.Txn(true)
@@ -1246,7 +1246,7 @@ func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, val
 }
 
 // IterRecords iterates records in the table and calls fn.
-func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
+func IterRecords(t table.Table, ctx sessionapi.Context, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	txn, err := ctx.Txn(true)

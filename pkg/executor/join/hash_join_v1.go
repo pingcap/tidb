@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -1137,8 +1137,8 @@ func (w *BuildWorkerV1) BuildHashTableForList(buildSideResultCh <-chan *chunk.Ch
 type NestedLoopApplyExec struct {
 	exec.BaseExecutor
 
-	Sctx        sessionctx.Context
-	innerRows   []chunk.Row
+	Sctx      sessionapi.Context
+	innerRows []chunk.Row
 	cursor      int
 	InnerExec   exec.Executor
 	OuterExec   exec.Executor

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -46,12 +46,12 @@ var _ exprctx.ExprContext = &ExprContext{}
 
 // ExprContext implements `ExprContext`
 type ExprContext struct {
-	sctx sessionctx.Context
+	sctx sessionapi.Context
 	*EvalContext
 }
 
 // NewExprContext creates a new ExprContext.
-func NewExprContext(sctx sessionctx.Context) *ExprContext {
+func NewExprContext(sctx sessionapi.Context) *ExprContext {
 	return &ExprContext{
 		sctx:        sctx,
 		EvalContext: NewEvalContext(sctx),
@@ -152,12 +152,12 @@ func (ctx *ExprContext) IntoStatic() *exprstatic.ExprContext {
 
 // EvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type EvalContext struct {
-	sctx  sessionctx.Context
+	sctx  sessionapi.Context
 	props expropt.OptionalEvalPropProviders
 }
 
 // NewEvalContext creates a new EvalContext.
-func NewEvalContext(sctx sessionctx.Context) *EvalContext {
+func NewEvalContext(sctx sessionapi.Context) *EvalContext {
 	ctx := &EvalContext{sctx: sctx}
 	// set all optional properties
 	ctx.setOptionalProp(currentUserProp(sctx))
@@ -182,7 +182,7 @@ func (ctx *EvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {
 }
 
 // Sctx returns the innert session context
-func (ctx *EvalContext) Sctx() sessionctx.Context {
+func (ctx *EvalContext) Sctx() sessionapi.Context {
 	return ctx.sctx
 }
 
@@ -322,7 +322,7 @@ func (ctx *EvalContext) IntoStatic() *exprstatic.EvalContext {
 	return exprstatic.MakeEvalContextStatic(ctx)
 }
 
-func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
+func getStmtTimestamp(ctx sessionapi.Context) (time.Time, error) {
 	if ctx != nil {
 		staleTSO, err := ctx.GetSessionVars().StmtCtx.GetStaleTSO()
 		if staleTSO != 0 && err == nil {
@@ -352,14 +352,14 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	return time.Unix(int64(seconds), int64(fractionalSeconds*float64(time.Second))), nil
 }
 
-func currentUserProp(sctx sessionctx.Context) exprctx.OptionalEvalPropProvider {
+func currentUserProp(sctx sessionapi.Context) exprctx.OptionalEvalPropProvider {
 	return expropt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
 		vars := sctx.GetSessionVars()
 		return vars.User, vars.ActiveRoles
 	})
 }
 
-func infoSchemaProp(sctx sessionctx.Context) expropt.InfoSchemaPropProvider {
+func infoSchemaProp(sctx sessionapi.Context) expropt.InfoSchemaPropProvider {
 	return func(isDomain bool) infoschema.MetaOnlyInfoSchema {
 		if isDomain {
 			return sctx.GetLatestInfoSchema()
@@ -368,14 +368,14 @@ func infoSchemaProp(sctx sessionctx.Context) expropt.InfoSchemaPropProvider {
 	}
 }
 
-func sqlExecutorProp(sctx sessionctx.Context) expropt.SQLExecutorPropProvider {
+func sqlExecutorProp(sctx sessionapi.Context) expropt.SQLExecutorPropProvider {
 	return func() (expropt.SQLExecutor, error) {
 		return sctx.GetRestrictedSQLExecutor(), nil
 	}
 }
 
 type sequenceOperator struct {
-	sctx sessionctx.Context
+	sctx sessionapi.Context
 	db   string
 	name string
 	tbl  util.SequenceTable
@@ -393,7 +393,7 @@ func (s *sequenceOperator) SetSequenceVal(newVal int64) (int64, bool, error) {
 	return s.tbl.SetSequenceVal(s.sctx, newVal, s.db, s.name)
 }
 
-func sequenceOperatorProp(sctx sessionctx.Context) expropt.SequenceOperatorProvider {
+func sequenceOperatorProp(sctx sessionapi.Context) expropt.SequenceOperatorProvider {
 	return func(db, name string) (expropt.SequenceOperator, error) {
 		sequence, err := util.GetSequenceByName(sctx.GetInfoSchema(), ast.NewCIStr(db), ast.NewCIStr(name))
 		if err != nil {

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -47,7 +47,7 @@ const (
 )
 
 // TODO: maybe we can cache it.
-func getTiFlashStores(ctx sessionctx.Context) ([]infoschema.ServerInfo, error) {
+func getTiFlashStores(ctx sessionapi.Context) ([]infoschema.ServerInfo, error) {
 	// TODO: Don't use infoschema, to preserve StoreID information.
 	aliveTiFlashStores := make([]infoschema.ServerInfo, 0)
 	stores, err := infoschema.GetStoreServerInfo(ctx.GetStore())

@@ -28,7 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -68,7 +68,7 @@ type PrepareExec struct {
 }
 
 // NewPrepareExec creates a new PrepareExec.
-func NewPrepareExec(ctx sessionctx.Context, sqlTxt string) *PrepareExec {
+func NewPrepareExec(ctx sessionapi.Context, sqlTxt string) *PrepareExec {
 	base := exec.NewBaseExecutor(ctx, nil, 0)
 	base.SetInitCap(chunk.ZeroCapacity)
 	return &PrepareExec{

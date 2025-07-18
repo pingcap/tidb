@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -48,7 +48,7 @@ func NewStatsGlobal(statsHandler statstypes.StatsHandle) statstypes.StatsGlobal 
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionapi.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
@@ -94,7 +94,7 @@ func newGlobalStats(histCount int) *GlobalStats {
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 func MergePartitionStats2GlobalStats(
-	sc sessionctx.Context,
+	sc sessionapi.Context,
 	statsHandle statstypes.StatsHandle,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
@@ -126,7 +126,7 @@ func MergePartitionStats2GlobalStats(
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func MergePartitionStats2GlobalStatsByTableID(
-	sc sessionctx.Context,
+	sc sessionapi.Context,
 	statsHandle statstypes.StatsHandle,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
@@ -166,7 +166,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 // blockingMergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 // It is the old algorithm to merge partition-level stats to global-level stats. It will happen the OOM. because it will load all the partition-level stats into memory.
 func blockingMergePartitionStats2GlobalStats(
-	sc sessionctx.Context,
+	sc sessionapi.Context,
 	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,

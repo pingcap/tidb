@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
@@ -95,8 +95,8 @@ type TaskManager interface {
 	// GetAllSubtaskSummaryByStep gets all subtask summaries by given states for one step.
 	GetAllSubtaskSummaryByStep(ctx context.Context, taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error)
 
-	WithNewSession(fn func(se sessionctx.Context) error) error
-	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
+	WithNewSession(fn func(se sessionapi.Context) error) error
+	WithNewTxn(ctx context.Context, fn func(se sessionapi.Context) error) error
 }
 
 // Extension is used to control the process operations for each task.

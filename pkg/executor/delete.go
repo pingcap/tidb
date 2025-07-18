@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -268,7 +268,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
+func (e *DeleteExec) removeRow(ctx sessionapi.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -287,7 +287,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	return nil
 }
 
-func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, ignore bool) error {
+func onRemoveRowForFK(ctx sessionapi.Context, data []types.Datum, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, ignore bool) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	if !ignore {
 		for _, fkc := range fkChecks {

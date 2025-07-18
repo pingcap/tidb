@@ -26,8 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -43,7 +42,7 @@ func isContextDone(ctx context.Context) bool {
 }
 
 // SyncUpgradeState syncs upgrade state to etcd.
-func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
+func SyncUpgradeState(s sessionapi.Context, timeout time.Duration) error {
 	ctx, cancelFunc := context.WithTimeout(context.Background(), timeout)
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
@@ -79,7 +78,7 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 }
 
 // SyncNormalRunning syncs normal state to etcd.
-func SyncNormalRunning(s sessionctx.Context) error {
+func SyncNormalRunning(s sessionapi.Context) error {
 	bgCtx := context.Background()
 	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -120,7 +119,7 @@ func SyncNormalRunning(s sessionctx.Context) error {
 }
 
 // IsUpgradingClusterState checks whether the global state is upgrading.
-func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
+func IsUpgradingClusterState(s sessionapi.Context) (bool, error) {
 	dom := domain.GetDomain(s)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelFunc()
@@ -132,7 +131,7 @@ func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
 	return stateInfo.State == serverstate.StateUpgrading, nil
 }
 
-func printClusterState(s sessiontypes.Session, ver int64) {
+func printClusterState(s sessionapi.Session, ver int64) {
 	// After SupportUpgradeHTTPOpVer version, the upgrade by paused user DDL can be notified through the HTTP API.
 	// We check the global state see if we are upgrading by paused the user DDL.
 	if ver >= SupportUpgradeHTTPOpVer {
@@ -140,7 +139,7 @@ func printClusterState(s sessiontypes.Session, ver int64) {
 	}
 }
 
-func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64, timeout time.Duration) {
+func isUpgradingClusterStateWithRetry(s sessionapi.Context, oldVer, newVer int64, timeout time.Duration) {
 	now := time.Now()
 	interval := 200 * time.Millisecond
 	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))

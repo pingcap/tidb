@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -54,8 +54,8 @@ const (
 )
 
 type mppExecBuilder struct {
-	sctx       sessionctx.Context
-	dbReader   *dbreader.DBReader
+	sctx     sessionapi.Context
+	dbReader *dbreader.DBReader
 	mppCtx     *MPPCtx
 	dagReq     *tipb.DAGRequest
 	dagCtx     *dagContext

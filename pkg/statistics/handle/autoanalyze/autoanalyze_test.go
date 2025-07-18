@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -48,7 +48,7 @@ import (
 )
 
 // WrapAsSCtx wraps the MockRestrictedSQLExecutor into sessionctx.Context.
-func WrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionctx.Context {
+func WrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionapi.Context {
 	sctx := mockexec.NewContext()
 	sctx.SetValue(mock.RestrictedSQLExecutorKey{}, exec)
 	return sctx
@@ -631,7 +631,7 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t,
 		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
-			se.(sessionctx.Context),
+			se.(sessionapi.Context),
 			dom.StatsHandle(),
 			dom.SysProcTracker(),
 			0.6,

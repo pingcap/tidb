@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	parserutil "github.com/pingcap/tidb/pkg/util/parser"
@@ -187,7 +187,7 @@ func Params2Expressions(params []types.Datum) []expression.Expression {
 }
 
 // ParseParameterizedSQL parse this parameterized SQL with the specified sctx.
-func ParseParameterizedSQL(sctx sessionctx.Context, paramSQL string) (ast.StmtNode, error) {
+func ParseParameterizedSQL(sctx sessionapi.Context, paramSQL string) (ast.StmtNode, error) {
 	p := parserutil.GetParser()
 	defer func() {
 		parserutil.DestroyParser(p)

@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/applycache",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/util/chunk",
         "//pkg/util/kvcache",
         "//pkg/util/mathutil",

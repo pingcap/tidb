@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -409,7 +409,7 @@ var inspectionSummaryRules = map[string][]string{
 	},
 }
 
-func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipInspection {
 		return nil, nil
 	}

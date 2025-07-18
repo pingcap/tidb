@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -204,7 +204,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock(ctx context.Context) error {
 // fetchAllTablesAndBuildAnalysisJobs builds analysis jobs for all eligible tables and partitions.
 // Note: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.Context) error {
-	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionapi.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
@@ -368,7 +368,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 
-	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionapi.Context) error {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -417,7 +417,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 
 // Note: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) processTableStats(
-	sctx sessionctx.Context,
+	sctx sessionapi.Context,
 	stats *statistics.Table,
 	parameters map[string]string,
 	lockedTables map[int64]struct{},
@@ -618,7 +618,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 
-	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionapi.Context) error {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -654,7 +654,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 
-	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionapi.Context) error {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)

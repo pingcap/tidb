@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -158,7 +158,7 @@ func TestPointGetId(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	pointGetQuery := "select c2 from t where c1 = 1"
 	for range 2 {
-		ctx := tk.Session().(sessionctx.Context)
+		ctx := tk.Session().(sessionapi.Context)
 		stmts, err := session.Parse(ctx, pointGetQuery)
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)

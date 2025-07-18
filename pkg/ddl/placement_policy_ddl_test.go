@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -42,7 +43,7 @@ func testPlacementPolicyInfo(t *testing.T, store kv.Storage, name string, settin
 	return policy
 }
 
-func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, policyInfo *model.PolicyInfo) *model.Job {
+func testCreatePlacementPolicy(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest, policyInfo *model.PolicyInfo) *model.Job {
 	job := &model.Job{
 		Version:    model.GetJobVerInUse(),
 		SchemaName: policyInfo.Name.L,

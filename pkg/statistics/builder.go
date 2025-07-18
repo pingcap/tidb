@@ -19,7 +19,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
@@ -118,7 +118,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 // count: represents the row count for the column.
 // ndv: represents the number of distinct values for the column.
 // nullCount: represents the number of null values for the column.
-func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
+func BuildColumnHist(ctx sessionapi.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType, count int64, ndv int64, nullCount int64) (*Histogram, error) {
 	if ndv > count {
 		ndv = count
 	}
@@ -249,13 +249,13 @@ func calcCorrelation(sampleNum int64, corrXYSum float64) float64 {
 }
 
 // BuildColumn builds histogram from samples for column.
-func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
+func BuildColumn(ctx sessionapi.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
 	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
 func BuildHistAndTopN(
-	ctx sessionctx.Context,
+	ctx sessionapi.Context,
 	numBuckets, numTopN int,
 	id int64,
 	collector *SampleCollector,

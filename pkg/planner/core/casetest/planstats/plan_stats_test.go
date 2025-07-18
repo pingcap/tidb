@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -48,7 +48,7 @@ func TestPlanStatsLoad(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
@@ -281,7 +281,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_stats_load_pseudo_timeout = %v", originalVal1))
 	}()
 
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	// since queue full, make sync-wait return as timeout as soon as possible

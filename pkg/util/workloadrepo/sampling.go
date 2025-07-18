@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -30,7 +30,7 @@ import (
 func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
-	sess := _sessctx.(sessionctx.Context)
+	sess := _sessctx.(sessionapi.Context)
 
 	if rt.insertStmt == "" {
 		if err := buildInsertQuery(ctx, sess, rt); err != nil {

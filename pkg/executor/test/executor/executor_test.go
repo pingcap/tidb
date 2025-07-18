@@ -55,7 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -2050,7 +2050,7 @@ func TestIsPointGet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql")
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	tests := map[string]bool{
 		"select * from help_topic where name='aaa'":         false,
 		"select 1 from help_topic where name='aaa'":         false,
@@ -2090,7 +2090,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key (c, a));")
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 
 	tests := map[string]bool{
 		"select 1 from t where a='x'":                   false,
@@ -2256,7 +2256,7 @@ func TestHistoryRead(t *testing.T) {
 	tk.MustExec("insert history_read values (2)")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
-	ctx := tk.Session().(sessionctx.Context)
+	ctx := tk.Session().(sessionapi.Context)
 	snapshotTS := ctx.GetSessionVars().SnapshotTS
 	require.Greater(t, snapshotTS, curVer1.Ver)
 	require.Less(t, snapshotTS, curVer2.Ver)

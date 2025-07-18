@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -305,14 +305,14 @@ func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, wo
 }
 
 type checkIndexWorker struct {
-	sctx       sessionctx.Context
-	dbName     string
+	sctx   sessionapi.Context
+	dbName string
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	e          *FastCheckTableExec
 }
 
-func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
+func (w *checkIndexWorker) initSessCtx(se sessionapi.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
 	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
 	originMemQuotaQuery := sessVars.MemQuotaQuery
@@ -508,7 +508,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		mod *= bucketSize
 	}
 
-	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
+	queryToRow := func(se sessionapi.Context, sql string) ([]chunk.Row, error) {
 		rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 		if err != nil {
 			return nil, err
@@ -697,7 +697,7 @@ type groupByChecksum struct {
 	count    int64
 }
 
-func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
+func getCheckSum(ctx context.Context, se sessionapi.Context, sql string) ([]groupByChecksum, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
 	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {

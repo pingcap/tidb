@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -376,7 +376,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	return nil
 }
 
-func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
+func recordHistoricalStats(sctx sessionapi.Context, tableID int64) error {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
@@ -545,8 +545,8 @@ type analyzeTask struct {
 }
 
 type baseAnalyzeExec struct {
-	ctx         sessionctx.Context
-	tableID     statistics.AnalyzeTableID
+	ctx     sessionapi.Context
+	tableID statistics.AnalyzeTableID
 	concurrency int
 	analyzePB   *tipb.AnalyzeReq
 	opts        map[ast.AnalyzeOptionType]uint64
@@ -555,7 +555,7 @@ type baseAnalyzeExec struct {
 }
 
 // AddNewAnalyzeJob records the new analyze job.
-func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+func AddNewAnalyzeJob(ctx sessionapi.Context, job *statistics.AnalyzeJob) {
 	if job == nil {
 		return
 	}

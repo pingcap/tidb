@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -36,7 +36,7 @@ var suppressAssertInTest = false
 
 // SessionContext provides a context for a session.
 type SessionContext interface {
-	sessionctx.Context
+	sessionapi.Context
 	// Close closes the session context.
 	Close()
 }
@@ -44,9 +44,9 @@ type SessionContext interface {
 // sessionOwner defines the interface for the owner of the session.
 type sessionOwner interface {
 	// onBecameOwner is a hook that will be called when it becomes the owner of the session.
-	onBecameOwner(sessionctx.Context) error
+	onBecameOwner(sessionapi.Context) error
 	// onResignOwner is a hook that will be called when it resigns the ownership of the session.
-	onResignOwner(sessionctx.Context) error
+	onResignOwner(sessionapi.Context) error
 }
 
 func resignOwnerAndCloseSctx(owner sessionOwner, sctx SessionContext) error {
@@ -66,9 +66,9 @@ func objectStr(obj any) string {
 // noopOwnerHook does nothing when the owner of the session is changed.
 type noopOwnerHook struct{}
 
-func (noopOwnerHook) onBecameOwner(sessionctx.Context) error { return nil }
+func (noopOwnerHook) onBecameOwner(sessionapi.Context) error { return nil }
 
-func (noopOwnerHook) onResignOwner(sessionctx.Context) error { return nil }
+func (noopOwnerHook) onResignOwner(sessionapi.Context) error { return nil }
 
 // `session` is a private struct, accessible only within the same package.
 // It encapsulates `SessionContext` and provides controlled access via dedicated methods.
@@ -513,7 +513,7 @@ func (s *Session) AvoidReuse() {
 }
 
 // WithSessionContext executes the input function with the session context.
-func (s *Session) WithSessionContext(fn func(sessionctx.Context) error) error {
+func (s *Session) WithSessionContext(fn func(sessionapi.Context) error) error {
 	intest.AssertNotNil(fn)
 	return s.internal.OwnerWithSctx(s, func(sctx SessionContext) error {
 		return fn(sctx)
@@ -592,12 +592,12 @@ func (s *Session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
 	return s
 }
 
-func (*Session) onBecameOwner(sctx sessionctx.Context) error {
+func (*Session) onBecameOwner(sctx sessionapi.Context) error {
 	infosync.StoreInternalSession(sctx)
 	return nil
 }
 
-func (*Session) onResignOwner(sctx sessionctx.Context) error {
+func (*Session) onResignOwner(sctx sessionapi.Context) error {
 	infosync.DeleteInternalSession(sctx)
 	return nil
 }

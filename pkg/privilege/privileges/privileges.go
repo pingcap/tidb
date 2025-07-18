@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -907,7 +907,7 @@ func (p *UserPrivileges) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, u
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
+func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionapi.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
@@ -930,7 +930,7 @@ func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionctx.Context
 }
 
 // ActiveRoles implements privilege.Manager ActiveRoles interface.
-func (p *UserPrivileges) ActiveRoles(ctx context.Context, sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
+func (p *UserPrivileges) ActiveRoles(ctx context.Context, sctx sessionapi.Context, roleList []*auth.RoleIdentity) (bool, string) {
 	if SkipWithGrant {
 		return true, ""
 	}

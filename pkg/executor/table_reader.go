@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -102,7 +102,7 @@ func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*inf
 	return nil, errors.New("GetDDLOwner in a context without DDL")
 }
 
-func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorContext {
+func newTableReaderExecutorContext(sctx sessionapi.Context) tableReaderExecutorContext {
 	// Explicitly get `ownerManager` out of the closure to show that the `tableReaderExecutorContext` itself doesn't
 	// depend on `sctx` directly.
 	// The context of some tests don't have `DDL`, so make it optional

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -215,7 +215,7 @@ func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas 
 	return memDeltas, nil
 }
 
-type multiArgsUpdateMemDeltaGens func(sessionctx.Context, *chunk.Chunk, []*types.FieldType, []*util.ByItems) (memDeltas []int64, err error)
+type multiArgsUpdateMemDeltaGens func(sessionapi.Context, *chunk.Chunk, []*types.FieldType, []*util.ByItems) (memDeltas []int64, err error)
 
 type aggMemTest struct {
 	aggTest            aggTest

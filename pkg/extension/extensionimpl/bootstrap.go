@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -82,7 +82,7 @@ func Bootstrap(ctx context.Context, do *domain.Domain) error {
 	}
 	defer pool.Put(r)
 
-	sctx, ok := r.(sessionctx.Context)
+	sctx, ok := r.(sessionapi.Context)
 	if !ok {
 		return errors.Errorf("type '%T' cannot be casted to 'sessionctx.Context'", sctx)
 	}

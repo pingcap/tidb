@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -73,7 +73,7 @@ type dummyRetriever struct {
 	dummyCloser
 }
 
-func (*dummyRetriever) retrieve(_ context.Context, _ sessionctx.Context) ([][]types.Datum, error) {
+func (*dummyRetriever) retrieve(_ context.Context, _ sessionapi.Context) ([][]types.Datum, error) {
 	return nil, nil
 }
 
@@ -87,7 +87,7 @@ type stmtSummaryRetriever struct {
 	rowsReader *rowsReader
 }
 
-func (e *stmtSummaryRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (e *stmtSummaryRetriever) retrieve(_ context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
 	if err := e.ensureRowsReader(sctx); err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (*stmtSummaryRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
-func (e *stmtSummaryRetriever) ensureRowsReader(sctx sessionctx.Context) error {
+func (e *stmtSummaryRetriever) ensureRowsReader(sctx sessionapi.Context) error {
 	if e.rowsReader != nil {
 		return nil
 	}
@@ -120,7 +120,7 @@ func (e *stmtSummaryRetriever) ensureRowsReader(sctx sessionctx.Context) error {
 	return err
 }
 
-func (e *stmtSummaryRetriever) initEvictedRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
+func (e *stmtSummaryRetriever) initEvictedRowsReader(sctx sessionapi.Context) (*rowsReader, error) {
 	if err := checkPrivilege(sctx); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (e *stmtSummaryRetriever) initEvictedRowsReader(sctx sessionctx.Context) (*
 	return newSimpleRowsReader(adjustColumns(rows, e.columns, e.table)), nil
 }
 
-func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
+func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionapi.Context) (*rowsReader, error) {
 	vars := sctx.GetSessionVars()
 	user := vars.User
 	tz := vars.StmtCtx.TimeZone()
@@ -182,7 +182,7 @@ type stmtSummaryRetrieverV2 struct {
 	rowsReader *rowsReader
 }
 
-func (r *stmtSummaryRetrieverV2) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+func (r *stmtSummaryRetrieverV2) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
 	if err := r.ensureRowsReader(ctx, sctx); err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (*stmtSummaryRetrieverV2) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
-func (r *stmtSummaryRetrieverV2) ensureRowsReader(ctx context.Context, sctx sessionctx.Context) error {
+func (r *stmtSummaryRetrieverV2) ensureRowsReader(ctx context.Context, sctx sessionapi.Context) error {
 	if r.rowsReader != nil {
 		return nil
 	}
@@ -215,7 +215,7 @@ func (r *stmtSummaryRetrieverV2) ensureRowsReader(ctx context.Context, sctx sess
 	return err
 }
 
-func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
+func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionapi.Context) (*rowsReader, error) {
 	if err := checkPrivilege(sctx); err != nil {
 		return nil, err
 	}
@@ -240,7 +240,7 @@ func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionctx.Context) 
 	return newSimpleRowsReader(adjustColumns(rows, r.columns, r.table)), nil
 }
 
-func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx sessionctx.Context) (*rowsReader, error) {
+func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx sessionapi.Context) (*rowsReader, error) {
 	vars := sctx.GetSessionVars()
 	user := vars.User
 	tz := vars.StmtCtx.TimeZone()
@@ -394,14 +394,14 @@ func isEvictedTable(originalTableName string) bool {
 	return false
 }
 
-func checkPrivilege(sctx sessionctx.Context) error {
+func checkPrivilege(sctx sessionapi.Context) error {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	return nil
 }
 
-func clusterTableInstanceAddr(sctx sessionctx.Context, originalTableName string) (string, error) {
+func clusterTableInstanceAddr(sctx sessionapi.Context, originalTableName string) (string, error) {
 	if isClusterTable(originalTableName) {
 		return infoschema.GetInstanceAddr(sctx)
 	}

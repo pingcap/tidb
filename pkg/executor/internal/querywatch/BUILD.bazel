@@ -14,7 +14,7 @@ go_library(
         "//pkg/planner/util",
         "//pkg/resourcegroup",
         "//pkg/resourcegroup/runaway",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/util/chunk",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",

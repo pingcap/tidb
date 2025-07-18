@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/ddl/notifier",
         "//pkg/kv",
-        "//pkg/sessionctx",
+        "//pkg/session/sessionapi",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/util",
     ],

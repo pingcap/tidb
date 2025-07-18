@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -145,7 +145,7 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	return ver, errors.Trace(err)
 }
 
-func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
+func checkAndCreateNewColumn(ctx sessionapi.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	err := checkUnsupportedColumnConstraint(specNewColumn, ti)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -191,7 +191,7 @@ func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 }
 
 // CreateNewColumn creates a new column according to the column information.
-func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
+func CreateNewColumn(ctx sessionapi.Context, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	// If new column is a generated column, do validation.
 	// NOTE: we do check whether the column refers other generated
 	// columns occurring later in a table, but we don't handle the col offset.
