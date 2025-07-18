@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/spf13/cobra"
 )
 
@@ -161,6 +162,7 @@ func Init(cmd *cobra.Command) (err error) {
 			return
 		}
 		log.ReplaceGlobals(lg, p)
+		memory.InitMemoryHook()
 
 		redactLog, e := cmd.Flags().GetBool(FlagRedactLog)
 		if e != nil {
