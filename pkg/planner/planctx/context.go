@@ -18,7 +18,7 @@ import (
 	"iter"
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-// Common represents the common API for plan context and session.
+// Common represents the common API for plan context and session context.
 // Not sure how to name this interface, so it is named `Common` for now.
 type Common interface {
 	contextutil.ValueStoreContext
@@ -40,14 +40,14 @@ type Common interface {
 	// If you want to get the infoschema of the current transaction in SQL layer,
 	// use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().
 	// If you want to get the latest infoschema use `GetLatestInfoSchema`
-	GetInfoSchema() isctx.MetaOnlyInfoSchema
+	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetLatestInfoSchema returns the latest information schema.
 	// except schema of physical schema objects, the information schema returned
 	// also includes the temporary table definitions stored in session.
-	GetLatestInfoSchema() isctx.MetaOnlyInfoSchema
+	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetLatestISWithoutSessExt is same as GetLatestInfoSchema, except that it
 	// does NOT include the temporary table definitions stored in session.
-	GetLatestISWithoutSessExt() isctx.MetaOnlyInfoSchema
+	GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 	// GetMPPClient gets a kv.MPPClient.

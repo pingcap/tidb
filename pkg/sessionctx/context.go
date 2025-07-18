@@ -35,6 +35,14 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// SessionStatesHandler is an interface for encoding and decoding session states.
+type SessionStatesHandler interface {
+	// EncodeSessionStates encodes session states into a JSON.
+	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+	// DecodeSessionStates decodes a map into session states.
+	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+}
+
 // SessionPlanCache is an interface for prepare and non-prepared plan cache
 type SessionPlanCache interface {
 	Get(key string, paramTypes any) (value any, ok bool)

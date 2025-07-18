@@ -240,7 +240,7 @@ type session struct {
 	stmtStats *stmtstats.StatementStats
 
 	// Used to encode and decode each type of session states.
-	sessionStatesHandlers map[sessionstates.SessionStateType]sessionapi.SessionStatesHandler
+	sessionStatesHandlers map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler
 
 	// Contains a list of sessions used to collect advisory locks.
 	advisoryLocks map[string]*advisoryLock
@@ -3170,7 +3170,7 @@ func (s *session) AuthWithoutVerification(ctx context.Context, user *auth.UserId
 }
 
 // SetSessionStatesHandler implements the Session.SetSessionStatesHandler interface.
-func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionapi.SessionStatesHandler) {
+func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler) {
 	s.sessionStatesHandlers[stateType] = handler
 }
 
@@ -3906,7 +3906,7 @@ func createSessionWithOpt(
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
-		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionapi.SessionStatesHandler),
+		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.sessionVars = variable.NewSessionVars(s)
 	s.exprctx = sessionexpr.NewExprContext(s)

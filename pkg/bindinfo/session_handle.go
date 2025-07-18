@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,7 +47,7 @@ type SessionBindingHandle interface {
 	// Close closes the SessionBindingHandle.
 	Close()
 
-	sessionapi.SessionStatesHandler
+	sessionctx.SessionStatesHandler
 }
 
 // sessionBindingHandle is used to handle all session sql bind operations.
