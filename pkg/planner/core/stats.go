@@ -134,6 +134,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
+	maxEqOrIn := 0
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -142,6 +143,15 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		if err != nil {
 			return nil, false, err
 		}
+		if path.EqOrInCondCount > maxEqOrIn {
+			maxEqOrIn = path.EqOrInCondCount
+		}
+	}
+
+	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
+	// but where the other index also has a higher eqOrInCondCount
+	if maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20 {
+		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths, maxEqOrIn)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -717,6 +727,66 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		}
 	}
 	return nil
+}
+
+// pruneIndexesByPrefixAndEqOrInCondCount prunes indexes that have the same prefix as other indexes
+// with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
+func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn int) []*util.AccessPath {
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	// Helper function to check if one index is a prefix of another
+	isIndexPrefix := func(idx1, idx2 *model.IndexInfo, minEq int) bool {
+		for i := range minEq {
+			if idx1.Columns[i].Name.L != idx2.Columns[i].Name.L {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Group paths by eqOrInCondCount
+	pathsByEqOrInCount := make(map[int][]*util.AccessPath)
+	for _, path := range paths {
+		if path.Index == nil {
+			continue // Skip table paths
+		}
+		eqOrInCount := path.EqOrInCondCount
+		pathsByEqOrInCount[eqOrInCount] = append(pathsByEqOrInCount[eqOrInCount], path)
+	}
+
+	// For each eqOrInCondCount, check if there are indexes with higher eqOrInCondCount
+	// that have the same prefix as indexes in the current group
+	pathsToRemove := make(map[*util.AccessPath]bool)
+
+	for currentEqOrInCount, currentPaths := range pathsByEqOrInCount {
+		// Check if there are any indexes with higher eqOrInCondCount that have the same prefix
+		for higherEqOrInCount, higherPaths := range pathsByEqOrInCount {
+			if higherEqOrInCount <= currentEqOrInCount {
+				continue
+			}
+			for _, currentPath := range currentPaths {
+				for _, higherPath := range higherPaths {
+					if isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
+						// The current index is a prefix of the higher index, and the higher index
+						// has more eqOrIn conditions, so we can prune the current index
+						pathsToRemove[currentPath] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Remove the pruned paths
+	result := make([]*util.AccessPath, 0, len(paths))
+	for _, path := range paths {
+		if !pathsToRemove[path] {
+			result = append(result, path)
+		}
+	}
+
+	return result
 }
 
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
