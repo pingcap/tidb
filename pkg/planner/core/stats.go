@@ -749,8 +749,8 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.Ac
 	// Group paths by eqOrInCondCount
 	pathsByEqOrInCount := make(map[int][]*util.AccessPath)
 	for _, path := range paths {
-		if path.Index == nil {
-			continue // Skip table paths
+		if path.IsTablePath() {
+			continue // Skip table paths (including PK)
 		}
 		eqOrInCount := path.EqOrInCondCount
 		pathsByEqOrInCount[eqOrInCount] = append(pathsByEqOrInCount[eqOrInCount], path)
