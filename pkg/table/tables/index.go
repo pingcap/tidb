@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -279,6 +280,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			if err != nil {
 				return nil, err
 			}
+			if keyIsTempIdxKey {
+				metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, false)
+			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
@@ -286,6 +290,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if err != nil {
 					return nil, err
 				}
+				metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, true)
 			}
 			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
@@ -373,6 +378,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if err != nil {
 					return nil, err
 				}
+				if keyIsTempIdxKey {
+					metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, false)
+				}
 				if len(tempKey) > 0 {
 					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 					val = tempVal.Encode(value)
@@ -380,6 +388,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					if err != nil {
 						return nil, err
 					}
+					metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, true)
 				}
 			} else if lazyCheck {
 				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
@@ -430,6 +439,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
+		doubleWrite := tempKeyVer == tablecodec.TempIndexKeyTypeMerge
 		var originTempVal []byte
 		if len(tempKey) > 0 && c.idxInfo.Unique {
 			// Get the origin value of the unique temporary index key.
@@ -480,6 +490,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
+				metrics.DDLSetTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, 1, doubleWrite)
 			}
 		} else {
 			if len(key) > 0 {
@@ -502,6 +513,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
+				metrics.DDLSetTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, 1, doubleWrite)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {

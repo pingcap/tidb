@@ -782,3 +782,83 @@ func TestAddIndexBackfillLostTempIndexValues(t *testing.T) {
 
 	tk.MustExec("admin check table t;")
 }
+<<<<<<< HEAD
+=======
+
+func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	tk.MustExec("create table t(id int primary key, b int not null default 0);")
+	tk.MustExec("insert into t values (1, 0);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	ingest.MockDMLExecutionStateBeforeImport = func() {
+		_, err := tk1.Exec("delete from t where id = 1;")
+		assert.NoError(t, err)
+		_, err = tk1.Exec("insert into t values (1, 0);")
+		assert.NoError(t, err)
+	}
+	ddl.MockDMLExecutionStateBeforeMerge = func() {
+		_, err := tk1.Exec("insert into t (id) values (1);")
+		assert.ErrorContains(t, err, "Duplicate entry")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "1*return")
+	tk.MustExec("alter table t add unique index idx(b);")
+}
+
+func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	var runInsert bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if t.Failed() || runInsert {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			for i := range 4 {
+				_, err := tk1.Exec("insert into t values (?, ?);", i, i)
+				assert.NoError(t, err)
+			}
+			runInsert = true
+		}
+	})
+
+	var runUpdate bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", func() {
+		if t.Failed() || runUpdate {
+			return
+		}
+		for i := range 4 {
+			_, err := tk1.Exec("update t set b = b+10 where a = ?;", i)
+			assert.NoError(t, err)
+		}
+		runUpdate = true
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0 10", "1 11", "2 12", "3 13"))
+}
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
