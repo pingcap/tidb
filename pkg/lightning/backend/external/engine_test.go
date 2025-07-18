@@ -333,17 +333,19 @@ func TestChangeEngineConcurrency(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
 
 	var (
-		outCh chan common.DataAndRanges
-		eg    errgroup.Group
-		e     *Engine
+		outCh    chan common.DataAndRanges
+		eg       errgroup.Group
+		e        *Engine
+		finished atomic.Int32
 	)
 
 	resetFn := func() {
 		outCh = make(chan common.DataAndRanges, 4)
 		eg = errgroup.Group{}
+		finished.Store(0)
 		e = &Engine{
-			jobKeys:           make([][]byte, 16),
-			workerConcurrency: *atomic.NewInt32(2),
+			jobKeys:           make([][]byte, 64),
+			workerConcurrency: *atomic.NewInt32(4),
 			readyCh:           make(chan struct{}),
 		}
 
@@ -357,6 +359,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 				// mock some time consuming job
 				data.Data.IncRef()
 				time.Sleep(time.Millisecond * 100)
+				finished.Add(1)
 				data.Data.DecRef()
 			}
 			return nil
@@ -365,9 +368,21 @@ func TestChangeEngineConcurrency(t *testing.T) {
 
 	t.Run("reduce concurrency", func(t *testing.T) {
 		resetFn()
-
-		time.Sleep(time.Millisecond * 300)
+		// Wait part of the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() > 2
+		}, time.Second, 10*time.Millisecond)
 		e.UpdateResource(context.Background(), 1, 1024)
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency", func(t *testing.T) {
+		resetFn()
+		// Wait part of the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() > 2
+		}, time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 8, 1024)
 		require.NoError(t, eg.Wait())
 	})
 }

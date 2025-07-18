@@ -500,13 +500,13 @@ func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) 
 		tick.Stop()
 	}()
 
-OUTER:
 	for {
+		allReleased := true
+
 		select {
 		case <-ctx.Done():
 			return currBatchSize
 		case <-tick.C:
-			allReleased := true
 			for _, data := range e.generatedData {
 				// We can't rely on refCnt to check if the data is released, because
 				// the refCnt is initialized to zero when the data is generated.
@@ -517,11 +517,11 @@ OUTER:
 					break
 				}
 			}
+		}
 
-			if allReleased {
-				e.generatedData = e.generatedData[:0]
-				break OUTER
-			}
+		if allReleased {
+			e.generatedData = e.generatedData[:0]
+			break
 		}
 	}
 
@@ -534,7 +534,11 @@ OUTER:
 	)
 
 	// Notify that we have changed the resource usage
-	e.readyCh <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return currBatchSize
+	case e.readyCh <- struct{}{}:
+	}
 
 	return newBatchSize
 }
