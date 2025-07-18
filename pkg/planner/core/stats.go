@@ -747,7 +747,7 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.Ac
 		// This handles both same order and different sequence cases
 		for i := 0; i < minEq && i < len(idx1.Columns); i++ {
 			found := false
-			for j := 0; j < len(idx2.Columns); j++ {
+			for j := range len(idx2.Columns) {
 				if idx1.Columns[i].Name.L == idx2.Columns[j].Name.L {
 					found = true
 					break
