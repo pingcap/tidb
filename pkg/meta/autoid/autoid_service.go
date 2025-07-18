@@ -109,12 +109,10 @@ retry:
 	if len(resp.Kvs) == 0 {
 		// If the key is not found, it means the autoid service leader is not elected yet.
 		// We can retry to get the leader.
-		select {
-		case <-ctx.Done():
-			return nil, 0, errors.Trace(ctx.Err())
-		default:
-			bo.Backoff()
+		if err := ctx.Err(); err != nil {
+			return nil, 0, errors.Trace(err)
 		}
+		bo.Backoff()
 		goto retry
 	}
 	bo.Reset()
@@ -179,12 +177,10 @@ retry:
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			sp.resetConn(ver, err)
-			select {
-			case <-ctx.Done():
-				return 0, 0, errors.Trace(ctx.Err())
-			default:
-				bo.Backoff()
+			if err := ctx.Err(); err != nil {
+				return 0, 0, errors.Trace(err)
 			}
+			bo.Backoff()
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
