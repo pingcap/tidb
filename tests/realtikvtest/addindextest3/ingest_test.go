@@ -782,8 +782,6 @@ func TestAddIndexBackfillLostTempIndexValues(t *testing.T) {
 
 	tk.MustExec("admin check table t;")
 }
-<<<<<<< HEAD
-=======
 
 func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -861,4 +859,3 @@ func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("0 10", "1 11", "2 12", "3 13"))
 }
->>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))

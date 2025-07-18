@@ -15427,14 +15427,9 @@
           },
           "yaxes": [
             {
-<<<<<<< HEAD
-              "format": "short",
-              "label": null,
-=======
               "format": "percent",
->>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
+              "label": null,
               "logBase": 1,
-              "max": null,
               "min": "0",
               "max": "100",
               "show": true
@@ -15443,12 +15438,8 @@
               "format": "short",
               "label": null,
               "logBase": 1,
-<<<<<<< HEAD
-              "max": null,
-              "min": null,
-=======
               "min": "0",
->>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
+              "max": null,
               "show": true
             }
           ],
