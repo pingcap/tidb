@@ -17,6 +17,7 @@ package util
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -257,6 +258,9 @@ func ExecRowsWithCtx(
 		}
 	}
 
+	if strings.Contains(sql, "stats_meta") {
+
+	}
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(ctx, UseCurrentSessionOpt, sql, args...)
 }

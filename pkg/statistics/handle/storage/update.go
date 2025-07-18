@@ -26,13 +26,19 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 // UpdateStatsVersion will set statistics version to the newest TS, then
 // tidb-server will reload automatic.
 func UpdateStatsVersion(ctx context.Context, sctx sessionctx.Context) error {
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "update stats version"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	startTS, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -80,6 +86,11 @@ func UpdateStatsMeta(
 	startTS uint64,
 	updates ...*DeltaUpdate,
 ) (err error) {
+
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "update stats meta"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	if len(updates) == 0 {
 		return nil
 	}
@@ -165,6 +176,10 @@ func UpdateStatsMeta(
 func InsertExtendedStats(sctx sessionctx.Context,
 	statsCache types.StatsCache,
 	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "insert extended stats"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
@@ -228,6 +243,10 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "save extended stats"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	for name, item := range extStats.Stats {
 		bytes, err := json.Marshal(item.ColIDs)
 		if err != nil {
@@ -279,6 +298,10 @@ func ChangeGlobalStatsID(
 	sctx sessionctx.Context,
 	from, to int64,
 ) error {
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "change global stats"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	for _, table := range changeGlobalStatsTables {
 		_, err := statsutil.ExecWithCtx(
 			ctx, sctx,
@@ -302,6 +325,10 @@ func UpdateStatsMetaVerAndLastHistUpdateVer(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "update stats metaver"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	if _, err = statsutil.ExecWithCtx(
 		ctx,
 		sctx,

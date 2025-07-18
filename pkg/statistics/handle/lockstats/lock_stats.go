@@ -292,6 +292,11 @@ func insertIntoStatsTableLockedAndUpdateStatsVersion(sctx sessionctx.Context, ti
 		return err
 	}
 
+	logutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "insertintostatstablelocked"))
+	defer func() {
+		logutil.StatsLogger().Info("[stats_meta] end")
+	}()
+
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)

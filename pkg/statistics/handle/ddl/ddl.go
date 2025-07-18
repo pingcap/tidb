@@ -100,6 +100,10 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	tableID int64,
 	countDelta, modifyCountDelta int64,
 ) error {
+	statslogutil.StatsLogger().Info("[stats_meta] start", zap.String("sql", "updateStatsWithCountDelta"))
+	defer func() {
+		statslogutil.StatsLogger().Info("[stats_meta] end")
+	}()
 	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
