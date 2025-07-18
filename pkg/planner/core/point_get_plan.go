@@ -678,6 +678,9 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
 		p.PartitionNames = tblName.PartitionNames
+
+		// Check if the index covers all required columns
+		p.CoveredByIndex = checkIndexCoveringColumns(p, schema.Columns, idxInfo)
 		return p
 	}
 	return nil
@@ -1460,4 +1463,57 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	return &col.Name.Name
+}
+
+// checkIndexCoveringColumns checks if the index covers all required columns
+func checkIndexCoveringColumns(p *physicalop.PointGetPlan, columns []*expression.Column, idxInfo *model.IndexInfo) bool {
+	// Get index columns
+	indexColumns := make([]*expression.Column, 0, len(idxInfo.Columns))
+	idxColLens := make([]int, 0, len(idxInfo.Columns))
+
+	for _, idxCol := range idxInfo.Columns {
+		for _, col := range columns {
+			if col.ID == p.TblInfo.Columns[idxCol.Offset].ID {
+				indexColumns = append(indexColumns, col)
+				idxColLens = append(idxColLens, idxCol.Length)
+				break
+			}
+		}
+	}
+
+	// Check if all required columns are covered by the index
+	for _, col := range columns {
+		if !isColumnCoveredByIndex(p, col, indexColumns, idxColLens) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isColumnCoveredByIndex checks if a column is covered by the index
+func isColumnCoveredByIndex(p *physicalop.PointGetPlan, column *expression.Column, indexColumns []*expression.Column, idxColLens []int) bool {
+	// Handle primary key
+	if p.TblInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
+		return true
+	}
+
+	// Handle row ID
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
+		return true
+	}
+
+	// Check if column is in the index
+	for i, idxCol := range indexColumns {
+		if idxCol.ID == column.ID {
+			// For string columns with prefix index, we need to check if length is sufficient
+			if column.RetType.EvalType() == types.ETString && idxColLens[i] != types.UnspecifiedLength {
+				// For point get, prefix index should be sufficient since we're doing equality comparison
+				return true
+			}
+			return true
+		}
+	}
+
+	return false
 }
