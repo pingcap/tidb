@@ -496,6 +496,9 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 // Return nil if the root of plan has not been changed
 // Return new root if the root of plan is changed to selection
 func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	// step1: get constant predicate from left or right according to the JoinType
 	var getConstantPredicateFromLeft bool
 	var getConstantPredicateFromRight bool
