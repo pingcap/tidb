@@ -123,6 +123,7 @@ func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk
 	}
 }
 
+// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body among two different planner modes. It can be used to set schema lease and store options.
 func RunTestUnderCascadesAndDomainWithSchemaLease(t *testing.T, lease time.Duration, opts []mockstore.MockTiKVStoreOption, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
 	options := []struct {
 		name string
