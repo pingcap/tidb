@@ -78,7 +78,7 @@ type DataSource struct {
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
-	PhysicalTableID int64
+	PhysicalTableID int64 `hash64-equals:"true"`
 	PartitionNames  []ast.CIStr
 
 	// handleCol represents the handle column for the datasource, either the

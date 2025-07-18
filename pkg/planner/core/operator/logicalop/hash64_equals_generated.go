@@ -507,6 +507,7 @@ func (op *DataSource) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
+	h.HashInt64(int64(op.PhysicalTableID))
 	h.HashInt64(int64(op.PreferStoreType))
 	h.HashBool(op.IsForUpdateRead)
 }
@@ -547,6 +548,9 @@ func (op *DataSource) Equals(other any) bool {
 		if !one.Equals(op2.AllConds[i]) {
 			return false
 		}
+	}
+	if op.PhysicalTableID != op2.PhysicalTableID {
+		return false
 	}
 	if op.PreferStoreType != op2.PreferStoreType {
 		return false
