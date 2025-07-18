@@ -29,6 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -873,7 +879,26 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
+=======
+	allIndexPublic := true
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			allIndexPublic = false
+			break
+		}
+	}
+	if allIndexPublic {
+		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+	}
+
+	if !b.enableV2 {
+		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
+		tableNames.tables[tblInfo.Name.L] = tbl
+	}
+	b.addTable(schemaVersion, dbInfo, tblInfo, tbl)
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
 
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
