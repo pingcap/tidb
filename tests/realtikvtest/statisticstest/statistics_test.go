@@ -53,7 +53,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version=1")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all colunns")
 	tk.MustExec("explain select * from t where a = 'aaa'")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
