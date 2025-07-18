@@ -1579,7 +1579,7 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = default")
 }
 
-func TestRiskRangeSkewRatio(t *testing.T) {
+func TestRiskRangeSkewRatioWithinBucket(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 
@@ -1629,5 +1629,53 @@ func TestRiskRangeSkewRatio(t *testing.T) {
 	require.Less(t, count4, count3)
 	// Reset global variable to default.
 	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = default")
-	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
+}
+
+func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, key idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	for i := 1; i <= 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t select a from t where a = %d", i))
+	}
+	//Ensure that there are values in the histogram buckets
+	testKit.MustExec("analyze table t with 0 topn")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(table.Meta())
+	sctx := testKit.Session()
+	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
+
+	// Increase RealTimeCount and ModifyCount to simulate changes to dataset
+	RealTimeCount := statsTbl.RealtimeCount * 10
+	ModifyCount := RealTimeCount * 2
+
+	// Search for range outside of histogram buckets
+	test, _ := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), int64(0), int64(0), false)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
+	count, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	require.NoError(t, err)
+	require.Less(t, test, count)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	count2, err2 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
+	count3, err3 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	require.NoError(t, err3)
+	// Result of count3 should be larger because the risk ratio is higher
+	require.Less(t, count2, count3)
 }
