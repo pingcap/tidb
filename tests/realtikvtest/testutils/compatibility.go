@@ -157,7 +157,7 @@ func testOneColFramePara(ctx *SuiteContext, tableID int, colIDs [][]int, f func(
 		err = f(ctx, tableID, tableName, i)
 		if err != nil {
 			if ctx.isUnique || ctx.isPK {
-				errorContainsDupKey(ctx.t, err)
+				require.Contains(ctx.t, err.Error(), "Duplicate entry")
 				err = nil
 				continue
 			}

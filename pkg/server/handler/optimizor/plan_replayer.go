@@ -189,7 +189,9 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
 	_, err = fmt.Fprintf(w, "can't find dump file %s in any remote server", name)
-	handler.WriteError(w, err)
+	if err != nil {
+		handler.WriteError(w, err)
+	}
 }
 
 type downloadFileHandler struct {

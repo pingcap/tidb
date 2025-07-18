@@ -41,7 +41,8 @@ ifeq ("${NEXT_GEN}", "1")
 endif
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GOEXPERIMENT) $(GO) build -tags $(BUILD_TAGS)
+GOBUILD_NO_TAGS := $(GOEXPERIMENT) $(GO) build
+GOBUILD         := $(GOBUILD_NO_TAGS) -tags $(BUILD_TAGS)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls

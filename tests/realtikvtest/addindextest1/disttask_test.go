@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,11 +30,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -69,6 +74,9 @@ func checkTmpDDLDir(t *testing.T) {
 }
 
 func TestAddIndexDistBasic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("might ingest overlapped sst, skip")
+	}
 	// mock that we only have 1 cpu, add-index task can be scheduled as usual
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", `return(true)`))
@@ -145,6 +153,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 }
 
 func TestAddIndexDistCancelWithPartition(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
@@ -183,6 +192,7 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 }
 
 func TestAddIndexDistCancel(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -494,4 +504,17 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 	wg.Wait()
 	close(ch)
+}
+
+func TestUseClusterIdInGlobalSortPath(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	s, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	vardef.CloudStorageURI.Store("s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws")
+	path := handle.GetCloudStorageURI(context.Background(), store)
+	require.Equal(t, "s3://bucket/path/to/folder/"+
+		strconv.FormatUint(s.GetPDClient().GetClusterID(context.TODO()), 10)+
+		"?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", path)
+	// without cluster id
+	require.Equal(t, "s3://bucket/path/to/folder?access-key=aaaaa&secret-access-key=bbbbb&endpoint=http://abc.com&force-path-style=false&region=Beijing&provider=aws", handle.GetCloudStorageURI(context.Background(), nil))
 }

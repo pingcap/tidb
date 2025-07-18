@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -781,7 +782,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
@@ -797,18 +798,18 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalApply{},
 		&plannercore.PhysicalHashAgg{},
 		&plannercore.PhysicalStreamAgg{},
-		&plannercore.PhysicalLimit{},
-		&plannercore.PhysicalSort{},
-		&plannercore.PhysicalTopN{},
+		&physicalop.PhysicalLimit{},
+		&physicalop.PhysicalSort{},
+		&physicalop.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},
 		&plannercore.PhysicalMaxOneRow{},
 		&plannercore.PhysicalProjection{},
-		&plannercore.PhysicalSelection{},
-		&plannercore.PhysicalTableDual{},
+		&physicalop.PhysicalSelection{},
+		&physicalop.PhysicalTableDual{},
 		&plannercore.PhysicalWindow{},
 		&plannercore.PhysicalShuffle{},
-		&plannercore.PhysicalUnionAll{},
+		&physicalop.PhysicalUnionAll{},
 	}
 
 	opsNeedsCoveredMask := uint64(1<<len(opsNeedsCovered) - 1)
@@ -846,7 +847,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
@@ -920,7 +921,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
@@ -937,7 +938,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 		e := executorBuilder.Build(p)
@@ -1380,7 +1381,7 @@ func TestApplyCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, index idx(a));")
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
@@ -1566,9 +1567,7 @@ func TestGetResultRowsCount(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(base.Plan)
-		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		cnt := tk.Session().GetSessionVars().StmtCtx.GetResultRowsCount()
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
@@ -2632,9 +2631,8 @@ func TestAdmin(t *testing.T) {
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
-	r, err = tk.Exec("admin check table admin_test, admin_test1")
-	require.NoError(t, err)
-	require.Nil(t, r)
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check table admin_test1")
 	// error table name
 	require.Error(t, tk.ExecToErr("admin check table admin_test_error"))
 	// different index values
@@ -2829,11 +2827,10 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
-	err := tk.ExecToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
-	fmt.Println(err.Error())
+	err := tk.ExecToErr("select /*+inl_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	tk.MustExec("set tidb_mem_quota_query=1000")
-	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	rs, err := tk.Exec("select /*+inl_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.NoError(t, err)
 	require.NotNil(t, tk.Session().GetSessionVars().MemTracker.GetFallbackForTest(false))
 	err = rs.Close()

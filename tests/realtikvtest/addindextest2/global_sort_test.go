@@ -30,8 +30,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -48,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func init() {
@@ -127,13 +131,13 @@ func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
 	}
 }
 
-func getTaskID(t *testing.T, tk *testkit.TestKit) int64 {
-	rs := tk.MustQuery("select id from mysql.tidb_global_task").Rows()
-	require.Len(t, rs, 1)
-	// convert string to int64
-	id, err := strconv.ParseInt(rs[0][0].(string), 10, 64)
+func getTaskID(t *testing.T, jobID int64) int64 {
+	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
-	return id
+	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID))
+	require.NoError(t, err)
+	return task.ID
 }
 
 func TestGlobalSortBasic(t *testing.T) {
@@ -142,7 +146,10 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	ch := make(chan struct{}, 1)
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
+		ch <- struct{}{}
+	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
@@ -152,6 +159,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
+	cloudStorageURI = handle.GetCloudStorageURI(context.Background(), store) // path with cluster id
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
@@ -178,8 +186,9 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
-	taskID := getTaskID(t, tk)
+	taskID := getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
@@ -187,18 +196,20 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx1(a);")
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
-	taskID = getTaskID(t, tk)
+	taskID = getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
-	taskID = getTaskID(t, tk)
+	taskID = getTaskID(t, jobID)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 }
@@ -246,35 +257,30 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			if kerneltype.IsNextGen() && tc.cloudStorageURI == "" {
+				t.Skip("local sort might ingest duplicate KV, cause overlapped sst")
+			}
 			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
 			tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + tc.cloudStorageURI + "';")
 			for _, tn := range tableNames {
+				if kerneltype.IsNextGen() && tc.cloudStorageURI != "" && tn == "t_partition" {
+					t.Log("partition table in global sort is ordered by index KV group, cause overlapped sst")
+					continue
+				}
 				tk.MustExec("alter table " + tn + " add index idx_1(a), add index idx_2(b, a);")
 				tk.MustExec("admin check table " + tn + ";")
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
 			}
 
-			// FIXME: unify error message
-			if tc.cloudStorageURI == "" {
-				tk.MustContainErrMsg(
-					"alter table t_dup add index idx(a), add unique index idx2(b);",
-					"Duplicate entry '2' for key 't_dup.idx2'",
-				)
-				tk.MustContainErrMsg(
-					"alter table t_dup_2 add unique index idx2(b);",
-					"Duplicate entry '2' for key 't_dup_2.idx2'",
-				)
-			} else {
-				tk.MustContainErrMsg(
-					"alter table t_dup add index idx(a), add unique index idx2(b);",
-					"found index conflict records in table t_dup, index name is 't_dup.idx2'",
-				)
-				tk.MustContainErrMsg(
-					"alter table t_dup_2 add unique index idx2(b);",
-					"found index conflict records in table t_dup_2, index name is 't_dup_2.idx2'",
-				)
-			}
+			tk.MustContainErrMsg(
+				"alter table t_dup add index idx(a), add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup.idx2'",
+			)
+			tk.MustContainErrMsg(
+				"alter table t_dup_2 add unique index idx2(b);",
+				"Duplicate entry '2' for key 't_dup_2.idx2'",
+			)
 		})
 	}
 
@@ -312,6 +318,7 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 }
 
 func TestGlobalSortDuplicateErrMsg(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -350,12 +357,12 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		errMsg          string
 	}{
 		{
-			"int index",
-			"create table t (a int, b int, c int);",
+			"varchar index",
+			"create table t (id int, data varchar(255));",
 			"",
-			"insert into t values (1, 1, 1), (2, 1, 2);",
-			"alter table t add unique index idx(b);",
-			"found index conflict records in table t, index name is 't.idx', unique key is '[1]', primary key is '2'",
+			"insert into t values (1, '1'), (2, '1');",
+			"alter table t add unique index idx(data);",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 		{
 			"int index on multi regions",
@@ -363,44 +370,43 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			"split table t between (0) and (4000) regions 4;",
 			"insert into t values (1, 1), (1001, 1), (2001, 2001), (4001, 1);",
 			"alter table t add unique index idx(b);",
-			"found index conflict records in table t, index name is 't.idx', unique key is '[1]'",
-		},
-		{
-			"varchar index",
-			"create table t (id int, data varchar(255));",
-			"",
-			"insert into t values (1, '1'), (2, '1');",
-			"alter table t add unique index i(data);",
-			"found index conflict records in table t, index name is 't.i', unique key is '[1]', primary key is '2'",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 		{
 			"combined index",
 			"create table t (id int, data varchar(255));",
 			"",
 			"insert into t values (1, '1'), (1, '1');",
-			"alter table t add unique index i(id, data);",
-			"found index conflict records in table t, index name is 't.i', unique key is '[1 1]', primary key is '2'",
+			"alter table t add unique index idx(id, data);",
+			"[kv:1062]Duplicate entry '1-1' for key 't.idx'",
 		},
 		{
 			"multi value index",
 			"create table t (id int, data json);",
 			"",
 			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
-			"alter table t add unique index zips( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
-			"found index conflict records in table t, index name is 't.zips', unique key is '[1]', primary key is '2'",
+			"alter table t add unique index idx( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 		{
 			"global index",
 			"create table t (k int, c int) partition by list (k) (partition odd values in (1,3,5,7,9), partition even values in (2,4,6,8,10));",
 			"",
 			"insert into t values (1, 1), (2, 1)",
-			"alter table t add unique index i(c) global",
-			"found index conflict records in table t, index name is 't.i', unique key is '[1]'",
+			"alter table t add unique index idx(c) global",
+			"[kv:1062]Duplicate entry '1' for key 't.idx'",
 		},
 	}
 
 	checkSubtaskStepAndReset := func(t *testing.T, expectedStep proto.Step) {
 		require.Equal(t, expectedStep, testErrStep)
+		testErrStep = proto.StepInit
+	}
+
+	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
+		tk.MustExec("set session tidb_redact_log = on;")
+		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+		tk.MustExec("set session tidb_redact_log = off;")
 		testErrStep = proto.StepInit
 	}
 
@@ -430,6 +436,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 			} else {
 				checkSubtaskStepAndReset(tt, proto.BackfillStepReadIndex)
 			}
+			checkRedactMsgAndReset(tc.addUniqueKeySQL)
 
 			// 2. merge sort
 			testfailpoint.Enable(tt, "github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", `return(true)`)
@@ -447,6 +454,9 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 
 // When meeting a retryable error, the subtask/job should be idempotent.
 func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("might cause overlapped data")
+	}
 	server, cloudStorageURI := genServerWithStorage(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 

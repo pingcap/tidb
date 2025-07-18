@@ -47,10 +47,14 @@ func TestParallelLockNewTask(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
-	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	testTable, err := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
-	sessionFactory := sessionFactory(t, dom)
+	sessionTimeout := time.Minute
+	if testflag.Long() {
+		sessionTimeout = 10 * time.Minute
+	}
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 	se, closeSe := sessionFactory()
 	defer closeSe()
 

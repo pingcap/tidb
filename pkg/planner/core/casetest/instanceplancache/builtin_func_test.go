@@ -32,7 +32,7 @@ func TestBuiltinInIntSig(t *testing.T) {
 	tk.MustExec("create table t2 (a int, key(a))")
 	tk.MustExec("create table t3 (a int, primary key(a))")
 	tk.MustExec("create table t4 (a int, unique key(a))")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values (%d)", i))
 		tk.MustExec(fmt.Sprintf("insert into t3 values (%d)", i))
@@ -40,12 +40,12 @@ func TestBuiltinInIntSig(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				v1, v2 := rand.Intn(50), 50+rand.Intn(50)
 				tName := fmt.Sprintf("t%d", rand.Intn(4)+1)
 				tk.MustExec(fmt.Sprintf("prepare st from 'select a from %v where a in (?, ?)'", tName))
@@ -71,7 +71,7 @@ func TestBuiltinInStringSig(t *testing.T) {
 	tk.MustExec("create table t2 (a varchar(20), key(a))")
 	tk.MustExec("create table t3 (a varchar(20), primary key(a))")
 	tk.MustExec("create table t4 (a varchar(20), unique key(a))")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values ('%d')", i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values ('%d')", i))
 		tk.MustExec(fmt.Sprintf("insert into t3 values ('%d')", i))
@@ -79,12 +79,12 @@ func TestBuiltinInStringSig(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				v1, v2 := rand.Intn(50), 50+rand.Intn(50)
 				tName := fmt.Sprintf("t%d", rand.Intn(4)+1)
 				tk.MustExec(fmt.Sprintf("prepare st from 'select a from %v where a in (?, ?)'", tName))
@@ -110,7 +110,7 @@ func TestBuiltinInRealSig(t *testing.T) {
 	tk.MustExec("create table t2 (a real, key(a))")
 	tk.MustExec("create table t3 (a real, primary key(a))")
 	tk.MustExec("create table t4 (a real, unique key(a))")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values ('%d.1')", i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values ('%d.1')", i))
 		tk.MustExec(fmt.Sprintf("insert into t3 values ('%d.1')", i))
@@ -118,12 +118,12 @@ func TestBuiltinInRealSig(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				v1, v2 := fmt.Sprintf("%v.1", rand.Intn(50)), fmt.Sprintf("%v.1", 50+rand.Intn(50))
 				tName := fmt.Sprintf("t%d", rand.Intn(4)+1)
 				tk.MustExec(fmt.Sprintf("prepare st from 'select a from %v where a in (?, ?)'", tName))
@@ -149,7 +149,7 @@ func TestBuiltinInDecimalSig(t *testing.T) {
 	tk.MustExec("create table t2 (a decimal(10, 2), key(a))")
 	tk.MustExec("create table t3 (a decimal(10, 2), primary key(a))")
 	tk.MustExec("create table t4 (a decimal(10, 2), unique key(a))")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values ('%d.10')", i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values ('%d.10')", i))
 		tk.MustExec(fmt.Sprintf("insert into t3 values ('%d.10')", i))
@@ -157,12 +157,12 @@ func TestBuiltinInDecimalSig(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				v1, v2 := fmt.Sprintf("%v.10", rand.Intn(50)), fmt.Sprintf("%v.10", 50+rand.Intn(50))
 				tName := fmt.Sprintf("t%d", rand.Intn(4)+1)
 				tk.MustExec(fmt.Sprintf("prepare st from 'select a from %v where a in (?, ?)'", tName))
@@ -188,7 +188,7 @@ func TestBuiltinInTimeSig(t *testing.T) {
 	tk.MustExec("create table t2 (a datetime, key(a))")
 	tk.MustExec("create table t3 (a datetime, primary key(a))")
 	tk.MustExec("create table t4 (a datetime, unique key(a))")
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values ('2000-01-01 00:%v:00')", 10+i))
 		tk.MustExec(fmt.Sprintf("insert into t2 values ('2000-01-01 00:%v:00')", 10+i))
 		tk.MustExec(fmt.Sprintf("insert into t3 values ('2000-01-01 00:%v:00')", 10+i))
@@ -196,12 +196,12 @@ func TestBuiltinInTimeSig(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				v1 := fmt.Sprintf("2000-01-01 00:%v:00", 10+rand.Intn(20))
 				v2 := fmt.Sprintf("2000-01-01 00:%v:00", 30+rand.Intn(20))
 				tName := fmt.Sprintf("t%d", rand.Intn(4)+1)
@@ -229,12 +229,12 @@ func TestBuiltinRealIsTrueFalse(t *testing.T) {
 	tk.MustExec("insert into t values (2.2)")
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				vs := []string{"1.1", "2.2"}
 				if rand.Intn(2) < 1 { // is true
 					tk.MustExec("prepare st from 'select a from t where (a-?) is true'")
@@ -264,12 +264,12 @@ func TestBuiltinDecimalIsTrueFalse(t *testing.T) {
 	tk.MustExec("insert into t values (2.20)")
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				vs := []string{"1.10", "2.20"}
 				if rand.Intn(2) < 1 { // is true
 					tk.MustExec("prepare st from 'select a from t where (a-?) is true'")
@@ -299,12 +299,12 @@ func TestBuiltinIntIsTrueFalse(t *testing.T) {
 	tk.MustExec("insert into t values (2)")
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for k := 0; k < 100; k++ {
+			for range 100 {
 				vs := []string{"1", "2"}
 				if rand.Intn(2) < 1 { // is true
 					tk.MustExec("prepare st from 'select a from t where (a-?) is true'")

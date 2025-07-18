@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -eu
+. run_services
 
 DB="$TEST_NAME"
 TABLES_COUNT=300
@@ -147,7 +148,7 @@ perform_restore_test full $TABLE_LIST
 echo "Test 2 finished successfully!"
 
 # Test 3: Attempt restore with checkpoint (inject corruption to force error)
-echo "=== Test 3: restore with checkpoint (injected corruption) ==="
+echo "=== Test 3-1: restore with checkpoint (injected corruption) ==="
 run_sql "drop schema if exists $DB;"
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/sleep_for_check_scheduler_status=return(\"$LOG_FILE\");github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files=return(\"corrupt-last-table-files\")"
@@ -165,15 +166,31 @@ if [ $exit_code -eq 0 ]; then
     exit 1
 fi
 ensure_region_label_rule_absent
-
-echo "=== Test 3: retry restore full db with checkpoint enabled ==="
-
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/sleep_for_check_scheduler_status=return(\"$LOG_FILE\")"
+echo "Test 3-1 finished successfully!"
+
+echo "=== Test 3-2: retry restore full db with checkpoint enabled ==="
+
 run_restore_in_background db --db "$DB"
-wait_for_checkpoint_stage
+
+set +e
 wait $RESTORE_PID
+exit_code=$?
+set -e
+
+if [ $exit_code -eq 0 ]; then
+    echo "Error: restore unexpectedly succeeded, the checkpoint should have failed"
+    exit 1
+fi
 ensure_region_label_rule_absent
-echo "Test 3 finished successfully!"
+echo "Test 3-2 finished successfully!"
+
+echo "=== Test 3-3: retry restore using same setting with checkpoint enabled ==="
+
+perform_restore_test full $TABLE_LIST
+echo "Test 3-3 finished successfully!"
+echo "=== Test 3 finished successfully!"
+
 
 # Test 4: Restore full without checkpoint (check deny rule absent)
 echo "=== Test4: restore full without checkpoint (check deny rule absent) ==="

@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -123,15 +122,6 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
-	if intest.InTest {
-		seed := uint64(time.Now().UnixNano())
-		tk.t.Logf("RefreshSession rand seed: %d", seed)
-		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
-		}
-	}
-
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
@@ -380,6 +370,10 @@ func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 // ExecWithContext executes a sql statement using the prepared stmt API
 func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
+
+	// Set the command value to ComQuery, so that the process info can be updated correctly
+	tk.Session().SetCommandValue(mysql.ComQuery)
+	defer tk.Session().SetCommandValue(mysql.ComSleep)
 
 	cursorExists := tk.Session().GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists)
 	if len(args) == 0 {

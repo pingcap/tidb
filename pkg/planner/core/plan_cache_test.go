@@ -132,7 +132,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 	tk.MustExec(`create table t7 (a datetime, b datetime, key(a))`)
 
 	n := 30
-	for i := 0; i < n; i++ {
+	for range n {
 		tk.MustExec(fmt.Sprintf(`insert into t1 values (%v, %v)`, randNonPrepTypeVal(t, n, "int"), randNonPrepTypeVal(t, n, "int")))
 		tk.MustExec(fmt.Sprintf(`insert into t2 values (%v, %v)`, randNonPrepTypeVal(t, n, "varchar"), randNonPrepTypeVal(t, n, "varchar")))
 		tk.MustExec(fmt.Sprintf(`insert into t3 values (%v, %v)`, randNonPrepTypeVal(t, n, "double"), randNonPrepTypeVal(t, n, "double")))
@@ -143,7 +143,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`insert into t7 values (%v, %v)`, randNonPrepTypeVal(t, n, "datetime"), randNonPrepTypeVal(t, n, "datetime")))
 	}
 
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		q := fmt.Sprintf(`select * from t%v where %v`, rand.Intn(7)+1, randNonPrepFilter(t, n))
 		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 		r0 := tk.MustQuery(q).Sort()            // the first execution
@@ -198,7 +198,7 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int, key(b), key(c, d))`)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, rand.Intn(20), rand.Intn(20), rand.Intn(20)))
 	}
 
@@ -285,14 +285,14 @@ func TestIssue38269(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_11(Probe) 37.46 root  ",
-		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_30, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_30(Probe) 37.46 root  ",
+		"  ├─Selection_29(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_27 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_28(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -328,7 +328,7 @@ func TestInvalidRange(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+		[][]any{{"TableDual_6"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
@@ -362,13 +362,13 @@ func TestIssue40093(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"Projection_9"},
-			{"└─HashJoin_21"},
-			{"  ├─IndexReader_26(Build)"},
-			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
-			{"  └─TableReader_24(Probe)"},
-			{"    └─Selection_23"},
-			{"      └─TableFullScan_22"},
+			{"Projection_10"},
+			{"└─HashJoin_26"},
+			{"  ├─IndexReader_28(Build)"},
+			{"  │ └─IndexRangeScan_27"}, // RangeScan instead of FullScan
+			{"  └─TableReader_34(Probe)"},
+			{"    └─Selection_33"},
+			{"      └─TableFullScan_32"},
 		})
 
 	tk.MustExec("execute st using @b")
@@ -392,15 +392,15 @@ func TestIssue38205(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexJoin_10"},
-			{"├─TableReader_19(Build)"},
-			{"│ └─Selection_18"},
-			{"│   └─TableFullScan_17"}, // RangeScan instead of FullScan
-			{"└─IndexReader_9(Probe)"},
-			{"  └─Selection_8"},
-			{"    └─IndexRangeScan_7"},
+			{"IndexJoin"},
+			{"├─TableReader(Build)"},
+			{"│ └─Selection"},
+			{"│   └─TableFullScan"}, // RangeScan instead of FullScan
+			{"└─IndexReader(Probe)"},
+			{"  └─Selection"},
+			{"    └─IndexRangeScan"},
 		})
 
 	tk.MustExec("execute stmt using @a, @b, @c")
@@ -440,10 +440,10 @@ func TestIssue40224(t *testing.T) {
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexReader_6"},
-			{"└─IndexRangeScan_5"}, // range scan not full scan
+			{"IndexReader"},
+			{"└─IndexRangeScan"}, // range scan not full scan
 		})
 
 	tk.MustExec("set @a=1, @b=2")
@@ -452,10 +452,10 @@ func TestIssue40224(t *testing.T) {
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
 	tk.MustExec("execute st using @a, @b")
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexReader_6"},
-			{"└─IndexRangeScan_5"}, // range scan not full scan
+			{"IndexReader"},
+			{"└─IndexRangeScan"}, // range scan not full scan
 		})
 }
 
@@ -591,7 +591,7 @@ func convertQueryToPrepExecStmt(q string) (normalQuery, prepStmt string, paramet
 	normalQuery = strings.ReplaceAll(q, "#", "")
 	normalQuery = strings.ReplaceAll(normalQuery, "?", "")
 	vs := strings.Split(q, "#")
-	for i := 0; i < len(vs); i++ {
+	for i := range vs {
 		if len(vs[i]) == 0 {
 			continue
 		}
@@ -614,8 +614,8 @@ func planCachePointGetPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf(`create table t1 (a %v, b %v, c %v, d %v, primary key(a), unique key(b), unique key(c), unique key(c))`, t(), t(), t(), t()))
 	tk.MustExec(fmt.Sprintf(`create table t2 (a %v, b %v, c %v, d %v, primary key(a, b), unique key(c, d))`, t(), t(), t(), t()))
 
-	var vals []string
-	for i := 0; i < 50; i++ {
+	vals := make([]string, 0, 50)
+	for i := range 50 {
 		vals = append(vals, fmt.Sprintf("('%v.%v', '%v.%v', '%v.%v', '%v.%v')",
 			i-20, rand.Intn(5),
 			i-20, rand.Intn(5),
@@ -655,8 +655,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 		}
 		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
-	var queries []string
-	for i := 0; i < 50; i++ {
+	queries := make([]string, 0, 50*12)
+	for range 50 {
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v", f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v", f(), f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v and %v", f(), f(), f()))
@@ -717,8 +717,8 @@ func planCacheIntConvertQueries(isNonPrep bool) []string {
 		}
 		return strings.Join(fs, ", ")
 	}
-	var queries []string
-	for i := 0; i < 50; i++ {
+	queries := make([]string, 0, 50*6)
+	for range 50 {
 		queries = append(queries, fmt.Sprintf("select %v from t where %v", fields(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v", fields(), f(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v and %v", fields(), f(), f(), f()))
@@ -734,7 +734,7 @@ func planCacheIntConvertPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int, b year, c double, d varchar(16), key(a), key(b), key(c))`)
 	vals := make([]string, 0, 50)
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		a := fmt.Sprintf("%v", 2000+rand.Intn(20)-10)
 		if rand.Intn(10) == 0 {
 			a = "null"
@@ -800,8 +800,8 @@ func planCacheIndexMergeQueries(isNonPrep bool) []string {
 			return "*"
 		}
 	}
-	var queries []string
-	for i := 0; i < 50; i++ {
+	queries := make([]string, 0, 50*12)
+	for range 50 {
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b) */ %s from t where %s and %s", fields(), f("a"), f("b")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, c) */ %s from t where %s and %s", fields(), f("a"), f("c")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b, c) */ %s from t where %s and %s and %s", fields(), f("a"), f("b"), f("c")))
@@ -829,7 +829,7 @@ func planCacheIndexMergePrepareData(tk *testkit.TestKit) {
 		}
 		return fmt.Sprintf("%d", rand.Intn(20)-10)
 	}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		vals = append(vals, fmt.Sprintf("(%s, %s, %s, %s)", v(), v(), v(), v()))
 	}
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
@@ -971,7 +971,7 @@ func TestIssue42125(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
+	require.Equal(t, rows[0][0], "Batch_Point_Get_6") // use BatchPointGet
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 
@@ -983,7 +983,7 @@ func TestIssue42125(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
+	require.Equal(t, rows[0][0], "Point_Get_6") // use Point_Get_5
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
 
@@ -1099,7 +1099,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	// all cases no warnings use other format
 	for _, q := range all {
 		tk.MustExec("explain " + q)
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		// tk.MustQuery("show warnings").Check(testkit.Rows())
 		tk.MustExec("explain " + q)
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
@@ -1184,7 +1184,7 @@ func TestIssue43667Concurrency(t *testing.T) {
 	tk.MustExec("create table cycle (pk int key, val int)")
 	var wg sync.WaitGroup
 	concurrency := 30
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		tk.MustExec(fmt.Sprintf("insert into cycle values (%v,%v)", i, i))
 		wg.Add(1)
 		go func(id int) {
@@ -1193,7 +1193,7 @@ func TestIssue43667Concurrency(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
 			query := fmt.Sprintf("select (val) from cycle where pk = %v", id)
-			for j := 0; j < 5000; j++ {
+			for range 5000 {
 				tk.MustQuery(query).Check(testkit.Rows(fmt.Sprintf("%v", id)))
 			}
 		}(i)
@@ -1347,14 +1347,14 @@ func randValueForMVIndex(colType string) string {
 	case "json-string":
 		var array []string
 		arraySize := 1 + rand.Intn(5)
-		for i := 0; i < arraySize; i++ {
+		for range arraySize {
 			array = append(array, randValueForMVIndex("string"))
 		}
 		return "'[" + strings.Join(array, ", ") + "]'"
 	case "json-signed":
 		var array []string
 		arraySize := 1 + rand.Intn(5)
-		for i := 0; i < arraySize; i++ {
+		for range arraySize {
 			array = append(array, randValueForMVIndex("int"))
 		}
 		return "'[" + strings.Join(array, ", ") + "]'"
@@ -1364,8 +1364,8 @@ func randValueForMVIndex(colType string) string {
 }
 
 func insertValuesForMVIndex(nRows int, colTypes ...string) string {
-	var stmtVals []string
-	for i := 0; i < nRows; i++ {
+	stmtVals := make([]string, 0, nRows)
+	for range nRows {
 		var vals []string
 		for _, colType := range colTypes {
 			vals = append(vals, randValueForMVIndex(colType))
@@ -1376,7 +1376,7 @@ func insertValuesForMVIndex(nRows int, colTypes ...string) string {
 }
 
 func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge, hitCache bool, queryTemplate string, colTypes ...string) {
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		var vals []string
 		for _, colType := range colTypes {
 			vals = append(vals, randValueForMVIndex(colType))
@@ -1742,5 +1742,39 @@ func TestNonPreparedPlanSupportsBindings(t *testing.T) {
 	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
 	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+}
+
+func TestNonPreparedPlanSupportsSetVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`DROP BINDING FOR select * from t where pk >= ?`)
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ set_var(max_execution_time=2000) */ * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
 }

@@ -107,7 +107,7 @@ aliases:
     - gmhdbjd
   sig-approvers-planner: # approvers for planner module
     - AilinKid
-    - Rustin170506
+    - 0xPoe
     - elsa0520
     - fixdb
     - hawkingrei
@@ -118,6 +118,12 @@ aliases:
     - ghazalfamilyusa
     - henrybw
     - wddevries
+    - King-Dylan
+  sig-approvers-metrics: # approvers for metrics module
+    - XuHuaiyu
+    - zimulala
+    - yibin87
+    - nolouch
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013
@@ -159,6 +165,7 @@ aliases:
     - zhongzc
     - zhuo-zhi
   sig-community-approvers:
+    - 0xPoe
     - 3AceShowHand
     - 3pointer
     - 5kbpers
@@ -175,11 +182,11 @@ aliases:
     - GMHDBJD
     - IANTHEREAL
     - JmPotato
+    - King-Dylan
     - Leavrth
     - Little-Wallace
     - MyonKeminta
     - Reminiscent
-    - Rustin170506
     - SunRunAway
     - Tammyxia
     - WangXiangUSTC

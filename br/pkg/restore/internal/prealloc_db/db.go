@@ -55,7 +55,7 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 			// not support placement policy, just ignore it
 			log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
 		} else {
-			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
+			log.Debug("set tidb_placement_mode success", zap.String("mode", policyMode))
 			supportPolicy = true
 		}
 	}

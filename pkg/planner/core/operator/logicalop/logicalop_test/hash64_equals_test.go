@@ -993,9 +993,8 @@ func TestHandleColsHash64Equals(t *testing.T) {
 		UniqueID: 2,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
-	ctx := mock.NewContext()
-	handles1 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
-	handles2 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles1 := util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 := util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
@@ -1004,31 +1003,31 @@ func TestHandleColsHash64Equals(t *testing.T) {
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 2}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 2}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 2}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 2}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col1})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col1})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())

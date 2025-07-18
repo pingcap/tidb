@@ -226,7 +226,7 @@ func (mp *MockDataPhysicalPlan) Schema() *expression.Schema {
 }
 
 // ExplainID returns explain id
-func (*MockDataPhysicalPlan) ExplainID() fmt.Stringer {
+func (*MockDataPhysicalPlan) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "mockData_0"
 	})

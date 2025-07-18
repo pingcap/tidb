@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//pkg/parser/terror",
         "//pkg/util/logutil",
+        "//pkg/util/naming",
         "//pkg/util/tikvutil",
         "//pkg/util/versioninfo",
         "@com_github_burntsushi_toml//:toml",
@@ -38,7 +39,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 27,
+    shard_count = 28,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",

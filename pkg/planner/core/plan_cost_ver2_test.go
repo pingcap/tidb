@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,11 +71,11 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 	}
 
 	tk.MustQuery("explain select a from t where a=1").Check(testkit.Rows(
-		`IndexReader_6 10.00 root  index:IndexRangeScan_5`, // use idx_ab automatically since it has the smallest row-size in all access paths.
-		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
+		`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_ab automatically since it has the smallest row-size in all access paths.
+		`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
 	tk.MustQuery("explain select a, b, c from t where a=1").Check(testkit.Rows(
-		`IndexReader_6 10.00 root  index:IndexRangeScan_5`, // use idx_abc automatically
-		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+		`IndexReader_7 10.00 root  index:IndexRangeScan_6`, // use idx_abc automatically
+		`└─IndexRangeScan_6 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
 }
 
 func TestCostModelTraceVer2(t *testing.T) {
@@ -85,12 +84,11 @@ func TestCostModelTraceVer2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, key(b))`)
 	vals := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", i, i, i))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(vals, ", ")))
 	tk.MustExec("analyze table t")
-	tk.MustExec("set @@tidb_cost_model_version=2")
 
 	for _, q := range []string{
 		"select * from t",
@@ -165,7 +163,7 @@ func BenchmarkGetPlanCost(b *testing.B) {
 }
 
 func TestTableScanCostWithForce(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -208,7 +206,7 @@ func TestTableScanCostWithForce(t *testing.T) {
 }
 
 func TestOptimizerCostFactors(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")

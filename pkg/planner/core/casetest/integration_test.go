@@ -33,7 +33,7 @@ func TestVerboseExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int, b int)")
@@ -172,7 +172,7 @@ func TestIssue31240(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t31240(a int, b int);")
 	tk.MustExec("set @@tidb_allow_mpp = 0")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
@@ -305,7 +305,7 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@tidb_enforce_mpp = on")
 	tk.MustExec("drop table if exists t1;")
@@ -398,12 +398,12 @@ func TestFixControl45132(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, key(a))`)
 	values := make([]string, 0, 101)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		values = append(values, "(1, 1)")
 	}
 	values = append(values, "(2, 2)") // count(1) : count(2) == 100 : 1
 	tk.MustExec(`insert into t values ` + strings.Join(values, ","))
-	for i := 0; i < 7; i++ {
+	for range 7 {
 		tk.MustExec(`insert into t select * from t`)
 	}
 	tk.MustExec(`analyze table t`)
@@ -469,7 +469,7 @@ func TestTiFlashExtraColumnPrune(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@tidb_enforce_mpp = on")
 	tk.MustExec("drop table if exists t1;")
@@ -507,14 +507,14 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 	tk.MustExec(`set tidb_analyze_version=2;`)
 	tk.MustExec(`analyze table t all columns;`)
 	tk.MustQuery("explain select * from t use index (iad) where a = 1;").Check(testkit.Rows(
-		"TableReader_7 1.00 root  data:Selection_6",
-		"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
-		"  └─TableFullScan_5 2.00 cop[tikv] table:t keep order:false",
+		"TableReader_8 1.00 root  data:Selection_7",
+		"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1)",
+		"  └─TableFullScan_6 2.00 cop[tikv] table:t keep order:false",
 	))
 	tk.MustQuery("explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
-		"IndexMerge_7 1.00 root  type: union",
-		"├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-		"└─TableRowIDScan_6(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+		"IndexMerge_8 1.00 root  type: union",
+		"├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
+		"└─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
 	))
 }
 

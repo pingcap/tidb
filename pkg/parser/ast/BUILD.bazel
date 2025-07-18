@@ -46,6 +46,7 @@ go_test(
         "misc_test.go",
         "model_test.go",
         "procedure_test.go",
+        "stats_test.go",
         "util_test.go",
     ],
     embed = [":ast"],

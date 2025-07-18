@@ -16,6 +16,7 @@ package storage_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -23,8 +24,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 )
 
 func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, step proto.Step) {
@@ -49,6 +53,11 @@ func TestTaskTable(t *testing.T) {
 	_, err := gm.CreateTask(ctx, "key1", "test", 999, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
 
+	bak := *config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&bak)
+	})
+	config.GetGlobalConfig().KeyspaceName = "test_keyspace"
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	id, err := gm.CreateTask(ctx, "key1", "test", 4, "aaa",
 		12, proto.ExtraParams{ManualRecovery: true}, []byte("testmeta"))
@@ -67,6 +76,7 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, "aaa", task.TargetScope)
 	require.Equal(t, 12, task.MaxNodeCount)
 	require.Equal(t, proto.ExtraParams{ManualRecovery: true}, task.ExtraParams)
+	require.Equal(t, "test_keyspace", task.Keyspace)
 	require.Equal(t, []byte("testmeta"), task.Meta)
 	require.GreaterOrEqual(t, task.CreateTime, timeBeforeCreate)
 	require.Zero(t, task.StartTime)
@@ -275,6 +285,52 @@ func TestSwitchTaskStep(t *testing.T) {
 	// start time should not change
 	require.Equal(t, taskStartTime, task.StartTime)
 	checkAfterSwitchStep(t, startTime, task, subtasksStepTwo, proto.StepTwo)
+}
+
+func TestGetSubtaskSummaries(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+	taskID, err := tm.CreateTask(ctx, "test", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+
+	subtasks := make([]*proto.Subtask, 3)
+	for i := range subtasks {
+		subtasks[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
+			":4000", 11, fmt.Appendf(nil, "%d", i), i+1)
+	}
+
+	task, err := tm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
+
+	summary := &execute.SubtaskSummary{
+		RowCnt: *atomic.NewInt64(100),
+		Bytes:  *atomic.NewInt64(200),
+	}
+	bytes, err := json.Marshal(summary)
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set summary = '%s' where task_key = %d", string(bytes), task.ID))
+	summaries, err := tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, summaries, len(subtasks))
+	for _, summary := range summaries {
+		require.EqualValues(t, 100, summary.RowCnt.Load())
+		require.EqualValues(t, 200, summary.Bytes.Load())
+	}
+
+	// If the JSON value is wrong, we still get an empty summary.
+	// This can only happen if the summary field is manually updated.
+	// It's acceptable, as the correct summary will be set by the executor later.
+	tk.MustExec(fmt.Sprintf(`update mysql.tidb_background_subtask set summary = '{"wrong_key": 123}' where task_key = %d`, task.ID))
+	summaries, err = tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
+	require.NoError(t, err)
+	for _, summary := range summaries {
+		require.EqualValues(t, 0, summary.RowCnt.Load())
+		require.EqualValues(t, 0, summary.Bytes.Load())
+	}
 }
 
 func TestSwitchTaskStepInBatch(t *testing.T) {
@@ -575,10 +631,10 @@ func TestSubTaskTable(t *testing.T) {
 	rowCount, err := sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), rowCount)
-	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, subtaskID, 100))
+	require.NoError(t, sm.UpdateSubtaskSummary(ctx, subtaskID, &execute.SubtaskSummary{RowCnt: *atomic.NewInt64(100)}))
 	rowCount, err = sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), rowCount)
+	require.EqualValues(t, 100, rowCount)
 
 	getSubtaskBaseSlice := func(sts []*proto.Subtask) []*proto.SubtaskBase {
 		res := make([]*proto.SubtaskBase, 0, len(sts))

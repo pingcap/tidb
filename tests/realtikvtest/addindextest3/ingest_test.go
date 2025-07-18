@@ -25,9 +25,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
+	disttestutil "github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -140,6 +142,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
+	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -398,6 +401,7 @@ func TestAddIndexSplitTableRanges(t *testing.T) {
 }
 
 func TestAddIndexLoadTableRangeError(t *testing.T) {
+	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -449,6 +453,7 @@ func TestAddIndexMockFlushError(t *testing.T) {
 }
 
 func TestAddIndexDiskQuotaTS(t *testing.T) {
+	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -477,6 +482,9 @@ func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
 }
 
 func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -512,6 +520,9 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -532,6 +543,9 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 }
 
 func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -545,6 +559,9 @@ func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
 }
 
 func TestAddIndexBackfillLostUpdate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -600,6 +617,9 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 }
 
 func TestAddIndexIngestFailures(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -624,6 +644,9 @@ func TestAddIndexIngestFailures(t *testing.T) {
 }
 
 func TestAddIndexImportFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -750,6 +773,9 @@ func TestConcFastReorg(t *testing.T) {
 }
 
 func TestIssue55808(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this is specific to classic kernel")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -862,4 +888,51 @@ func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "1*return")
 	tk.MustExec("alter table t add unique index idx(b);")
+}
+
+func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	var runInsert bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if t.Failed() || runInsert {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			for i := range 4 {
+				_, err := tk1.Exec("insert into t values (?, ?);", i, i)
+				assert.NoError(t, err)
+			}
+			runInsert = true
+		}
+	})
+
+	var runUpdate bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", func() {
+		if t.Failed() || runUpdate {
+			return
+		}
+		for i := range 4 {
+			_, err := tk1.Exec("update t set b = b+10 where a = ?;", i)
+			assert.NoError(t, err)
+		}
+		runUpdate = true
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0 10", "1 11", "2 12", "3 13"))
 }

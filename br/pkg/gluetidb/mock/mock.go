@@ -97,7 +97,7 @@ func (s *mockSession) Close() {
 	s.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 	if ret, ok := s.globalVars[name]; ok {
 		return ret, nil
@@ -108,6 +108,18 @@ func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 // GetGlobalSysVar implements glue.Session.
 func (s *mockSession) GetGlobalSysVar(string) (string, error) {
 	return "", nil
+}
+
+// AlterTableMode implements glue.Session.
+func (*mockSession) AlterTableMode(_ context.Context, _ int64, _ int64, _ model.TableMode) error {
+	log.Fatal("unimplemented AlterTableMode for mock session")
+	return nil
+}
+
+// RefreshMeta implements glue.Session.
+func (*mockSession) RefreshMeta(_ context.Context, _ *model.RefreshMetaArgs) error {
+	log.Fatal("unimplemented RefreshMeta for mock session")
+	return nil
 }
 
 // MockGlue only used for test

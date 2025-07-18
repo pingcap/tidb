@@ -211,6 +211,13 @@ type ExplainStmt struct {
 	Stmt    StmtNode
 	Format  string
 	Analyze bool
+
+	// Explore indicates whether to use EXPLAIN EXPLORE.
+	Explore bool
+	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
+	SQLDigest string
+	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
+	PlanDigest string
 }
 
 // Restore implements Node interface.
@@ -232,14 +239,24 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
-	if !n.Analyze || strings.ToLower(n.Format) != "row" {
+	if n.Explore {
+		ctx.WriteKeyWord("EXPLORE ")
+		if n.SQLDigest != "" {
+			ctx.WriteString(n.SQLDigest)
+		}
+	} else if !n.Analyze || strings.ToLower(n.Format) != "row" {
 		ctx.WriteKeyWord("FORMAT ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Format)
 		ctx.WritePlain(" ")
 	}
-	if err := n.Stmt.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore ExplainStmt.Stmt")
+	if n.PlanDigest != "" {
+		ctx.WriteString(n.PlanDigest)
+	}
+	if n.Stmt != nil {
+		if err := n.Stmt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ExplainStmt.Stmt")
+		}
 	}
 	return nil
 }
@@ -251,11 +268,13 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExplainStmt)
-	node, ok := n.Stmt.Accept(v)
-	if !ok {
-		return n, false
+	if n.Stmt != nil {
+		node, ok := n.Stmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Stmt = node.(StmtNode)
 	}
-	n.Stmt = node.(StmtNode)
 	return v.Leave(n)
 }
 
@@ -3856,6 +3875,23 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// CancelDistributionJobStmt represent CANCEL DISTRIBUTION JOB statement.
+type CancelDistributionJobStmt struct {
+	stmtNode
+	JobID int64
+}
+
+func (n *CancelDistributionJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelDistributionJobStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CANCEL DISTRIBUTION JOB ")
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }

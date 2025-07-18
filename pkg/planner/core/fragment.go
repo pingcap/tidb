@@ -32,15 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
@@ -52,7 +52,7 @@ type Fragment struct {
 	CTEReaders        []*PhysicalCTE              // The receivers for CTE storage/producer.
 
 	// following fields are filled after scheduling.
-	ExchangeSender *PhysicalExchangeSender // data exporter
+	Sink MPPSink // data exporter
 
 	IsRoot bool
 
@@ -79,14 +79,25 @@ func (f *Fragment) MemoryUsage() (sum int64) {
 	if f.TableScan != nil {
 		sum += f.TableScan.MemoryUsage()
 	}
-	if f.ExchangeSender != nil {
-		sum += f.ExchangeSender.MemoryUsage()
+	if f.Sink != nil {
+		sum += f.Sink.MemoryUsage()
 	}
 
 	for _, receiver := range f.ExchangeReceivers {
 		sum += receiver.MemoryUsage()
 	}
 	return
+}
+
+// MPPSink is the operator to send data to its parent fragment.
+// e.g. ExchangeSender, etc.
+type MPPSink interface {
+	base.PhysicalPlan
+	GetCompressionMode() vardef.ExchangeCompressionMode
+	GetSelfTasks() []*kv.MPPTask
+	SetSelfTasks(tasks []*kv.MPPTask)
+	SetTargetTasks(tasks []*kv.MPPTask)
+	AppendTargetTasks(tasks []*kv.MPPTask)
 }
 
 type tasksAndFrags struct {
@@ -164,7 +175,7 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		return nil, errors.Trace(err)
 	}
 	for _, frag := range frags {
-		frag.ExchangeSender.TargetTasks = []*kv.MPPTask{tidbTask}
+		frag.Sink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
 	return e.frags, nil
@@ -234,7 +245,7 @@ func (f *Fragment) init(p base.PhysicalPlan) error {
 		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
 		f.singleton = f.singleton || x.Children()[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
-	case *PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		return errors.New("unexpected union all detected")
 	case *PhysicalCTE:
 		f.CTEReaders = append(f.CTEReaders, x)
@@ -266,7 +277,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		}
 		*forest = append(*forest, p.(*PhysicalExchangeSender))
 		for i := 1; i < len(stack); i++ {
-			if _, ok := stack[i].(*PhysicalUnionAll); ok {
+			if _, ok := stack[i].(*physicalop.PhysicalUnionAll); ok {
 				continue
 			}
 			if _, ok := stack[i].(*PhysicalSequence); ok {
@@ -291,7 +302,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
 		stack = stack[:len(stack)-1]
 		return errors.Trace(err)
-	case *PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		for _, ch := range x.Children() {
 			stack = append(stack, ch)
 			err := e.untwistPlanAndRemoveUnionAll(stack, forest)
@@ -303,7 +314,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 	case *PhysicalSequence:
 		lastChildIdx := len(x.Children()) - 1
 		// except the last child, those previous ones are all cte producer.
-		for i := 0; i < lastChildIdx; i++ {
+		for i := range lastChildIdx {
 			if e.CTEGroups == nil {
 				e.CTEGroups = make(map[int]*cteGroupInFragment)
 			}
@@ -340,7 +351,7 @@ func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragmen
 	}
 	fragments := make([]*Fragment, 0, len(forest))
 	for _, s := range forest {
-		f := &Fragment{ExchangeSender: s}
+		f := &Fragment{Sink: s}
 		err = f.init(s)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -417,14 +428,14 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	for _, r := range f.ExchangeReceivers {
 		for _, frag := range r.frags {
-			frag.ExchangeSender.TargetTasks = append(frag.ExchangeSender.TargetTasks, tasks...)
+			frag.Sink.AppendTargetTasks(tasks)
 		}
 	}
 	for _, cteR := range f.CTEReaders {
 		e.addReaderTasksForCTEStorage(cteR.CTE.IDForStorage, tasks...)
 	}
-	f.ExchangeSender.Tasks = tasks
-	f.flipCTEReader(f.ExchangeSender)
+	f.Sink.SetSelfTasks(tasks)
+	f.flipCTEReader(f.Sink)
 	return tasks, nil
 }
 
@@ -433,7 +444,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 // But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
 func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
 	newChildren := make([]base.PhysicalPlan, len(currentPlan.Children()))
-	for i := 0; i < len(currentPlan.Children()); i++ {
+	for i := range currentPlan.Children() {
 		child := currentPlan.Children()[i]
 		newChildren[i] = child
 		if cteR, ok := child.(*PhysicalCTE); ok {
@@ -465,7 +476,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 	cteReader.SetChildren(receiver)
 	receiver.SetChildren(group.CTEStorage.Children()[0])
 	inconsistenceNullable := false
-	for i, col := range cteReader.schema.Columns {
+	for i, col := range cteReader.Schema().Columns {
 		if mysql.HasNotNullFlag(col.RetType.GetFlag()) != mysql.HasNotNullFlag(group.CTEStorage.Children()[0].Schema().Columns[i].RetType.GetFlag()) {
 			inconsistenceNullable = true
 			break
@@ -477,7 +488,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 			col.Index = i
 		}
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(cols)}.Init(cteReader.SCtx(), cteReader.StatsInfo(), 0, nil)
-		proj.SetSchema(cteReader.schema.Clone())
+		proj.SetSchema(cteReader.Schema().Clone())
 		proj.SetChildren(receiver)
 		cteReader.SetChildren(proj)
 	}
@@ -487,7 +498,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*kv.MPPTask) {
 	group := e.CTEGroups[storageID]
 	for _, frag := range group.StorageFragments {
-		frag.ExchangeSender.TargetCTEReaderTasks = append(frag.ExchangeSender.TargetCTEReaderTasks, tasks)
+		frag.Sink.AppendTargetTasks(tasks)
 	}
 }
 
@@ -579,15 +590,11 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		return nil, errors.Trace(err)
 	}
 
-	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
-	if err != nil {
-		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
-		ttl = 30 * time.Second
-	}
+	// ttl is always 0, `tidb_mpp_store_fail_ttl` variable has been deprecated
+	ttl := time.Duration(0)
 	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
-		ttl = time.Duration(0)
 	}
 	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
 
