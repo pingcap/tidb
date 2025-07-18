@@ -2011,6 +2011,11 @@ error = '''
 Delete can not find column %s for table %s
 '''
 
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

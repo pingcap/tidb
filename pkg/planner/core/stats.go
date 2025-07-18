@@ -464,7 +464,7 @@ func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []
 					break
 				}
 			}
-			if match {
+			if match && idx.IsEssentialStatsLoaded() {
 				ndv := property.GroupNDV{
 					Cols: idxCols,
 					NDV:  float64(idx.NDV),
