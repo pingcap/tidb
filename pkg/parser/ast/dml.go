@@ -3054,6 +3054,8 @@ const (
 	ShowDistributions
 	ShowPlanForSQL
 	ShowDistributionJobs
+	// showTpCount is the count of all kinds of `SHOW` statements.
+	showTpCount
 )
 
 const (
