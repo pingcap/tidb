@@ -65,7 +65,7 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	r.Close()
 
 	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
@@ -200,7 +200,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
@@ -1419,6 +1419,78 @@ func TestTiDBServerMemoryLimitUpgradeTo651_2(t *testing.T) {
 	row = chk.GetRow(0)
 	require.Equal(t, 2, row.Len())
 	require.Equal(t, "70%", row.GetString(1))
+}
+
+func TestTiDBEnterpriseEditionUpgrade(t *testing.T) {
+	ctx := context.Background()
+
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := CreateSessionAndSetID(t, store)
+
+	MustExec(t, se, "USE mysql")
+
+	// bootstrap with currentEEBootstrapVersion
+	r := MustExecToRecodeSet(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_enterprise_edition_server_version"`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	row := req.GetRow(0)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, req.NumRows())
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, []byte(fmt.Sprintf("%d", currentEEBootstrapVersion)), row.GetBytes(0))
+	require.NoError(t, r.Close())
+
+	se1 := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapEEVersion(se1)
+	require.NoError(t, err)
+	require.Equal(t, currentEEBootstrapVersion, ver)
+
+	// Do something to downgrade the store.
+	// downgrade meta bootstrap version
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrapEE(int64(1))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	MustExec(t, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_enterprise_edition_server_version"`)
+	MustExec(t, se1, `commit`)
+	unsetStoreBootstrapped(store.UUID())
+	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_enterprise_edition_server_version'", 0))
+	// Make sure the version is downgraded.
+	r = MustExecToRecodeSet(t, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_enterprise_edition_server_version"`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
+	require.NoError(t, r.Close())
+
+	ver, err = getBootstrapEEVersion(se1)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), ver)
+	dom.Close()
+
+	// Create a new session then upgrade() will run automatically.
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+
+	se2 := CreateSessionAndSetID(t, store)
+	r = MustExecToRecodeSet(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_enterprise_edition_server_version"`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, req.NumRows())
+	row = req.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, []byte(fmt.Sprintf("%d", currentEEBootstrapVersion)), row.GetBytes(0))
+	require.NoError(t, r.Close())
+
+	ver, err = getBootstrapEEVersion(se2)
+	require.NoError(t, err)
+	require.Equal(t, currentEEBootstrapVersion, ver)
 }
 
 func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {

@@ -82,6 +82,7 @@ var (
 	_ functionClass = &toBase64FunctionClass{}
 	_ functionClass = &insertFunctionClass{}
 	_ functionClass = &instrFunctionClass{}
+	_ functionClass = &labelAccessibleFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
 	_ functionClass = &weightStringFunctionClass{}
 )
@@ -151,6 +152,7 @@ var (
 	_ builtinFunc = &builtinInstrSig{}
 	_ builtinFunc = &builtinFieldRealSig{}
 	_ builtinFunc = &builtinFieldIntSig{}
+	_ builtinFunc = &builtinLabelAccessibleSig{}
 	_ builtinFunc = &builtinFieldStringSig{}
 	_ builtinFunc = &builtinWeightStringSig{}
 )
@@ -3811,6 +3813,111 @@ func (b *builtinInstrSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		return 0, false, nil
 	}
 	return int64(idx + 1), false, nil
+}
+
+type labelAccessibleFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *labelAccessibleFunctionClass) getFunction(ctx BuildContext,
+	args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(1)
+	// The label values is always case sensitive,
+	// so we don't create a builtinLabelAccessibleSigUTF8 by bf.collation
+	sig := &builtinLabelAccessibleSig{bf}
+	// todo: add ScalarFuncSig_LabelAccessible to tipb
+	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	return sig, nil
+
+}
+
+type builtinLabelAccessibleSig struct{ baseBuiltinFunc }
+
+func (b *builtinLabelAccessibleSig) Clone() builtinFunc {
+	newSig := &builtinLabelAccessibleSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals Label_Accessible(rowLabelStr,usrLabelStr), case sensitive.
+func (b *builtinLabelAccessibleSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	// If rowLabelStr is NULL, the row is unaccessible.
+	rowLabelStr, IsNull, err := b.args[0].EvalString(ctx, row)
+	if IsNull || err != nil {
+		return 0, true, err
+	}
+	// If usrLabelStr is NULL, the row is not accessible.
+	// In fact, the column tidb_ls_users.label_value is not null.
+	usrLabelStr, IsNull, err := b.args[1].EvalString(ctx, row)
+	if IsNull || err != nil {
+		return 0, true, err
+	}
+
+	// if the rowLabels is empty, it is accessible.
+	if len(rowLabelStr) == 0 {
+		return 1, false, nil
+	}
+
+	// if the usrLabels is empty, but the rowLabels is not empty, it is unaccessible.
+	if len(usrLabelStr) == 0 {
+		return 0, false, nil
+	}
+
+	// The form of rowLabelStr is like "level:compartment:group", such as "1:m:south".
+	rowLabels := strings.Split(rowLabelStr, ":")
+	usrLabels := strings.Split(usrLabelStr, ":")
+
+	// if the rowLabels has more components than usrLabels, this row is not accessible.
+	if len(rowLabels) > len(usrLabels) {
+		return 0, false, nil
+	}
+
+	for i, rowLbl := range rowLabels {
+		// usrLabels[i] is always vaild, because we ensure len(usrLabels) >= len(rowLabels) above.
+		usrLbl := usrLabels[i]
+		if i == 0 {
+			// todo: we should add a more detail error to indicate that the level label is not vaild.
+			rowLevel, errRow := strconv.Atoi(rowLbl)
+			if errRow != nil {
+				return 0, false, errRow
+			}
+			usrLevel, errUsr := strconv.Atoi(usrLbl)
+			if errUsr != nil {
+				return 0, false, errUsr
+			}
+			// If rowLevel > usrLevel, the row is not accessible for this user.
+			if rowLevel > usrLevel {
+				return 0, false, nil
+			}
+			// It goes to compare compartment label and group label.
+			continue
+		}
+
+		// compare compartment label and group label.
+		found := false
+		rowSubLbs := strings.Split(rowLbl, ",")
+		usrSubLbs := strings.Split(usrLbl, ",")
+		for _, rowSub := range rowSubLbs {
+			for _, usrSub := range usrSubLbs {
+				if rowSub == usrSub {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return 0, false, nil
+			}
+			found = false
+		}
+	}
+	return 1, false, nil
 }
 
 type loadFileFunctionClass struct {
