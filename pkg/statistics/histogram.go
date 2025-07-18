@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -1625,10 +1626,33 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				// mergedBuffer is in reverse order, we need to reverse it.
 				slices.Reverse(mergeBuffer)
 				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
+				// slices.Reverse(mergeBuffer)
+				intest.AssertFunc(func() bool {
+					for i := 0; i < len(mergeBuffer); i++ {
+						res, err := mergeBuffer[i].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+						if err != nil {
+							return false
+						}
+						if res != 0 {
+							return false
+						}
+					}
+					return true
+				}, "the buckets are not sorted actually")
 				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
 				checkBucket4MergingIsSorted(sc.TypeCtx(), mergeBuffer)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
 				if err != nil {
+					strBuilder := strings.Builder{}
+					strBuilder.WriteString("merge buffer: ")
+					for i, bkt := range mergeBuffer {
+						str := types.DatumsToStrNoErr([]types.Datum{*bkt.lower, *bkt.upper})
+						strBuilder.WriteString(str)
+						if i != len(mergeBuffer)-1 {
+							strBuilder.WriteString(", ")
+						}
+					}
+					logutil.BgLogger().Warn("failed to merge partition buckets", zap.String("merge buffer", strBuilder.String()))
 					return nil, err
 				}
 				for _, bkt := range cutAndFixBuffer {
