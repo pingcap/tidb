@@ -737,9 +737,23 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.Ac
 	}
 
 	// Helper function to check if one index is a prefix of another
+	// This supports both same order and different sequence of columns
 	isIndexPrefix := func(idx1, idx2 *model.IndexInfo, minEq int) bool {
-		for i := range minEq {
-			if idx1.Columns[i].Name.L != idx2.Columns[i].Name.L {
+		if minEq == 0 {
+			return false
+		}
+
+		// Check if the first minEq columns of idx1 are contained in idx2
+		// This handles both same order and different sequence cases
+		for i := 0; i < minEq && i < len(idx1.Columns); i++ {
+			found := false
+			for j := 0; j < len(idx2.Columns); j++ {
+				if idx1.Columns[i].Name.L == idx2.Columns[j].Name.L {
+					found = true
+					break
+				}
+			}
+			if !found {
 				return false
 			}
 		}
@@ -768,6 +782,17 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.Ac
 			}
 			for _, currentPath := range currentPaths {
 				for _, higherPath := range higherPaths {
+					// Don't prune if the current index is a single scan and the higher index is not
+					// Single scan indexes can avoid table lookups, so they should be preserved
+					if currentPath.IsSingleScan && !higherPath.IsSingleScan {
+						continue
+					}
+					if currentPath.Forced {
+						continue // Don't prune forced indexes
+					}
+					if len(currentPath.TableFilters) < len(higherPath.TableFilters) {
+						continue // Prefer indexes with fewer table filters
+					}
 					if isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
 						// The current index is a prefix of the higher index, and the higher index
 						// has more eqOrIn conditions, so we can prune the current index
