@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -1366,6 +1367,11 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
+
+	if kerneltype.IsNextGen() && len(tableInfo.EngineAttribute) > 0 {
+		fmt.Fprintf(buf, " ENGINE_ATTRIBUTE='%s'", format.OutputFormat(tableInfo.EngineAttribute))
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
