@@ -763,6 +763,7 @@ mod
 month
 monthname
 mul
+mysql_query_attribute_string
 name_const
 ne
 nextval
