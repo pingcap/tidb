@@ -126,6 +126,10 @@ check_contains "CONSTRAINT_NAME: fk_0"
 run_sql "SHOW CREATE TABLE test.pairs17_child;"
 check_contains "ON DELETE CASCADE"
 
+## check table test.pairs18
+run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs18' AND INDEX_ID = 2 AND IS_GLOBAL = 1;"
+check_contains "RESCNT: 1"
+
 # adjust some index to be visible
 run_sql "ALTER TABLE test.pairs ALTER INDEX i1 VISIBLE;"
 
@@ -173,4 +177,10 @@ check_not_contains "RESCNT: 0"
 run_sql "select count(*) AS RESCNT from test.pairs16_parent use index(i2) where id = 1;"
 check_not_contains "RESCNT: 0"
 run_sql "select count(*) AS RESCNT from test.pairs16_child use index(i2) where pid = 1;"
+check_not_contains "RESCNT: 0"
+run_sql "select count(*) AS RESCNT from test.pairs17_parent use index(i2) where id = 1;"
+check_not_contains "RESCNT: 0"
+run_sql "select count(*) AS RESCNT from test.pairs18 use index(i1) where pid = 1;"
+check_not_contains "RESCNT: 0"
+run_sql "select count(*) AS RESCNT from test.pairs18 use index(i1) where pid = 10;"
 check_not_contains "RESCNT: 0"

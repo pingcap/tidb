@@ -82,3 +82,7 @@ CREATE TABLE test.pairs17_parent (id int primary key, pid int);
 CREATE TABLE test.pairs17_child (id int, pid int, index i1(pid), foreign key (pid) references test.pairs17_parent (id) on delete cascade);
 INSERT INTO test.pairs17_parent VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
 INSERT INTO test.pairs17_child VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+-- test global index
+CREATE TABLE test.pairs18 (id int, pid int) partition by range(id) (partition p0 values less than (6), partition p1 values less than (11));
+INSERT INTO test.pairs18 values (1, 1), (10, 10);
