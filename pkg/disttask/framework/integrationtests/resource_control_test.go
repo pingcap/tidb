@@ -247,6 +247,11 @@ func TestResourceControl(t *testing.T) {
 		}
 		allSubtasks := c.getAllSubtasks()
 		c.continueAllSubtasks()
+		// wait all subtasks done, else we don't know whether they are done or cancelled,
+		// so hard to do wait
+		for taskID := int64(1); taskID <= 4; taskID++ {
+			c.waitNewSubtasksNotIn(taskID, allSubtasks[taskID], 1)
+		}
 		// now there are 4 subtasks left, 1 node should be enough to run them
 		c.ScaleIn(2)
 		c.waitTotalSubtaskCount(4)
