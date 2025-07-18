@@ -17,7 +17,6 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"math"
 	"regexp"
 	"slices"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -533,7 +533,7 @@ func (helper extractHelper) extractTimeRange(
 	timezone *time.Location,
 ) (
 	remained []expression.Expression,
-	// unix timestamp in nanoseconds
+// unix timestamp in nanoseconds
 	startTime int64,
 	endTime int64,
 ) {
