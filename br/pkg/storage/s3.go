@@ -184,7 +184,7 @@ type S3BackendOptions struct {
 }
 
 // Apply apply s3 options on backuppb.S3.
-func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
+func (options *S3BackendOptions) Apply(s3 *backuppb.S3, rawURL string) error {
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
@@ -199,7 +199,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	}
 	// In some cases, we need to set ForcePathStyle to false.
 	// Refer to: https://rclone.org/s3/#s3-force-path-style
-	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
+	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" || useVirtualHostStyleForAWSS3(options, rawURL) ||
 		options.UseAccelerateEndpoint {
 		options.ForcePathStyle = false
 	}
@@ -225,6 +225,24 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.ExternalId = options.ExternalID
 	s3.Provider = options.Provider
 	return nil
+}
+
+func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
+	// User has explicitly specified ForcePathStyle, use specified value
+	if strings.Contains(rawURL, "force-path-style") || strings.Contains(rawURL, "force_path_style") {
+		return false
+	}
+
+	if opts.Provider == "aws" || opts.Provider == "" {
+		return true
+	}
+	if strings.Contains(opts.Endpoint, "amazonaws.com") {
+		return true
+	}
+	if opts.RoleARN != "" {
+		return true
+	}
+	return false
 }
 
 // defineS3Flags defines the command line flags for S3BackendOptions.

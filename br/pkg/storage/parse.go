@@ -91,7 +91,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 			s3Options = options.S3
 		}
 		ExtractQueryParameters(u, &s3Options)
-		if err := s3Options.Apply(s3); err != nil {
+		if err := s3Options.Apply(s3, rawURL); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if u.Scheme == "ks3" {
