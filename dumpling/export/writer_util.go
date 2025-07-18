@@ -148,7 +148,7 @@ func WriteInsert(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
-	chunkIndex int,
+	_ int,
 	_ int,
 	isLastChunk bool,
 ) (n uint64, err error) {
