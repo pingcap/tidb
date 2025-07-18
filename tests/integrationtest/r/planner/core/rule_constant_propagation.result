@@ -184,7 +184,7 @@ Update	N/A	root		N/A
   └─HashJoin	80.00	root		CARTESIAN left outer join, left side:TableReader
     ├─HashAgg(Build)	8.00	root		group by:planner__core__rule_constant_propagation.t2.id, funcs:count(1)->Column#7
     │ └─TableReader	10.00	root		data:Selection
-    │   └─Selection	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.id, 10)
+    │   └─Selection	10.00	cop[tikv]		eq(10, planner__core__rule_constant_propagation.t2.id)
     │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10.00	root		data:Selection
       └─Selection	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t1.id, 10)
