@@ -54,7 +54,7 @@ func (s *SimpleDataSource[T]) Open() error {
 			select {
 			case s.target.Channel() <- input:
 			case <-s.ctx.Done():
-				return nil
+				return s.ctx.Err()
 			}
 		}
 
@@ -101,7 +101,7 @@ func (s *simpleSink[R]) Open() error {
 		for {
 			select {
 			case <-s.ctx.Done():
-				return nil
+				return s.ctx.Err()
 			case data, ok := <-s.source.Channel():
 				if !ok {
 					return nil
