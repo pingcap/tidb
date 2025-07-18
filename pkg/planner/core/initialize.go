@@ -34,13 +34,6 @@ func (p PhysicalProjection) Init(ctx base.PlanContext, stats *property.StatsInfo
 	return &p
 }
 
-// Init initializes PhysicalTableDual.
-func (p PhysicalTableDual) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalTableDual {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalMaxOneRow.
 func (p PhysicalMaxOneRow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalMaxOneRow {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
@@ -188,14 +181,6 @@ func (base basePhysicalAgg) initForStream(ctx base.PlanContext, stats *property.
 // Init initializes PhysicalApply.
 func (p PhysicalApply) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalApply {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeApply, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalUnionScan.
-func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionScan {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeUnionScan, &p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
 	return &p
