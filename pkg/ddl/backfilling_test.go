@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -91,7 +91,7 @@ func TestPickBackfillType(t *testing.T) {
 	ingest.LitInitialized = false
 }
 
-func assertStaticExprContextEqual(t *testing.T, sctx sessionapi.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
+func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
 	exprCtxManualCheckFields := []struct {
 		field string
 		check func(*exprstatic.ExprContext)
@@ -206,7 +206,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionapi.Context, exprCtx
 // newMockReorgSessCtx creates a mock session context for reorg test.
 // In old implementations, DDL is using `mock.Context` to construct the contexts used in DDL reorg.
 // After refactoring, we just need it to do test the new implementation is compatible with the old one.
-func newMockReorgSessCtx(store kv.Storage) sessionapi.Context {
+func newMockReorgSessCtx(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
@@ -275,7 +275,7 @@ func TestReorgTableMutateContext(t *testing.T) {
 
 	exprCtx := exprstatic.NewExprContext()
 
-	assertTblCtxMatchSessionCtx := func(ctx table.MutateContext, sctx sessionapi.Context) {
+	assertTblCtxMatchSessionCtx := func(ctx table.MutateContext, sctx sessionctx.Context) {
 		sctxTblCtx := sctx.GetTableCtx()
 		require.Equal(t, uint64(0), ctx.ConnectionID())
 		require.Equal(t, sctxTblCtx.ConnectionID(), ctx.ConnectionID())

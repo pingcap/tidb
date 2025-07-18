@@ -17,7 +17,7 @@ package priorityqueue
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
@@ -85,7 +85,7 @@ const LastFailedDurationQueryForPartition = `
 // GetAverageAnalysisDuration returns the average duration of the last 5 successful analyses for each specified partition.
 // If there are no successful analyses, it returns 0.
 func GetAverageAnalysisDuration(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	schema, tableName string,
 	partitionNames ...string,
 ) (time.Duration, error) {
@@ -120,7 +120,7 @@ func GetAverageAnalysisDuration(
 // GetLastFailedAnalysisDuration returns the duration since the last failed analysis.
 // If there is no failed analysis, it returns 0.
 func GetLastFailedAnalysisDuration(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	schema, tableName string,
 	partitionNames ...string,
 ) (time.Duration, error) {

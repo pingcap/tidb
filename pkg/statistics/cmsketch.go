@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -544,7 +544,7 @@ func (c *TopN) Num() int {
 }
 
 // DecodedString returns the value with decoded result.
-func (c *TopN) DecodedString(ctx sessionapi.Context, colTypes []byte) (string, error) {
+func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, error) {
 	if c == nil {
 		return "", nil
 	}

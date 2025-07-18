@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn"
@@ -46,7 +46,7 @@ func NewStatsUsageImpl(statsHandle statstypes.StatsHandle) statstypes.StatsUsage
 
 // LoadColumnStatsUsage returns all columns' usage information.
 func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]statstypes.ColStatsTimeInfo, err error) {
-	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		colStatsMap, err = predicatecolumn.LoadColumnStatsUsage(sctx, loc)
 		return err
 	})
@@ -55,7 +55,7 @@ func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap m
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
-	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		columnIDs, err = predicatecolumn.GetPredicateColumns(sctx, tableID)
 		return err
 	}, utilstats.FlagWrapTxn)
@@ -64,7 +64,7 @@ func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, 
 
 // CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 func (u *statsUsageImpl) CollectColumnsInExtendedStats(tableID int64) (columnIDs []int64, err error) {
-	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		columnIDs, err = predicatecolumn.CollectColumnsInExtendedStats(sctx, tableID)
 		return err
 	})

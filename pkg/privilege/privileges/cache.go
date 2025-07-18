@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1683,7 +1683,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	return false
 }
 
-func (p *MySQLPrivilege) showGrants(ctx sessionapi.Context, user, host string, roles []*auth.RoleIdentity) []string {
+func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string //nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false

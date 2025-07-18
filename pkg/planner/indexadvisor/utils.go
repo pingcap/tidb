@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -530,7 +530,7 @@ func evaluateIndexSetCost(
 	return IndexSetCost{workloadCost, totCols, strings.Join(keys, ",")}, nil
 }
 
-func exec(sctx sessionapi.Context, sql string, args ...any) (ret []chunk.Row, err error) {
+func exec(sctx sessionctx.Context, sql string, args ...any) (ret []chunk.Row, err error) {
 	executor := sctx.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	result, err := executor.ExecuteInternal(ctx, sql, args...)

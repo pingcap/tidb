@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 )
@@ -30,7 +30,7 @@ type PessimisticSerializableTxnContextProvider struct {
 }
 
 // NewPessimisticSerializableTxnContextProvider returns a new PessimisticSerializableTxnContextProvider
-func NewPessimisticSerializableTxnContextProvider(sctx sessionapi.Context,
+func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 	causalConsistencyOnly bool) *PessimisticSerializableTxnContextProvider {
 	provider := &PessimisticSerializableTxnContextProvider{
 		baseTxnContextProvider: baseTxnContextProvider{

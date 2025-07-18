@@ -23,7 +23,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -132,7 +132,7 @@ func TestPlanCostDetail(t *testing.T) {
 	}
 }
 
-func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionapi.Context, dom *domain.Domain) map[string]*tracing.PhysicalPlanCostDetail {
+func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context, dom *domain.Domain) map[string]*tracing.PhysicalPlanCostDetail {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	nodeW := resolve.NewNodeW(stmt)

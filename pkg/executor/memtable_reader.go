@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -65,7 +65,7 @@ func (dummyCloser) close() error { return nil }
 func (dummyCloser) getRuntimeStats() execdetails.RuntimeStats { return nil }
 
 type memTableRetriever interface {
-	retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error)
+	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 	close() error
 	getRuntimeStats() execdetails.RuntimeStats
 }
@@ -168,7 +168,7 @@ type clusterConfigRetriever struct {
 }
 
 // retrieve implements the memTableRetriever interface
-func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -176,7 +176,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionapi.Con
 	return fetchClusterConfig(sctx, e.extractor.NodeTypes, e.extractor.Instances)
 }
 
-func fetchClusterConfig(sctx sessionapi.Context, nodeTypes, nodeAddrs set.StringSet) ([][]types.Datum, error) {
+func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.StringSet) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -320,7 +320,7 @@ type clusterServerInfoRetriever struct {
 }
 
 // retrieve implements the memTableRetriever interface
-func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	switch e.serverInfoType {
 	case diagnosticspb.ServerInfoType_LoadInfo,
 		diagnosticspb.ServerInfoType_SystemInfo:
@@ -405,7 +405,7 @@ func (h *logResponseHeap) Pop() any {
 	return x
 }
 
-func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionapi.Context) ([]chan logStreamResult, error) {
+func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -455,7 +455,7 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionapi.Co
 
 func (e *clusterLogRetriever) startRetrieving(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	serversInfo []infoschema.ServerInfo,
 	req *diagnosticspb.SearchLogRequest) ([]chan logStreamResult, error) {
 	// gRPC options
@@ -535,7 +535,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	return results, nil
 }
 
-func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *clusterLogRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.isDrained {
 		return nil, nil
 	}
@@ -689,7 +689,7 @@ type HistoryHotRegion struct {
 	EndKey        string  `json:"end_key"`
 }
 
-func (e *hotRegionsHistoryRetriver) initialize(_ context.Context, sctx sessionapi.Context) ([]chan hotRegionsResult, error) {
+func (e *hotRegionsHistoryRetriver) initialize(_ context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -769,7 +769,7 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 	return results, nil
 }
 
-func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.isDrained {
 		return nil, nil
 	}
@@ -894,7 +894,7 @@ type tikvRegionPeersRetriever struct {
 	retrieved bool
 }
 
-func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}

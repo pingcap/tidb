@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	transaction "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -50,7 +50,7 @@ var (
 )
 
 type memIndexReader struct {
-	ctx   sessionapi.Context
+	ctx   sessionctx.Context
 	index *model.IndexInfo
 	table          *model.TableInfo
 	kvRanges       []kv.KeyRange
@@ -235,7 +235,7 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 }
 
 type memTableReader struct {
-	ctx   sessionapi.Context
+	ctx   sessionctx.Context
 	table *model.TableInfo
 	columns       []*model.ColumnInfo
 	kvRanges      []kv.KeyRange
@@ -316,7 +316,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 
 // txnMemBufferIter implements a kv.Iterator, it is an iterator that combines the membuffer data and snapshot data.
 type txnMemBufferIter struct {
-	sctx     sessionapi.Context
+	sctx     sessionctx.Context
 	kvRanges []kv.KeyRange
 	cacheTable kv.MemBuffer
 	txn        kv.Transaction
@@ -326,7 +326,7 @@ type txnMemBufferIter struct {
 	err        error
 }
 
-func newTxnMemBufferIter(sctx sessionapi.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
+func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -581,7 +581,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 
 type processKVFunc func(key, value []byte) error
 
-func iterTxnMemBuffer(ctx sessionapi.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
+func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -621,7 +621,7 @@ func iterTxnMemBuffer(ctx sessionapi.Context, cacheTable kv.MemBuffer, kvRanges 
 	return nil
 }
 
-func getSnapIter(ctx sessionapi.Context, cacheTable kv.MemBuffer, rg kv.KeyRange, reverse bool) (snapCacheIter kv.Iterator, err error) {
+func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange, reverse bool) (snapCacheIter kv.Iterator, err error) {
 	var cacheIter, snapIter kv.Iterator
 	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	if tempTableData != nil {
@@ -689,7 +689,7 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 }
 
 type memIndexLookUpReader struct {
-	ctx   sessionapi.Context
+	ctx   sessionctx.Context
 	index *model.IndexInfo
 	columns       []*model.ColumnInfo
 	table         table.Table
@@ -811,7 +811,7 @@ func (*memIndexLookUpReader) getMemRowsHandle() ([]kv.Handle, error) {
 }
 
 type memIndexMergeReader struct {
-	ctx     sessionapi.Context
+	ctx     sessionctx.Context
 	columns []*model.ColumnInfo
 	table            table.Table
 	conditions       []expression.Expression
@@ -1162,7 +1162,7 @@ func (*memIndexMergeReader) getMemRowsHandle() ([]kv.Handle, error) {
 	return nil, errors.New("getMemRowsHandle has not been implemented for memIndexMergeReader")
 }
 
-func getColIDAndPkColIDs(ctx sessionapi.Context, tbl table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
+func getColIDAndPkColIDs(ctx sessionctx.Context, tbl table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
 	colIDs := make(map[int64]int, len(columns))
 	for i, col := range columns {
 		colIDs[col.ID] = i

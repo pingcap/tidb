@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -107,9 +107,9 @@ type TaskExecInfo struct {
 // SessionExecutor defines the interface for executing SQLs in a session.
 type SessionExecutor interface {
 	// WithNewSession executes the function with a new session.
-	WithNewSession(fn func(se sessionapi.Context) error) error
+	WithNewSession(fn func(se sessionctx.Context) error) error
 	// WithNewTxn executes the fn in a new transaction.
-	WithNewTxn(ctx context.Context, fn func(se sessionapi.Context) error) error
+	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
 }
 
 // TaskHandle provides the interface for operations needed by Scheduler.
@@ -186,7 +186,7 @@ func SetDXFSvcTaskMgr(mgr *TaskManager) {
 }
 
 // WithNewSession executes the function with a new session.
-func (mgr *TaskManager) WithNewSession(fn func(se sessionapi.Context) error) error {
+func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePerThousand(); err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionapi.Context) error) err
 	}
 	// when using global sort, the subtask meta might quite large as it include
 	// filenames of all the generated kv/stat files.
-	se := v.(sessionapi.Context)
+	se := v.(sessionctx.Context)
 	limitBak := se.GetSessionVars().TxnEntrySizeLimit
 	defer func() {
 		se.GetSessionVars().TxnEntrySizeLimit = limitBak
@@ -207,9 +207,9 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionapi.Context) error) err
 }
 
 // WithNewTxn executes the fn in a new transaction.
-func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionapi.Context) error) error {
+func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
-	return mgr.WithNewSession(func(se sessionapi.Context) (err error) {
+	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
 			return err
@@ -238,7 +238,7 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionapi.Co
 
 // ExecuteSQLWithNewSession executes one SQL with new session.
 func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string, args ...any) (rs []chunk.Row, err error) {
-	err = mgr.WithNewSession(func(se sessionapi.Context) error {
+	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, args...)
 		return err
 	})
@@ -261,7 +261,7 @@ func (mgr *TaskManager) CreateTask(
 	extraParams proto.ExtraParams,
 	meta []byte,
 ) (taskID int64, err error) {
-	err = mgr.WithNewSession(func(se sessionapi.Context) error {
+	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
 		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, maxNodeCnt, extraParams, meta)
 		return err2
@@ -272,7 +272,7 @@ func (mgr *TaskManager) CreateTask(
 // CreateTaskWithSession adds a new task to task table with session.
 func (mgr *TaskManager) CreateTaskWithSession(
 	ctx context.Context,
-	se sessionapi.Context,
+	se sessionctx.Context,
 	key string,
 	tp proto.TaskType,
 	concurrency int,
@@ -349,7 +349,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
-	err := mgr.WithNewSession(func(se sessionapi.Context) error {
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		// as the task will not go into next step when there are subtasks in those
 		// states, so their steps will be current step of their corresponding task,
 		// so we don't need to query by step here.
@@ -440,7 +440,7 @@ func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
-	err = mgr.WithNewSession(func(se sessionapi.Context) error {
+	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
 		task, err2 = mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
 		return err2
@@ -750,7 +750,7 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	err := mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
 			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				update mysql.tidb_background_subtask
@@ -777,7 +777,7 @@ func (mgr *TaskManager) SwitchTaskStep(
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	return mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		if vars.MemQuotaQuery < vardef.DefTiDBMemQuotaQuery {
 			bak := vars.MemQuotaQuery
@@ -804,7 +804,7 @@ func (mgr *TaskManager) SwitchTaskStep(
 	})
 }
 
-func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionapi.Context,
+func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionctx.Context,
 	task *proto.Task, nextState proto.TaskState, nextStep proto.Step) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
@@ -829,7 +829,7 @@ func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionapi.Conte
 // TestChannel is used for test.
 var TestChannel = make(chan struct{})
 
-func (*TaskManager) insertSubtasks(ctx context.Context, se sessionapi.Context, subtasks []*proto.Subtask) error {
+func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, subtasks []*proto.Subtask) error {
 	if len(subtasks) == 0 {
 		return nil
 	}
@@ -867,7 +867,7 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	return mgr.WithNewSession(func(se sessionapi.Context) error {
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		// some subtasks may be inserted by other schedulers, we can skip them.
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			select count(1) from mysql.tidb_background_subtask
@@ -940,7 +940,7 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
-	err = mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`select `+SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %? and step = %?`,
 			taskID, step,
@@ -1020,7 +1020,7 @@ func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBas
 // We don't adjust the concurrency in subtask table because this field does not exist in v7.5.0.
 // For details, see https://github.com/pingcap/tidb/issues/50894.
 // For the following versions, there is a check when submitting a new task. This function should be a no-op.
-func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionapi.Context) error {
+func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se sessionctx.Context) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}

@@ -28,6 +28,7 @@ go_library(
         "//pkg/planner/core/resolve",
         "//pkg/planner/util/fixcontrol",
         "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

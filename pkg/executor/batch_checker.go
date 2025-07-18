@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -53,7 +53,7 @@ type toBeCheckedRow struct {
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
-func getKeysNeedCheck(sctx sessionapi.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
+func getKeysNeedCheck(sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
 	nUnique := 0
 	for _, v := range t.Indices() {
 		if !tables.IsIndexWritable(v) {
@@ -94,7 +94,7 @@ func getKeysNeedCheck(sctx sessionapi.Context, t table.Table, rows [][]types.Dat
 	return toBeCheckRows, nil
 }
 
-func getKeysNeedCheckOneRow(ctx sessionapi.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column,
+func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.Datum, nUnique int, handleCols []*table.Column,
 	pkIdxInfo *model.IndexInfo, result []toBeCheckedRow) ([]toBeCheckedRow, error) {
 	var err error
 	if p, ok := t.(table.PartitionedTable); ok {
@@ -285,7 +285,7 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-func getOldRow(ctx context.Context, sctx sessionapi.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
+func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
 	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 	if err != nil {

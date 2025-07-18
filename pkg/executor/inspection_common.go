@@ -19,7 +19,7 @@ import (
 	"slices"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -34,7 +34,7 @@ const (
 	inspectionRuleTypeSummary    string = "summary"
 )
 
-func (e *inspectionRuleRetriever) retrieve(context.Context, sessionapi.Context) ([][]types.Datum, error) {
+func (e *inspectionRuleRetriever) retrieve(context.Context, sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}

@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -60,7 +60,7 @@ var (
 	wideString                   = strings.Repeat("x", 5*1024)
 )
 
-func buildHashAggExecutor(ctx sessionapi.Context, src exec.Executor, schema *expression.Schema,
+func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) exec.Executor {
 	plan := new(core.PhysicalHashAgg)
 	plan.AggFuncs = aggFuncs
@@ -75,7 +75,7 @@ func buildHashAggExecutor(ctx sessionapi.Context, src exec.Executor, schema *exp
 	return exec
 }
 
-func buildStreamAggExecutor(ctx sessionapi.Context, srcExec exec.Executor, schema *expression.Schema,
+func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
 
@@ -280,7 +280,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(ctx sessionapi.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
@@ -585,7 +585,7 @@ type hashJoinTestCase struct {
 	rows               int
 	cols               []*types.FieldType
 	concurrency int
-	ctx         sessionapi.Context
+	ctx         sessionctx.Context
 	keyIdx      []int
 	joinType           logicalop.JoinType
 	disk               bool
@@ -1175,7 +1175,7 @@ type IndexJoinTestCase struct {
 	OuterRows       int
 	InnerRows       int
 	Concurrency     int
-	Ctx             sessionapi.Context
+	Ctx             sessionctx.Context
 	OuterJoinKeyIdx []int
 	InnerJoinKeyIdx []int
 	OuterHashKeyIdx []int
@@ -1860,7 +1860,7 @@ type topNTestCase struct {
 	orderByIdx            []int
 	usingInlineProjection bool
 	columnIdxsUsedByChild []bool
-	ctx                   sessionapi.Context
+	ctx                   sessionctx.Context
 }
 
 func (tc topNTestCase) columns() []*expression.Column {

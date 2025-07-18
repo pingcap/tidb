@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -486,7 +486,7 @@ func TestImmutableTableInfo(t *testing.T) {
 var _ sqlexec.RestrictedSQLExecutor = (*mockRestrictedSQLExecutor)(nil)
 
 type mockRestrictedSQLExecutor struct {
-	sessionapi.Context
+	sessionctx.Context
 }
 
 func (m mockRestrictedSQLExecutor) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {

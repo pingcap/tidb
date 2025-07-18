@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -32,7 +32,7 @@ import (
 
 // UpdateStatsVersion will set statistics version to the newest TS, then
 // tidb-server will reload automatic.
-func UpdateStatsVersion(ctx context.Context, sctx sessionapi.Context) error {
+func UpdateStatsVersion(ctx context.Context, sctx sessionctx.Context) error {
 	startTS, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -76,7 +76,7 @@ func NewDeltaUpdate(tableID int64, delta variable.TableDelta, isLocked bool) *De
 // Note: Make sure call this function in a transaction.
 func UpdateStatsMeta(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	startTS uint64,
 	updates ...*DeltaUpdate,
 ) (err error) {
@@ -162,7 +162,7 @@ func UpdateStatsMeta(
 }
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-func InsertExtendedStats(sctx sessionapi.Context,
+func InsertExtendedStats(sctx sessionctx.Context,
 	statsCache types.StatsCache,
 	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
 	slices.Sort(colIDs)
@@ -218,7 +218,7 @@ func InsertExtendedStats(sctx sessionapi.Context,
 }
 
 // SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-func SaveExtendedStatsToStorage(sctx sessionapi.Context,
+func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (statsVer uint64, err error) {
 	if extStats == nil || len(extStats.Stats) == 0 {
 		return 0, nil
@@ -276,7 +276,7 @@ var changeGlobalStatsTables = []string{
 // ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
 func ChangeGlobalStatsID(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	from, to int64,
 ) error {
 	for _, table := range changeGlobalStatsTables {
@@ -295,7 +295,7 @@ func ChangeGlobalStatsID(
 // UpdateStatsMetaVerAndLastHistUpdateVer updates the version to the newest TS for a table.
 func UpdateStatsMetaVerAndLastHistUpdateVer(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	physicalID int64,
 ) (uint64, error) {
 	startTS, err := statsutil.GetStartTS(sctx)

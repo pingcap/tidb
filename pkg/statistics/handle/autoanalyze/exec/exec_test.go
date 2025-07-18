@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -37,7 +37,7 @@ func TestExecAutoAnalyzes(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 
 	se := tk.Session()
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	handle := dom.StatsHandle()
 
 	exec.AutoAnalyze(

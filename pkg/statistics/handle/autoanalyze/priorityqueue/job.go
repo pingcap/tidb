@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -58,7 +58,7 @@ type AnalysisJob interface {
 	// - Table is not partitioned (for partition jobs)
 	// - Recent failed analysis (within 2x avg duration) to avoid queue blocking
 	ValidateAndPrepare(
-		sctx sessionapi.Context,
+		sctx sessionctx.Context,
 	) (bool, string)
 
 	// Analyze executes the analyze statement within a transaction.
@@ -110,7 +110,7 @@ const (
 // we skip this table to avoid too much failed analysis. Because the last analysis just failed,
 // we don't want to block the queue by analyzing it again.
 func isValidToAnalyze(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	schema, table string,
 	partitionNames ...string,
 ) (bool, string) {

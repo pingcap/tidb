@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -74,8 +74,8 @@ var (
 )
 
 type opSessPool interface {
-	Get() (sessionapi.Context, error)
-	Put(sessionapi.Context)
+	Get() (sessionctx.Context, error)
+	Put(sessionctx.Context)
 }
 
 // OperatorCtx is the context for AddIndexIngestPipeline.
@@ -755,7 +755,7 @@ type indexIngestWorker struct {
 	copCtx   copr.CopContext
 	sessPool opSessPool
 	se       *session.Session
-	restore  func(sessionapi.Context)
+	restore  func(sessionctx.Context)
 
 	writers      []ingest.Writer
 	srcChunkPool *sync.Pool

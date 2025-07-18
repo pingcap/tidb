@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -395,15 +395,15 @@ func newSessPoolForTest(t *testing.T, store kv.Storage) *sessPoolForTest {
 	}
 }
 
-func (p *sessPoolForTest) Get() (sessionapi.Context, error) {
+func (p *sessPoolForTest) Get() (sessionctx.Context, error) {
 	resource, err := p.pool.Get()
 	if err != nil {
 		return nil, err
 	}
-	return resource.(sessionapi.Context), nil
+	return resource.(sessionctx.Context), nil
 }
 
-func (p *sessPoolForTest) Put(sctx sessionapi.Context) {
+func (p *sessPoolForTest) Put(sctx sessionctx.Context) {
 	p.pool.Put(sctx.(pools.Resource))
 }
 

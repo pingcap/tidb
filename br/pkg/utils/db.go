@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -147,7 +147,7 @@ func CheckLogBackupTaskExist() bool {
 }
 
 // IsLogBackupInUse checks the log backup task existed.
-func IsLogBackupInUse(ctx sessionapi.Context) bool {
+func IsLogBackupInUse(ctx sessionctx.Context) bool {
 	return CheckLogBackupTaskExist()
 }
 

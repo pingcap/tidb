@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -36,7 +36,7 @@ func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 
 	// test session manager registry when put back
 	// We test for more than one times to cover the case that the session is in the pool.
-	var sctx sessionapi.Context
+	var sctx sessionctx.Context
 	var se *syssession.Session
 	for range 2 {
 		sctx = nil
@@ -45,7 +45,7 @@ func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 			require.Nil(t, se)
 			se = session
 			require.True(t, session.IsOwner())
-			return session.WithSessionContext(func(ctx sessionapi.Context) error {
+			return session.WithSessionContext(func(ctx sessionctx.Context) error {
 				require.Nil(t, sctx)
 				sctx = ctx
 				require.True(t, sessManager.ContainsInternalSession(ctx))
@@ -63,7 +63,7 @@ func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 	sctx = nil
 	se, err := p.Get()
 	require.NoError(t, err)
-	require.NoError(t, se.WithSessionContext(func(ctx sessionapi.Context) error {
+	require.NoError(t, se.WithSessionContext(func(ctx sessionctx.Context) error {
 		sctx = ctx
 		return nil
 	}))
@@ -87,7 +87,7 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 	cases := []struct {
 		name               string
 		withSession        func(*syssession.Session) error
-		withSessionContext func(sessionapi.Context) error
+		withSessionContext func(sessionctx.Context) error
 	}{
 		{
 			name: "put back closed one",
@@ -104,7 +104,7 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 		},
 		{
 			name: "return error for withSessionContext",
-			withSessionContext: func(sctx sessionapi.Context) error {
+			withSessionContext: func(sctx sessionctx.Context) error {
 				return errors.New("err2")
 			},
 		},
@@ -134,7 +134,7 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 		},
 		{
 			name: "tsFuturePrepared",
-			withSessionContext: func(sctx sessionapi.Context) error {
+			withSessionContext: func(sctx sessionctx.Context) error {
 				require.NoError(t, sctx.PrepareTSFuture(ctx, sessiontxn.ConstantFuture(1), kv.GlobalTxnScope))
 				return nil
 			},
@@ -149,7 +149,7 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 		{
 			name: "avoid reuse in withSessionContext",
 			withSession: func(session *syssession.Session) error {
-				return session.WithSessionContext(func(sessionapi.Context) error {
+				return session.WithSessionContext(func(sessionctx.Context) error {
 					session.AvoidReuse()
 					return nil
 				})
@@ -173,7 +173,7 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 					}
 
 					if c.withSessionContext != nil {
-						err := session.WithSessionContext(func(sessionctx sessionapi.Context) error {
+						err := session.WithSessionContext(func(sessionctx sessionctx.Context) error {
 							expectedErr = c.withSessionContext(sessionctx)
 							return expectedErr
 						})
@@ -205,7 +205,7 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 		var se *syssession.Session
 		require.NoError(t, p.WithSession(func(s *syssession.Session) error {
 			se = s
-			return s.WithSessionContext(func(sessionapi.Context) error { return nil })
+			return s.WithSessionContext(func(sessionctx.Context) error { return nil })
 		}))
 		require.NotNil(t, se)
 		require.False(t, se.IsInternalClosed())

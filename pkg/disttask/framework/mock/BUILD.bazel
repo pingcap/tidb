@@ -15,7 +15,7 @@ go_library(
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor/execute",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "@org_uber_go_mock//gomock",
     ],
 )

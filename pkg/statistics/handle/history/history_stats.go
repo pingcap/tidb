@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -60,7 +60,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 		return 0, nil
 	}
 	var version uint64
-	err = handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err = handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		version, err = RecordHistoricalStatsToStorage(sctx, physicalID, js)
 		return err
 	}, handleutil.FlagWrapTxn)
@@ -87,7 +87,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 		}
 	}
 	shouldSkipHistoricalStats := false
-	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		if !sctx.GetSessionVars().EnableHistoricalStats {
 			shouldSkipHistoricalStats = true
 			return nil
@@ -105,7 +105,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 	}
 	if !shouldSkipHistoricalStats {
 		for _, tableID := range targetedTableIDs {
-			err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+			err := handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 				return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, tableID)
 			}, handleutil.FlagWrapTxn)
 			if err != nil {
@@ -121,7 +121,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 
 // CheckHistoricalStatsEnable checks whether historical stats is enabled.
 func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error) {
-	err = handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err = handleutil.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		enable = sctx.GetSessionVars().EnableHistoricalStats
 		return nil
 	})
@@ -131,7 +131,7 @@ func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error
 // RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history with the given version and source.
 func RecordHistoricalStatsMeta(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	version uint64,
 	source string,
 	tableID int64,
@@ -180,7 +180,7 @@ func RecordHistoricalStatsMeta(
 const maxColumnSize = 5 << 20
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-func RecordHistoricalStatsToStorage(sctx sessionapi.Context, physicalID int64, js *statsutil.JSONTable) (uint64, error) {
+func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *statsutil.JSONTable) (uint64, error) {
 	version := uint64(0)
 	if len(js.Partitions) == 0 {
 		version = js.Version

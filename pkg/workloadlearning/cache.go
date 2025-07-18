@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -68,7 +68,7 @@ func (cw *WLCacheWorker) UpdateTableReadCostCache() {
 		}
 	}()
 
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
 

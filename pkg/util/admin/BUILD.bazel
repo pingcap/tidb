@@ -11,7 +11,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/types",

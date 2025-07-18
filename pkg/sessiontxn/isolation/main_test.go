@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfork"
@@ -50,14 +50,14 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func getOracleTS(t testing.TB, sctx sessionapi.Context) uint64 {
+func getOracleTS(t testing.TB, sctx sessionctx.Context) uint64 {
 	ts, err := sctx.GetStore().GetOracle().GetTimestamp(context.TODO(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	require.NoError(t, err)
 	return ts
 }
 
 type txnAssert[T sessiontxn.TxnContextProvider] struct {
-	sctx      sessionapi.Context
+	sctx      sessionctx.Context
 	isolation string
 	minStartTime          time.Time
 	active                bool
@@ -114,7 +114,7 @@ func (a *txnAssert[T]) Check(t testing.TB) {
 	_ = provider.(T)
 }
 
-func activeSnapshotTxnAssert(sctx sessionapi.Context, ts uint64, isolation string) *txnAssert[sessiontxn.TxnContextProvider] {
+func activeSnapshotTxnAssert(sctx sessionctx.Context, ts uint64, isolation string) *txnAssert[sessiontxn.TxnContextProvider] {
 	return &txnAssert[sessiontxn.TxnContextProvider]{
 		sctx:         sctx,
 		minStartTime: time.Now(),

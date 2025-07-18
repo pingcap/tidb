@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -475,7 +475,7 @@ func (e *InsertExec) doDupRowUpdate(
 	}
 
 	warnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
-	errorHandler := func(sctx sessionapi.Context, assign *expression.Assignment, val *types.Datum, err error) error {
+	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error {
 		c := assign.Col.ToInfo()
 		c.Name = assign.ColName
 		sc := sctx.GetSessionVars().StmtCtx

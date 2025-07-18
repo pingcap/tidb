@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,7 +37,7 @@ type OptimisticTxnContextProvider struct {
 }
 
 // ResetForNewTxn resets OptimisticTxnContextProvider to an initial state for a new txn
-func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionapi.Context, causalConsistencyOnly bool) {
+func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, causalConsistencyOnly bool) {
 	*p = emptyOptimisticTxnContextProvider
 	p.sctx = sctx
 	p.causalConsistencyOnly = causalConsistencyOnly

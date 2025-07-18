@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -80,7 +80,7 @@ type slowQueryRetriever struct {
 	wg            sync.WaitGroup
 }
 
-func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if !e.initialized {
 		err := e.initialize(ctx, sctx)
 		if err != nil {
@@ -92,7 +92,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionapi.Conte
 	return e.dataForSlowLog(ctx)
 }
 
-func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionapi.Context) error {
+func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Context) error {
 	var err error
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
@@ -226,7 +226,7 @@ func (e *slowQueryRetriever) getNextReader() (*bufio.Reader, error) {
 	return reader, nil
 }
 
-func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionapi.Context) {
+func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
 	defer e.wg.Done()
 	reader, _ := e.getNextReader()
 	if reader == nil {
@@ -435,7 +435,7 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 	return decomposedSlowLogTasks
 }
 
-func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionapi.Context, reader *bufio.Reader, logNum int) {
+func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
@@ -636,7 +636,7 @@ func splitByColon(line string) (fields []string, values []string) {
 	return fields, values
 }
 
-func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionapi.Context, log []string, offset offset) (data [][]types.Datum, err error) {
+func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	start := time.Now()
 	logSize := calculateLogSize(log)
 	defer e.memConsume(-logSize)
@@ -746,7 +746,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionapi.Conte
 	return data, nil
 }
 
-func (e *slowQueryRetriever) setColumnValue(sctx sessionapi.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
+func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
 	factory := e.columnValueFactoryMap[field]
 	if factory == nil {
 		// Fix issue 34320, when slow log time is not in the output columns, the time filter condition is mistakenly discard.
@@ -896,7 +896,7 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 	return nil, nil
 }
 
-func getInstanceColumnValueFactory(sctx sessionapi.Context, columnIdx int) (func(row []types.Datum), error) {
+func getInstanceColumnValueFactory(sctx sessionctx.Context, columnIdx int) (func(row []types.Datum), error) {
 	instanceAddr, err := infoschema.GetInstanceAddr(sctx)
 	if err != nil {
 		return nil, err
@@ -940,7 +940,7 @@ type logFile struct {
 }
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
-func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionapi.Context, logFilePath string) ([]logFile, error) {
+func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
 	totalFileNum := 0
 	if e.stats != nil {
 		startTime := time.Now()
@@ -1246,7 +1246,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 	return strings.Split(strings.ReplaceAll(finalStr, "\r\n", "\n"), "\n"), len(finalStr), nil
 }
 
-func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionapi.Context) {
+func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
 	e.wg.Add(1)
 	go e.parseDataForSlowLog(ctx, sctx)

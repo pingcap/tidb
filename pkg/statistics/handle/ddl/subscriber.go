@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
@@ -48,7 +48,7 @@ func newSubscriber(
 
 func (h subscriber) handle(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	change *notifier.SchemaChangeEvent,
 ) error {
 	switch change.GetType() {
@@ -269,7 +269,7 @@ func (h subscriber) handle(
 
 func (h subscriber) insertStats4PhysicalID(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	info *model.TableInfo,
 	id int64,
 ) error {
@@ -282,7 +282,7 @@ func (h subscriber) insertStats4PhysicalID(
 
 func (h subscriber) recordHistoricalStatsMeta(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	id int64,
 	startTS uint64,
 ) error {
@@ -313,7 +313,7 @@ func (h subscriber) recordHistoricalStatsMeta(
 
 func (h subscriber) delayedDeleteStats4PhysicalID(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	id int64,
 ) error {
 	startTS, err2 := storage.UpdateStatsMetaVerAndLastHistUpdateVer(ctx, sctx, id)
@@ -325,7 +325,7 @@ func (h subscriber) delayedDeleteStats4PhysicalID(
 
 func (h subscriber) insertStats4Col(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	physicalID int64,
 	colInfos []*model.ColumnInfo,
 ) error {
@@ -337,7 +337,7 @@ func (h subscriber) insertStats4Col(
 }
 
 func getPhysicalIDs(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) (ids []int64, err error) {
 	pi := tblInfo.GetPartitionInfo()
@@ -359,7 +359,7 @@ func getPhysicalIDs(
 }
 
 func getCurrentPruneMode(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 ) (variable.PartitionPruneMode, error) {
 	pruneMode, err := sctx.GetSessionVars().
 		GlobalVarsAccessor.
@@ -368,7 +368,7 @@ func getCurrentPruneMode(
 }
 
 func getEnableHistoricalStats(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 ) (bool, error) {
 	val, err := sctx.GetSessionVars().
 		GlobalVarsAccessor.
@@ -378,7 +378,7 @@ func getEnableHistoricalStats(
 
 func updateGlobalTableStats4DropPartition(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	globalTableInfo *model.TableInfo,
 	droppedPartitionInfo *model.PartitionInfo,
 ) error {
@@ -424,7 +424,7 @@ const (
 
 func updateGlobalTableStats4ExchangePartition(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	globalTableInfo *model.TableInfo,
 	originalPartInfo *model.PartitionInfo,
 	originalTableInfo *model.TableInfo,
@@ -506,7 +506,7 @@ func updateGlobalTableStats4ExchangePartition(
 
 func getCountsAndModifyCounts(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	partitionID, tableID int64,
 ) (partCount, partModifyCount, tableCount, tableModifyCount int64, err error) {
 	partCount, partModifyCount, _, err = storage.StatsMetaCountAndModifyCount(ctx, sctx, partitionID)
@@ -550,7 +550,7 @@ func exchangePartitionLogFields(
 
 func updateGlobalTableStats4TruncatePartition(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	globalTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) error {

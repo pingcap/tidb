@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -277,7 +277,7 @@ func clonePhysicalPlan(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
-func EncodeUniqueIndexKey(ctx sessionapi.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
+func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
 	encodedIdxVals, err := EncodeUniqueIndexValuesForKey(ctx, tblInfo, idxInfo, idxVals)
 	if err != nil {
 		return nil, err
@@ -286,7 +286,7 @@ func EncodeUniqueIndexKey(ctx sessionapi.Context, tblInfo *model.TableInfo, idxI
 }
 
 // EncodeUniqueIndexValuesForKey encodes unique index values for a key.
-func EncodeUniqueIndexValuesForKey(ctx sessionapi.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]

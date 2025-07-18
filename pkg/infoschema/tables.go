@@ -49,8 +49,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1948,7 +1948,7 @@ func (s *ServerInfo) ResolveLoopBackAddr() {
 }
 
 // GetClusterServerInfo returns all components information of cluster
-func GetClusterServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
+func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
 		// The cluster topology is injected by `failpoint` expression and
 		// there is no extra checks for it. (let the test fail if the expression invalid)
@@ -1973,8 +1973,8 @@ func GetClusterServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
 		}
 	})
 
-	type retriever func(ctx sessionapi.Context) ([]ServerInfo, error)
-	retrievers := []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionapi.Context) ([]ServerInfo, error) {
+	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	retrievers := []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionctx.Context) ([]ServerInfo, error) {
 		return GetStoreServerInfo(ctx.GetStore())
 	}, GetTiProxyServerInfo, GetTiCDCServerInfo, GetTSOServerInfo, GetSchedulingServerInfo}
 	//nolint: prealloc
@@ -2007,7 +2007,7 @@ func GetClusterServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
 }
 
 // GetTiDBServerInfo returns all TiDB nodes information of cluster
-func GetTiDBServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
+func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get TiDB servers info.
 	tidbNodes, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
@@ -2057,7 +2057,7 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 }
 
 // GetPDServerInfo returns all PD nodes information of cluster
-func GetPDServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
+func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
 	members, err := getEtcdMembers(ctx)
 	if err != nil {
@@ -2132,16 +2132,16 @@ func GetPDServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
 }
 
 // GetTSOServerInfo returns all TSO nodes information of cluster
-func GetTSOServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
+func GetTSOServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return getMicroServiceServerInfo(ctx, tsoServiceName)
 }
 
 // GetSchedulingServerInfo returns all scheduling nodes information of cluster
-func GetSchedulingServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
+func GetSchedulingServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return getMicroServiceServerInfo(ctx, schedulingServiceName)
 }
 
-func getMicroServiceServerInfo(ctx sessionapi.Context, serviceName string) ([]ServerInfo, error) {
+func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]ServerInfo, error) {
 	members, err := getEtcdMembers(ctx)
 	if err != nil {
 		return nil, err
@@ -2208,7 +2208,7 @@ func getMicroServiceServerInfo(ctx sessionapi.Context, serviceName string) ([]Se
 	return servers, nil
 }
 
-func getEtcdMembers(ctx sessionapi.Context) ([]string, error) {
+func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
 	store := ctx.GetStore()
 	etcd, ok := store.(kv.EtcdBackend)
 	if !ok {
@@ -2335,7 +2335,7 @@ func GetTiFlashStoreCount(store kv.Storage) (cnt uint64, err error) {
 }
 
 // GetTiProxyServerInfo gets server info of TiProxy from PD.
-func GetTiProxyServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
+func GetTiProxyServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	tiproxyNodes, err := infosync.GetTiProxyServerInfo(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2355,7 +2355,7 @@ func GetTiProxyServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
 }
 
 // GetTiCDCServerInfo gets server info of TiCDC from PD.
-func GetTiCDCServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
+func GetTiCDCServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	ticdcNodes, err := infosync.GetTiCDCServerInfo(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2375,7 +2375,7 @@ func GetTiCDCServerInfo(ctx sessionapi.Context) ([]ServerInfo, error) {
 }
 
 // SysVarHiddenForSem checks if a given sysvar is hidden according to SEM and privileges.
-func SysVarHiddenForSem(ctx sessionapi.Context, sysVarNameInLower string) bool {
+func SysVarHiddenForSem(ctx sessionctx.Context, sysVarNameInLower string) bool {
 	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
 		return false
 	}
@@ -2387,7 +2387,7 @@ func SysVarHiddenForSem(ctx sessionapi.Context, sysVarNameInLower string) bool {
 }
 
 // GetDataFromSessionVariables return the [name, value] of all session variables
-func GetDataFromSessionVariables(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	sessionVars := sctx.GetSessionVars()
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
@@ -2407,7 +2407,7 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionapi.Context) (
 }
 
 // GetDataFromSessionConnectAttrs produces the rows for the session_connect_attrs table.
-func GetDataFromSessionConnectAttrs(sctx sessionapi.Context, sameAccount bool) ([][]types.Datum, error) {
+func GetDataFromSessionConnectAttrs(sctx sessionctx.Context, sameAccount bool) ([][]types.Datum, error) {
 	sm := sctx.GetSessionManager()
 	if sm == nil {
 		return nil, nil
@@ -2544,7 +2544,7 @@ type infoschemaTable struct {
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (*infoschemaTable) IterRecords(ctx context.Context, sctx sessionapi.Context, cols []*table.Column, fn table.RecordIterFunc) error {
+func (*infoschemaTable) IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error {
 	return nil
 }
 

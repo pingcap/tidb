@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -220,7 +220,7 @@ func (p *parallelHashAggSpillHelper) setError() {
 	p.hasError.Store(true)
 }
 
-func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionapi.Context) (aggfuncs.AggPartialResultMapper, int64, error) {
+func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context) (aggfuncs.AggPartialResultMapper, int64, error) {
 	restoredData := make(aggfuncs.AggPartialResultMapper)
 	bInMap := 0
 	restoredMem := int64(0)
@@ -244,7 +244,7 @@ func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionapi.Context)
 }
 
 type processRowContext struct {
-	ctx   sessionapi.Context
+	ctx   sessionctx.Context
 	chunk *chunk.Chunk
 	rowPos                 int
 	keyColPos              int
@@ -254,7 +254,7 @@ type processRowContext struct {
 	bInMap                 *int
 }
 
-func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionapi.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (totalMemDelta int64, totalExpandMem int64, err error) {
+func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (totalMemDelta int64, totalExpandMem int64, err error) {
 	chunkNum := diskIO.NumChunks()
 	aggFuncNum := len(p.aggFuncsForRestoring)
 	processRowContext := &processRowContext{

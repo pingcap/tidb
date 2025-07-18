@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -68,7 +68,7 @@ PARTITION BY RANGE ( a ) (
 		analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
 		tk.MustExec("analyze table t")
 
-		is := tk.Session().(sessionapi.Context).GetInfoSchema().(infoschema.InfoSchema)
+		is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 		table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		pi := table.Meta().GetPartitionInfo()
@@ -97,7 +97,7 @@ PARTITION BY RANGE ( a ) (
 			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 		}
 		tk.MustExec("alter table t analyze partition p0")
-		is = tk.Session().(sessionapi.Context).GetInfoSchema().(infoschema.InfoSchema)
+		is = tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 		table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		pi = table.Meta().GetPartitionInfo()
@@ -123,7 +123,7 @@ func TestAnalyzeReplicaReadFollower(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	ctx.GetSessionVars().SetReplicaRead(kv.ReplicaReadFollower)
 	tk.MustExec("analyze table t")
 }
@@ -154,7 +154,7 @@ func TestAnalyzeParameters(t *testing.T) {
 
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 30 samples")
-	is := tk.Session().(sessionapi.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -210,7 +210,7 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	tk.MustExec("analyze table t")
-	is := tk.Session().(sessionapi.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
@@ -435,7 +435,7 @@ func testSnapshotAnalyzeAndMaxTSAnalyzeHelper(analyzeSnapshot bool) func(t *test
 		}
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, index index_a(a))")
-		is := tk.Session().(sessionapi.Context).GetInfoSchema().(infoschema.InfoSchema)
+		is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
@@ -495,12 +495,12 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	statsHandle := domain.GetDomain(tk.Session().(sessionapi.Context)).StatsHandle()
+	statsHandle := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index index_a(a))")
 	err := statstestutil.HandleNextDDLEventWithTxn(statsHandle)
 	require.NoError(t, err)
-	is := tk.Session().(sessionapi.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()

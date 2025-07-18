@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -34,7 +34,7 @@ import (
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 type hashJoinInfo struct {
-	ctx    sessionapi.Context
+	ctx    sessionctx.Context
 	schema *expression.Schema
 	leftExec, rightExec   exec.Executor
 	joinType              logicalop.JoinType
@@ -232,7 +232,7 @@ func buildJoinKeyStringDatums(num int) []any {
 	return datums
 }
 
-func buildLeftAndRightDataSource(ctx sessionapi.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (_, _ *testutil.MockDataSource) {
+func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (_, _ *testutil.MockDataSource) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 

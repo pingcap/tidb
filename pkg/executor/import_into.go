@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -54,7 +54,7 @@ const unknownImportedRowCount = -1
 type ImportIntoExec struct {
 	exec.BaseExecutor
 	selectExec exec.Executor
-	userSctx   sessionapi.Context
+	userSctx   sessionctx.Context
 	controller *importer.LoadDataController
 	stmt       string
 
@@ -67,7 +67,7 @@ var (
 	_ exec.Executor = (*ImportIntoExec)(nil)
 )
 
-func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionapi.Context,
+func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionctx.Context,
 	plan *plannercore.ImportInto, tbl table.Table) (*ImportIntoExec, error) {
 	return &ImportIntoExec{
 		BaseExecutor: b,
@@ -193,7 +193,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 		return err
 	}
 	var info *importer.JobInfo
-	if err = taskManager.WithNewSession(func(se sessionapi.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		sqlExec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.Ctx().GetSessionVars().User.String(), false)
@@ -377,7 +377,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *dxfstorage.TaskManager, hasSuperPriv bool) error {
 	var info *importer.JobInfo
-	if err := manager.WithNewSession(func(se sessionapi.Context) error {
+	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -396,7 +396,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := manager.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))
 	}); err != nil {

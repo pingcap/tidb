@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // EnterNewTxnType is the type to enter a new txn
@@ -104,7 +104,7 @@ type TxnAdvisable interface {
 
 // AdviseOptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
 // and then do `AdviseWarmup` to do some tso fetch if necessary
-func AdviseOptimizeWithPlanAndThenWarmUp(sctx sessionapi.Context, plan any) error {
+func AdviseOptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan any) error {
 	txnManager := GetTxnManager(sctx)
 	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
 		return err
@@ -220,7 +220,7 @@ type TxnManager interface {
 // 2. Some background job need to do something in a transaction.
 // In other scenes like 'BEGIN', 'START TRANSACTION' or prepare transaction in a new statement,
 // you should use `TxnManager`.`EnterNewTxn` and pass the relevant to it.
-func NewTxn(ctx context.Context, sctx sessionapi.Context) error {
+func NewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	return GetTxnManager(sctx).EnterNewTxn(ctx, &EnterNewTxnRequest{
 		Type:    EnterNewTxnDefault,
 		TxnMode: ast.Optimistic,
@@ -229,7 +229,7 @@ func NewTxn(ctx context.Context, sctx sessionapi.Context) error {
 
 // NewTxnInStmt is like `NewTxn` but it will call `OnStmtStart` after it.
 // It should be used when a statement already started.
-func NewTxnInStmt(ctx context.Context, sctx sessionapi.Context) error {
+func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 	if err := NewTxn(ctx, sctx); err != nil {
 		return err
 	}
@@ -238,4 +238,4 @@ func NewTxnInStmt(ctx context.Context, sctx sessionapi.Context) error {
 }
 
 // GetTxnManager returns the TxnManager object from session context
-var GetTxnManager func(sctx sessionapi.Context) TxnManager
+var GetTxnManager func(sctx sessionctx.Context) TxnManager

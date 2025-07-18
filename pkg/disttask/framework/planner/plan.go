@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // PlanCtx is the context for planning.
@@ -27,7 +27,7 @@ type PlanCtx struct {
 	Ctx context.Context
 
 	// integrate with current distribute framework
-	SessionCtx sessionapi.Context
+	SessionCtx sessionctx.Context
 	TaskID     int64
 	TaskKey    string
 	TaskType   proto.TaskType

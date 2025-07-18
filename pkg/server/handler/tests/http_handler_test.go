@@ -61,7 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -867,7 +867,7 @@ func TestGetSchema(t *testing.T) {
 	require.Equal(t, "mysql", dbtbl.DBInfo.Name.L)
 	se, err := session.CreateSession(ts.store)
 	require.NoError(t, err)
-	require.Equal(t, domain.GetDomain(se.(sessionapi.Context)).InfoSchema().SchemaMetaVersion(), dbtbl.SchemaVersion)
+	require.Equal(t, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion(), dbtbl.SchemaVersion)
 
 	db, err := sql.Open("mysql", ts.GetDSN())
 	require.NoError(t, err)
@@ -991,7 +991,7 @@ func TestAllHistory(t *testing.T) {
 	var jobs []*model.Job
 	s, _ := session.CreateSession(ts.server.NewTikvHandlerTool().Store.(kv.Storage))
 	defer s.Close()
-	store := domain.GetDomain(s.(sessionapi.Context)).Store()
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMutator(txn)
 	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)

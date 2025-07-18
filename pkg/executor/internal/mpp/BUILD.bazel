@@ -22,7 +22,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/physicalop",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/store/copr",
         "//pkg/store/driver/backoff",

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -366,7 +367,7 @@ func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (tc *TiDBContext) EncodeSessionStates(_ context.Context, _ sessionapi.Context, sessionStates *sessionstates.SessionStates) error {
+func (tc *TiDBContext) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	sessionVars := tc.Session.GetSessionVars()
 	sessionStates.PreparedStmts = make(map[uint32]*sessionstates.PreparedStmtInfo, len(sessionVars.PreparedStmts))
 	for preparedID, preparedObj := range sessionVars.PreparedStmts {
@@ -406,7 +407,7 @@ func (tc *TiDBContext) EncodeSessionStates(_ context.Context, _ sessionapi.Conte
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, _ sessionapi.Context, sessionStates *sessionstates.SessionStates) error {
+func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	if len(sessionStates.PreparedStmts) == 0 {
 		return nil
 	}

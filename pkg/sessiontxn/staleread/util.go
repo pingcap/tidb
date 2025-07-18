@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -68,7 +67,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 }
 
 // CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
-func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionapi.Context, readStaleness time.Duration) (uint64, error) {
+func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
 	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx().GetEvalCtx())
 	if err != nil {
 		return 0, err
@@ -91,7 +90,7 @@ func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionapi.Context, 
 }
 
 // IsStmtStaleness indicates whether the current statement is staleness or not
-func IsStmtStaleness(sctx sessionapi.Context) bool {
+func IsStmtStaleness(sctx sessionctx.Context) bool {
 	return sctx.GetSessionVars().StmtCtx.IsStaleness
 }
 

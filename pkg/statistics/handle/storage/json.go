@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -90,7 +90,7 @@ func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn
 
 // GenJSONTableFromStats generate jsonTable from tableInfo and stats
 func GenJSONTableFromStats(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	dbName string,
 	tableInfo *model.TableInfo,
 	tbl *statistics.Table,
@@ -325,7 +325,7 @@ func BlocksToJSONTable(blocks [][]byte) (*statsutil.JSONTable, error) {
 }
 
 // TableHistoricalStatsToJSON converts the historical stats of a table to JSONTable.
-func TableHistoricalStatsToJSON(sctx sessionapi.Context, physicalID int64, snapshot uint64) (jt *statsutil.JSONTable, exist bool, err error) {
+func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snapshot uint64) (jt *statsutil.JSONTable, exist bool, err error) {
 	// get meta version
 	rows, _, err := util.ExecRows(sctx, "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
 	if err != nil {

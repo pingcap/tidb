@@ -19,7 +19,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/session",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",
         "//pkg/table/tables",

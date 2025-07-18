@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -300,7 +300,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	}
 }
 
-func activeOptimisticTxnAssert(t testing.TB, sctx sessionapi.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {
+func activeOptimisticTxnAssert(t testing.TB, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.OptimisticTxnContextProvider] {
 	return &txnAssert[*isolation.OptimisticTxnContextProvider]{
 		sctx:         sctx,
 		minStartTime: time.Now(),
@@ -310,7 +310,7 @@ func activeOptimisticTxnAssert(t testing.TB, sctx sessionapi.Context, inTxn bool
 	}
 }
 
-func inactiveOptimisticTxnAssert(sctx sessionapi.Context) *txnAssert[*isolation.OptimisticTxnContextProvider] {
+func inactiveOptimisticTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.OptimisticTxnContextProvider] {
 	return &txnAssert[*isolation.OptimisticTxnContextProvider]{
 		sctx:         sctx,
 		minStartTime: time.Now(),

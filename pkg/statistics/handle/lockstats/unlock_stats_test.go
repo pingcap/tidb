@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	stststypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -31,7 +31,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func wrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionapi.Context {
+func wrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionctx.Context {
 	sctx := mockctx.NewContext()
 	sctx.SetValue(mock.RestrictedSQLExecutorKey{}, exec)
 	return sctx

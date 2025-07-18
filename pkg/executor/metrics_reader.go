@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/prometheus/client_golang/api"
@@ -51,7 +51,7 @@ type MetricRetriever struct {
 	retrieved bool
 }
 
-func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
 	}
@@ -93,7 +93,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionapi.Context)
 // MockMetricsPromDataKey is for test
 type MockMetricsPromDataKey struct{}
 
-func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionapi.Context, queryRange promv1.Range, quantile float64) (result pmodel.Value, err error) {
+func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Context, queryRange promv1.Range, quantile float64) (result pmodel.Value, err error) {
 	failpoint.InjectContext(ctx, "mockMetricsPromData", func() {
 		failpoint.Return(ctx.Value(MockMetricsPromDataKey{}).(pmodel.Matrix), nil)
 	})
@@ -135,7 +135,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionapi.Conte
 
 type promQLQueryRange = promv1.Range
 
-func (e *MetricRetriever) getQueryRange(sctx sessionapi.Context) promQLQueryRange {
+func (e *MetricRetriever) getQueryRange(sctx sessionctx.Context) promQLQueryRange {
 	startTime, endTime := e.extractor.StartTime, e.extractor.EndTime
 	step := time.Second * time.Duration(sctx.GetSessionVars().MetricSchemaStep)
 	return promQLQueryRange{Start: startTime, End: endTime, Step: step}
@@ -193,7 +193,7 @@ type MetricsSummaryRetriever struct {
 	retrieved bool
 }
 
-func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -270,7 +270,7 @@ type MetricsSummaryByLabelRetriever struct {
 	retrieved bool
 }
 
-func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}

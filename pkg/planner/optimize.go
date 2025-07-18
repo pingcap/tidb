@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -71,7 +71,7 @@ func isReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVa
 }
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
-func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionapi.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
+func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
@@ -137,7 +137,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionapi.Contex
 }
 
 // Optimize does optimization and creates a Plan.
-func Optimize(ctx context.Context, sctx sessionapi.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
 	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
@@ -215,7 +215,7 @@ func Optimize(ctx context.Context, sctx sessionapi.Context, node *resolve.NodeW,
 	return optimizeNoCache(ctx, sctx, node, is)
 }
 
-func optimizeNoCache(ctx context.Context, sctx sessionapi.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
 	pctx := sctx.GetPlanCtx()
 	sessVars := sctx.GetSessionVars()
 
@@ -524,7 +524,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 }
 
 // OptimizeExecStmt to handle the "execute" statement
-func OptimizeExecStmt(ctx context.Context, sctx sessionapi.Context,
+func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -603,7 +603,7 @@ func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tb
 }
 
 // queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
-func queryPlanCost(sctx sessionapi.Context, stmt ast.StmtNode) (float64, error) {
+func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
 	nodeW := resolve.NewNodeW(stmt)
 	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
@@ -616,7 +616,7 @@ func queryPlanCost(sctx sessionapi.Context, stmt ast.StmtNode) (float64, error) 
 	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 }
 
-func calculatePlanDigestFunc(sctx sessionapi.Context, stmt ast.StmtNode) (planDigest string, err error) {
+func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
 	ret := &core.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(
@@ -639,7 +639,7 @@ func calculatePlanDigestFunc(sctx sessionapi.Context, stmt ast.StmtNode) (planDi
 	return digest.String(), nil
 }
 
-func recordRelevantOptVarsAndFixes(sctx sessionapi.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error) {
+func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error) {
 	sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(true)
 	defer sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(false)
 	ret := &core.PreprocessorReturn{}
@@ -674,7 +674,7 @@ func recordRelevantOptVarsAndFixes(sctx sessionapi.Context, stmt ast.StmtNode) (
 	return
 }
 
-func genBriefPlanWithSCtx(sctx sessionapi.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error) {
+func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error) {
 	ret := &core.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(stmt)
 	if err = core.Preprocess(context.Background(), sctx, nodeW,
@@ -708,7 +708,7 @@ func init() {
 	core.OptimizeAstNodeNoCache = optimizeNoCache
 	core.IsReadOnly = IsReadOnly
 	indexadvisor.QueryPlanCostHook = queryPlanCost
-	bindinfo.GetBindingHandle = func(sctx sessionapi.Context) bindinfo.BindingHandle {
+	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
 		dom := domain.GetDomain(sctx)
 		if dom == nil {
 			return nil

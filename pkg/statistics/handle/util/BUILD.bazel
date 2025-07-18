@@ -18,7 +18,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -45,7 +45,7 @@ go_test(
     deps = [
         ":util",
         "//pkg/domain/infosync",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1371,7 +1371,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 }
 
 // getValidTime get the boundary of password valid time.
-func getValidTime(sctx sessionapi.Context, passwordReuse *passwordReuseInfo) string {
+func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
 	beforeTimeS := max(nowTimeS-passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second), 0)
@@ -1382,7 +1382,7 @@ func getValidTime(sctx sessionapi.Context, passwordReuse *passwordReuseInfo) str
 // The deleted password must meet the following conditions at the same time.
 // 1. Exceeded the maximum number of saves.
 // 2. The password has exceeded the prohibition time.
-func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, maxDelRows int64, passwordReuse *passwordReuseInfo, sctx sessionapi.Context) error {
+func deleteHistoricalData(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, maxDelRows int64, passwordReuse *passwordReuseInfo, sctx sessionctx.Context) error {
 	//never times out or no row need delete.
 	if (passwordReuse.passwordReuseInterval > math.MaxInt32) || maxDelRows == 0 {
 		return nil
@@ -1539,7 +1539,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 }
 
 func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo,
-	sctx sessionapi.Context, authPlugin string) (canUse bool, err error) {
+	sctx sessionctx.Context, authPlugin string) (canUse bool, err error) {
 	beforeDate := getValidTime(sctx, passwordReuse)
 	switch authPlugin {
 	case mysql.AuthNativePassword, "":
@@ -1575,7 +1575,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 	return false, nil
 }
 
-func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, sctx sessionapi.Context, authPlugin string) (bool, int64, error) {
+func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, passwordReuse *passwordReuseInfo, sctx sessionctx.Context, authPlugin string) (bool, int64, error) {
 	passwordNum, err := getUserPasswordNum(ctx, sqlExecutor, userDetail)
 	if err != nil {
 		return false, 0, err
@@ -1610,7 +1610,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	return true, canDeleteNum, nil
 }
 
-func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionapi.Context, authPlugin string, authPlugins map[string]*extension.AuthPlugin) error {
+func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userDetail *userInfo, sctx sessionctx.Context, authPlugin string, authPlugins map[string]*extension.AuthPlugin) error {
 	if strings.EqualFold(authPlugin, mysql.AuthTiDBAuthToken) || strings.EqualFold(authPlugin, mysql.AuthLDAPSASL) || strings.EqualFold(authPlugin, mysql.AuthLDAPSimple) {
 		// AuthTiDBAuthToken is the token login method on the cloud,
 		// and the Password Reuse Policy does not take effect.
@@ -2442,7 +2442,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(userList)
 }
 
-func userExists(ctx context.Context, sctx sessionapi.Context, name string, host string) (bool, error) {
+func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
@@ -2677,7 +2677,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	return nil
 }
 
-func killRemoteConn(ctx context.Context, sctx sessionapi.Context, gcid *globalconn.GCID, query bool) error {
+func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalconn.GCID, query bool) error {
 	if gcid.ServerID == 0 {
 		return errors.New("Unexpected ZERO ServerID. Please file a bug to the TiDB Team")
 	}
@@ -2737,7 +2737,7 @@ func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStat
 	return broadcast(ctx, e.Ctx(), s.Text())
 }
 
-func broadcast(ctx context.Context, sctx sessionapi.Context, sql string) error {
+func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 	broadcastExec := &tipb.Executor{
 		Tp: tipb.ExecType_TypeBroadcastQuery,
 		BroadcastQuery: &tipb.BroadcastQuery{

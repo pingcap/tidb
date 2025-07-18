@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -633,7 +634,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	}
 }
 
-func execute(ctx context.Context, s sessionapi.Context, query string) ([]chunk.Row, error) {
+func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.Row, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	rs, err := s.GetSQLExecutor().ExecuteInternal(ctx, query)
 	if err != nil {

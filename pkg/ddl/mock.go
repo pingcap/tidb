@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // SetBatchInsertDeleteRangeSize sets the batch insert/delete range size in the test
@@ -54,7 +54,7 @@ func (*mockDelRange) start() {}
 func (*mockDelRange) clear() {}
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
-func MockTableInfo(sctx sessionapi.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
+func MockTableInfo(sctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {
 	ctx := NewMetaBuildContextWithSctx(sctx)
 	chs, coll := charset.GetDefaultCharsetAndCollate()
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, stmt.Cols, stmt.Constraints, chs, coll)

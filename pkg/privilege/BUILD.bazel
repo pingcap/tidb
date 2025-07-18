@@ -9,7 +9,7 @@ go_library(
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/privilege/conn",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/sqlexec",

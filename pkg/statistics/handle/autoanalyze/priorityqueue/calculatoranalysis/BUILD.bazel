@@ -10,7 +10,7 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     deps = [
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
         "//pkg/statistics/handle/types",

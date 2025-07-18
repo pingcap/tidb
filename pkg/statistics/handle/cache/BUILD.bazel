@@ -14,7 +14,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/metrics",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/cache/internal",

@@ -144,10 +144,10 @@ import (
 )
 
 func init() {
-	executor.CreateSession = func(ctx sessionapi.Context) (sessionapi.Context, error) {
+	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
 		return CreateSession(ctx.GetStore())
 	}
-	executor.CloseSession = func(ctx sessionapi.Context) {
+	executor.CloseSession = func(ctx sessionctx.Context) {
 		if se, ok := ctx.(sessionapi.Session); ok {
 			se.Close()
 		}
@@ -3651,7 +3651,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 
 	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
-	planReplayerWorkersSctx := make([]sessionapi.Context, planReplayerWorkerCnt)
+	planReplayerWorkersSctx := make([]sessionctx.Context, planReplayerWorkerCnt)
 	pworkerSes, err := createSessions(store, int(planReplayerWorkerCnt))
 	if err != nil {
 		return nil, err
@@ -3685,7 +3685,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	extractWorkerSctxs := make([]sessionapi.Context, 0)
+	extractWorkerSctxs := make([]sessionctx.Context, 0)
 	for _, sctx := range sctxs {
 		extractWorkerSctxs = append(extractWorkerSctxs, sctx)
 	}
@@ -4122,7 +4122,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 
 // GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
 // It returns nil otherwise.
-func (s *session) GetPreparedTxnFuture() sessionapi.TxnFuture {
+func (s *session) GetPreparedTxnFuture() sessionctx.TxnFuture {
 	if !s.txn.validOrPending() {
 		return nil
 	}
@@ -4423,7 +4423,7 @@ func (s *session) GetSchemaValidator() validatorapi.Validator {
 	return s.schemaValidator
 }
 
-func getSnapshotInfoSchema(s sessionapi.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
 	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return nil, err

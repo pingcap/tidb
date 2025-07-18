@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -131,7 +131,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		rows                      []chunk.Row
 		err                       error
 	)
-	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
 

@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -1002,7 +1002,7 @@ func applyNewAutoRandomBits(jobCtx *jobContext, dbInfo *model.DBInfo,
 
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
-func checkForNullValue(ctx context.Context, sctx sessionapi.Context, isDataTruncated bool, schema, table ast.CIStr, newCol *model.ColumnInfo, oldCols ...*model.ColumnInfo) error {
+func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTruncated bool, schema, table ast.CIStr, newCol *model.ColumnInfo, oldCols ...*model.ColumnInfo) error {
 	needCheckNullValue := false
 	for _, oldCol := range oldCols {
 		if oldCol.GetType() != mysql.TypeTimestamp && newCol.GetType() == mysql.TypeTimestamp {
@@ -1169,7 +1169,7 @@ func modifyColsFromNull2NotNull(
 	isDataTruncated bool,
 ) error {
 	// Get sessionctx from context resource pool.
-	var sctx sessionapi.Context
+	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -1198,7 +1198,7 @@ func modifyColsFromNull2NotNull(
 	return nil
 }
 
-func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionapi.Context) (any, error) {
+func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) ||

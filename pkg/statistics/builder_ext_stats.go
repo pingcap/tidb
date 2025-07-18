@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
-func BuildExtendedStats(sctx sessionapi.Context,
+func BuildExtendedStats(sctx sessionctx.Context,
 	tableID int64, cols []*model.ColumnInfo, collectors []*SampleCollector) (*ExtendedStatsColl, error) {
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
 
@@ -61,7 +61,7 @@ func BuildExtendedStats(sctx sessionapi.Context,
 	return statsColl, nil
 }
 
-func fillExtendedStatsItemVals(sctx sessionapi.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
+func fillExtendedStatsItemVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
 	switch item.Tp {
 	case ast.StatsTypeCardinality, ast.StatsTypeDependency:
 		return nil
@@ -71,7 +71,7 @@ func fillExtendedStatsItemVals(sctx sessionapi.Context, item *ExtendedStatsItem,
 	return nil
 }
 
-func fillExtStatsCorrVals(sctx sessionapi.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
+func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
 	colOffsets := make([]int, 0, 2)
 	for _, id := range item.ColIDs {
 		for i, col := range cols {

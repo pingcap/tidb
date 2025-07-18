@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -121,7 +121,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	}, nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionapi.Context, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, isIndex bool) (err error) {
 	if len(a.histIDs) == 0 {
 		for _, col := range a.globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
@@ -226,7 +226,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissin
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionapi.Context, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("ioWorker panic", zap.Stack("stack"), zap.Any("error", r))
@@ -261,7 +261,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionapi.Context,
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionapi.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
@@ -307,7 +307,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) Result() *GlobalStats {
 
 // MergePartitionStats2GlobalStats merges partition stats to global stats.
 func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64,
 	isIndex bool,
 ) error {
@@ -316,7 +316,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	return util.CallWithSCtx(a.statsHandle.SPool(),
-		func(sctx sessionapi.Context) error {
+		func(sctx sessionctx.Context) error {
 			err := a.prepare(sctx, isIndex)
 			if err != nil {
 				return err
@@ -342,7 +342,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	)
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionapi.Context, isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
 	for i := range a.globalStats.Num {
 		// load fmsketch from tikv
 		for _, partitionID := range a.partitionIDs {
@@ -370,7 +370,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionapi.Cont
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionapi.Context, isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
 	failpoint.Inject("PanicInIOWorker", nil)
 	for i := range a.globalStats.Num {
 		for _, partitionID := range a.partitionIDs {
@@ -398,7 +398,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionapi.Cont
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx sessionapi.Context, tableInfo *model.TableInfo, isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
 	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
@@ -490,7 +490,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
 	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, sctx sessionapi.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
 	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))
@@ -539,10 +539,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 	}
 }
 
-func skipPartition(sctx sessionapi.Context, partitionID int64, isIndex bool) error {
+func skipPartition(sctx sessionctx.Context, partitionID int64, isIndex bool) error {
 	return storage.CheckSkipPartition(sctx, partitionID, toSQLIndex(isIndex))
 }
 
-func skipColumnPartition(sctx sessionapi.Context, partitionID int64, isIndex bool, histsID int64) error {
+func skipColumnPartition(sctx sessionctx.Context, partitionID int64, isIndex bool, histsID int64) error {
 	return storage.CheckSkipColumnPartiion(sctx, partitionID, toSQLIndex(isIndex), histsID)
 }

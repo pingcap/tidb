@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -112,7 +112,7 @@ func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 		}
 	}()
 
-	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeDynamicPartition:
 			success = j.analyzePartitions(sctx, statsHandle, sysProcTracker)
@@ -155,7 +155,7 @@ func (j *DynamicPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 // - All specified partitions exist
 // - No recent failed analysis for any partition to avoid queue blocking
 func (j *DynamicPartitionedTableAnalysisJob) ValidateAndPrepare(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 ) (bool, string) {
 	callFailureHook := func(needRetry bool) {
 		if j.failureHook != nil {
@@ -267,7 +267,7 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 // it's necessary to merge their statistics. By analyzing them in batches,
 // we can reduce the overhead of this merging process.
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
@@ -292,7 +292,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 
 // analyzePartitionIndexes performs analysis on the specified partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) (success bool) {

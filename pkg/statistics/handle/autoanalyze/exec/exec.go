@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -44,7 +44,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 // AutoAnalyze executes the auto analyze task.
 func AutoAnalyze(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
@@ -75,7 +75,7 @@ func AutoAnalyze(
 
 // RunAnalyzeStmt executes the analyze statement.
 func RunAnalyzeStmt(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
@@ -103,7 +103,7 @@ func RunAnalyzeStmt(
 }
 
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
-func GetAutoAnalyzeParameters(sctx sessionapi.Context) map[string]string {
+func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
 	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, vardef.TiDBAutoAnalyzeRatio, vardef.TiDBAutoAnalyzeStartTime, vardef.TiDBAutoAnalyzeEndTime)
 	if err != nil {

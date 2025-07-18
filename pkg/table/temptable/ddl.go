@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -42,7 +42,7 @@ type TemporaryTableDDL interface {
 
 // temporaryTableDDL implements temptable.TemporaryTableDDL
 type temporaryTableDDL struct {
-	sctx sessionapi.Context
+	sctx sessionctx.Context
 }
 
 func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *model.TableInfo) error {
@@ -127,7 +127,7 @@ func (d *temporaryTableDDL) clearTemporaryTableRecords(tblID int64) error {
 	return nil
 }
 
-func checkLocalTemporaryExistsAndReturn(sctx sessionapi.Context, schema ast.CIStr, tblName ast.CIStr) (table.Table, error) {
+func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema ast.CIStr, tblName ast.CIStr) (table.Table, error) {
 	ident := ast.Ident{Schema: schema, Name: tblName}
 	localTemporaryTables := getLocalTemporaryTables(sctx)
 	if localTemporaryTables == nil {
@@ -142,11 +142,11 @@ func checkLocalTemporaryExistsAndReturn(sctx sessionapi.Context, schema ast.CISt
 	return tbl, nil
 }
 
-func getSessionData(sctx sessionapi.Context) variable.TemporaryTableData {
+func getSessionData(sctx sessionctx.Context) variable.TemporaryTableData {
 	return sctx.GetSessionVars().TemporaryTableData
 }
 
-func ensureSessionData(sctx sessionapi.Context) (variable.TemporaryTableData, error) {
+func ensureSessionData(sctx sessionctx.Context) (variable.TemporaryTableData, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.TemporaryTableData == nil {
 		// Create this txn just for getting a MemBuffer. It's a little tricky
@@ -161,7 +161,7 @@ func ensureSessionData(sctx sessionapi.Context) (variable.TemporaryTableData, er
 	return sessVars.TemporaryTableData, nil
 }
 
-func newTemporaryTableFromTableInfo(sctx sessionapi.Context, tbInfo *model.TableInfo) (table.Table, error) {
+func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.TableInfo) (table.Table, error) {
 	// Local temporary table uses a real table ID.
 	// We could mock a table ID, but the mocked ID might be identical to an existing
 	// real table, and then we'll get into trouble.
@@ -190,7 +190,7 @@ func newTemporaryTableFromTableInfo(sctx sessionapi.Context, tbInfo *model.Table
 }
 
 // GetTemporaryTableDDL gets the temptable.TemporaryTableDDL from session context
-func GetTemporaryTableDDL(sctx sessionapi.Context) TemporaryTableDDL {
+func GetTemporaryTableDDL(sctx sessionctx.Context) TemporaryTableDDL {
 	return &temporaryTableDDL{
 		sctx: sctx,
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -35,7 +36,7 @@ type mockSession struct {
 }
 
 // GetSessionCtx implements glue.Glue
-func (s *mockSession) GetSessionCtx() sessionapi.Context {
+func (s *mockSession) GetSessionCtx() sessionctx.Context {
 	return s.se
 }
 

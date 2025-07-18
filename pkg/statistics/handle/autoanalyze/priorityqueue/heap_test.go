@@ -26,7 +26,7 @@ package priorityqueue
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ type testHeapObject struct {
 	val     float64
 }
 
-func (t testHeapObject) ValidateAndPrepare(sctx sessionapi.Context) (bool, string) {
+func (t testHeapObject) ValidateAndPrepare(sctx sessionctx.Context) (bool, string) {
 	panic("implement me")
 }
 func (t testHeapObject) Analyze(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) error {

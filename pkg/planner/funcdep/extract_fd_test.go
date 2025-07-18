@@ -25,14 +25,14 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
 
-func testGetIS(t *testing.T, ctx sessionapi.Context) infoschema.InfoSchema {
+func testGetIS(t *testing.T, ctx sessionctx.Context) infoschema.InfoSchema {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()

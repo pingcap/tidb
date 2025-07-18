@@ -53,7 +53,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -365,7 +365,7 @@ type LoadDataController struct {
 	ExecuteNodesCnt int
 }
 
-func getImportantSysVars(sctx sessionapi.Context) map[string]string {
+func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	res := map[string]string{}
 	for k, defVal := range common.DefaultImportantVariables {
 		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
@@ -385,7 +385,7 @@ func getImportantSysVars(sctx sessionapi.Context) map[string]string {
 }
 
 // NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
-func NewPlanFromLoadDataPlan(userSctx sessionapi.Context, plan *plannercore.LoadData) (*Plan, error) {
+func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData) (*Plan, error) {
 	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	charset := plan.Charset
@@ -447,7 +447,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionapi.Context, plan *plannercore.Load
 }
 
 // NewImportPlan creates a new import into plan.
-func NewImportPlan(ctx context.Context, userSctx sessionapi.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	failpoint.InjectCall("NewImportPlan", plan)
 	var format string
 	if plan.Format != nil {
@@ -565,7 +565,7 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 }
 
 // InitTiKVConfigs initializes some TiKV related configs.
-func (e *LoadDataController) InitTiKVConfigs(ctx context.Context, sctx sessionapi.Context) error {
+func (e *LoadDataController) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
 	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
 	if err != nil {
 		return err
@@ -624,7 +624,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.Charset = &v
 }
 
-func (p *Plan) initOptions(ctx context.Context, seCtx sessionapi.Context, options []*plannercore.LoadDataOpt) error {
+func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
 	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
 	if err != nil {
 		return err

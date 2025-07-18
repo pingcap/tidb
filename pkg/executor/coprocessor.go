@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -55,12 +55,12 @@ func copHandlerCtx(ctx context.Context, req *coprocessor.Request) context.Contex
 
 // CoprocessorDAGHandler uses to handle cop dag request.
 type CoprocessorDAGHandler struct {
-	sctx   sessionapi.Context
+	sctx   sessionctx.Context
 	dagReq *tipb.DAGRequest
 }
 
 // NewCoprocessorDAGHandler creates a new CoprocessorDAGHandler.
-func NewCoprocessorDAGHandler(sctx sessionapi.Context) *CoprocessorDAGHandler {
+func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 	return &CoprocessorDAGHandler{
 		sctx: sctx,
 	}

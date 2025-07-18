@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -50,7 +50,7 @@ type dumpFileGcChecker struct {
 	sync.Mutex
 	gcLease                time.Duration
 	paths                  []string
-	sctx                   sessionapi.Context
+	sctx                   sessionctx.Context
 	planReplayerTaskStatus *planReplayerDumpTaskStatus
 }
 
@@ -79,7 +79,7 @@ func (p *dumpFileGcChecker) GCDumpFiles(gcDurationDefault, gcDurationForCapture 
 	}
 }
 
-func (p *dumpFileGcChecker) setupSctx(sctx sessionapi.Context) {
+func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 	p.sctx = sctx
 }
 
@@ -135,7 +135,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gc
 	}
 }
 
-func deletePlanReplayerStatus(ctx context.Context, sctx sessionapi.Context, token string) {
+func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	exec := sctx.GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where token = %?", token)
@@ -145,7 +145,7 @@ func deletePlanReplayerStatus(ctx context.Context, sctx sessionapi.Context, toke
 }
 
 // insertPlanReplayerStatus insert mysql.plan_replayer_status record
-func insertPlanReplayerStatus(ctx context.Context, sctx sessionapi.Context, records []PlanReplayerStatusRecord) {
+func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, records []PlanReplayerStatusRecord) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
@@ -164,7 +164,7 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionapi.Context, reco
 	}
 }
 
-func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionapi.Context, instance string, record PlanReplayerStatusRecord) {
+func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(
 		ctx, nil,
@@ -182,7 +182,7 @@ func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionapi.Co
 	}
 }
 
-func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionapi.Context, instance string, record PlanReplayerStatusRecord) {
+func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(
 		ctx,
@@ -249,7 +249,7 @@ type planReplayerTaskCollectorHandle struct {
 		tasks map[replayer.PlanReplayerTaskKey]struct{}
 	}
 	ctx  context.Context
-	sctx sessionapi.Context
+	sctx sessionctx.Context
 }
 
 // CollectPlanReplayerTask collects all unhandled plan replayer task
@@ -402,7 +402,7 @@ func (r *planReplayerDumpTaskStatus) clearFinishedTask() {
 
 type planReplayerTaskDumpWorker struct {
 	ctx    context.Context
-	sctx   sessionapi.Context
+	sctx   sessionctx.Context
 	taskCH <-chan *PlanReplayerDumpTask
 	status *planReplayerDumpTaskStatus
 }
@@ -513,7 +513,7 @@ func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 	return <-h.taskCH
 }
 
-func checkUnHandledReplayerTask(ctx context.Context, sctx sessionapi.Context, task replayer.PlanReplayerTaskKey) (bool, error) {
+func checkUnHandledReplayerTask(ctx context.Context, sctx sessionctx.Context, task replayer.PlanReplayerTaskKey) (bool, error) {
 	exec := sctx.GetSQLExecutor()
 	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_status where sql_digest = '%v' and plan_digest = '%v' and fail_reason is null", task.SQLDigest, task.PlanDigest))
 	if err != nil {
@@ -534,7 +534,7 @@ func checkUnHandledReplayerTask(ctx context.Context, sctx sessionapi.Context, ta
 }
 
 // CheckPlanReplayerTaskExists checks whether plan replayer capture task exists already
-func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionapi.Context, sqlDigest, planDigest string) (bool, error) {
+func CheckPlanReplayerTaskExists(ctx context.Context, sctx sessionctx.Context, sqlDigest, planDigest string) (bool, error) {
 	exec := sctx.GetSQLExecutor()
 	rs, err := exec.ExecuteInternal(ctx, fmt.Sprintf("select * from mysql.plan_replayer_task where sql_digest = '%v' and plan_digest = '%v'",
 		sqlDigest, planDigest))

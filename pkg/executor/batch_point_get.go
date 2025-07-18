@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -482,7 +482,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 }
 
 // LockKeys locks the keys for pessimistic transaction.
-func LockKeys(ctx context.Context, sctx sessionapi.Context, lockWaitTime int64, keys ...kv.Key) error {
+func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
 	if err != nil {
@@ -523,7 +523,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 }
 
 type cacheBatchGetter struct {
-	ctx sessionapi.Context
+	ctx sessionctx.Context
 	tid int64
 	snapshot kv.Snapshot
 }
@@ -544,6 +544,6 @@ func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[str
 	return vals, nil
 }
 
-func newCacheBatchGetter(ctx sessionapi.Context, tid int64, snapshot kv.Snapshot) *cacheBatchGetter {
+func newCacheBatchGetter(ctx sessionctx.Context, tid int64, snapshot kv.Snapshot) *cacheBatchGetter {
 	return &cacheBatchGetter{ctx, tid, snapshot}
 }

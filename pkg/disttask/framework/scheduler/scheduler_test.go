@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -443,13 +443,13 @@ func TestManagerScheduleLoop(t *testing.T) {
 				if task.IsDone() {
 					return
 				}
-				require.NoError(t, taskMgr.WithNewSession(func(se sessionapi.Context) error {
+				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
 					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
 					return err
 				}))
 				<-waitChannels[task.Key]
-				require.NoError(t, taskMgr.WithNewSession(func(se sessionapi.Context) error {
+				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
 					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err

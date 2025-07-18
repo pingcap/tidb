@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -57,7 +57,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionapi.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
+func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -2552,7 +2552,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	require.Equal(t, 0, recordsNum)
 }
 
-func getPartitionTableRecordsNum(t *testing.T, ctx sessionapi.Context, tbl table.PartitionedTable) int {
+func getPartitionTableRecordsNum(t *testing.T, ctx sessionctx.Context, tbl table.PartitionedTable) int {
 	num := 0
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {

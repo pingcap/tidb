@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -37,7 +37,7 @@ import (
 // For mpp err recovery, hold at most 4 * MaxChunkSize rows.
 const mppErrRecoveryHoldChkCap = 4
 
-func useMPPExecution(ctx sessionapi.Context, tr *plannercore.PhysicalTableReader) bool {
+func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
 	if !ctx.GetSessionVars().IsMPPAllowed() {
 		return false
 	}
@@ -45,13 +45,13 @@ func useMPPExecution(ctx sessionapi.Context, tr *plannercore.PhysicalTableReader
 	return ok
 }
 
-func getMPPQueryID(ctx sessionapi.Context) uint64 {
+func getMPPQueryID(ctx sessionctx.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
 	mppQueryInfo.QueryID.CompareAndSwap(0, plannercore.AllocMPPQueryID())
 	return mppQueryInfo.QueryID.Load()
 }
 
-func getMPPQueryTS(ctx sessionapi.Context) uint64 {
+func getMPPQueryTS(ctx sessionctx.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
 	mppQueryInfo.QueryTS.CompareAndSwap(0, uint64(time.Now().UnixNano()))
 	return mppQueryInfo.QueryTS.Load()

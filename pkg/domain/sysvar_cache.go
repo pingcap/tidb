@@ -20,7 +20,7 @@ import (
 	"maps"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -83,7 +83,7 @@ func (do *Domain) GetGlobalVar(name string) (string, error) {
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
-func (*Domain) fetchTableValues(sctx sessionapi.Context) (map[string]string, error) {
+func (*Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, error) {
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
 	exec := sctx.GetRestrictedSQLExecutor()
@@ -102,7 +102,7 @@ func (*Domain) fetchTableValues(sctx sessionapi.Context) (map[string]string, err
 
 // rebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
-func (do *Domain) rebuildSysVarCache(ctx sessionapi.Context) error {
+func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	if ctx == nil {
@@ -111,7 +111,7 @@ func (do *Domain) rebuildSysVarCache(ctx sessionapi.Context) error {
 			return err
 		}
 		defer do.sysSessionPool.Put(res)
-		ctx = res.(sessionapi.Context)
+		ctx = res.(sessionctx.Context)
 	}
 	// Only one rebuild can be in progress at a time, this prevents a lost update race
 	// where an earlier fetchTableValues() finishes last.

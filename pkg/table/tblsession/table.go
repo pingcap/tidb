@@ -19,7 +19,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -31,7 +31,7 @@ var _ tblctx.AllocatorContext = &MutateContext{}
 
 // MutateContext is used to provide context for table operations.
 type MutateContext struct {
-	sessionapi.Context
+	sessionctx.Context
 	// mutateBuffers is a memory pool for table related memory allocation that aims to reuse memory
 	// and saves allocation
 	// The buffers are supposed to be used inside AddRecord/UpdateRecord/RemoveRecord.
@@ -39,7 +39,7 @@ type MutateContext struct {
 }
 
 // NewMutateContext creates a new MutateContext.
-func NewMutateContext(sctx sessionapi.Context) *MutateContext {
+func NewMutateContext(sctx sessionctx.Context) *MutateContext {
 	return &MutateContext{
 		Context:       sctx,
 		mutateBuffers: tblctx.NewMutateBuffers(sctx.GetSessionVars().GetWriteStmtBufs()),

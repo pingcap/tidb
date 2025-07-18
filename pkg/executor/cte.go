@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -182,7 +182,7 @@ type cteProducer struct {
 	// Otherwise there may be resource leak because Close() only clean resource for the last Open().
 	openErr error
 
-	ctx sessionapi.Context
+	ctx sessionctx.Context
 
 	seedExec      exec.Executor
 	recursiveExec exec.Executor
@@ -575,7 +575,7 @@ func (p *cteProducer) limitDone(tbl cteutil.Storage) bool {
 	return p.hasLimit && uint64(tbl.NumRows()) >= p.limitEnd
 }
 
-func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionapi.Context, parentMemTracker *memory.Tracker,
+func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
 	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
 	memTracker := tbl.GetMemTracker()
 	memTracker.SetLabel(memory.LabelForCTEStorage)

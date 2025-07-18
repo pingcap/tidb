@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -103,7 +103,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 }
 
-func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionapi.Context, req *chunk.Chunk) error {
+func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
 	stmtCtx := se.GetSessionVars().StmtCtx
 	origin := stmtCtx.EnableOptimizerCETrace
 	stmtCtx.EnableOptimizerCETrace = true
@@ -132,7 +132,7 @@ func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionapi.
 	return nil
 }
 
-func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionapi.Context, req *chunk.Chunk) error {
+func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
 	stmtCtx := se.GetSessionVars().StmtCtx
 	origin := stmtCtx.EnableOptimizerDebugTrace
 	stmtCtx.EnableOptimizerDebugTrace = true
@@ -161,7 +161,7 @@ func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessiona
 	return nil
 }
 
-func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionapi.Context, req *chunk.Chunk) error {
+func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
 	zf, fileName, err := generateOptimizerTraceFile()
 	if err != nil {
 		return err
@@ -296,7 +296,7 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 	logutil.Eventf(ctx, "execute done, modify row: %d", e.Ctx().GetSessionVars().StmtCtx.AffectedRows())
 }
 
-func drainRecordSet(ctx context.Context, sctx sessionapi.Context, rs sqlexec.RecordSet) {
+func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) {
 	req := rs.NewChunk(nil)
 	var rowCount int
 	for {

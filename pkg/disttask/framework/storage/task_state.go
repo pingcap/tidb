@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -43,7 +43,7 @@ func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 }
 
 // CancelTaskByKeySession cancels task by key using input session.
-func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionapi.Context, taskKey string) error {
+func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 		`update mysql.tidb_global_task
 		 set state = %?,
@@ -122,7 +122,7 @@ func (mgr *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, er
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return false, err
 	}
-	err := mgr.WithNewSession(func(se sessionapi.Context) error {
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`update mysql.tidb_global_task
 			 set state = %?,
@@ -162,7 +162,7 @@ func (mgr *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
 // ResumeTask resumes the task.
 func (mgr *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
-	err := mgr.WithNewSession(func(se sessionapi.Context) error {
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`update mysql.tidb_global_task
 		     set state = %?,
@@ -208,7 +208,7 @@ func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		task, err2 := mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
 		if err2 != nil {
 			return err2
@@ -242,7 +242,7 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 		return err
 	}
 	prevState := task.ModifyParam.PrevState
-	return mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		failpoint.InjectCall("beforeModifiedTask")
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task
@@ -279,7 +279,7 @@ func (mgr *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	return mgr.WithNewSession(func(se sessionapi.Context) error {
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task
 			set state = %?,

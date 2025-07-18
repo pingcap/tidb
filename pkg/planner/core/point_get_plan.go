@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -329,7 +329,7 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 }
 
 // LoadTableStats preloads the stats data for the physical table
-func (p *PointGetPlan) LoadTableStats(ctx sessionapi.Context) {
+func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	tableID := p.TblInfo.ID
 	if idx := p.PartitionIdx; idx != nil {
 		if *idx < 0 {
@@ -345,7 +345,7 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionapi.Context) {
 
 // PrunePartitions will check which partition to use
 // returns true if no matching partition
-func (p *PointGetPlan) PrunePartitions(sctx sessionapi.Context) (bool, error) {
+func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	pi := p.TblInfo.GetPartitionInfo()
 	if pi == nil {
 		return false, nil
@@ -665,7 +665,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 }
 
 // LoadTableStats preloads the stats data for the physical table
-func (p *BatchPointGetPlan) LoadTableStats(ctx sessionapi.Context) {
+func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	// as a `BatchPointGet` can access multiple partitions, and we cannot distinguish how many rows come from each
 	// partitions in the existing statistics information, we treat all index usage through a `BatchPointGet` just
 	// like a normal global index.
@@ -686,7 +686,7 @@ func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr)
 }
 
 // Map each index value to Partition ID
-func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionapi.Context) []int {
+func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 	intest.Assert(ok)
@@ -718,7 +718,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionapi.Context) []int {
 // returns:
 // slice of non-duplicated handles (or nil if IndexValues is used)
 // true if no matching partition (TableDual plan can be used)
-func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionapi.Context) ([]kv.Handle, bool, error) {
+func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([]kv.Handle, bool, error) {
 	pi := p.TblInfo.GetPartitionInfo()
 	if p.IndexInfo != nil && p.IndexInfo.Global {
 		// Reading from a global index, i.e. base table ID

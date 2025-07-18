@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -54,7 +54,7 @@ func NewStatsGC(statsHandle types.StatsHandle) types.StatsGC {
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return GCStats(sctx, gc.statsHandle, is, ddlLease)
 	})
 }
@@ -68,7 +68,7 @@ func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
-	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return DeleteTableStatsFromKV(sctx, statsIDs, soft)
 	}, util.FlagWrapTxn)
 }
@@ -77,7 +77,7 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err 
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func GCStats(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle types.StatsHandle,
 	is infoschema.InfoSchema,
 	ddlLease time.Duration,
@@ -135,7 +135,7 @@ func GCStats(
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func DeleteTableStatsFromKV(sctx sessionapi.Context, statsIDs []int64, soft bool) (err error) {
+func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool) (err error) {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -195,7 +195,7 @@ func forCount(total int64, batch int64) int64 {
 }
 
 // ClearOutdatedHistoryStats clear outdated historical stats
-func ClearOutdatedHistoryStats(sctx sessionapi.Context) error {
+func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
@@ -229,7 +229,7 @@ func ClearOutdatedHistoryStats(sctx sessionapi.Context) error {
 }
 
 // gcHistoryStatsFromKV delete history stats from kv.
-func gcHistoryStatsFromKV(sctx sessionapi.Context, physicalID int64) (err error) {
+func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
 	sql := "delete from mysql.stats_history where table_id = %?"
 	_, err = util.Exec(sctx, sql, physicalID)
 	if err != nil {
@@ -241,7 +241,7 @@ func gcHistoryStatsFromKV(sctx sessionapi.Context, physicalID int64) (err error)
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
-func deleteHistStatsFromKV(sctx sessionapi.Context, physicalID int64, histID int64, isIndex int) (err error) {
+func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int64, isIndex int) (err error) {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -276,7 +276,7 @@ func deleteHistStatsFromKV(sctx sessionapi.Context, physicalID int64, histID int
 }
 
 // removeDeletedExtendedStats removes deleted extended stats.
-func removeDeletedExtendedStats(sctx sessionapi.Context, version uint64) (err error) {
+func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err error) {
 	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
 	_, err = util.Exec(sctx, sql, statistics.ExtendedStatsDeleted, version)
 	return
@@ -286,7 +286,7 @@ func removeDeletedExtendedStats(sctx sessionapi.Context, version uint64) (err er
 // The GC of a table will be a two-phase process:
 // 1. Delete the column/index's stats from storage. Then other TiDB nodes will be aware that those stats are deleted.
 // 2. Then delete the record in stats_meta.
-func gcTableStats(sctx sessionapi.Context,
+func gcTableStats(sctx sessionctx.Context,
 	statsHandler types.StatsHandle,
 	is infoschema.InfoSchema, physicalID int64) error {
 	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
@@ -298,7 +298,7 @@ func gcTableStats(sctx sessionapi.Context,
 		if len(rows) > 0 {
 			// It's the first time to run into it. Delete column/index stats to notify other TiDB nodes.
 			logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("tableID", physicalID))
-			return util.WrapTxn(sctx, func(sctx sessionapi.Context) error {
+			return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
 				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}, false))
 			})
 		}
@@ -332,7 +332,7 @@ func gcTableStats(sctx sessionapi.Context,
 			}
 		}
 		if !find {
-			err := util.WrapTxn(sctx, func(sctx sessionapi.Context) error {
+			err := util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
 				return errors.Trace(deleteHistStatsFromKV(sctx, physicalID, histID, int(isIndex)))
 			})
 			if err != nil {
@@ -382,7 +382,7 @@ func gcTableStats(sctx sessionapi.Context,
 const gcLastTSVarName = "tidb_stats_gc_last_ts"
 
 // getLastGCTimestamp loads the last gc time from mysql.tidb.
-func getLastGCTimestamp(sctx sessionapi.Context) (uint64, error) {
+func getLastGCTimestamp(sctx sessionctx.Context) (uint64, error) {
 	rows, _, err := util.ExecRows(sctx, "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?", gcLastTSVarName)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -399,7 +399,7 @@ func getLastGCTimestamp(sctx sessionapi.Context) (uint64, error) {
 }
 
 // writeGCTimestampToKV write the GC timestamp to the storage.
-func writeGCTimestampToKV(sctx sessionapi.Context, newTS uint64) error {
+func writeGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 	_, _, err := util.ExecRows(sctx,
 		"insert into mysql.tidb (variable_name, variable_value) values (%?, %?) on duplicate key update variable_value = %?",
 		gcLastTSVarName,
@@ -410,7 +410,7 @@ func writeGCTimestampToKV(sctx sessionapi.Context, newTS uint64) error {
 }
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-func MarkExtendedStatsDeleted(sctx sessionapi.Context,
+func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 	statsCache types.StatsCache,
 	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
 	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)

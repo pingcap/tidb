@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -132,7 +132,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			err = taskMgr.WithNewSession(func(se sessionapi.Context) error {
+			err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
 				store, err = se.GetSQLServer().GetKSStore(taskKS)
 				return err
 			})

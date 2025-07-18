@@ -25,7 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 const (
@@ -33,7 +33,7 @@ const (
 )
 
 type profileBuilder struct {
-	sctx  sessionapi.Context
+	sctx  sessionctx.Context
 	idMap map[string]uint64
 	idAllocator uint64
 	totalValue  float64
@@ -297,7 +297,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 }
 
 // NewProfileBuilder returns a new profileBuilder.
-func NewProfileBuilder(sctx sessionapi.Context, start, end time.Time, tp string) (*profileBuilder, error) {
+func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string) (*profileBuilder, error) {
 	var valueTp metricValueType
 	switch strings.ToLower(tp) {
 	case metricValueSum.String():

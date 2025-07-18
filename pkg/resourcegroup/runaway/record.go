@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
@@ -308,7 +308,7 @@ func handleRemoveStaleRunawayWatch(sysSessionPool util.SessionPool, record *Quar
 	if err != nil {
 		return errors.Annotate(err, "get session failed")
 	}
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	exec := sctx.GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
@@ -339,7 +339,7 @@ func handleRunawayWatchDone(sysSessionPool util.SessionPool, record *QuarantineR
 	if err != nil {
 		return errors.Annotate(err, "get session failed")
 	}
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	exec := sctx.GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
@@ -376,7 +376,7 @@ func ExecRCRestrictedSQL(sysSessionPool util.SessionPool, sql string, params []a
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
 	}
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
@@ -394,7 +394,7 @@ func (rm *Manager) AddRunawayWatch(record *QuarantineRecord) (uint64, error) {
 	if err != nil {
 		return 0, errors.Annotate(err, "get session failed")
 	}
-	exec := se.(sessionapi.Context).GetSQLExecutor()
+	exec := se.(sessionctx.Context).GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {

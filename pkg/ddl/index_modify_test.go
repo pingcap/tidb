@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -803,7 +804,7 @@ func TestAddGlobalIndex(t *testing.T) {
 // checkGlobalIndexRow reads one record from global index and check. Only support int handle.
 func checkGlobalIndexRow(
 	t *testing.T,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 	indexInfo *model.IndexInfo,
 	pid int64,

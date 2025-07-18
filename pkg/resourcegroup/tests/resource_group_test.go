@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -323,7 +323,7 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM UNLIMITED <nil> TASK_TYPES='br,ddl', UTILIZATION_LIMIT=30"))
 }
 
-func testResourceGroupNameFromIS(t *testing.T, ctx sessionapi.Context, name string) *model.ResourceGroupInfo {
+func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()

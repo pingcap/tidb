@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -43,7 +43,7 @@ import (
 
 // MockDataSourceParameters mpcks data source parameters
 type MockDataSourceParameters struct {
-	Ctx        sessionapi.Context
+	Ctx        sessionctx.Context
 	DataSchema *expression.Schema
 	GenDataFunc func(row int, typ *types.FieldType) any
 	Ndvs        []int
@@ -253,7 +253,7 @@ func (*MockDataPhysicalPlan) MemoryUsage() (sum int64) {
 }
 
 // BuildMockDataPhysicalPlan builds MockDataPhysicalPlan
-func BuildMockDataPhysicalPlan(_ sessionapi.Context, srcExec exec.Executor) *MockDataPhysicalPlan {
+func BuildMockDataPhysicalPlan(_ sessionctx.Context, srcExec exec.Executor) *MockDataPhysicalPlan {
 	return &MockDataPhysicalPlan{
 		DataSchema: srcExec.Schema(),
 		Exec:       srcExec,

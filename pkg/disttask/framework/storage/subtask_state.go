@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -28,7 +28,7 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	err := mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		_, err := sqlexec.ExecSQL(ctx,
 			se.GetSQLExecutor(),
@@ -138,7 +138,7 @@ func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtask
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	err := mgr.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
 			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				update mysql.tidb_background_subtask

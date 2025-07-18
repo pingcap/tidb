@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -42,7 +42,7 @@ type CommandDDLJobsExec struct {
 	jobIDs []int64
 	errs   []error
 
-	execute func(ctx context.Context, se sessionapi.Context, ids []int64) (errs []error, err error)
+	execute func(ctx context.Context, se sessionctx.Context, ids []int64) (errs []error, err error)
 }
 
 // Open implements the Executor for all Cancel/Pause/Resume command on DDL jobs
@@ -155,7 +155,7 @@ const alterDDLJobMaxRetryCnt = 3
 // In case of failure, it will retry alterDDLJobMaxRetryCnt times.
 func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 	ctx context.Context,
-	sessCtx sessionapi.Context,
+	sessCtx sessionctx.Context,
 ) (err error) {
 	ns := sess.NewSession(sessCtx)
 	var job *model.Job

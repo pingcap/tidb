@@ -38,7 +38,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/planner",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/types",
         "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",

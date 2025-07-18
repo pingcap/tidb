@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfork"
@@ -93,14 +93,14 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	return store, do
 }
 
-func checkAssertRecordExits(t *testing.T, se sessionapi.Context, name string) {
+func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
 	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]any)
 	require.True(t, ok, fmt.Sprintf("'%s' not in record, maybe failpoint not enabled?", name))
 	_, ok = records[name]
 	require.True(t, ok, fmt.Sprintf("'%s' not in record", name))
 }
 
-func doWithCheckPath(t *testing.T, se sessionapi.Context, names []string, do func()) {
+func doWithCheckPath(t *testing.T, se sessionctx.Context, names []string, do func()) {
 	se.SetValue(sessiontxn.AssertRecordsKey, nil)
 	do()
 	for _, name := range names {

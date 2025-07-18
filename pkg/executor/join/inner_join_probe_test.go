@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -45,7 +45,7 @@ func toNullableTypes(tps []*types.FieldType) []*types.FieldType {
 	return ret
 }
 
-func evalOtherCondition(sessCtx sessionapi.Context, leftRow chunk.Row, rightRow chunk.Row, shallowRow chunk.MutRow, otherCondition expression.CNFExprs) (bool, error) {
+func evalOtherCondition(sessCtx sessionctx.Context, leftRow chunk.Row, rightRow chunk.Row, shallowRow chunk.MutRow, otherCondition expression.CNFExprs) (bool, error) {
 	shallowRow.ShallowCopyPartialRow(0, leftRow)
 	shallowRow.ShallowCopyPartialRow(leftRow.Len(), rightRow)
 	valid, _, err := expression.EvalBool(sessCtx.GetExprCtx().GetEvalCtx(), otherCondition, shallowRow.ToRow())
@@ -77,7 +77,7 @@ func containsNullKey(row chunk.Row, keyIndex []int) bool {
 }
 
 // generate inner join result using nested loop
-func genInnerJoinResult(t *testing.T, sessCtx sessionapi.Context, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
+func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int,
 	rightUsedColumns []int, otherConditions expression.CNFExprs, resultTypes []*types.FieldType) []*chunk.Chunk {
 	returnChks := make([]*chunk.Chunk, 0, 1)

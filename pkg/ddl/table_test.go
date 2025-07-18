@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -45,7 +44,7 @@ import (
 
 func testRenameTable(
 	t *testing.T,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID, oldSchemaID int64,
 	oldSchemaName ast.CIStr,
@@ -80,7 +79,7 @@ func testRenameTable(
 	return job
 }
 
-func testRenameTables(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest,
+func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest,
 	oldSchemaIDs, newSchemaIDs []int64,
 	newTableNames []ast.CIStr, oldTableIDs []int64,
 	oldSchemaNames, oldTableNames []ast.CIStr) *model.Job {
@@ -111,7 +110,7 @@ func testRenameTables(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTes
 
 func testLockTable(
 	t *testing.T,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	uuid string,
 	newSchemaID int64,
@@ -165,7 +164,7 @@ func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, 
 	require.NoError(t, err)
 }
 
-func testTruncateTable(t *testing.T, ctx sessionapi.Context, store kv.Storage, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	newTableID := genIDs[0]
@@ -400,7 +399,7 @@ func checkTableNoCacheTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo,
 
 func testAlterCacheTable(
 	t *testing.T,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
 	newSchemaName ast.CIStr,
@@ -427,7 +426,7 @@ func testAlterCacheTable(
 
 func testAlterNoCacheTable(
 	t *testing.T,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
 	newSchemaName ast.CIStr,

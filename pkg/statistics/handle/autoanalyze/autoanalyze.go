@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -81,13 +81,13 @@ func NewStatsAnalyze(
 
 // InsertAnalyzeJob inserts the analyze job to the storage.
 func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return insertAnalyzeJob(sctx, job, instance, procID)
 	})
 }
 
 func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
-	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		startAnalyzeJob(sctx, job)
 		return nil
 	})
@@ -97,7 +97,7 @@ func (sa *statsAnalyze) StartAnalyzeJob(job *statistics.AnalyzeJob) {
 }
 
 func (sa *statsAnalyze) UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64) {
-	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		updateAnalyzeJobProgress(sctx, job, rowCount)
 		return nil
 	})
@@ -107,7 +107,7 @@ func (sa *statsAnalyze) UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, row
 }
 
 func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType) {
-	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		finishAnalyzeJob(sctx, job, failReason, analyzeType)
 		return nil
 	})
@@ -118,7 +118,7 @@ func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason 
 
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
-	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 		return err
 	})
@@ -127,7 +127,7 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job.
 // It only cleans up the jobs that are associated with the current instance.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
-	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnCurrentInstance(sctx, currentRunningProcessIDs)
 	}, statsutil.FlagWrapTxn)
 }
@@ -135,7 +135,7 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunn
 // CleanupCorruptedAnalyzeJobsOnDeadInstances removes analyze jobs that may have been corrupted.
 // Specifically, it removes jobs associated with instances that no longer exist in the cluster.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
-	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
 	}, statsutil.FlagWrapTxn)
 }
@@ -180,7 +180,7 @@ func tenMinutesAgo() string {
 // CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job from current instance.
 // Exported for testing.
 func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	currentRunningProcessIDs map[uint64]struct{},
 ) error {
 	serverInfo, err := infosync.GetServerInfo()
@@ -236,7 +236,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 
 // CleanupCorruptedAnalyzeJobsOnDeadInstances cleans up the potentially corrupted analyze job from dead instances.
 func CleanupCorruptedAnalyzeJobsOnDeadInstances(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 ) error {
 	rows, _, err := statsutil.ExecRows(
 		sctx,
@@ -294,7 +294,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 // HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
-	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		analyzed = sa.handleAutoAnalyze(sctx)
 		return nil
 	}); err != nil {
@@ -324,7 +324,7 @@ func (sa *statsAnalyze) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnap
 	return sa.refresher.GetPriorityQueueSnapshot()
 }
 
-func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionapi.Context) bool {
+func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Error(
@@ -375,7 +375,7 @@ func (sa *statsAnalyze) Close() {
 
 // CheckAutoAnalyzeWindow determine the time window for auto-analysis and verify if the current time falls within this range.
 // parameters is a map of auto analyze parameters. it is from GetAutoAnalyzeParameters.
-func CheckAutoAnalyzeWindow(sctx sessionapi.Context) bool {
+func CheckAutoAnalyzeWindow(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	_, _, ok := checkAutoAnalyzeWindow(parameters)
 	return ok
@@ -406,7 +406,7 @@ func checkAutoAnalyzeWindow(parameters map[string]string) (_, _ time.Time, _ boo
 // 4. If the table is locked, skip it.
 // Exposed solely for testing.
 func RandomPickOneTableAndTryAutoAnalyze(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	autoAnalyzeRatio float64,
@@ -531,7 +531,7 @@ func getPartitionStats(
 
 // Determine whether the table and index require analysis.
 func tryAutoAnalyzeTable(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	tblInfo *model.TableInfo,
@@ -626,7 +626,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, st
 
 // It is very similar to tryAutoAnalyzeTable, but it commits the analyze job in batch for partitions.
 func tryAutoAnalyzePartitionTableInDynamicMode(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	tblInfo *model.TableInfo,
@@ -757,7 +757,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 }
 
 // insertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func insertAnalyzeJob(sctx sessionapi.Context, job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
+func insertAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
 	jobInfo := job.JobInfo
 	const textMaxLength = 65535
 	if len(jobInfo) > textMaxLength {
@@ -790,7 +790,7 @@ func insertAnalyzeJob(sctx sessionapi.Context, job *statistics.AnalyzeJob, insta
 }
 
 // startAnalyzeJob marks the state of the analyze job as running and sets the start time.
-func startAnalyzeJob(sctx sessionapi.Context, job *statistics.AnalyzeJob) {
+func startAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if job == nil || job.ID == nil {
 		return
 	}
@@ -812,7 +812,7 @@ func startAnalyzeJob(sctx sessionapi.Context, job *statistics.AnalyzeJob) {
 }
 
 // updateAnalyzeJobProgress updates count of the processed rows when increment reaches a threshold.
-func updateAnalyzeJobProgress(sctx sessionapi.Context, job *statistics.AnalyzeJob, rowCount int64) {
+func updateAnalyzeJobProgress(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
 	if job == nil || job.ID == nil {
 		return
 	}
@@ -836,7 +836,7 @@ func updateAnalyzeJobProgress(sctx sessionapi.Context, job *statistics.AnalyzeJo
 }
 
 // finishAnalyzeJob finishes an analyze or merge job
-func finishAnalyzeJob(sctx sessionapi.Context, job *statistics.AnalyzeJob, analyzeErr error, analyzeType statistics.JobType) {
+func finishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error, analyzeType statistics.JobType) {
 	if job == nil || job.ID == nil {
 		return
 	}

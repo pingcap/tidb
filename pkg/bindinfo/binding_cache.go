@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -206,7 +206,7 @@ func (b *digestBiMapImpl) SQLDigest2NoDBDigest(sqlDigest string) string {
 // BindingCache is the interface for the cache of the SQL plan bindings.
 type BindingCache interface {
 	// MatchingBinding supports cross-db matching on bindings.
-	MatchingBinding(sctx sessionapi.Context, noDBDigest string, tableNames []*ast.TableName) (binding *Binding, isMatched bool)
+	MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (binding *Binding, isMatched bool)
 	// GetBinding gets the binding for the specified sqlDigest.
 	GetBinding(sqlDigest string) *Binding
 	// GetAllBindings gets all the bindings in the cache.
@@ -253,7 +253,7 @@ func newBindCache() BindingCache {
 	return &c
 }
 
-func (c *bindingCache) MatchingBinding(sctx sessionapi.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
+func (c *bindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
 	if c.Size() == 0 {
 		return
 	}

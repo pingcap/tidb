@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -62,7 +62,7 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 }
 
 // UpdateByID tries to update the cache by table ID.
-func (c *StatsTableRowCache) UpdateByID(sctx sessionapi.Context, ids ...int64) error {
+func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, ids ...int64) error {
 	tableRows, err := getRowCountTables(sctx, ids...)
 	if err != nil {
 		return err
@@ -108,7 +108,7 @@ func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	return
 }
 
-func getRowCountTables(sctx sessionapi.Context, tableIDs ...int64) (map[int64]uint64, error) {
+func getRowCountTables(sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {
@@ -144,7 +144,7 @@ func buildInTableIDsString(tableIDs []int64) string {
 	return whereBuilder.String()
 }
 
-func getColLengthTables(sctx sessionapi.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
+func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {

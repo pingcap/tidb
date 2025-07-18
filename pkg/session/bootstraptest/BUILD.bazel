@@ -21,6 +21,7 @@ go_test(
         "//pkg/server/handler",
         "//pkg/session",  #keep
         "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/testkit",  #keep
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",

@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -40,7 +40,7 @@ func SetTxnAssertionLevel(txn kv.Transaction, assertionLevel variable.AssertionL
 
 // CommitBeforeEnterNewTxn is called before entering a new transaction. It checks whether the old
 // txn is valid in which case we should commit it first.
-func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionapi.Context) error {
+func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	txn, err := sctx.Txn(false)
 	if err != nil {
 		return err
@@ -61,7 +61,7 @@ func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionapi.Context) error
 }
 
 // GetSnapshotWithTS returns a snapshot with ts.
-func GetSnapshotWithTS(s sessionapi.Context, ts uint64, interceptor kv.SnapshotInterceptor) kv.Snapshot {
+func GetSnapshotWithTS(s sessionctx.Context, ts uint64, interceptor kv.SnapshotInterceptor) kv.Snapshot {
 	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
 	if interceptor != nil {
 		snap.SetOption(kv.SnapInterceptor, interceptor)

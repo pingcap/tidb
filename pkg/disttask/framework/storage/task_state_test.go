@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -52,7 +52,7 @@ func TestTaskState(t *testing.T) {
 	id, err = gm.CreateTask(ctx, "key2", "test", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(2), id) TODO: unstable for infoschema v2
-	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionapi.Context) error {
+	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 		return gm.CancelTaskByKeySession(ctx, se, "key2")
 	}))
@@ -205,7 +205,7 @@ func TestModifyTask(t *testing.T) {
 	require.Len(t, gotSubtasks, len(subtasks))
 	require.NoError(t, gm.FinishSubtask(ctx, gotSubtasks[0].ExecID, gotSubtasks[0].ID, nil))
 	require.NoError(t, gm.StartSubtask(ctx, gotSubtasks[1].ID, gotSubtasks[1].ExecID))
-	require.NoError(t, gm.WithNewSession(func(se sessionapi.Context) error {
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `update mysql.tidb_background_subtask set state='paused' where id=%?`,
 			gotSubtasks[2].ID)
 		return err

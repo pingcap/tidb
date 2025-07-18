@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -84,16 +84,16 @@ func (t DelRangeTask) Range() (start kv.Key, end kv.Key) {
 }
 
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
-func LoadDeleteRanges(ctx context.Context, sctx sessionapi.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+func LoadDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	return loadDeleteRangesFromTable(ctx, sctx, deleteRangesTable, safePoint)
 }
 
 // LoadDoneDeleteRanges loads deleted ranges from gc_delete_range_done table.
-func LoadDoneDeleteRanges(ctx context.Context, sctx sessionapi.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+func LoadDoneDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	return loadDeleteRangesFromTable(ctx, sctx, doneDeleteRangesTable, safePoint)
 }
 
-func loadDeleteRangesFromTable(ctx context.Context, sctx sessionapi.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
+func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
 	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, loadDeleteRangeSQL, table, safePoint)
 	if rs != nil {
 		defer terror.Call(rs.Close)
@@ -134,7 +134,7 @@ func loadDeleteRangesFromTable(ctx context.Context, sctx sessionapi.Context, tab
 }
 
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
-func CompleteDeleteRange(sctx sessionapi.Context, dr DelRangeTask, needToRecordDone bool) error {
+func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordDone bool) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "BEGIN")
@@ -158,27 +158,27 @@ func CompleteDeleteRange(sctx sessionapi.Context, dr DelRangeTask, needToRecordD
 }
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveFromGCDeleteRange(sctx sessionapi.Context, jobID, elementID int64) error {
+func RemoveFromGCDeleteRange(sctx sessionctx.Context, jobID, elementID int64) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, completeDeleteRangeSQL, jobID, elementID)
 	return errors.Trace(err)
 }
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionapi.Context, jobID int64) error {
+func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64) error {
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, completeDeleteMultiRangesSQL, jobID)
 	return errors.Trace(err)
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
-func DeleteDoneRecord(sctx sessionapi.Context, dr DelRangeTask) error {
+func DeleteDoneRecord(sctx sessionctx.Context, dr DelRangeTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
 	return errors.Trace(err)
 }
 
 // UpdateDeleteRange is only for emulator.
-func UpdateDeleteRange(sctx sessionapi.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
+func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -187,19 +187,19 @@ func UpdateDeleteRange(sctx sessionapi.Context, dr DelRangeTask, newStartKey, ol
 }
 
 // LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
-func LoadDDLReorgVars(ctx context.Context, sctx sessionapi.Context) error {
+func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
 	// close issue #21391
 	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
 	return loadGlobalVars(ctx, sctx, []string{vardef.TiDBDDLReorgWorkerCount, vardef.TiDBDDLReorgBatchSize, vardef.TiDBRowFormatVersion})
 }
 
 // LoadDDLVars loads ddl variable from mysql.global_variables.
-func LoadDDLVars(ctx sessionapi.Context) error {
+func LoadDDLVars(ctx sessionctx.Context) error {
 	return loadGlobalVars(context.Background(), ctx, []string{vardef.TiDBDDLErrorCountLimit})
 }
 
 // loadGlobalVars loads global variable from mysql.global_variables.
-func loadGlobalVars(ctx context.Context, sctx sessionapi.Context, varNames []string) error {
+func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	e := sctx.GetRestrictedSQLExecutor()
 	var buf strings.Builder
@@ -228,7 +228,7 @@ func loadGlobalVars(ctx context.Context, sctx sessionapi.Context, varNames []str
 }
 
 // GetTimeZone gets the session location's zone name and offset.
-func GetTimeZone(sctx sessionapi.Context) (string, int) {
+func GetTimeZone(sctx sessionctx.Context) (string, int) {
 	loc := sctx.GetSessionVars().Location()
 	name := loc.String()
 	if name != "" {
@@ -409,7 +409,7 @@ const (
 )
 
 // IsRaftKv2 checks whether the raft-kv2 is enabled
-func IsRaftKv2(ctx context.Context, sctx sessionapi.Context) (bool, error) {
+func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	// Mock store does not support `show config` now, so we  use failpoint here
 	// to control whether we are in raft-kv2
 	failpoint.Inject("IsRaftKv2", func(v failpoint.Value) (bool, error) {

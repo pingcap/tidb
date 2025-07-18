@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
@@ -176,7 +176,7 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 type analyzeIndexProcessor struct {
 	skipVal
 
-	sctx   sessionapi.Context
+	sctx   sessionctx.Context
 	colLen int
 	statsBuilder *statistics.SortedBuilder
 	cms          *statistics.CMSketch

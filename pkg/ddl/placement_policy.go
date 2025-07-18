@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -547,7 +547,7 @@ func removePartitionPlacement(partInfo *model.PartitionInfo) bool {
 	return hasPlacementSettings
 }
 
-func handleDatabasePlacement(ctx sessionapi.Context, dbInfo *model.DBInfo) error {
+func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error {
 	if dbInfo.PlacementPolicyRef == nil {
 		return nil
 	}
@@ -566,7 +566,7 @@ func handleDatabasePlacement(ctx sessionapi.Context, dbInfo *model.DBInfo) error
 	return err
 }
 
-func handleTablePlacement(ctx sessionapi.Context, tbInfo *model.TableInfo) error {
+func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == vardef.PlacementModeIgnore && removeTablePlacement(tbInfo) {
 		sessVars.StmtCtx.AppendNote(
@@ -593,7 +593,7 @@ func handleTablePlacement(ctx sessionapi.Context, tbInfo *model.TableInfo) error
 	return nil
 }
 
-func handlePartitionPlacement(ctx sessionapi.Context, partInfo *model.PartitionInfo) error {
+func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionInfo) error {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == vardef.PlacementModeIgnore && removePartitionPlacement(partInfo) {
 		sessVars.StmtCtx.AppendNote(
@@ -613,7 +613,7 @@ func handlePartitionPlacement(ctx sessionapi.Context, partInfo *model.PartitionI
 	return nil
 }
 
-func checkAndNormalizePlacementPolicy(ctx sessionapi.Context, placementPolicyRef *model.PolicyRefInfo) (*model.PolicyRefInfo, error) {
+func checkAndNormalizePlacementPolicy(ctx sessionctx.Context, placementPolicyRef *model.PolicyRefInfo) (*model.PolicyRefInfo, error) {
 	if placementPolicyRef == nil {
 		return nil, nil
 	}
@@ -632,7 +632,7 @@ func checkAndNormalizePlacementPolicy(ctx sessionapi.Context, placementPolicyRef
 	return placementPolicyRef, nil
 }
 
-func checkIgnorePlacementDDL(ctx sessionapi.Context) bool {
+func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == vardef.PlacementModeIgnore {
 		sessVars.StmtCtx.AppendNote(

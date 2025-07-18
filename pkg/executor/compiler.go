@@ -27,7 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -38,7 +38,7 @@ import (
 
 // Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
-	Ctx sessionapi.Context
+	Ctx sessionctx.Context
 }
 
 // Compile compiles an ast.StmtNode to a physical plan.

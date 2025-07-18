@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -53,7 +53,7 @@ var allIsolationReadEngines = map[kv.StoreType]struct{}{
 
 func withSession(pool syssession.Pool, fn func(session.Session) error) error {
 	return pool.WithSession(func(s *syssession.Session) error {
-		return s.WithSessionContext(func(sctx sessionapi.Context) error {
+		return s.WithSessionContext(func(sctx sessionctx.Context) error {
 			if intest.InTest {
 				// Only for test, in this case, the return session is mockSession
 				if se, ok := sctx.(session.Session); ok {

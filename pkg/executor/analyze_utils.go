@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -32,7 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionapi.Context) int {
+func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionctx.Context) int {
 	concurrency := sctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	if concurrency > 0 {
 		return concurrency
@@ -68,7 +68,7 @@ func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionapi.Cont
 	return storesStat.Count * 4
 }
 
-func getIntFromSessionVars(ctx sessionapi.Context, name string) (int, error) {
+func getIntFromSessionVars(ctx sessionctx.Context, name string) (int, error) {
 	sessionVars := ctx.GetSessionVars()
 	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), name)
 	if err != nil {
@@ -78,11 +78,11 @@ func getIntFromSessionVars(ctx sessionapi.Context, name string) (int, error) {
 	return int(c), err
 }
 
-func getBuildStatsConcurrency(ctx sessionapi.Context) (int, error) {
+func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	return getIntFromSessionVars(ctx, vardef.TiDBBuildStatsConcurrency)
 }
 
-func getBuildSamplingStatsConcurrency(ctx sessionapi.Context) (int, error) {
+func getBuildSamplingStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	return getIntFromSessionVars(ctx, vardef.TiDBBuildSamplingStatsConcurrency)
 }
 

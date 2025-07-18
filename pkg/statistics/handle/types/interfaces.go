@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
@@ -478,7 +478,7 @@ type GlobalStatsInfo struct {
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
-	MergePartitionStats2GlobalStatsByTableID(sc sessionapi.Context,
+	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 		info *GlobalStatsInfo,
 		physicalID int64,
@@ -488,7 +488,7 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(ctx context.Context, sctx sessionapi.Context, changeEvent *notifier.SchemaChangeEvent) error
+	HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, changeEvent *notifier.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
 	DDLEventCh() chan *notifier.SchemaChangeEvent
 }

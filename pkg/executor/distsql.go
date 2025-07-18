@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -178,7 +178,7 @@ type indexReaderExecutorContext struct {
 	stmtMemTracker *memory.Tracker
 }
 
-func newIndexReaderExecutorContext(sctx sessionapi.Context) indexReaderExecutorContext {
+func newIndexReaderExecutorContext(sctx sessionctx.Context) indexReaderExecutorContext {
 	pctx := sctx.GetPlanCtx()
 
 	return indexReaderExecutorContext{
@@ -421,7 +421,7 @@ type indexLookUpExecutorContext struct {
 	weakConsistency        bool
 }
 
-func newIndexLookUpExecutorContext(sctx sessionapi.Context) indexLookUpExecutorContext {
+func newIndexLookUpExecutorContext(sctx sessionctx.Context) indexLookUpExecutorContext {
 	return indexLookUpExecutorContext{
 		tableReaderExecutorContext: newTableReaderExecutorContext(sctx),
 

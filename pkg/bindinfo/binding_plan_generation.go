@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -51,7 +51,7 @@ func (g *planGenerator) Generate(defaultSchema, sql, charset, collation string) 
 		return nil, nil // not a SELECT statement
 	}
 
-	err = callWithSCtx(g.sPool, false, func(sctx sessionapi.Context) error {
+	err = callWithSCtx(g.sPool, false, func(sctx sessionctx.Context) error {
 		genedPlans, err := generatePlanWithSCtx(sctx, defaultSchema, sql, charset, collation)
 		if err != nil {
 			return err
@@ -202,7 +202,7 @@ func newStateWithNewFix(old *state, fixID uint64, fixVal string) *state {
 	return newState
 }
 
-func generatePlanWithSCtx(sctx sessionapi.Context, defaultSchema, sql, charset, collation string) (plans []*genedPlan, err error) {
+func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, collation string) (plans []*genedPlan, err error) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, charset, collation)
 	if err != nil {
@@ -227,7 +227,7 @@ func generatePlanWithSCtx(sctx sessionapi.Context, defaultSchema, sql, charset, 
 	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2)
 }
 
-func breadthFirstPlanSearch(sctx sessionapi.Context, stmt ast.StmtNode,
+func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName) (plans []*genedPlan, err error) {
 	// init BFS structures
 	visitedStates := make(map[string]struct{})  // map[encodedState]struct{}, all visited states
@@ -297,7 +297,7 @@ func breadthFirstPlanSearch(sctx sessionapi.Context, stmt ast.StmtNode,
 }
 
 // genPlanUnderState returns a plan generated under the given state (vars and fix-controls).
-func genPlanUnderState(sctx sessionapi.Context, stmt ast.StmtNode, state *state) (plan *genedPlan, err error) {
+func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state) (plan *genedPlan, err error) {
 	for i, varName := range state.varNames {
 		switch varName {
 		case vardef.TiDBOptIndexScanCostFactor:

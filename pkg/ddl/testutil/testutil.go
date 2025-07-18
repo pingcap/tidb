@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -165,7 +166,7 @@ func CheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInf
 
 // SetTableMode sets the table mode of a table in the store.
 func SetTableMode(
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	t *testing.T,
 	store kv.Storage,
 	de ddl.Executor,
@@ -207,7 +208,7 @@ func GetTableInfoByTxn(t *testing.T, store kv.Storage, dbID int64, tableID int64
 
 // RefreshMeta sets the table mode of a table in the store.
 func RefreshMeta(
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	t *testing.T,
 	de ddl.Executor,
 	dbID, tableID int64,

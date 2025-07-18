@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"go.uber.org/zap"
 )
@@ -71,7 +71,7 @@ func addHistoryDDLJob2Table(ctx context.Context, sess *sess.Session, job *model.
 }
 
 // GetHistoryJobByID return history DDL job by ID.
-func GetHistoryJobByID(sess sessionapi.Context, id int64) (*model.Job, error) {
+func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	err := sessiontxn.NewTxn(context.Background(), sess)
 	if err != nil {
 		return nil, err

@@ -10,7 +10,7 @@ go_library(
         "//pkg/kv",
         "//pkg/planner/core/base",
         "//pkg/planner/planctx",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/util/timeutil",
         "@com_github_pingcap_tipb//go-tipb",

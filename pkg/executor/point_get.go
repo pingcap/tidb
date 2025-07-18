@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -181,7 +181,7 @@ func matchPartitionNames(pid int64, partitionNames []ast.CIStr, pi *model.Partit
 }
 
 // Recreated based on Init, change baseExecutor fields also
-func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan, ctx sessionapi.Context) {
+func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan, ctx sessionctx.Context) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
 	e.BaseExecutor = exec.NewBaseExecutor(ctx, p.Schema(), p.ID())
@@ -459,7 +459,7 @@ func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
 }
 
 func fillRowChecksum(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	start, end int,
 	schema *expression.Schema, tblInfo *model.TableInfo,
 	values [][]byte, handles []kv.Handle,
@@ -723,7 +723,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 }
 
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
-func DecodeRowValToChunk(sctx sessionapi.Context, schema *expression.Schema, tblInfo *model.TableInfo,
+func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
 		return rd.DecodeToChunk(rowVal, handle, chk)
@@ -731,7 +731,7 @@ func DecodeRowValToChunk(sctx sessionapi.Context, schema *expression.Schema, tbl
 	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
 }
 
-func decodeOldRowValToChunk(sctx sessionapi.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
+func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
 	rowVal []byte, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
 	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)

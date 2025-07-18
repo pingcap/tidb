@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl/notifier",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -38,7 +38,7 @@ go_test(
     deps = [
         ":refresher",
         "//pkg/parser/ast",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",

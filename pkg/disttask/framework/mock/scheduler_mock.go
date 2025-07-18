@@ -16,7 +16,7 @@ import (
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -709,7 +709,7 @@ func (mr *MockTaskManagerMockRecorder) UpdateSubtasksExecIDs(arg0, arg1 any) *go
 }
 
 // WithNewSession mocks base method.
-func (m *MockTaskManager) WithNewSession(arg0 func(sessionapi.Context) error) error {
+func (m *MockTaskManager) WithNewSession(arg0 func(sessionctx.Context) error) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "WithNewSession", arg0)
 	ret0, _ := ret[0].(error)
@@ -723,7 +723,7 @@ func (mr *MockTaskManagerMockRecorder) WithNewSession(arg0 any) *gomock.Call {
 }
 
 // WithNewTxn mocks base method.
-func (m *MockTaskManager) WithNewTxn(arg0 context.Context, arg1 func(sessionapi.Context) error) error {
+func (m *MockTaskManager) WithNewTxn(arg0 context.Context, arg1 func(sessionctx.Context) error) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "WithNewTxn", arg0, arg1)
 	ret0, _ := ret[0].(error)

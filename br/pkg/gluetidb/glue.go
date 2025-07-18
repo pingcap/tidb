@@ -193,7 +193,7 @@ func (Glue) GetClient() glue.GlueClient {
 }
 
 // GetSessionCtx implements glue.Glue
-func (gs *tidbSession) GetSessionCtx() sessionapi.Context {
+func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
 }
 

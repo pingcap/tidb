@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -46,7 +46,7 @@ import (
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func StatsMetaCountAndModifyCount(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	tableID int64,
 ) (count, modifyCount int64, isNull bool, err error) {
 	return statsMetaCountAndModifyCount(ctx, sctx, tableID, false)
@@ -55,7 +55,7 @@ func StatsMetaCountAndModifyCount(
 // StatsMetaCountAndModifyCountForUpdate reads count and modify_count for the given table from mysql.stats_meta with lock.
 func StatsMetaCountAndModifyCountForUpdate(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	tableID int64,
 ) (count, modifyCount int64, isNull bool, err error) {
 	return statsMetaCountAndModifyCount(ctx, sctx, tableID, true)
@@ -63,7 +63,7 @@ func StatsMetaCountAndModifyCountForUpdate(
 
 func statsMetaCountAndModifyCount(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	tableID int64,
 	forUpdate bool,
 ) (count, modifyCount int64, isNull bool, err error) {
@@ -84,7 +84,7 @@ func statsMetaCountAndModifyCount(
 }
 
 // HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
-func HistMetaFromStorageWithHighPriority(sctx sessionapi.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
+func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
@@ -113,7 +113,7 @@ func HistMetaFromStorageWithHighPriority(sctx sessionapi.Context, item *model.Ta
 // HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
 // Sync load and async load will use high priority to get data.
 func HistogramFromStorageWithPriority(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	tableID int64,
 	colID int64,
 	tp *types.FieldType,
@@ -177,7 +177,7 @@ func HistogramFromStorageWithPriority(
 }
 
 // CMSketchAndTopNFromStorageWithHighPriority reads CMSketch and TopN from storage.
-func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionapi.Context, tblID int64, isIndex, histID, statsVer int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
+func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionctx.Context, tblID int64, isIndex, histID, statsVer int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
 	topNRows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
@@ -197,7 +197,7 @@ func CMSketchAndTopNFromStorageWithHighPriority(sctx sessionapi.Context, tblID i
 }
 
 // CMSketchFromStorage reads CMSketch from storage
-func CMSketchFromStorage(sctx sessionapi.Context, tblID int64, isIndex int, histID int64) (_ *statistics.CMSketch, err error) {
+func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.CMSketch, err error) {
 	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -206,7 +206,7 @@ func CMSketchFromStorage(sctx sessionapi.Context, tblID int64, isIndex int, hist
 }
 
 // TopNFromStorage reads TopN from storage
-func TopNFromStorage(sctx sessionapi.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
+func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
 	rows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -215,7 +215,7 @@ func TopNFromStorage(sctx sessionapi.Context, tblID int64, isIndex int, histID i
 }
 
 // FMSketchFromStorage reads FMSketch from storage
-func FMSketchFromStorage(sctx sessionapi.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
+func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
 	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -224,7 +224,7 @@ func FMSketchFromStorage(sctx sessionapi.Context, tblID int64, isIndex, histID i
 }
 
 // CheckSkipPartition checks if we can skip loading the partition.
-func CheckSkipPartition(sctx sessionapi.Context, tblID int64, isIndex int) error {
+func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex int) error {
 	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id =%? and is_index = %?", tblID, isIndex)
 	if err != nil {
 		return err
@@ -236,7 +236,7 @@ func CheckSkipPartition(sctx sessionapi.Context, tblID int64, isIndex int) error
 }
 
 // CheckSkipColumnPartiion checks if we can skip loading the partition.
-func CheckSkipColumnPartiion(sctx sessionapi.Context, tblID int64, isIndex int, histsID int64) error {
+func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, histsID int64) error {
 	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histsID)
 	if err != nil {
 		return err
@@ -248,7 +248,7 @@ func CheckSkipColumnPartiion(sctx sessionapi.Context, tblID int64, isIndex int, 
 }
 
 // ExtendedStatsFromStorage reads extended stats from storage.
-func ExtendedStatsFromStorage(sctx sessionapi.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
+func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
 		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
 	})
@@ -298,7 +298,7 @@ func ExtendedStatsFromStorage(sctx sessionapi.Context, table *statistics.Table, 
 	return table, nil
 }
 
-func indexStatsFromStorage(sctx sessionapi.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
+func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -386,7 +386,7 @@ func indexStatsFromStorage(sctx sessionapi.Context, row chunk.Row, table *statis
 	return nil
 }
 
-func columnStatsFromStorage(sctx sessionapi.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
+func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -501,7 +501,7 @@ func columnStatsFromStorage(sctx sessionapi.Context, row chunk.Row, table *stati
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(sctx sessionapi.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
 	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
@@ -573,7 +573,7 @@ func TableStatsFromStorage(sctx sessionapi.Context, snapshot uint64, tableInfo *
 }
 
 // LoadHistogram will load histogram from storage.
-func LoadHistogram(sctx sessionapi.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
+func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
 	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)
 	if err != nil || len(row) == 0 {
 		return nil, err
@@ -600,7 +600,7 @@ func LoadHistogram(sctx sessionapi.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionapi.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, loadFMSketch bool) (err error) {
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
@@ -652,7 +652,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionapi.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
@@ -790,7 +790,7 @@ func loadNeededColumnHistograms(sctx sessionapi.Context, statsHandle statstypes.
 
 // loadNeededIndexHistograms loads the necessary index histograms.
 // It is similar to loadNeededColumnHistograms, but for index.
-func loadNeededIndexHistograms(sctx sessionapi.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
@@ -895,7 +895,7 @@ func loadNeededIndexHistograms(sctx sessionapi.Context, is infoschema.InfoSchema
 }
 
 // StatsMetaByTableIDFromStorage gets the stats meta of a table from storage.
-func StatsMetaByTableIDFromStorage(sctx sessionapi.Context, tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
+func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
 	var rows []chunk.Row
 	if snapshot == 0 {
 		rows, _, err = util.ExecRows(sctx,

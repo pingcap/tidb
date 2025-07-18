@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -37,14 +37,14 @@ const (
 // AnalysisJobFactory is responsible for creating different types of analysis jobs.
 // NOTE: This struct is not thread-safe.
 type AnalysisJobFactory struct {
-	sctx             sessionapi.Context
+	sctx             sessionctx.Context
 	autoAnalyzeRatio float64
 	// The current TSO.
 	currentTs uint64
 }
 
 // NewAnalysisJobFactory creates a new AnalysisJobFactory.
-func NewAnalysisJobFactory(sctx sessionapi.Context, autoAnalyzeRatio float64, currentTs uint64) *AnalysisJobFactory {
+func NewAnalysisJobFactory(sctx sessionctx.Context, autoAnalyzeRatio float64, currentTs uint64) *AnalysisJobFactory {
 	return &AnalysisJobFactory{
 		sctx:             sctx,
 		autoAnalyzeRatio: autoAnalyzeRatio,

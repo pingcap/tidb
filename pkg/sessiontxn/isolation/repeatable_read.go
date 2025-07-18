@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -46,7 +46,7 @@ type PessimisticRRTxnContextProvider struct {
 }
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
-func NewPessimisticRRTxnContextProvider(sctx sessionapi.Context, causalConsistencyOnly bool) *PessimisticRRTxnContextProvider {
+func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRRTxnContextProvider {
 	provider := &PessimisticRRTxnContextProvider{
 		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
 			baseTxnContextProvider: baseTxnContextProvider{

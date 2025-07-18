@@ -30,7 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -56,7 +56,7 @@ type WithForeignKeyTrigger interface {
 type FKCheckExec struct {
 	*plannercore.FKCheck
 	*fkValueHelper
-	ctx sessionapi.Context
+	ctx sessionctx.Context
 
 	toBeCheckedKeys       []kv.Key
 	toBeCheckedPrefixKeys []kv.Key
@@ -106,7 +106,7 @@ type FKCascadeRuntimeStats struct {
 	Keys  int
 }
 
-func buildTblID2FKCheckExecs(sctx sessionapi.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
+func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
 	fkChecksMap := make(map[int64][]*FKCheckExec)
 	for tid, tbl := range tblID2Table {
 		fkChecks, err := buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
@@ -120,7 +120,7 @@ func buildTblID2FKCheckExecs(sctx sessionapi.Context, tblID2Table map[int64]tabl
 	return fkChecksMap, nil
 }
 
-func buildFKCheckExecs(sctx sessionapi.Context, tbl table.Table, fkChecks []*plannercore.FKCheck) ([]*FKCheckExec, error) {
+func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*plannercore.FKCheck) ([]*FKCheckExec, error) {
 	fkCheckExecs := make([]*FKCheckExec, 0, len(fkChecks))
 	for _, fkCheck := range fkChecks {
 		fkCheckExec, err := buildFKCheckExec(sctx, tbl, fkCheck)
@@ -134,7 +134,7 @@ func buildFKCheckExecs(sctx sessionapi.Context, tbl table.Table, fkChecks []*pla
 	return fkCheckExecs, nil
 }
 
-func buildFKCheckExec(sctx sessionapi.Context, tbl table.Table, fkCheck *plannercore.FKCheck) (*FKCheckExec, error) {
+func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *plannercore.FKCheck) (*FKCheckExec, error) {
 	var cols []ast.CIStr
 	if fkCheck.FK != nil {
 		cols = fkCheck.FK.Cols
@@ -621,7 +621,7 @@ func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementCont
 
 // checkFKIgnoreErr will use `fkc.checkRows` to check the rows. The `fkc.checkRows` will ignore the error and append the error as warning to the statement context.
 // It'll return whether an error has been ignored. If an error has been ignored, it'll return `true, nil`.
-func checkFKIgnoreErr(ctx context.Context, sctx sessionapi.Context, fkChecks []*FKCheckExec, row []types.Datum) (bool, error) {
+func checkFKIgnoreErr(ctx context.Context, sctx sessionctx.Context, fkChecks []*FKCheckExec, row []types.Datum) (bool, error) {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return false, err

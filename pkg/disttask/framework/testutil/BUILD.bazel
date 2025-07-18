@@ -23,7 +23,7 @@ go_library(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/kv",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

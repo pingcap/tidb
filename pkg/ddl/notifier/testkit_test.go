@@ -33,7 +33,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -96,7 +96,7 @@ func TestBasicPubSub(t *testing.T) {
 		notifier.ErrNotReadyRetryLater,
 		io.EOF,
 	}
-	testHandler := func(_ context.Context, _ sessionapi.Context, c *notifier.SchemaChangeEvent) error {
+	testHandler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
 		var err error
 		if len(injectedErrors) > 0 {
 			err = injectedErrors[0]
@@ -163,7 +163,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		tableIDs := make([]int64, 0, 8)
 		h := func(
 			_ context.Context,
-			_ sessionapi.Context,
+			_ sessionctx.Context,
 			change *notifier.SchemaChangeEvent,
 		) error {
 			if maxFail > 0 {
@@ -219,7 +219,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 func TestPubSub(t *testing.T) {
 	tps := make([]model.ActionType, 0, 32)
 	tpsLock := sync.Mutex{}
-	handler := func(_ context.Context, _ sessionapi.Context, c *notifier.SchemaChangeEvent) error {
+	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
 		tpsLock.Lock()
 		defer tpsLock.Unlock()
 		tps = append(tps, c.GetType())
@@ -336,7 +336,7 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	waitCh := make(chan struct{})
 	waitCh2 := make(chan struct{})
 
-	testHandler := func(ctx context.Context, se sessionapi.Context, c *notifier.SchemaChangeEvent) error {
+	testHandler := func(ctx context.Context, se sessionctx.Context, c *notifier.SchemaChangeEvent) error {
 		close(waitCh)
 		// mimic other owner will handle this event, wait for another session to update
 		// the processed_by_flag.
@@ -383,7 +383,7 @@ func TestPaginatedList(t *testing.T) {
 
 	names := make([]string, 0, 32)
 	namesLock := sync.Mutex{}
-	handler := func(_ context.Context, _ sessionapi.Context, c *notifier.SchemaChangeEvent) error {
+	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
 		namesLock.Lock()
 		defer namesLock.Unlock()
 		switch c.GetType() {
@@ -400,7 +400,7 @@ func TestPaginatedList(t *testing.T) {
 
 	blocking := atomic.NewBool(true)
 	count := atomic.NewInt32(0)
-	blockingHandler := func(context.Context, sessionapi.Context, *notifier.SchemaChangeEvent) error {
+	blockingHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
 		if blocking.Load() {
 			return notifier.ErrNotReadyRetryLater
 		}
@@ -469,7 +469,7 @@ func TestBeginTwice(t *testing.T) {
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
 
-	testHandler := func(context.Context, sessionapi.Context, *notifier.SchemaChangeEvent) error {
+	testHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
 		return nil
 	}
 	n.RegisterHandler(notifier.TestHandlerID, testHandler)
@@ -519,13 +519,13 @@ func TestHandlersSeePessimisticTxnError(t *testing.T) {
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
 	// Always fails
-	failHandler := func(_ context.Context, sctx sessionapi.Context, _ *notifier.SchemaChangeEvent) error {
+	failHandler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// Mock a duplicate key error
 		_, err := sctx.GetSQLExecutor().Execute(ctx, "INSERT INTO test."+ddl.NotifierTableName+" VALUES(1, -1, 'some', 0)")
 		return err
 	}
 	// Always succeeds
-	successHandler := func(context.Context, sessionapi.Context, *notifier.SchemaChangeEvent) error {
+	successHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
 		return nil
 	}
 	n.RegisterHandler(2, successHandler)
@@ -572,7 +572,7 @@ func TestCommitFailed(t *testing.T) {
 		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
-	handler := func(_ context.Context, sctx sessionapi.Context, _ *notifier.SchemaChangeEvent) error {
+	handler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
 		// pessimistic + DDL will cause an "infoschema is changed" error at commit time.
 		_, err := sctx.GetSQLExecutor().Execute(
 			ctx, "UPDATE test.subscribe_table SET c = c + 1 WHERE id = 1",

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -36,7 +36,7 @@ import (
 )
 
 // HandleDDLEvent handles DDL events for the priority queue.
-func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionapi.Context, event *notifier.SchemaChangeEvent) (err error) {
+func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) (err error) {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
@@ -116,7 +116,7 @@ func (pq *AnalysisPriorityQueue) getAndDeleteJob(tableID int64) error {
 
 // recreateAndPushJob is a helper function that recreates a job and pushes it to the queue.
 func (pq *AnalysisPriorityQueue) recreateAndPushJob(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	lockedTables map[int64]struct{},
 	pruneMode variable.PartitionPruneMode,
 	stats *statistics.Table,
@@ -137,7 +137,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 // For static partitioned tables, we need to recreate the job for each partition.
 // So we need to call this function for each partition.
 // For normal tables and dynamic partitioned tables, we only need to recreate the job for the whole table.
-func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionapi.Context, tableInfo *model.TableInfo) error {
+func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Context, tableInfo *model.TableInfo) error {
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
 	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
@@ -160,7 +160,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionapi.Cont
 }
 
 func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
 	tableInfo, idxes := event.GetAddIndexInfo()
@@ -209,7 +209,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 }
 
 func (pq *AnalysisPriorityQueue) handleTruncateTableEvent(
-	_ sessionapi.Context,
+	_ sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
 	_, droppedTableInfo := event.GetTruncateTableInfo()
@@ -235,7 +235,7 @@ func (pq *AnalysisPriorityQueue) handleTruncateTableEvent(
 }
 
 func (pq *AnalysisPriorityQueue) handleDropTableEvent(
-	_ sessionapi.Context,
+	_ sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
 	droppedTableInfo := event.GetDropTableInfo()
@@ -261,7 +261,7 @@ func (pq *AnalysisPriorityQueue) handleDropTableEvent(
 }
 
 func (pq *AnalysisPriorityQueue) handleTruncateTablePartitionEvent(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
 	globalTableInfo, _, droppedPartInfo := event.GetTruncatePartitionInfo()
@@ -284,7 +284,7 @@ func (pq *AnalysisPriorityQueue) handleTruncateTablePartitionEvent(
 }
 
 func (pq *AnalysisPriorityQueue) handleDropTablePartitionEvent(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
 	globalTableInfo, droppedPartInfo := event.GetDropPartitionInfo()
@@ -307,7 +307,7 @@ func (pq *AnalysisPriorityQueue) handleDropTablePartitionEvent(
 }
 
 func (pq *AnalysisPriorityQueue) handleExchangeTablePartitionEvent(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
 	globalTableInfo, partInfo, nonPartTableInfo := event.GetExchangePartitionInfo()
@@ -348,7 +348,7 @@ func (pq *AnalysisPriorityQueue) handleExchangeTablePartitionEvent(
 }
 
 func (pq *AnalysisPriorityQueue) handleReorganizePartitionEvent(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	event *notifier.SchemaChangeEvent,
 ) error {
 	globalTableInfo, _, droppedPartitionInfo := event.GetReorganizePartitionInfo()
@@ -373,7 +373,7 @@ func (pq *AnalysisPriorityQueue) handleReorganizePartitionEvent(
 	return pq.recreateAndPushJobForTable(sctx, globalTableInfo)
 }
 
-func (pq *AnalysisPriorityQueue) handleAlterTablePartitioningEvent(sctx sessionapi.Context, event *notifier.SchemaChangeEvent) error {
+func (pq *AnalysisPriorityQueue) handleAlterTablePartitioningEvent(sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 	oldSingleTableID, newGlobalTableInfo, _ := event.GetAddPartitioningInfo()
 
 	// For non-partitioned tables.
@@ -394,7 +394,7 @@ func (pq *AnalysisPriorityQueue) handleAlterTablePartitioningEvent(sctx sessiona
 	return pq.recreateAndPushJobForTable(sctx, newGlobalTableInfo)
 }
 
-func (pq *AnalysisPriorityQueue) handleRemovePartitioningEvent(sctx sessionapi.Context, event *notifier.SchemaChangeEvent) error {
+func (pq *AnalysisPriorityQueue) handleRemovePartitioningEvent(sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 	oldTblID, newSingleTableInfo, droppedPartInfo := event.GetRemovePartitioningInfo()
 
 	// For static partitioned tables.
@@ -417,7 +417,7 @@ func (pq *AnalysisPriorityQueue) handleRemovePartitioningEvent(sctx sessionapi.C
 	return pq.recreateAndPushJobForTable(sctx, newSingleTableInfo)
 }
 
-func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionapi.Context, event *notifier.SchemaChangeEvent) error {
+func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 	miniDBInfo := event.GetDropSchemaInfo()
 	for _, tbl := range miniDBInfo.Tables {
 		// For static partitioned tables.

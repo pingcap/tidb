@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	s "github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
@@ -46,7 +46,7 @@ type Option struct {
 }
 
 // AdviseIndexes is the entry point for the index advisor.
-func AdviseIndexes(ctx context.Context, sctx sessionapi.Context, userSQLs []string,
+func AdviseIndexes(ctx context.Context, sctx sessionctx.Context, userSQLs []string,
 	userOptions []ast.RecommendIndexOption) (results []*Recommendation, err error) {
 	advisorLogger().Info("fill index advisor option")
 	option := &Option{SpecifiedSQLs: userSQLs}
@@ -58,7 +58,7 @@ func AdviseIndexes(ctx context.Context, sctx sessionapi.Context, userSQLs []stri
 	return adviseIndexesWithOption(ctx, sctx, option)
 }
 
-func adviseIndexesWithOption(ctx context.Context, sctx sessionapi.Context,
+func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	option *Option) (results []*Recommendation, err error) {
 	if ctx == nil || sctx == nil || option == nil {
 		return nil, errors.New("nil input")
@@ -134,7 +134,7 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionapi.Context,
 }
 
 // prepareQuerySet prepares the target queries for the index advisor.
-func prepareQuerySet(ctx context.Context, sctx sessionapi.Context,
+func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 	defaultDB string, opt Optimizer, option *Option) (s.Set[Query], error) {
 	advisorLogger().Info("prepare target query set")
 	querySet := s.NewSet[Query]()
@@ -177,7 +177,7 @@ func prepareQuerySet(ctx context.Context, sctx sessionapi.Context,
 	return querySet, nil
 }
 
-func loadQuerySetFromStmtSummary(sctx sessionapi.Context, option *Option) (s.Set[Query], error) {
+func loadQuerySetFromStmtSummary(sctx sessionctx.Context, option *Option) (s.Set[Query], error) {
 	template := `SELECT any_value(ifnull(schema_name, "")) as schema_name,
 				any_value(query_sample_text) as query_sample_text,
 				sum(cast(exec_count as double)) as exec_count
@@ -324,7 +324,7 @@ func gracefulIndexName(opt Optimizer, schema, tableName string, cols []string) s
 	return indexName
 }
 
-func saveRecommendations(sctx sessionapi.Context, results []*Recommendation) {
+func saveRecommendations(sctx sessionctx.Context, results []*Recommendation) {
 	for _, r := range results {
 		q, err := json.Marshal(r.TopImpactedQueries)
 		if err != nil {

@@ -91,7 +91,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1864,7 +1863,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key //nolint: prealloc
 	isCommonHandle := make(map[string]bool, 0)
 
-	handlePlan := func(sctx sessionapi.Context, p base.PhysicalPlan, resetStmtCtxFn func()) error {
+	handlePlan := func(sctx sessionctx.Context, p base.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:

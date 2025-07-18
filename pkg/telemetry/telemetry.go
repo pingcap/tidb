@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -32,13 +32,13 @@ const (
 	ReportInterval = 6 * time.Hour
 )
 
-func getTelemetryGlobalVariable(ctx sessionapi.Context) (bool, error) {
+func getTelemetryGlobalVariable(ctx sessionctx.Context) (bool, error) {
 	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableTelemetry)
 	return variable.TiDBOptOn(val), err
 }
 
 // IsTelemetryEnabled check whether telemetry enabled.
-func IsTelemetryEnabled(ctx sessionapi.Context) (bool, error) {
+func IsTelemetryEnabled(ctx sessionctx.Context) (bool, error) {
 	if !config.GetGlobalConfig().EnableTelemetry {
 		return false, nil
 	}
@@ -50,7 +50,7 @@ func IsTelemetryEnabled(ctx sessionapi.Context) (bool, error) {
 }
 
 // ReportUsageData generates the latest usage data and print it to log.
-func ReportUsageData(ctx sessionapi.Context) error {
+func ReportUsageData(ctx sessionctx.Context) error {
 	enabled, err := IsTelemetryEnabled(ctx)
 	if err != nil || !enabled {
 		return err
@@ -70,7 +70,7 @@ func ReportUsageData(ctx sessionapi.Context) error {
 }
 
 // InitialRun reports the Telmetry configuration and trigger an initial run
-func InitialRun(ctx sessionapi.Context) error {
+func InitialRun(ctx sessionctx.Context) error {
 	enabled, err := IsTelemetryEnabled(ctx)
 	if err != nil {
 		return err

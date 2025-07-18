@@ -32,7 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,7 +47,7 @@ type ShowDDLJobsExec struct {
 
 	jobNumber int
 	is   infoschema.InfoSchema
-	sess sessionapi.Context
+	sess sessionctx.Context
 }
 
 var _ exec.Executor = &ShowDDLJobsExec{}
@@ -134,7 +134,7 @@ type DDLJobRetriever struct {
 	extractor      base.MemTablePredicateExtractor
 }
 
-func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionapi.Context) error {
+func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) error {
 	skipRunningJobs := false
 	skipHistoryJobs := false
 	schemaNames := set.NewStringSet()

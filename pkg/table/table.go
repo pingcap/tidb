@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -479,7 +479,7 @@ func getIncrementAndOffset(vars *variable.SessionVars) (int, int) {
 }
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
-func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionapi.Context) (int64, error) {
+func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
 	defer r.End()
 	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
@@ -493,7 +493,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionapi.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
-func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionapi.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
 	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
 	minv, maxv, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))

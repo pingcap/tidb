@@ -24,13 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
-func buildCreateQuery(ctx context.Context, sess sessionapi.Context, rt *repositoryTable) (string, error) {
+func buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 	tbl, err := is.TableByName(ctx, ast.NewCIStr(rt.schema), ast.NewCIStr(rt.table))
 	if err != nil {
@@ -58,7 +58,7 @@ func buildCreateQuery(ctx context.Context, sess sessionapi.Context, rt *reposito
 	return sb.String(), nil
 }
 
-func buildInsertQuery(ctx context.Context, sess sessionapi.Context, rt *repositoryTable) error {
+func buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 	tbl, err := is.TableByName(ctx, ast.NewCIStr(rt.schema), ast.NewCIStr(rt.table))
 	if err != nil {
@@ -102,7 +102,7 @@ func buildInsertQuery(ctx context.Context, sess sessionapi.Context, rt *reposito
 
 func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 	_sessctx := w.getSessionWithRetry()
-	sess := _sessctx.(sessionapi.Context)
+	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	if !is.SchemaExists(workloadSchemaCIStr) {
@@ -153,7 +153,7 @@ func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 
 func (w *worker) checkTablesExists(ctx context.Context, now time.Time) bool {
 	_sessctx := w.getSessionWithRetry()
-	sess := _sessctx.(sessionapi.Context)
+	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	return slice.AllOf(w.workloadTables, func(i int) bool {

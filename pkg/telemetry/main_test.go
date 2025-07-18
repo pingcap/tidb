@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
@@ -28,7 +28,7 @@ var (
 	GetTxnUsageInfo = getTxnUsageInfo
 )
 
-func GetFeatureUsage(sctx sessionapi.Context) (*featureUsage, error) {
+func GetFeatureUsage(sctx sessionctx.Context) (*featureUsage, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry)
 	return getFeatureUsage(ctx, sctx)
 }

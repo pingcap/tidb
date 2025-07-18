@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -192,7 +192,7 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 // checkHistoryJobInTest does some sanity check to make sure something is correct after DDL complete.
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.
-func (e *executor) checkHistoryJobInTest(ctx sessionapi.Context, historyJob *model.Job) {
+func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
 	if !intest.EnableInternalCheck {
 		return
 	}

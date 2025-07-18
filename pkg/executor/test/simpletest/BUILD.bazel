@@ -18,7 +18,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/server",
         "//pkg/session",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/statistics",
         "//pkg/store/mockstore",
         "//pkg/testkit",

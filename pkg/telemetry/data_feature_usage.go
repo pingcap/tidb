@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	m "github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -73,7 +73,7 @@ type resourceControlUsage struct {
 	NumResourceGroups uint64 `json:"numResourceGroups"`
 }
 
-func getFeatureUsage(ctx context.Context, sctx sessionapi.Context) (*featureUsage, error) {
+func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsage, error) {
 	var usage featureUsage
 	var err error
 	usage.NewClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
@@ -123,7 +123,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionapi.Context) (*featureUsag
 }
 
 // collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table, placement policies and resource groups.
-func collectFeatureUsageFromInfoschema(ctx sessionapi.Context, usage *featureUsage) {
+func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsage) {
 	if usage.PlacementPolicyUsage == nil {
 		usage.PlacementPolicyUsage = &placementPolicyUsage{}
 	}
@@ -173,7 +173,7 @@ func collectFeatureUsageFromInfoschema(ctx sessionapi.Context, usage *featureUsa
 
 // GetDomainInfoSchema is used by the telemetry package to get the latest schema information
 // while avoiding circle dependency with domain package.
-var GetDomainInfoSchema func(sessionapi.Context) infoschema.InfoSchema
+var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
 
 // TableClusteredInfo records the usage info of clusterindex of each table
 // CLUSTERED, NON_CLUSTERED, NA
@@ -193,7 +193,7 @@ type NewClusterIndexUsage struct {
 }
 
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func getClusterIndexUsageInfo(ctx context.Context, sctx sessionapi.Context) (ncu *NewClusterIndexUsage, err error) {
+func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu *NewClusterIndexUsage, err error) {
 	var newUsage NewClusterIndexUsage
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
@@ -269,7 +269,7 @@ var initialStoreBatchCoprCounter m.StoreBatchCoprCounter
 var initialFairLockingUsageCounter m.FairLockingUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
-func getTxnUsageInfo(ctx sessionapi.Context) *TxnUsage {
+func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == vardef.On
@@ -390,7 +390,7 @@ func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
 }
 
 // getAutoCaptureUsageInfo gets the 'Auto Capture' usage
-func getAutoCaptureUsageInfo(ctx sessionapi.Context) bool {
+func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBCapturePlanBaseline); err == nil {
 		return val == vardef.On
 	}
@@ -411,22 +411,22 @@ func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
 }
 
-func getLogBackupUsageInfo(ctx sessionapi.Context) bool {
+func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
 	return utils.IsLogBackupInUse(ctx)
 }
 
-func getCostModelVer2UsageInfo(ctx sessionapi.Context) bool {
+func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().CostModelVersion == 2
 }
 
 // getPagingUsageInfo gets the value of system vardef `tidb_enable_paging`.
 // This vardef is set to true as default since v6.2.0. We want to know many
 // users set it to false manually.
-func getPagingUsageInfo(ctx sessionapi.Context) bool {
+func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
 }
 
-func getDDLUsageInfo(ctx sessionapi.Context) *m.DDLUsageCounter {
+func getDDLUsageInfo(ctx sessionctx.Context) *m.DDLUsageCounter {
 	curr := m.GetDDLUsageCounter()
 	diff := curr.Sub(initialDDLUsageCounter)
 	isEnable, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar("tidb_enable_metadata_lock")
@@ -450,7 +450,7 @@ func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
 	return &diff
 }
 
-func getStoreBatchUsage(ctx sessionapi.Context) *m.StoreBatchCoprCounter {
+func getStoreBatchUsage(ctx sessionctx.Context) *m.StoreBatchCoprCounter {
 	curr := m.GetStoreBatchCoprCounter()
 	diff := curr.Sub(initialStoreBatchCoprCounter)
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBStoreBatchSize); err == nil {

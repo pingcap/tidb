@@ -12,7 +12,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/mysql",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

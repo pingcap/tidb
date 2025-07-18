@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -38,7 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func runSQL(t *testing.T, ctx sessionapi.Context, is infoschema.InfoSchema, sql string, inPrepare bool, terr error) {
+func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql string, inPrepare bool, terr error) {
 	stmts, err := session.Parse(ctx, sql)
 	require.NoErrorf(t, err, "sql: %s", sql)
 	require.Len(t, stmts, 1)

@@ -13,7 +13,7 @@ go_library(
         "//pkg/expression",
         "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",

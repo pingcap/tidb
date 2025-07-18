@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/table"
@@ -56,7 +56,7 @@ type allTableData struct {
 // Checks that there are no accessible data after an existing table
 // assumes that tableIDs are only increasing.
 // To be used during failure testing of ALTER, to make sure cleanup is done.
-func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionapi.Context, tbl table.Table, msg string) {
+func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table, msg string) {
 	waitForGC := tk.MustQuery(`select start_key, end_key, "queue" from mysql.gc_delete_range union all select start_key, end_key, "done" from mysql.gc_delete_range_done`).Rows()
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
@@ -128,7 +128,7 @@ ROW:
 	}
 }
 
-func getAllDataForTableID(t *testing.T, ctx sessionapi.Context, tableID int64) allTableData {
+func getAllDataForTableID(t *testing.T, ctx sessionctx.Context, tableID int64) allTableData {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)

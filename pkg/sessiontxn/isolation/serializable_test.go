@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -264,7 +264,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	}
 }
 
-func activeSerializableAssert(t testing.TB, sctx sessionapi.Context,
+func activeSerializableAssert(t testing.TB, sctx sessionctx.Context,
 	inTxn bool) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticSerializableTxnContextProvider]{
 		sctx:         sctx,
@@ -276,7 +276,7 @@ func activeSerializableAssert(t testing.TB, sctx sessionapi.Context,
 	}
 }
 
-func inactiveSerializableAssert(sctx sessionapi.Context) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
+func inactiveSerializableAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticSerializableTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "SERIALIZABLE",

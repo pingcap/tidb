@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -194,7 +194,7 @@ func UpdateSubtaskExecID(ctx context.Context, mgr *storage.TaskManager, tidbID s
 
 // TransferSubTasks2History move subtasks from tidb_background_subtask to tidb_background_subtask_history.
 func TransferSubTasks2History(ctx context.Context, mgr *storage.TaskManager, taskID int64) error {
-	return mgr.WithNewSession(func(se sessionapi.Context) error {
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		return mgr.TransferSubtasks2HistoryWithSession(ctx, se, taskID)
 	})
 }

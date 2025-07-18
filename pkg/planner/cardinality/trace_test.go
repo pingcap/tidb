@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -74,7 +74,7 @@ func TestTraceCE(t *testing.T) {
 	err := statsHandle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
-	sctx := tk.Session().(sessionapi.Context)
+	sctx := tk.Session().(sessionctx.Context)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	p := parser.New()
 	for i, expr := range in {
@@ -193,7 +193,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	err = statsHandle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
-	sctx := tk.Session().(sessionapi.Context)
+	sctx := tk.Session().(sessionctx.Context)
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()

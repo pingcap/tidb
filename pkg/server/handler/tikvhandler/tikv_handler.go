@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -774,7 +775,7 @@ func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *ast.CIStr, tabl
 	}
 	defer s.Close()
 
-	sctx := s.(sessionapi.Context)
+	sctx := s.(sessionctx.Context)
 	condition := make([]string, 0)
 	params := make([]any, 0)
 

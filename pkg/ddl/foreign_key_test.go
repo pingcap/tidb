@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -35,7 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionapi.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := ast.NewCIStr(fkName)
 	Keys := make([]ast.CIStr, len(keys))
 	for i, key := range keys {
@@ -77,7 +76,7 @@ func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionapi.Co
 	return job
 }
 
-func testDropForeignKey(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
+func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
 		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,

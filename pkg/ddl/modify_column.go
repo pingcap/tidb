@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -443,7 +443,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
-				var sctx sessionapi.Context
+				var sctx sessionctx.Context
 				sctx, err := w.sessPool.Get()
 				if err != nil {
 					failpoint.Return(ver, err)
@@ -678,7 +678,7 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
 func GetModifiableColumnJob(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	is infoschema.InfoSchema, // WARN: is maybe nil here.
 	ident ast.Ident,
 	originalColName ast.CIStr,
@@ -1191,7 +1191,7 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 }
 
 // processModifyColumnOptions process column options.
-func processModifyColumnOptions(ctx sessionapi.Context, col *table.Column, options []*ast.ColumnOption) error {
+func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName

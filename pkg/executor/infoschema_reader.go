@@ -55,8 +55,8 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -109,7 +109,7 @@ type memtableRetriever struct {
 }
 
 // retrieve implements the infoschemaRetriever interface
-func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.table.Name.O == infoschema.TableClusterInfo && !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -282,7 +282,7 @@ func (e *memtableRetriever) recordMemoryConsume(data []types.Datum) {
 
 func getAutoIncrementID(
 	is infoschema.InfoSchema,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) int64 {
 	if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
@@ -307,7 +307,7 @@ func getAutoIncrementID(
 	return alloc.Base() + 1
 }
 
-func hasPriv(ctx sessionapi.Context, priv mysql.PrivilegeType) bool {
+func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 	pm := privilege.GetPrivilegeManager(ctx)
 	if pm == nil {
 		// internal session created with createSession doesn't has the PrivilegeManager. For most experienced cases before,
@@ -325,7 +325,7 @@ func hasPriv(ctx sessionapi.Context, priv mysql.PrivilegeType) bool {
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
-func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, sv := range sysVars {
@@ -370,7 +370,7 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionapi.Context) erro
 	return nil
 }
 
-func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx sessionctx.Context) error {
 	exec := sctx.GetRestrictedSQLExecutor()
 	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, `SELECT user, host, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata')) FROM mysql.user`)
@@ -401,7 +401,7 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromSchemata(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaSchemataExtractor)
 	if !ok {
@@ -448,7 +448,7 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionapi.Context) error {
 	return nil
 }
 
-func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForStatistics(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaStatisticsExtractor)
 	if !ok {
@@ -570,7 +570,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 	e.rows = append(e.rows, rows...)
 }
 
-func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	ex, ok := e.extractor.(*plannercore.InfoSchemaReferConstExtractor)
@@ -624,7 +624,7 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionapi.Context, tbls []*model.TableInfo) {
+func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls []*model.TableInfo) {
 	needUpdate := false
 	for _, col := range e.columns {
 		// only the following columns need stats cache.
@@ -657,7 +657,7 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionapi.Context, tbls
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	loc *time.Location,
 	checker privilege.Manager,
 	schema ast.CIStr,
@@ -799,7 +799,7 @@ func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
 	return true
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
@@ -903,7 +903,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessiona
 
 // Data for inforation_schema.CHECK_CONSTRAINTS
 // This is standards (ISO/IEC 9075-11) compliant and is compatible with the implementation in MySQL as well.
-func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaCheckConstraintsExtractor)
@@ -948,7 +948,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 
 // Data for inforation_schema.TIDB_CHECK_CONSTRAINTS
 // This has non-standard TiDB specific extensions.
-func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBCheckConstraintsExtractor)
@@ -1012,7 +1012,7 @@ type hugeMemTableRetriever struct {
 }
 
 // retrieve implements the infoschemaRetriever interface
-func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -1037,7 +1037,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionapi.Co
 	return adjustColumns(e.rows, e.columns, e.table), nil
 }
 
-func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionapi.Context) error {
+func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
@@ -1065,7 +1065,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 
 func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	schema ast.CIStr,
 	table *model.TableInfo,
 	checker privilege.Manager) bool {
@@ -1115,7 +1115,7 @@ func getNumericPrecision(ft *types.FieldType, colLen int) int {
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	schema ast.CIStr,
 	tbl *model.TableInfo,
 	priv mysql.PrivilegeType) {
@@ -1126,7 +1126,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			var viewLogicalPlan base.Plan
 			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
-			if err := runWithSystemSession(internalCtx, sctx, func(s sessionapi.Context) error {
+			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 				planBuilder, _ := plannercore.NewPlanBuilder(plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 				var err error
@@ -1268,7 +1268,7 @@ func calcCharOctLength(lenInChar int, cs string) int {
 	return lenInBytes
 }
 
-func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
@@ -1440,7 +1440,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx sessionctx.Context) error {
 	ex, ok := e.extractor.(*plannercore.InfoSchemaIndexesExtractor)
 	if !ok {
 		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaIndexesExtractor", e.extractor)
@@ -1466,7 +1466,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx context.Context, sctx session
 }
 
 func (e *memtableRetriever) setDataFromIndex(
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	schema ast.CIStr,
 	tb *model.TableInfo,
 	rows [][]types.Datum) ([][]types.Datum, error) {
@@ -1552,7 +1552,7 @@ func (e *memtableRetriever) setDataFromIndex(
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaViewsExtractor)
 	if !ok {
@@ -1601,7 +1601,7 @@ func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionap
 	return nil
 }
 
-func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx sessionapi.Context) (err error) {
+func (e *memtableRetriever) dataForTiKVStoreStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV store status can be gotten only when the storage is TiKV")
@@ -1674,7 +1674,7 @@ type DDLJobsReaderExec struct {
 
 	cacheJobs []*model.Job
 	is   infoschema.InfoSchema
-	sess sessionapi.Context
+	sess sessionctx.Context
 }
 
 // Open implements the Executor Next interface.
@@ -1795,7 +1795,7 @@ func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 	e.rows = rows
 }
 
-func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionapi.Context) error {
+func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error {
 	servers, err := infoschema.GetClusterServerInfo(ctx)
 	if err != nil {
 		e.rows = nil
@@ -1840,7 +1840,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionapi.Context) error
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaKeyColumnUsageExtractor)
 	if !ok {
@@ -1869,7 +1869,7 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx context.Context, sctx 
 	return nil
 }
 
-func (e *memtableRetriever) setDataForClusterProcessList(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForClusterProcessList(ctx sessionctx.Context) error {
 	e.setDataForProcessList(ctx)
 	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 	if err != nil {
@@ -1879,7 +1879,7 @@ func (e *memtableRetriever) setDataForClusterProcessList(ctx sessionapi.Context)
 	return nil
 }
 
-func (e *memtableRetriever) setDataForProcessList(ctx sessionapi.Context) {
+func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 	sm := ctx.GetSessionManager()
 	if sm == nil {
 		return
@@ -1905,7 +1905,7 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionapi.Context) {
 	e.rows = records
 }
 
-func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionapi.Context) {
+func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	pm := privilege.GetPrivilegeManager(ctx)
 	// The results depend on the user querying the information.
 	e.rows = pm.UserPrivilegesTable(ctx.GetSessionVars().ActiveRoles, ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
@@ -2035,7 +2035,7 @@ func (e *memtableRetriever) keyColumnUsageInTable(schema ast.CIStr, table *model
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx sessionapi.Context) (err error) {
+func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var extractorTableIDs []int64
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
@@ -2203,7 +2203,7 @@ const (
 	downPeer    = "DOWN"
 )
 
-func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx sessionctx.Context) error {
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
@@ -2257,7 +2257,7 @@ func (e *memtableRetriever) setDataForHotRegionByMetrics(metrics []helper.HotTab
 }
 
 // setDataFromTableConstraints constructs data for table information_schema.constraints.See https://dev.mysql.com/doc/refman/5.7/en/table-constraints-table.html
-func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaTableConstraintsExtractor)
 	if !ok {
@@ -2359,7 +2359,7 @@ type tableStorageStatsRetriever struct {
 	stats         *pd.RegionStats
 }
 
-func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
@@ -2397,7 +2397,7 @@ type initialTable struct {
 	*model.TableInfo
 }
 
-func (e *tableStorageStatsRetriever) initialize(ctx context.Context, sctx sessionapi.Context) error {
+func (e *tableStorageStatsRetriever) initialize(ctx context.Context, sctx sessionctx.Context) error {
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	var databases []string
 	schemas := e.extractor.TableSchema
@@ -2507,7 +2507,7 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx context.Con
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
-func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx sessionapi.Context) (rows [][]types.Datum, err error) {
+func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.GetRestrictedSQLExecutor()
@@ -2598,7 +2598,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
-	sctx sessionapi.Context, startTime *types.Time,
+	sctx sessionctx.Context, startTime *types.Time,
 	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
 	remainingDuration := time.Duration(0)
 	if startTime != nil {
@@ -2667,13 +2667,13 @@ func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processe
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
-func (e *memtableRetriever) setDataForAnalyzeStatus(ctx context.Context, sctx sessionapi.Context) (err error) {
+func (e *memtableRetriever) setDataForAnalyzeStatus(ctx context.Context, sctx sessionctx.Context) (err error) {
 	e.rows, err = dataForAnalyzeStatusHelper(ctx, e, sctx)
 	return
 }
 
 // setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.
-func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionapi.Context) {
+func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
 	if v, ok := sctx.GetSessionVars().GetSystemVar("profiling"); ok && variable.TiDBOptOn(v) {
 		row := types.MakeDatums(
 			0,                      // QUERY_ID
@@ -2700,7 +2700,7 @@ func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionapi.Context) {
 	}
 }
 
-func (e *memtableRetriever) setDataForServersInfo(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error {
 	serversInfo, err := infosync.GetAllServerInfo(context.Background())
 	if err != nil {
 		return err
@@ -2730,7 +2730,7 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionapi.Context) error 
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	extractor, ok := e.extractor.(*plannercore.InfoSchemaSequenceExtractor)
 	if !ok {
@@ -2773,7 +2773,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context) error {
 	var (
 		checker       = privilege.GetPrivilegeManager(sctx)
 		rows          [][]types.Datum
@@ -2821,7 +2821,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 	return nil
 }
 
-func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionapi.Context, tableName string) error {
+func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
 	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
 	// This is similar to information_schema.processlist, which is the closest comparison.
 	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
@@ -2895,7 +2895,7 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionapi.Context
 	return nil
 }
 
-func (e *memtableRetriever) setDataForTrxSummary(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
 	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
 	if !hasProcessPriv {
 		return nil
@@ -2908,7 +2908,7 @@ func (e *memtableRetriever) setDataForTrxSummary(ctx sessionapi.Context) error {
 	return nil
 }
 
-func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
 	err := e.setDataForTrxSummary(ctx)
 	if err != nil {
 		return err
@@ -2951,7 +2951,7 @@ func (e *memtableRetriever) setDataForMemoryUsage() error {
 	return nil
 }
 
-func (e *memtableRetriever) setDataForClusterMemoryUsage(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForClusterMemoryUsage(ctx sessionctx.Context) error {
 	err := e.setDataForMemoryUsage()
 	if err != nil {
 		return err
@@ -2972,7 +2972,7 @@ func (e *memtableRetriever) setDataForMemoryUsageOpsHistory() error {
 	return nil
 }
 
-func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionctx.Context) error {
 	err := e.setDataForMemoryUsageOpsHistory()
 	if err != nil {
 		return err
@@ -2995,7 +2995,7 @@ type tidbTrxTableRetriever struct {
 	initialized bool
 }
 
-func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved {
 		return nil, nil
 	}
@@ -3113,7 +3113,7 @@ type dataLockWaitsTableRetriever struct {
 	initialized    bool
 }
 
-func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if r.retrieved {
 		return nil, nil
 	}
@@ -3318,7 +3318,7 @@ func (r *deadlocksTableRetriever) nextIndexPair(idx, waitChainIdx int) (a, b int
 	return idx, waitChainIdx
 }
 
-func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if r.retrieved {
 		return nil, nil
 	}
@@ -3466,7 +3466,7 @@ type TiFlashSystemTableRetriever struct {
 	extractor     *plannercore.TiFlashSystemTableExtractor
 }
 
-func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -3492,7 +3492,7 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 	}
 }
 
-func (e *TiFlashSystemTableRetriever) initialize(sctx sessionapi.Context, tiflashInstances set.StringSet) error {
+func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	storeInfo, err := infoschema.GetStoreServerInfo(sctx.GetStore())
 	if err != nil {
 		return err
@@ -3535,7 +3535,7 @@ var (
 	}
 )
 
-func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionapi.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
 	maxCount := 1024
 	targetTable := tiflashTargetTableName[e.table.Name.L]
 
@@ -3675,7 +3675,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	return outputRows, nil
 }
 
-func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessionapi.Context, is infoschema.InfoSchema) error {
+func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	rules, err := infosync.GetAllLabelRules(context.TODO())
 	skipValidateTable := false
@@ -3769,7 +3769,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessi
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionctx.Context) error {
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	placementPolicies := is.AllPlacementPolicies()
 	rows := make([][]types.Datum, 0, len(placementPolicies))
@@ -3808,7 +3808,7 @@ func (e *memtableRetriever) setDataFromPlacementPolicies(sctx sessionapi.Context
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) error {
 	do := domain.GetDomain(sctx)
 	err := do.RunawayManager().UpdateNewAndDoneWatch()
 	if err != nil {
@@ -3978,7 +3978,7 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sessionctx.Context) error {
 	dom := domain.GetDomain(sctx)
 	rows := make([][]types.Datum, 0, 100)
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -4031,7 +4031,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sctx sessionapi.Context) error {
+func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sctx sessionctx.Context) error {
 	err := e.setDataFromIndexUsage(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -4044,7 +4044,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionapi.Context, cluster bool) (err error) {
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context, cluster bool) (err error) {
 	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
 	rows := make([][]types.Datum, 0, len(values))
 	for _, v := range values {
@@ -4085,7 +4085,7 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 	return nil
 }
 
-func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionapi.Context) (err error) {
+func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err error) {
 	meta := sctx.GetStore().GetCodec().GetKeyspaceMeta()
 	var (
 		keyspaceName string

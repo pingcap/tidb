@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ func checkCases(
 	loadSQL string,
 	t *testing.T,
 	tk *testkit.TestKit,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
 	for _, tt := range tests {
@@ -64,7 +64,7 @@ func checkCases(
 func TestLoadDataInitParam(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 
 	tk.MustExec("use test")
@@ -148,7 +148,7 @@ func TestLoadData(t *testing.T) {
 	err = tk.ExecToErr("load data infile '/tmp/nonexistence.csv' into table load_data_test")
 	require.Error(t, err)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -311,7 +311,7 @@ func TestLoadDataEscape(t *testing.T) {
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -338,7 +338,7 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	// test
 	tests := []testCase{
 		{[]byte("7\ta string\n"), []string{"1|7|a string|0"}, trivialMsg},
@@ -360,7 +360,7 @@ func TestLoadDataIgnoreLines(t *testing.T) {
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
 		{[]byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
@@ -381,7 +381,7 @@ func TestLoadDataNULL(t *testing.T) {
 	tk.MustExec("CREATE TABLE load_data_test (id VARCHAR(20), value VARCHAR(20)) CHARACTER SET utf8")
 	loadSQL := `load data local infile '/tmp/nonexistence.csv' into table load_data_test
 FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
 		{
 			[]byte(`NULL,"NULL"
@@ -403,7 +403,7 @@ func TestLoadDataReplace(t *testing.T) {
 	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
 	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
 	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE load_data_replace"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
 		{[]byte("1\tline1\n2\tline2\n"), []string{"1|line1", "2|line2"}, "Records: 2  Deleted: 2  Skipped: 0  Warnings: 0"},
 		{[]byte("2\tnew line2\n3\tnew line3\n"), []string{"1|line1", "2|new line2", "3|new line3"}, "Records: 2  Deleted: 1  Skipped: 0  Warnings: 0"},
@@ -420,7 +420,7 @@ func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
 		{[]byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
 		{[]byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
@@ -437,7 +437,7 @@ func TestLoadDataWithUppercaseUserVars(t *testing.T) {
 	tk.MustExec("CREATE TABLE load_data_test (a int, b int);")
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test (@V1)" +
 		" set a = @V1, b = @V1*100"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
 		{[]byte("1\n2\n"), []string{"1|100", "2|200"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
@@ -454,7 +454,7 @@ func TestLoadDataIntoPartitionedTable(t *testing.T) {
 		"partition p0 values less than (4)," +
 		"partition p1 values less than (7)," +
 		"partition p2 values less than (11))")
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table range_t fields terminated by ','"
 	tests := []testCase{
 		{[]byte("1,2\n3,4\n5,6\n7,8\n9,10\n"), []string{"1|2", "3|4", "5|6", "7|8", "9|10"}, "Records: 5  Deleted: 0  Skipped: 0  Warnings: 0"},
@@ -479,7 +479,7 @@ func TestFix56408(t *testing.T) {
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("create table a(id int,name varchar(20),addr varchar(100),primary key (id) nonclustered);")
 	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS terminated by '|';"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	tests := []testCase{
 		{[]byte("1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n2|bb|shanghai\n2|bb|shanghai\n2|bb|shanghai\n3|cc|guangzhou\n"),
 			[]string{"1 aa beijing", "2 bb shanghai", "3 cc guangzhou"},

@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
@@ -1092,7 +1092,7 @@ func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
 	pool := s.dom.SysSessionPool()
 	se, err := pool.Get()
 	require.NoError(t, err)
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	defer pool.Put(se)
 	pollTiflashContext, err := ddl.NewTiFlashManagementContext()
 	pollTiflashContext.UpdatingProgressTables.PushBack(ddl.AvailableTableID{

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -46,7 +46,7 @@ func NewSessionPool(resPool util.SessionPool) *Pool {
 
 // Get gets sessionCtx from context resource pool.
 // Please remember to call Put after you finished using sessionCtx.
-func (sg *Pool) Get() (sessionapi.Context, error) {
+func (sg *Pool) Get() (sessionctx.Context, error) {
 	sg.mu.Lock()
 	if sg.mu.closed {
 		sg.mu.Unlock()
@@ -60,7 +60,7 @@ func (sg *Pool) Get() (sessionapi.Context, error) {
 		return nil, errors.Trace(err)
 	}
 
-	ctx, ok := resource.(sessionapi.Context)
+	ctx, ok := resource.(sessionctx.Context)
 	if !ok {
 		return nil, errors.Trace(fmt.Errorf("need sessionctx.Context, but got %T", ctx))
 	}
@@ -72,7 +72,7 @@ func (sg *Pool) Get() (sessionapi.Context, error) {
 }
 
 // Put returns sessionCtx to context resource pool.
-func (sg *Pool) Put(ctx sessionapi.Context) {
+func (sg *Pool) Put(ctx sessionctx.Context) {
 	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
 	// Put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
 	intest.AssertFunc(func() bool {

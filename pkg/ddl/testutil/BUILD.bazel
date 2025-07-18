@@ -19,6 +19,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessiontxn",
         "//pkg/table",
         "//pkg/table/tables",

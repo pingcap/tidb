@@ -37,7 +37,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -110,7 +110,7 @@ type mppRequestReport struct {
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
 type localMppCoordinator struct {
 	ctx        context.Context
-	sessionCtx sessionapi.Context
+	sessionCtx sessionctx.Context
 	is         infoschema.InfoSchema
 	originalPlan base.PhysicalPlan
 	reqMap       map[int64]*mppRequestReport
@@ -157,7 +157,7 @@ type localMppCoordinator struct {
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(ctx context.Context, sctx sessionapi.Context, is infoschema.InfoSchema, plan base.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, plan base.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
 	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
 		coordinatorAddr = ""
 	}

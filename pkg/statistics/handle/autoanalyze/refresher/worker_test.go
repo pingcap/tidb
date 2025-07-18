@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
@@ -49,7 +49,7 @@ func (m *mockAnalysisJob) RegisterFailureHook(priorityqueue.FailureJobHook) {
 	panic("not implemented")
 }
 func (m *mockAnalysisJob) String() string { return "mockAnalysisJob" }
-func (m *mockAnalysisJob) ValidateAndPrepare(sessionapi.Context) (bool, string) {
+func (m *mockAnalysisJob) ValidateAndPrepare(sessionctx.Context) (bool, string) {
 	panic("not implemented")
 }
 func (m *mockAnalysisJob) SetWeight(weight float64) {

@@ -7,7 +7,7 @@ go_library(
     visibility = ["//pkg/sessiontxn:__subpackages__"],
     deps = [
         "//pkg/kv",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/util/logutil",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

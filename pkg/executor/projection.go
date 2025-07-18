@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -63,7 +63,7 @@ type projectionExecutorContext struct {
 	enableVectorizedExpression bool
 }
 
-func newProjectionExecutorContext(sctx sessionapi.Context) projectionExecutorContext {
+func newProjectionExecutorContext(sctx sessionctx.Context) projectionExecutorContext {
 	return projectionExecutorContext{
 		stmtMemTracker:             sctx.GetSessionVars().StmtCtx.MemTracker,
 		stmtRuntimeStatsColl:       sctx.GetSessionVars().StmtCtx.RuntimeStatsColl,

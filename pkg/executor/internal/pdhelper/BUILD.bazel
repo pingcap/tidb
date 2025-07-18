@@ -7,7 +7,7 @@ go_library(
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/kv",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/store/helper",
         "//pkg/util",
         "//pkg/util/sqlescape",
@@ -28,7 +28,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/testkit/testsetup",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_stretchr_testify//require",

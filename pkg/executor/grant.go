@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -278,7 +278,7 @@ func containsNonDynamicPriv(privList []*ast.PrivElem) bool {
 
 // checkAndInitGlobalPriv checks if global scope privilege entry exists in mysql.global_priv.
 // If not exists, insert a new one.
-func checkAndInitGlobalPriv(ctx sessionapi.Context, user string, host string) error {
+func checkAndInitGlobalPriv(ctx sessionctx.Context, user string, host string) error {
 	ok, err := globalPrivEntryExists(ctx, user, host)
 	if err != nil {
 		return err
@@ -292,7 +292,7 @@ func checkAndInitGlobalPriv(ctx sessionapi.Context, user string, host string) er
 
 // checkAndInitDBPriv checks if DB scope privilege entry exists in mysql.DB.
 // If unexists, insert a new one.
-func checkAndInitDBPriv(ctx sessionapi.Context, dbName string, user string, host string) error {
+func checkAndInitDBPriv(ctx sessionctx.Context, dbName string, user string, host string) error {
 	ok, err := dbUserExists(ctx, user, host, dbName)
 	if err != nil {
 		return err
@@ -306,7 +306,7 @@ func checkAndInitDBPriv(ctx sessionapi.Context, dbName string, user string, host
 
 // checkAndInitTablePriv checks if table scope privilege entry exists in mysql.Tables_priv.
 // If unexists, insert a new one.
-func checkAndInitTablePriv(ctx sessionapi.Context, dbName, tblName string, _ infoschema.InfoSchema, user string, host string) error {
+func checkAndInitTablePriv(ctx sessionctx.Context, dbName, tblName string, _ infoschema.InfoSchema, user string, host string) error {
 	ok, err := tableUserExists(ctx, user, host, dbName, tblName)
 	if err != nil {
 		return err
@@ -320,7 +320,7 @@ func checkAndInitTablePriv(ctx sessionapi.Context, dbName, tblName string, _ inf
 
 // checkAndInitColumnPriv checks if column scope privilege entry exists in mysql.Columns_priv.
 // If unexists, insert a new one.
-func (e *GrantExec) checkAndInitColumnPriv(ctx context.Context, user string, host string, cols []*ast.ColumnName, internalSession sessionapi.Context) error {
+func (e *GrantExec) checkAndInitColumnPriv(ctx context.Context, user string, host string, cols []*ast.ColumnName, internalSession sessionctx.Context) error {
 	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
@@ -347,35 +347,35 @@ func (e *GrantExec) checkAndInitColumnPriv(ctx context.Context, user string, hos
 }
 
 // initGlobalPrivEntry inserts a new row into mysql.DB with empty privilege.
-func initGlobalPrivEntry(sctx sessionapi.Context, user string, host string) error {
+func initGlobalPrivEntry(sctx sessionctx.Context, user string, host string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, PRIV) VALUES (%?, %?, %?)`, mysql.SystemDB, mysql.GlobalPrivTable, host, user, "{}")
 	return err
 }
 
 // initDBPrivEntry inserts a new row into mysql.DB with empty privilege.
-func initDBPrivEntry(sctx sessionapi.Context, user string, host string, db string) error {
+func initDBPrivEntry(sctx sessionctx.Context, user string, host string, db string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, DB) VALUES (%?, %?, %?)`, mysql.SystemDB, mysql.DBTable, host, user, db)
 	return err
 }
 
 // initTablePrivEntry inserts a new row into mysql.Tables_priv with empty privilege.
-func initTablePrivEntry(sctx sessionapi.Context, user string, host string, db string, tbl string) error {
+func initTablePrivEntry(sctx sessionctx.Context, user string, host string, db string, tbl string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, DB, Table_name, Table_priv, Column_priv) VALUES (%?, %?, %?, %?, '', '')`, mysql.SystemDB, mysql.TablePrivTable, host, user, db, tbl)
 	return err
 }
 
 // initColumnPrivEntry inserts a new row into mysql.Columns_priv with empty privilege.
-func initColumnPrivEntry(sctx sessionapi.Context, user string, host string, db string, tbl string, col string) error {
+func initColumnPrivEntry(sctx sessionctx.Context, user string, host string, db string, tbl string, col string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, `INSERT INTO %n.%n (Host, User, DB, Table_name, Column_name, Column_priv) VALUES (%?, %?, %?, %?, %?, '')`, mysql.SystemDB, mysql.ColumnPrivTable, host, user, db, tbl, col)
 	return err
 }
 
 // grantGlobalPriv grants priv to user in global scope.
-func (e *GrantExec) grantGlobalPriv(sctx sessionapi.Context, user *ast.UserSpec) error {
+func (e *GrantExec) grantGlobalPriv(sctx sessionctx.Context, user *ast.UserSpec) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	if len(e.AuthTokenOrTLSOptions) == 0 {
 		return nil
@@ -470,7 +470,7 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 }
 
 // grantLevelPriv grants priv to user in s.Level scope.
-func (e *GrantExec) grantLevelPriv(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionapi.Context) error {
+func (e *GrantExec) grantLevelPriv(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	if priv.Priv == mysql.ExtendedPriv {
 		return e.grantDynamicPriv(priv.Name, user, internalSession)
 	}
@@ -492,7 +492,7 @@ func (e *GrantExec) grantLevelPriv(ctx context.Context, priv *ast.PrivElem, user
 	}
 }
 
-func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, internalSession sessionapi.Context) error {
+func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	privName = strings.ToUpper(privName)
 	if e.Level.Level != ast.GrantLevelGlobal { // DYNAMIC can only be *.*
 		return exeerrors.ErrIllegalPrivilegeLevel.GenWithStackByArgs(privName)
@@ -514,7 +514,7 @@ func (e *GrantExec) grantDynamicPriv(privName string, user *ast.UserSpec, intern
 }
 
 // grantGlobalLevel manipulates mysql.user table.
-func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionapi.Context) error {
+func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET `, mysql.SystemDB, mysql.UserTable)
 	err := composeGlobalPrivUpdate(sql, priv.Priv, "Y")
@@ -529,7 +529,7 @@ func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, inter
 }
 
 // grantDBLevel manipulates mysql.db table.
-func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionapi.Context) error {
+func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	if slices.Contains(mysql.StaticGlobalOnlyPrivs, priv.Priv) {
 		return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 	}
@@ -553,7 +553,7 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 }
 
 // grantTableLevel manipulates mysql.tables_priv table.
-func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionapi.Context) error {
+func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
@@ -574,7 +574,7 @@ func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, inte
 }
 
 // grantColumnLevel manipulates mysql.tables_priv table.
-func (e *GrantExec) grantColumnLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionapi.Context) error {
+func (e *GrantExec) grantColumnLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
 	if err != nil {
 		return err
@@ -642,7 +642,7 @@ func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value s
 }
 
 // composeTablePrivUpdateForGrant composes update stmt assignment list for table scope privilege update.
-func composeTablePrivUpdateForGrant(ctx sessionapi.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
+func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
 	var newTablePriv, newColumnPriv []string
 	if priv != mysql.AllPriv {
 		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
@@ -671,7 +671,7 @@ func composeTablePrivUpdateForGrant(ctx sessionapi.Context, sql *strings.Builder
 }
 
 // composeColumnPrivUpdateForGrant composes update stmt assignment list for column scope privilege update.
-func composeColumnPrivUpdateForGrant(ctx sessionapi.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) error {
+func composeColumnPrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) error {
 	var newColumnPriv []string
 	if priv != mysql.AllPriv {
 		currColumnPriv, err := getColumnPriv(ctx, name, host, db, tbl, col)
@@ -691,7 +691,7 @@ func composeColumnPrivUpdateForGrant(ctx sessionapi.Context, sql *strings.Builde
 }
 
 // recordExists is a helper function to check if the sql returns any row.
-func recordExists(sctx sessionapi.Context, sql string, args ...any) (bool, error) {
+func recordExists(sctx sessionctx.Context, sql string, args ...any) (bool, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -705,28 +705,28 @@ func recordExists(sctx sessionapi.Context, sql string, args ...any) (bool, error
 }
 
 // globalPrivEntryExists checks if there is an entry with key user-host in mysql.global_priv.
-func globalPrivEntryExists(ctx sessionapi.Context, name string, host string) (bool, error) {
+func globalPrivEntryExists(ctx sessionctx.Context, name string, host string) (bool, error) {
 	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.GlobalPrivTable, name, host)
 }
 
 // dbUserExists checks if there is an entry with key user-host-db in mysql.DB.
-func dbUserExists(ctx sessionapi.Context, name string, host string, db string) (bool, error) {
+func dbUserExists(ctx sessionctx.Context, name string, host string, db string) (bool, error) {
 	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%?;`, mysql.SystemDB, mysql.DBTable, name, host, db)
 }
 
 // tableUserExists checks if there is an entry with key user-host-db-tbl in mysql.Tables_priv.
-func tableUserExists(ctx sessionapi.Context, name string, host string, db string, tbl string) (bool, error) {
+func tableUserExists(ctx sessionctx.Context, name string, host string, db string, tbl string) (bool, error) {
 	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?;`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, tbl)
 }
 
 // columnPrivEntryExists checks if there is an entry with key user-host-db-tbl-col in mysql.Columns_priv.
-func columnPrivEntryExists(ctx sessionapi.Context, name string, host string, db string, tbl string, col string) (bool, error) {
+func columnPrivEntryExists(ctx sessionctx.Context, name string, host string, db string, tbl string, col string) (bool, error) {
 	return recordExists(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?;`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, tbl, col)
 }
 
 // getTablePriv gets current table scope privilege set from mysql.Tables_priv.
 // Return Table_priv and Column_priv.
-func getTablePriv(sctx sessionapi.Context, name string, host string, db string, tbl string) (tPriv, cPriv string, err error) {
+func getTablePriv(sctx sessionctx.Context, name string, host string, db string, tbl string) (tPriv, cPriv string, err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, `SELECT Table_priv, Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?`, mysql.SystemDB, mysql.TablePrivTable, name, host, db, tbl)
 	if err != nil {
@@ -753,7 +753,7 @@ func getTablePriv(sctx sessionapi.Context, name string, host string, db string, 
 
 // getColumnPriv gets current column scope privilege set from mysql.Columns_priv.
 // Return Column_priv.
-func getColumnPriv(sctx sessionapi.Context, name string, host string, db string, tbl string, col string) (string, error) {
+func getColumnPriv(sctx sessionctx.Context, name string, host string, db string, tbl string, col string) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, `SELECT Column_priv FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?;`, mysql.SystemDB, mysql.ColumnPrivTable, name, host, db, tbl, col)
 	if err != nil {
@@ -775,7 +775,7 @@ func getColumnPriv(sctx sessionapi.Context, name string, host string, db string,
 }
 
 // getTargetSchemaAndTable finds the schema and table by dbName and tableName.
-func getTargetSchemaAndTable(ctx context.Context, sctx sessionapi.Context, dbName, tableName string, is infoschema.InfoSchema) (string, table.Table, error) {
+func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbName, tableName string, is infoschema.InfoSchema) (string, table.Table, error) {
 	if len(dbName) == 0 {
 		dbName = sctx.GetSessionVars().CurrentDB
 		if len(dbName) == 0 {
@@ -794,7 +794,7 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionapi.Context, dbNam
 }
 
 // getRowsAndFields is used to extract rows from record sets.
-func getRowsAndFields(sctx sessionapi.Context, rs sqlexec.RecordSet) ([]chunk.Row, []*resolve.ResultField, error) {
+func getRowsAndFields(sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, []*resolve.ResultField, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	if rs == nil {
 		return nil, nil, errors.Errorf("nil recordset")
@@ -809,7 +809,7 @@ func getRowsAndFields(sctx sessionapi.Context, rs sqlexec.RecordSet) ([]chunk.Ro
 	return rows, rs.Fields(), nil
 }
 
-func getRowFromRecordSet(ctx context.Context, se sessionapi.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+func getRowFromRecordSet(ctx context.Context, se sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
 	req := rs.NewChunk(nil)
 	for {

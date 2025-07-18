@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -64,7 +64,7 @@ type (
 
 	inspectionRule interface {
 		name() string
-		inspect(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult
+		inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult
 	}
 )
 
@@ -114,7 +114,7 @@ type inspectionResultRetriever struct {
 	statusToInstanceAddress map[string]string
 }
 
-func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionapi.Context) ([][]types.Datum, error) {
+func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.retrieved || e.extractor.SkipInspection {
 		return nil, nil
 	}
@@ -210,14 +210,14 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionap
 	return finalRows, nil
 }
 
-func (c configInspection) inspect(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (c configInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var results []inspectionResult
 	results = append(results, c.inspectDiffConfig(ctx, sctx, filter)...)
 	results = append(results, c.inspectCheckConfig(ctx, sctx, filter)...)
 	return results
 }
 
-func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration consistent
 	ignoreConfigKey := []string{
 		// TiDB
@@ -298,7 +298,7 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionapi.C
 	return results
 }
 
-func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration in reason.
 	cases := []struct {
 		table  string
@@ -366,7 +366,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionap
 	return results
 }
 
-func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	item := "storage.block-cache.capacity"
 	if !filter.enable(item) {
 		return nil
@@ -451,7 +451,7 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 	return uint64(size) * rate, nil
 }
 
-func (versionInspection) inspect(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	exec := sctx.GetRestrictedSQLExecutor()
 	// check the configuration consistent
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;")
@@ -477,7 +477,7 @@ func (versionInspection) inspect(ctx context.Context, sctx sessionapi.Context, f
 	return results
 }
 
-func (nodeLoadInspection) inspect(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (nodeLoadInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []ruleChecker{
 		inspectCPULoad{item: "load1", tbl: "node_load1"},
 		inspectCPULoad{item: "load5", tbl: "node_load5"},
@@ -586,12 +586,12 @@ func (i inspectCPULoad) getItem() string {
 	return "cpu-" + i.item
 }
 
-func (c criticalErrorInspection) inspect(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (c criticalErrorInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	results := c.inspectError(ctx, sctx, filter)
 	results = append(results, c.inspectForServerDown(ctx, sctx, filter)...)
 	return results
 }
-func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []struct {
 		tp   string
 		item string
@@ -660,7 +660,7 @@ func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionapi
 	return results
 }
 
-func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	item := "server-down"
 	if !filter.enable(item) {
 		return nil
@@ -720,8 +720,8 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 	return results
 }
 
-func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
-	inspects := []func(context.Context, sessionapi.Context, inspectionFilter) []inspectionResult{
+func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	inspects := []func(context.Context, sessionctx.Context, inspectionFilter) []inspectionResult{
 		c.inspectThreshold1,
 		c.inspectThreshold2,
 		c.inspectThreshold3,
@@ -736,7 +736,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionapi.C
 	return results
 }
 
-func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []struct {
 		item      string
 		component string
@@ -861,7 +861,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 	return results
 }
 
-func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []struct {
 		tp        string
 		item      string
@@ -1150,7 +1150,7 @@ func (checkStoreRegionTooMuch) getItem() string {
 	return "region-count"
 }
 
-func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	var rules = []ruleChecker{
 		compareStoreStatus{
 			item:      "leader-score-balance",
@@ -1173,7 +1173,7 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 	return checkRules(ctx, sctx, filter, rules)
 }
 
-func checkRules(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter, rules []ruleChecker) []inspectionResult {
+func checkRules(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter, rules []ruleChecker) []inspectionResult {
 	var results []inspectionResult
 	exec := sctx.GetRestrictedSQLExecutor()
 	for _, rule := range rules {
@@ -1193,7 +1193,7 @@ func checkRules(ctx context.Context, sctx sessionapi.Context, filter inspectionF
 	return results
 }
 
-func (thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx sessionapi.Context, filter inspectionFilter) []inspectionResult {
+func (thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	condition := filter.timeRange.Condition()
 	threshold := 50.0
 	sql := new(strings.Builder)

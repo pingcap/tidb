@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTestSuite(t *testing.T) (sessionapi.Context, *temporaryTableDDL) {
+func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL) {
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 

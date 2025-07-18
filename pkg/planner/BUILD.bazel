@@ -20,7 +20,7 @@ go_library(
         "//pkg/planner/util/debugtrace",
         "//pkg/planner/util/optimizetrace",
         "//pkg/privilege",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

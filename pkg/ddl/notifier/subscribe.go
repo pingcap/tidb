@@ -25,7 +25,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -49,7 +49,7 @@ import (
 // and re-handle later.
 type SchemaChangeHandler func(
 	ctx context.Context,
-	sctx sessionapi.Context,
+	sctx sessionctx.Context,
 	change *SchemaChangeEvent,
 ) error
 
@@ -183,7 +183,7 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	defer n.sysSessionPool.Put(s)
-	sess4List := sess.NewSession(s.(sessionapi.Context))
+	sess4List := sess.NewSession(s.(sessionctx.Context))
 	result, closeFn := n.store.List(ctx, sess4List)
 	defer closeFn()
 
@@ -192,7 +192,7 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	defer n.sysSessionPool.Put(s2)
-	sess4Process := sess.NewSession(s2.(sessionapi.Context))
+	sess4Process := sess.NewSession(s2.(sessionctx.Context))
 
 	// we should ensure deliver order of events to a handler, so if a handler returns
 	// error for previous events it should not receive later events.
@@ -242,7 +242,7 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 				if err3 != nil {
 					return errors.Trace(err3)
 				}
-				sess4Del := sess.NewSession(s3.(sessionapi.Context))
+				sess4Del := sess.NewSession(s3.(sessionctx.Context))
 				err3 = n.store.DeleteAndCommit(
 					ctx,
 					sess4Del,

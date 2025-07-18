@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -537,7 +537,7 @@ func TestConflictErrorsInRC(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertPessimisticLockErr"))
 }
 
-func activeRCTxnAssert(t testing.TB, sctx sessionapi.Context, inTxn bool) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
+func activeRCTxnAssert(t testing.TB, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRCTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "READ-COMMITTED",
@@ -548,7 +548,7 @@ func activeRCTxnAssert(t testing.TB, sctx sessionapi.Context, inTxn bool) *txnAs
 	}
 }
 
-func inactiveRCTxnAssert(sctx sessionapi.Context) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
+func inactiveRCTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRCTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "READ-COMMITTED",

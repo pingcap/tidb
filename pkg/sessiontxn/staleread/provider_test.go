@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -107,7 +107,7 @@ func createStaleReadProvider(t *testing.T, tk *testkit.TestKit, explicitTxn bool
 	return sessiontxn.GetTxnManager(se).GetContextProvider().(*staleread.StalenessTxnContextProvider)
 }
 
-func getOracleTS(t testing.TB, sctx sessionapi.Context) uint64 {
+func getOracleTS(t testing.TB, sctx sessionctx.Context) uint64 {
 	ts, err := sctx.GetStore().GetOracle().GetTimestamp(context.TODO(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	require.NoError(t, err)
 	return ts

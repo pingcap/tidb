@@ -31,7 +31,7 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -231,7 +231,7 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
  |	 |-....
  |-explain.txt
 */
-func DumpPlanReplayerInfo(ctx context.Context, sctx sessionapi.Context,
+func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	task *PlanReplayerDumpTask) (err error) {
 	zf := task.Zf
 	fileName := task.FileName
@@ -469,7 +469,7 @@ func dumpMeta(zw *zip.Writer) error {
 	return nil
 }
 
-func dumpTiFlashReplica(sctx sessionapi.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+func dumpTiFlashReplica(sctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
 	bf, err := zw.Create(PlanReplayerTiFlashReplicasFile)
 	if err != nil {
 		return errors.AddStack(err)
@@ -495,7 +495,7 @@ func dumpTiFlashReplica(sctx sessionapi.Context, zw *zip.Writer, pairs map[table
 	return nil
 }
 
-func dumpSchemas(ctx sessionapi.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+func dumpSchemas(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
 	tables := make(map[tableNamePair]struct{})
 	for pair := range pairs {
 		err := getShowCreateTable(pair, zw, ctx)
@@ -602,7 +602,7 @@ func dumpSQLs(execStmts []ast.StmtNode, zw *zip.Writer) error {
 	return nil
 }
 
-func dumpVariables(sctx sessionapi.Context, sessionVars *variable.SessionVars, zw *zip.Writer) error {
+func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, zw *zip.Writer) error {
 	varMap := make(map[string]string)
 	for _, v := range variable.GetSysVars() {
 		if v.IsNoop && !vardef.EnableNoopVariables.Load() {
@@ -654,7 +654,7 @@ func dumpSessionBindRecords(records [][]*bindinfo.Binding, zw *zip.Writer) error
 	return nil
 }
 
-func dumpSessionBindings(ctx sessionapi.Context, zw *zip.Writer) error {
+func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show bindings")
 	if err != nil {
 		return err
@@ -678,7 +678,7 @@ func dumpSessionBindings(ctx sessionapi.Context, zw *zip.Writer) error {
 	return nil
 }
 
-func dumpGlobalBindings(ctx sessionapi.Context, zw *zip.Writer) error {
+func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show global bindings")
 	if err != nil {
 		return err
@@ -702,7 +702,7 @@ func dumpGlobalBindings(ctx sessionapi.Context, zw *zip.Writer) error {
 	return nil
 }
 
-func dumpEncodedPlan(ctx sessionapi.Context, zw *zip.Writer, encodedPlan string) error {
+func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string) error {
 	var recordSets []sqlexec.RecordSet
 	var err error
 	recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
@@ -728,7 +728,7 @@ func dumpEncodedPlan(ctx sessionapi.Context, zw *zip.Writer, encodedPlan string)
 	return nil
 }
 
-func dumpExplain(ctx sessionapi.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []any, err error) {
+func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []any, err error) {
 	fw, err := zw.Create("explain.txt")
 	if err != nil {
 		return nil, errors.AddStack(err)
@@ -773,7 +773,7 @@ func dumpExplain(ctx sessionapi.Context, zw *zip.Writer, isAnalyze bool, sqls []
 	return
 }
 
-func dumpPlanReplayerExplain(ctx sessionapi.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
 	sqls := make([]string, 0)
 	for _, execStmt := range task.ExecStmts {
 		sql := execStmt.Text()
@@ -789,7 +789,7 @@ func dumpPlanReplayerExplain(ctx sessionapi.Context, zw *zip.Writer, task *PlanR
 }
 
 // extractTableNames extracts table names from the given stmts.
-func extractTableNames(ctx context.Context, sctx sessionapi.Context,
+func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	execStmts []ast.StmtNode, curDB ast.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
@@ -822,7 +822,7 @@ func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*u
 	return jt, nil, err
 }
 
-func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionapi.Context) error {
+func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
 	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
 	if err != nil {
 		return err

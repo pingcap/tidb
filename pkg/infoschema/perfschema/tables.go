@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -232,7 +232,7 @@ func initTableIndices(t *perfSchemaTable) error {
 	return nil
 }
 
-func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionapi.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
+func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameTiDBProfileCPU:
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
@@ -286,7 +286,7 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionapi.Context,
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (vt *perfSchemaTable) IterRecords(ctx context.Context, sctx sessionapi.Context, cols []*table.Column, fn table.RecordIterFunc) error {
+func (vt *perfSchemaTable) IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error {
 	rows, err := vt.getRows(ctx, sctx, cols)
 	if err != nil {
 		return err
@@ -303,7 +303,7 @@ func (vt *perfSchemaTable) IterRecords(ctx context.Context, sctx sessionapi.Cont
 	return nil
 }
 
-func dataForRemoteProfile(ctx sessionapi.Context, nodeType, uri string, isGoroutine bool) ([][]types.Datum, error) {
+func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGoroutine bool) ([][]types.Datum, error) {
 	var (
 		servers []infoschema.ServerInfo
 		err     error

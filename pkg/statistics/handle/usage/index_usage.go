@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
@@ -32,7 +32,7 @@ func (u *statsUsageImpl) NewSessionIndexUsageCollector() *indexusage.SessionInde
 
 // GCIndexUsage removes unnecessary index usage data.
 func (u *statsUsageImpl) GCIndexUsage() error {
-	return util.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionapi.Context) error {
+	return util.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		schema := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		u.idxUsageCollector.GCIndexUsage(func(id int64) (*model.TableInfo, bool) {
 			tbl, ok := schema.TableByID(context.Background(), id)

@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -465,13 +465,13 @@ func TestRcTSOCmdCountForTextSQLExecuteNormal(t *testing.T) {
 	require.Equal(t, uint64(495), count)
 }
 
-func resetAllTsoCounter(sctx sessionapi.Context) {
+func resetAllTsoCounter(sctx sessionctx.Context) {
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 	sctx.SetValue(sessiontxn.TsoUseConstantCount, 0)
 	sctx.SetValue(sessiontxn.TsoWaitCount, 0)
 }
 
-func getAllTsoCounter(sctx sessionapi.Context) (any, any, any) {
+func getAllTsoCounter(sctx sessionctx.Context) (any, any, any) {
 	countTsoRequest := sctx.Value(sessiontxn.TsoRequestCount)
 	countTsoUseConstant := sctx.Value(sessiontxn.TsoUseConstantCount)
 	countWaitTsoOracle := sctx.Value(sessiontxn.TsoWaitCount)

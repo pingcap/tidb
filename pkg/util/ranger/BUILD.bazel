@@ -63,7 +63,7 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/planner/util/utilfuncp",
         "//pkg/session",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",

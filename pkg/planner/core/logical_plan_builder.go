@@ -59,7 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -4212,7 +4212,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 // Its overall logic is quite similar to getStatsTable(). During plan cache matching, only the latest version is needed.
 // In such case, compared to getStatsTable(), this function can save some copies, memory allocations and unnecessary
 // checks. Also, this function won't trigger metrics changes.
-func getLatestVersionFromStatsTable(ctx sessionapi.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
+func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	// 1. tidb-server started and statistics handle has not been initialized. Pseudo stats table.
 	if statsHandle == nil {

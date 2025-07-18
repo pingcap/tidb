@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -32,11 +32,11 @@ import (
 
 // Session wraps sessionctx.Context for transaction usage.
 type Session struct {
-	sessionapi.Context
+	sessionctx.Context
 }
 
 // NewSession creates a new Session.
-func NewSession(s sessionapi.Context) *Session {
+func NewSession(s sessionctx.Context) *Session {
 	return &Session{s}
 }
 
@@ -113,7 +113,7 @@ func (s *Session) Execute(ctx context.Context, query string, label string, args 
 }
 
 // Session returns the sessionctx.Context.
-func (s *Session) Session() sessionapi.Context {
+func (s *Session) Session() sessionctx.Context {
 	return s.Context
 }
 

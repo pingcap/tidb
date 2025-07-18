@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/types"
@@ -575,7 +575,7 @@ func (p *mockSessionPool) WithSession(fn func(*syssession.Session) error) error 
 
 type mockSession struct {
 	mock.Mock
-	sessionapi.Context
+	sessionctx.Context
 	sqlexec.SQLExecutor
 }
 
@@ -746,7 +746,7 @@ func TestWithSession(t *testing.T) {
 
 	// withSctx
 	mockCb2 := &mock.Mock{}
-	cb2 := func(ctx sessionapi.Context) error {
+	cb2 := func(ctx sessionctx.Context) error {
 		sctx.AssertExpectations(t)
 		defer mockRestore()
 		return mockCb2.MethodCalled("cb2", ctx).Error(0)

@@ -22,7 +22,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/types",

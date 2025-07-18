@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -62,8 +62,8 @@ func TestIsSpecialGlobalIndex(t *testing.T) {
 func TestCallSCtxFailed(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 
-	var sctxWithFailure sessionapi.Context
-	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionapi.Context) error {
+	var sctxWithFailure sessionctx.Context
+	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
 		sctxWithFailure = sctx
 		return errors.New("simulated error")
 	})

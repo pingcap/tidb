@@ -18,7 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -57,12 +57,12 @@ type LRUPlanCache struct {
 	guard float64
 
 	memoryUsageTotal int64
-	sctx             sessionapi.Context
+	sctx             sessionctx.Context
 }
 
 // NewLRUPlanCache creates a PCLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionapi.Context, _ bool) *LRUPlanCache {
+func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx.Context, _ bool) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
 		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")

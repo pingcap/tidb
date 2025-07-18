@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -53,12 +53,12 @@ func TestChangePruneMode(t *testing.T) {
 
 	// Two jobs are added because the prune mode is static.
 	tk.MustExec("set global tidb_partition_prune_mode = 'static'")
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, handle.HandleAutoAnalyze())
 		return nil
 	}))
 	r.WaitAutoAnalyzeFinishedForTest()
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -72,7 +72,7 @@ func TestChangePruneMode(t *testing.T) {
 
 	// One job is added because the prune mode is dynamic.
 	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -122,7 +122,7 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 	// No jobs are added.
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -130,7 +130,7 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	// Enable the auto analyze.
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 	// Jobs are added.
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -154,7 +154,7 @@ func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -178,7 +178,7 @@ func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -226,7 +226,7 @@ func TestIgnoreTinyTable(t *testing.T) {
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -265,7 +265,7 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 	// Analyze t1 first.
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -286,7 +286,7 @@ func TestAnalyzeHighestPriorityTables(t *testing.T) {
 	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
 	require.Equal(t, int64(6), tblStats2.ModifyCount)
 	// Do one more round.
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -334,7 +334,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 	// Analyze tables concurrently.
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -364,7 +364,7 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.Equal(t, int64(4), tblStats3.ModifyCount)
 
 	// Do one more round to analyze t3.
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -398,7 +398,7 @@ func TestDoNotRetryTableNotExistJob(t *testing.T) {
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -416,7 +416,7 @@ func TestDoNotRetryTableNotExistJob(t *testing.T) {
 	// Drop the database.
 	tk.MustExec("drop database test")
 
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))
@@ -455,7 +455,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	r := refresher.NewRefresher(context.Background(), handle, sysProcTracker, dom.DDLNotifier())
 	defer r.Close()
 
-	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionapi.Context) error {
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
 		return nil
 	}))

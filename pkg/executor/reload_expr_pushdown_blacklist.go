@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -38,7 +38,7 @@ func (e *ReloadExprPushdownBlacklistExec) Next(context.Context, *chunk.Chunk) er
 }
 
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
-func LoadExprPushdownBlacklist(sctx sessionapi.Context) (err error) {
+func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
 	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")

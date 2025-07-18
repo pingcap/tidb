@@ -8,7 +8,7 @@ go_library(
     deps = [
         "//pkg/metrics",
         "//pkg/planner/core/resolve",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
@@ -32,7 +32,7 @@ go_test(
     deps = [
         ":exec",
         "//pkg/parser/ast",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/util",
         "@com_github_stretchr_testify//require",

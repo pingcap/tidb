@@ -39,7 +39,7 @@ go_library(
         "//pkg/owner",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/table",

@@ -16,7 +16,7 @@ package breakpoint
 
 import (
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -24,7 +24,7 @@ import (
 const NotifyBreakPointFuncKey = stringutil.StringerStr("breakPointNotifyFunc")
 
 // Inject injects a break point to a session
-func Inject(sctx sessionapi.Context, name string) {
+func Inject(sctx sessionctx.Context, name string) {
 	failpoint.Inject(name, func(_ failpoint.Value) {
 		val := sctx.Value(NotifyBreakPointFuncKey)
 		if breakPointNotifyAndWaitContinue, ok := val.(func(string)); ok {

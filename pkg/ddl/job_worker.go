@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -1074,7 +1074,7 @@ func (w *worker) runOneJobStep(
 
 func loadDDLVars(w *worker) error {
 	// Get sessionctx from context resource pool.
-	var ctx sessionapi.Context
+	var ctx sessionctx.Context
 	ctx, err := w.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)

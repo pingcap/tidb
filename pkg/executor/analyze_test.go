@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -76,7 +76,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 
-	is := tk.Session().(sessionapi.Context).GetInfoSchema().(infoschema.InfoSchema)
+	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test_index_extract_topn"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()

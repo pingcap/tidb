@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -27,7 +27,7 @@ import (
 
 // SortCase is the sort case
 type SortCase struct {
-	Ctx        sessionapi.Context
+	Ctx        sessionctx.Context
 	OrderByIdx []int
 	Ndvs       []int
 	Rows       int
@@ -47,7 +47,7 @@ func (tc SortCase) String() string {
 }
 
 // DefaultSortTestCase returns default sort test case
-func DefaultSortTestCase(ctx sessionapi.Context) *SortCase {
+func DefaultSortTestCase(ctx sessionctx.Context) *SortCase {
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
@@ -56,7 +56,7 @@ func DefaultSortTestCase(ctx sessionapi.Context) *SortCase {
 }
 
 // SortTestCaseWithMemoryLimit returns sort test case
-func SortTestCaseWithMemoryLimit(ctx sessionapi.Context, bytesLimit int64) *SortCase {
+func SortTestCaseWithMemoryLimit(ctx sessionctx.Context, bytesLimit int64) *SortCase {
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(-1, bytesLimit)

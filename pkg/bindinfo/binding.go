@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -93,7 +93,7 @@ func (b *Binding) size() float64 {
 var (
 	// GetBindingHandle is a function to get the global binding handle.
 	// It is mainly used to resolve cycle import issue.
-	GetBindingHandle func(sctx sessionapi.Context) BindingHandle
+	GetBindingHandle func(sctx sessionctx.Context) BindingHandle
 )
 
 // BindingMatchInfo records necessary information for cross-db binding matching.
@@ -104,7 +104,7 @@ type BindingMatchInfo struct {
 }
 
 // MatchSQLBindingForPlanCache matches binding for plan cache.
-func MatchSQLBindingForPlanCache(sctx sessionapi.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string, ignoreBinding bool) {
+func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string, ignoreBinding bool) {
 	binding, matched, _ := matchSQLBinding(sctx, stmtNode, info)
 	if matched {
 		bindingSQL = binding.BindSQL
@@ -114,11 +114,11 @@ func MatchSQLBindingForPlanCache(sctx sessionapi.Context, stmtNode ast.StmtNode,
 }
 
 // MatchSQLBinding returns the matched binding for this statement.
-func MatchSQLBinding(sctx sessionapi.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
 	return matchSQLBinding(sctx, stmtNode, nil)
 }
 
-func matchSQLBinding(sctx sessionapi.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || stmtNode == nil {
 		return
@@ -169,7 +169,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	return bindingNoDBDigest, nil
 }
 
-func crossDBMatchBindings(sctx sessionapi.Context, tableNames []*ast.TableName, bindings []*Binding) (matchedBinding *Binding, isMatched bool) {
+func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, bindings []*Binding) (matchedBinding *Binding, isMatched bool) {
 	leastWildcards := len(tableNames) + 1
 	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, binding := range bindings {
@@ -268,7 +268,7 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func prepareHints(sctx sessionapi.Context, binding *Binding) (rerr error) {
+func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			rerr = errors.Errorf("panic when preparing hints for binding %v, panic: %v", binding.BindSQL, r)
@@ -471,7 +471,7 @@ func hasParam(stmt ast.Node) bool {
 }
 
 // CheckBindingStmt checks whether the statement is valid.
-func checkBindingValidation(sctx sessionapi.Context, bindingSQL string) error {
+func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
 	origVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
 

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -259,7 +260,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 func TestHandleLockTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	se := tk.Session().(sessionapi.Context)
+	se := tk.Session().(sessionctx.Context)
 	require.False(t, se.HasLockedTables())
 
 	checkTableLocked := func(tblID int64, tp ast.TableLockType) {

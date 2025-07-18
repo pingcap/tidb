@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -147,7 +147,7 @@ func TestNonPartitionedTableValidateAndPrepare(t *testing.T) {
 	insertMultipleFinishedJobs(tk, "example_table1", "")
 
 	se := tk.Session()
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	valid, failReason := job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
@@ -187,7 +187,7 @@ func TestValidateAndPrepareWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
 		Weight:  2,
 	}
 	se := tk.Session()
-	sctx := se.(sessionapi.Context)
+	sctx := se.(sessionctx.Context)
 	valid, failReason := job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)

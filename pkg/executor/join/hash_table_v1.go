@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/bitmap"
@@ -108,7 +108,7 @@ type hashRowContainer struct {
 	chkBufSizeForOneProbe int64
 }
 
-func newHashRowContainer(sCtx sessionapi.Context, hCtx *HashContext, allTypes []*types.FieldType) *hashRowContainer {
+func newHashRowContainer(sCtx sessionctx.Context, hCtx *HashContext, allTypes []*types.FieldType) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
 	rc := chunk.NewRowContainer(allTypes, maxChunkSize)
 	c := &hashRowContainer{

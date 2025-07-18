@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -641,7 +641,7 @@ func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertPessimisticLockErr"))
 }
 
-func activePessimisticRRAssert(t testing.TB, sctx sessionapi.Context,
+func activePessimisticRRAssert(t testing.TB, sctx sessionctx.Context,
 	inTxn bool) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRRTxnContextProvider]{
 		sctx:         sctx,
@@ -653,7 +653,7 @@ func activePessimisticRRAssert(t testing.TB, sctx sessionapi.Context,
 	}
 }
 
-func inactivePessimisticRRAssert(sctx sessionapi.Context) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
+func inactivePessimisticRRAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRRTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "REPEATABLE-READ",

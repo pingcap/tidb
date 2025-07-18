@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -169,7 +169,7 @@ func checkCases(
 	loadSQL string,
 	t *testing.T,
 	tk *testkit.TestKit,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
 	for _, tt := range tests {
@@ -199,7 +199,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	createSQL := `create table load_data_missing (id int, t timestamp not null)`
 	tk.MustExec(createSQL)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' ignore into table load_data_missing"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 
 	deleteSQL := "delete from load_data_missing"
 	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
@@ -232,7 +232,7 @@ func TestIssue18681(t *testing.T) {
 		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1),e bit(32),f bit(1));`
 	tk.MustExec(createSQL)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test"
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d), bin(e), bin(f) from load_data_test;"
@@ -257,7 +257,7 @@ func TestIssue18681(t *testing.T) {
 func TestIssue34358(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 
 	tk.MustExec("use test")

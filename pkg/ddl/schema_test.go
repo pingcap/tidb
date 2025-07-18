@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -39,7 +38,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func testCreateTable(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
@@ -136,7 +135,7 @@ func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	return dbInfo, nil
 }
 
-func testCreateSchema(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		Version:    model.GetJobVerInUse(),
 		SchemaID:   dbInfo.ID,
@@ -171,7 +170,7 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 	return j
 }
 
-func testDropSchema(t *testing.T, ctx sessionapi.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.DropSchemaArgs{FKCheck: true}, true))
@@ -347,7 +346,7 @@ func doDDLJobErr(
 	schemaID, tableID int64,
 	schemaName, tableName string,
 	tp model.ActionType,
-	ctx sessionapi.Context,
+	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	store kv.Storage,
 	handler func(job *model.Job) model.JobArgs,

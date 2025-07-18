@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -90,7 +90,7 @@ func (r *Refresher) UpdateConcurrency() {
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
 // Note: Make sure the session has the latest variable values.
 // Usually, this is done by the caller through `util.CallWithSCtx`.
-func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionapi.Context) bool {
+func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	err := r.setAutoAnalysisTimeWindow(parameters)
 	if err != nil {

@@ -29,14 +29,14 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 // setWatchOption is used to set the QuarantineRecord with specific QueryWatchOption ast node.
 func setWatchOption(ctx context.Context,
-	sctx, newSctx sessionapi.Context,
+	sctx, newSctx sessionctx.Context,
 	record *runaway.QuarantineRecord,
 	op *ast.QueryWatchOption,
 ) error {
@@ -117,7 +117,7 @@ func setWatchOption(ctx context.Context,
 }
 
 // fromQueryWatchOptionList is used to create a QuarantineRecord with some QueryWatchOption ast nodes.
-func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionapi.Context,
+func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context,
 	optionList []*ast.QueryWatchOption) (*runaway.QuarantineRecord, error) {
 	record := &runaway.QuarantineRecord{
 		Source:      runaway.ManualSource,
@@ -196,7 +196,7 @@ func (e *AddExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // ExecDropQueryWatch is use to exec DropQueryWatchStmt.
-func ExecDropQueryWatch(sctx sessionapi.Context, s *ast.DropQueryWatchStmt) error {
+func ExecDropQueryWatch(sctx sessionctx.Context, s *ast.DropQueryWatchStmt) error {
 	do := domain.GetDomain(sctx)
 	switch {
 	case s.GroupNameStr.String() != "":

@@ -15,7 +15,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/planner/core/resolve",
         "//pkg/session",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_prometheus_client_model//go",

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
@@ -98,7 +98,7 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	return nil
 }
 
-func planCachePreprocess(ctx context.Context, sctx sessionapi.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
+func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
 	vars.StmtCtx.StmtType = stmtAst.StmtType
@@ -193,7 +193,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionapi.Context, isNonPrep
 // It tries to get a valid cached plan from plan cache.
 // If there is no such a plan, it'll call the optimizer to generate a new one.
 // isNonPrepared indicates whether to use the non-prepared plan cache or the prepared plan cache.
-func GetPlanFromPlanCache(ctx context.Context, sctx sessionapi.Context,
+func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
 	params []expression.Expression) (plan base.Plan, names []*types.FieldName, err error) {
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
@@ -246,7 +246,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionapi.Context,
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, binding, paramTypes)
 }
 
-func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionapi.Context,
+func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmt *PlanCacheStmt, plan base.Plan) (clonedPlan base.Plan, ok bool) {
 	defer func(begin time.Time) {
 		if ok {
@@ -281,7 +281,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	return enableInstancePlanCache
 }
 
-func lookupPlanCache(ctx context.Context, sctx sessionapi.Context, cacheKey string,
+func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string,
 	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, hit bool) {
 	useInstanceCache := instancePlanCacheEnabled(ctx)
 	defer func(begin time.Time) {
@@ -303,7 +303,7 @@ func lookupPlanCache(ctx context.Context, sctx sessionapi.Context, cacheKey stri
 	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
 }
 
-func adjustCachedPlan(ctx context.Context, sctx sessionapi.Context,
+func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 	plan base.Plan, stmtHints *hint.StmtHints, isNonPrepared, skipPrivCheck bool,
 	bindSQL string, is infoschema.InfoSchema, stmt *PlanCacheStmt) (
 	base.Plan, bool, error) {
@@ -333,7 +333,7 @@ func adjustCachedPlan(ctx context.Context, sctx sessionapi.Context,
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
-func generateNewPlan(ctx context.Context, sctx sessionapi.Context, isNonPrepared bool, is infoschema.InfoSchema,
+func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
 	stmt *PlanCacheStmt, cacheKey, binding string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
@@ -382,7 +382,7 @@ func generateNewPlan(ctx context.Context, sctx sessionapi.Context, isNonPrepared
 }
 
 // checkPreparedPriv checks the privilege of the prepared statement
-func checkPreparedPriv(ctx context.Context, sctx sessionapi.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
+func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := VisitInfo4PrivCheck(ctx, is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
@@ -394,7 +394,7 @@ func checkPreparedPriv(ctx context.Context, sctx sessionapi.Context, stmt *PlanC
 }
 
 // IsSafeToReusePointGetExecutor checks whether this is a PointGet Plan and safe to reuse its executor.
-func IsSafeToReusePointGetExecutor(sctx sessionapi.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) bool {
+func IsSafeToReusePointGetExecutor(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) bool {
 	if staleread.IsStmtStaleness(sctx) {
 		return false
 	}

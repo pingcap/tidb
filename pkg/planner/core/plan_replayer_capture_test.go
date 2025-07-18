@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -33,7 +33,7 @@ import (
 func TestPlanReplayerCaptureRecordJsonStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionapi.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int)")
@@ -62,7 +62,7 @@ func TestPlanReplayerCaptureRecordJsonStats(t *testing.T) {
 	}
 }
 
-func getTableStats(sql string, t *testing.T, ctx sessionapi.Context, dom *domain.Domain) map[int64]*statistics.Table {
+func getTableStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain.Domain) map[int64]*statistics.Table {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)

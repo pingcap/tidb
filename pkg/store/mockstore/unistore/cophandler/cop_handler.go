@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
@@ -407,7 +407,7 @@ type evalContext struct {
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
 	primaryCols []int64
-	sctx        sessionapi.Context
+	sctx        sessionctx.Context
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
@@ -467,7 +467,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 }
 
 // flagsAndTzToSessionContext creates a sessionctx.Context from a `tipb.SelectRequest.Flags`.
-func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionapi.Context {
+func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx := mock.NewContextDeprecated()

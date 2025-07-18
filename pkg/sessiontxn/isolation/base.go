@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -58,7 +58,7 @@ import (
 // or `GetStmtForUpdate` to get the timestamp that should be used by the corresponding isolation level.
 type baseTxnContextProvider struct {
 	// States that should be initialized when baseTxnContextProvider is created and should not be changed after that
-	sctx                  sessionapi.Context
+	sctx                  sessionctx.Context
 	causalConsistencyOnly bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
 	onTxnActiveFunc        func(kv.Transaction, sessiontxn.EnterNewTxnType)
@@ -654,7 +654,7 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 }
 
 // canReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
-func canReuseTxnWhenExplicitBegin(sctx sessionapi.Context) bool {
+func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	sessVars := sctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
@@ -667,7 +667,7 @@ func canReuseTxnWhenExplicitBegin(sctx sessionapi.Context) bool {
 }
 
 // newOracleFuture creates new future according to the scope and the session context
-func newOracleFuture(ctx context.Context, sctx sessionapi.Context, scope string) oracle.Future {
+func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string) oracle.Future {
 	r, ctx := tracing.StartRegionEx(ctx, "isolation.newOracleFuture")
 	defer r.End()
 

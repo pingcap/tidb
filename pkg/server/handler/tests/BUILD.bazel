@@ -34,7 +34,7 @@ go_test(
         "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
         "//pkg/session",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle/ddl/testutil",

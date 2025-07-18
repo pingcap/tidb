@@ -77,7 +77,7 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/resolve",
         "//pkg/session",
-        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",

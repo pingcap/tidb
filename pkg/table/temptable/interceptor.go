@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 )
@@ -40,7 +40,7 @@ type TemporaryTableSnapshotInterceptor struct {
 }
 
 // SessionSnapshotInterceptor creates a new snapshot interceptor for temporary table data fetch
-func SessionSnapshotInterceptor(sctx sessionapi.Context, is infoschema.InfoSchema) kv.SnapshotInterceptor {
+func SessionSnapshotInterceptor(sctx sessionctx.Context, is infoschema.InfoSchema) kv.SnapshotInterceptor {
 	if !is.HasTemporaryTable() {
 		return nil
 	}

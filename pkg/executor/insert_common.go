@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -799,7 +799,7 @@ func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int,
 	return nil, -1, false
 }
 
-func setDatumAutoIDAndCast(ctx sessionapi.Context, d *types.Datum, id int64, col *table.Column) error {
+func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
 	d.SetAutoID(id, col.GetFlag())
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
@@ -1456,10 +1456,10 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 }
 
 // CreateSession will be assigned by session package.
-var CreateSession func(ctx sessionapi.Context) (sessionapi.Context, error)
+var CreateSession func(ctx sessionctx.Context) (sessionctx.Context, error)
 
 // CloseSession will be assigned by session package.
-var CloseSession func(ctx sessionapi.Context)
+var CloseSession func(ctx sessionctx.Context)
 
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {

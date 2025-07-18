@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -300,7 +300,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
 }
 
-func newLockCtx(sctx sessionapi.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
@@ -347,7 +347,7 @@ func newLockCtx(sctx sessionapi.Context, lockWaitTime int64, numKeys int) (*tikv
 // doLockKeys is the main entry for pessimistic lock keys
 // waitTime means the lock operation will wait in milliseconds if target key is already
 // locked by others. used for (select for update nowait) situation
-func doLockKeys(ctx context.Context, se sessionapi.Context, lockCtx *tikvstore.LockCtx, keys ...kv.Key) error {
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.LockCtx, keys ...kv.Key) error {
 	sessVars := se.GetSessionVars()
 	sctx := sessVars.StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
@@ -632,7 +632,7 @@ type selectionExecutorContext struct {
 	enableVectorizedExpression bool
 }
 
-func newSelectionExecutorContext(sctx sessionapi.Context) selectionExecutorContext {
+func newSelectionExecutorContext(sctx sessionctx.Context) selectionExecutorContext {
 	return selectionExecutorContext{
 		stmtMemTracker:             sctx.GetSessionVars().StmtCtx.MemTracker,
 		evalCtx:                    sctx.GetExprCtx().GetEvalCtx(),
@@ -791,7 +791,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 		}
 		mutableRow := chunk.MutRowFromTypes(exec.RetTypes(e))
 		type tableIter interface {
-			IterRecords(ctx context.Context, sctx sessionapi.Context, cols []*table.Column, fn table.RecordIterFunc) error
+			IterRecords(ctx context.Context, sctx sessionctx.Context, cols []*table.Column, fn table.RecordIterFunc) error
 		}
 		err := (e.t.(tableIter)).IterRecords(ctx, e.Ctx(), columns, func(_ kv.Handle, rec []types.Datum, _ []*table.Column) (bool, error) {
 			mutableRow.SetDatums(rec...)
@@ -870,7 +870,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
-func ResetContextOfStmt(ctx sessionapi.Context, s ast.StmtNode) (err error) {
+func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("ResetContextOfStmt panicked", zap.Stack("stack"), zap.Any("recover", r), zap.Error(err))
@@ -1271,7 +1271,7 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	}
 }
 
-func isWeakConsistencyRead(ctx sessionapi.Context, node ast.Node) bool {
+func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(sessionVars) && plannercore.IsReadOnly(node, sessionVars)

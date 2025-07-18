@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
@@ -186,7 +187,7 @@ func DisableStats4Test() {
 }
 
 // Parse parses a query string to raw ast.StmtNode.
-func Parse(ctx sessionapi.Context, src string) ([]ast.StmtNode, error) {
+func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
 	sessVars := ctx.GetSessionVars()
 	p := parser.New()
@@ -326,7 +327,7 @@ func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
 // If stmtHistory is nil, will create a new one for current txn.
-func GetHistory(ctx sessionapi.Context) *StmtHistory {
+func GetHistory(ctx sessionctx.Context) *StmtHistory {
 	hist, ok := ctx.GetSessionVars().TxnCtx.History.(*StmtHistory)
 	if ok {
 		return hist
@@ -337,7 +338,7 @@ func GetHistory(ctx sessionapi.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(ctx context.Context, _ sessionapi.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}

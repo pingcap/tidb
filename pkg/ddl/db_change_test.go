@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -349,7 +350,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		if err = se.PrepareTxnCtx(ctx); err != nil {
 			return err
 		}
-		sctx := se.(sessionapi.Context)
+		sctx := se.(sessionctx.Context)
 		if err = executor.ResetContextOfStmt(sctx, c.rawStmt); err != nil {
 			return errors.Trace(err)
 		}
@@ -1547,7 +1548,7 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	sessionToStart.Add(2)
 	firstDDLFinished := make(chan struct{})
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetSchemaAndTableByIdent", func(ctx sessionapi.Context) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetSchemaAndTableByIdent", func(ctx sessionctx.Context) {
 		// The following code is for testing.
 		// Make sure the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.

@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -103,7 +103,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 }
 
 // GetGroupKey evaluates the group items and args of aggregate functions.
-func GetGroupKey(ctx sessionapi.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
+func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
 	avlGroupKeyLen := min(len(groupKey), numRows)
 	for i := range avlGroupKeyLen {

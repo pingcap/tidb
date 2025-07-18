@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -103,7 +103,7 @@ func registerHandler(t *testing.T) *sessionHandler {
 	return h
 }
 
-func getPreparedID(t *testing.T, sctx sessionapi.Context) uint32 {
+func getPreparedID(t *testing.T, sctx sessionctx.Context) uint32 {
 	sessStates := &sessionstates.SessionStates{}
 	require.NoError(t, sctx.GetSessionVars().EncodeSessionStates(context.Background(), sessStates))
 	return sessStates.PreparedStmtID

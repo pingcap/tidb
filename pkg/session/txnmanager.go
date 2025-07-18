@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -38,7 +38,7 @@ func init() {
 	sessiontxn.GetTxnManager = getTxnManager
 }
 
-func getTxnManager(sctx sessionapi.Context) sessiontxn.TxnManager {
+func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 	if manager, ok := sctx.GetSessionVars().TxnManager.(sessiontxn.TxnManager); ok {
 		return manager
 	}
@@ -50,7 +50,7 @@ func getTxnManager(sctx sessionapi.Context) sessiontxn.TxnManager {
 
 // txnManager implements sessiontxn.TxnManager
 type txnManager struct {
-	sctx sessionapi.Context
+	sctx sessionctx.Context
 
 	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
@@ -75,7 +75,7 @@ func (s event) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	return nil
 }
 
-func newTxnManager(sctx sessionapi.Context) *txnManager {
+func newTxnManager(sctx sessionctx.Context) *txnManager {
 	return &txnManager{sctx: sctx}
 }
 

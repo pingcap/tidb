@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -103,7 +103,7 @@ func TestManager(t *testing.T) {
 			require.NoError(t, err)
 			mgr := storage.NewTaskManager(pool)
 			ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-			require.NoError(t, mgr.WithNewSession(func(se sessionapi.Context) error {
+			require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
 				_, err := importer.CreateJob(ctx, se.GetSQLExecutor(), "db", "tbl", 1, "", &importer.ImportParameters{}, 1)
 				return err
 			}))
@@ -111,13 +111,13 @@ func TestManager(t *testing.T) {
 			userTK.MustQuery("select count(1) from mysql.tidb_import_jobs").Check(testkit.Rows("1"))
 
 			// we cannot access user tables in cross keyspace session
-			require.ErrorIs(t, mgr.WithNewSession(func(se sessionapi.Context) error {
+			require.ErrorIs(t, mgr.WithNewSession(func(se sessionctx.Context) error {
 				_, err2 := se.GetSQLExecutor().ExecuteInternal(ctx, "select * from test.t")
 				return err2
 			}), infoschema.ErrTableNotExists)
 
 			// we cannot execute DDL in cross keyspace session
-			require.ErrorContains(t, mgr.WithNewSession(func(se sessionapi.Context) error {
+			require.ErrorContains(t, mgr.WithNewSession(func(se sessionctx.Context) error {
 				_, err2 := se.GetSQLExecutor().ExecuteInternal(ctx, "create table test.t2(id int)")
 				return err2
 			}), "DDL is not supported in cross keyspace session")

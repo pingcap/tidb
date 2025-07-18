@@ -38,7 +38,7 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -355,7 +355,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 }
 
 // PollAvailableTableProgress will poll and check availability of available tables.
-func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionapi.Context, pollTiFlashContext *TiFlashManagementContext) {
+func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
 		pollMaxCount = uint64(val.(int))
@@ -427,7 +427,7 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionapi.Cont
 	}
 }
 
-func (d *ddl) refreshTiFlashTicker(ctx sessionapi.Context, pollTiFlashContext *TiFlashManagementContext) error {
+func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) error {
 	if pollTiFlashContext.PollCounter%UpdateTiFlashStoreTick.Load() == 0 {
 		if err := updateTiFlashStores(pollTiFlashContext); err != nil {
 			// If we failed to get from pd, retry everytime.
@@ -562,7 +562,7 @@ type pending struct {
 // 1. It will scan all the meta and check if there is any TiFlash replica.
 // 2. If there is, it will check if the placement rules are missing.
 // 3. If the placement rules are missing, it will add by submit a ActionSetTiFlashReplica job to repair the entire table.
-func (d *ddl) refreshTiFlashPlacementRules(sctx sessionapi.Context, tick uint64) error {
+func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64) error {
 	if tick%RefreshRulesTick.Load() != 0 {
 		return nil
 	}

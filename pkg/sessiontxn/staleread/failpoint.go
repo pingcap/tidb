@@ -17,12 +17,12 @@ package staleread
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 )
 
 // AssertStmtStaleness is used only for test
-func AssertStmtStaleness(sctx sessionapi.Context, expected bool) {
+func AssertStmtStaleness(sctx sessionctx.Context, expected bool) {
 	actual := IsStmtStaleness(sctx)
 	if actual != expected {
 		panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, actual))

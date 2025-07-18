@@ -50,7 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1310,12 +1310,12 @@ type fakeSession struct {
 	glue.Session
 }
 
-func (fs fakeSession) GetSessionCtx() sessionapi.Context {
+func (fs fakeSession) GetSessionCtx() sessionctx.Context {
 	return fakeSessionContext{}
 }
 
 type fakeSessionContext struct {
-	sessionapi.Context
+	sessionctx.Context
 }
 
 func (fsc fakeSessionContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {

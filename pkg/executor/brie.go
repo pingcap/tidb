@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -688,7 +687,7 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 
 type tidbGlue struct {
 	// the session context of the brie task
-	se       sessionapi.Context
+	se       sessionctx.Context
 	progress *brieTaskProgress
 	info     *brieTaskInfo
 }
@@ -765,7 +764,7 @@ func (*tidbGlue) GetClient() glue.GlueClient {
 
 type tidbGlueSession struct {
 	// the session context of the brie task's subtask, such as `CREATE TABLE`.
-	se sessionapi.Context
+	se sessionctx.Context
 }
 
 // Execute implements glue.Session
@@ -827,7 +826,7 @@ func (gs *tidbGlueSession) GetGlobalSysVar(name string) (string, error) {
 }
 
 // GetSessionCtx implements glue.Glue
-func (gs *tidbGlueSession) GetSessionCtx() sessionapi.Context {
+func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
 }
 

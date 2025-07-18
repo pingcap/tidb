@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -83,7 +83,7 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 }
 
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
-func TryAddExtraLimit(ctx sessionapi.Context, node ast.StmtNode) ast.StmtNode {
+func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
 		return node
 	}
@@ -125,7 +125,7 @@ func TryAddExtraLimit(ctx sessionapi.Context, node ast.StmtNode) ast.StmtNode {
 
 // Preprocess resolves table names of the node, and checks some statements' validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
-func Preprocess(ctx context.Context, sctx sessionapi.Context, node *resolve.NodeW, preprocessOpt ...PreprocessOpt) error {
+func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, preprocessOpt ...PreprocessOpt) error {
 	defer tracing.StartRegion(ctx, "planner.Preprocess").End()
 	v := preprocessor{
 		ctx:                ctx,
@@ -187,7 +187,7 @@ var _ = PreprocessorReturn{}.initedLastSnapshotTS
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
 	IsStaleness          bool
-	SnapshotTSEvaluator  func(context.Context, sessionapi.Context) (uint64, error)
+	SnapshotTSEvaluator  func(context.Context, sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
@@ -231,7 +231,7 @@ func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
 // ast Nodes parsed from parser.
 type preprocessor struct {
 	ctx  context.Context
-	sctx sessionapi.Context
+	sctx sessionctx.Context
 	flag preprocessorFlag
 	stmtTp byte
 	showTp ast.ShowStmtType

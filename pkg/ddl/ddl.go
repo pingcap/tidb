@@ -55,7 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -1254,7 +1254,7 @@ type Info struct {
 }
 
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
-func GetDDLInfoWithNewTxn(s sessionapi.Context) (*Info, error) {
+func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	se := sess.NewSession(s)
 	err := se.Begin(context.Background())
 	if err != nil {
@@ -1266,7 +1266,7 @@ func GetDDLInfoWithNewTxn(s sessionapi.Context) (*Info, error) {
 }
 
 // GetDDLInfo returns DDL information and only uses for testing.
-func GetDDLInfo(s sessionapi.Context) (*Info, error) {
+func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
 	se := sess.NewSession(s)
@@ -1393,7 +1393,7 @@ func resumePausedJob(job *model.Job,
 func processJobs(
 	ctx context.Context,
 	process func(*model.Job, model.AdminCommandOperator) (err error),
-	sessCtx sessionapi.Context,
+	sessCtx sessionctx.Context,
 	ids []int64,
 	byWho model.AdminCommandOperator,
 ) (jobErrs []error, err error) {
@@ -1476,34 +1476,34 @@ func processJobs(
 }
 
 // CancelJobs cancels the DDL jobs according to user command.
-func CancelJobs(ctx context.Context, se sessionapi.Context, ids []int64) (errs []error, err error) {
+func CancelJobs(ctx context.Context, se sessionctx.Context, ids []int64) (errs []error, err error) {
 	return processJobs(ctx, cancelRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // PauseJobs pause all the DDL jobs according to user command.
-func PauseJobs(ctx context.Context, se sessionapi.Context, ids []int64) ([]error, error) {
+func PauseJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
 	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // ResumeJobs resume all the DDL jobs according to user command.
-func ResumeJobs(ctx context.Context, se sessionapi.Context, ids []int64) ([]error, error) {
+func ResumeJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
 	return processJobs(ctx, resumePausedJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // CancelJobsBySystem cancels Jobs because of internal reasons.
-func CancelJobsBySystem(se sessionapi.Context, ids []int64) (errs []error, err error) {
+func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	ctx := context.Background()
 	return processJobs(ctx, cancelRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // PauseJobsBySystem pauses Jobs because of internal reasons.
-func PauseJobsBySystem(se sessionapi.Context, ids []int64) (errs []error, err error) {
+func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	ctx := context.Background()
 	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
-func ResumeJobsBySystem(se sessionapi.Context, ids []int64) (errs []error, err error) {
+func ResumeJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	ctx := context.Background()
 	return processJobs(ctx, resumePausedJob, se, ids, model.AdminCommandBySystem)
 }
@@ -1512,7 +1512,7 @@ func ResumeJobsBySystem(se sessionapi.Context, ids []int64) (errs []error, err e
 func processAllJobs(
 	ctx context.Context,
 	process func(*model.Job, model.AdminCommandOperator) (err error),
-	se sessionapi.Context,
+	se sessionctx.Context,
 	byWho model.AdminCommandOperator,
 ) (map[int64]error, error) {
 	var err error
@@ -1572,23 +1572,23 @@ func processAllJobs(
 }
 
 // PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
-func PauseAllJobsBySystem(se sessionapi.Context) (map[int64]error, error) {
+func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
 	return processAllJobs(context.Background(), pauseRunningJob, se, model.AdminCommandBySystem)
 }
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
-func ResumeAllJobsBySystem(se sessionapi.Context) (map[int64]error, error) {
+func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
 	return processAllJobs(context.Background(), resumePausedJob, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
-func GetAllDDLJobs(ctx context.Context, se sessionapi.Context) ([]*model.Job, error) {
+func GetAllDDLJobs(ctx context.Context, se sessionctx.Context) ([]*model.Job, error) {
 	return getJobsBySQL(ctx, sess.NewSession(se), "1 order by job_id")
 }
 
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
-func IterAllDDLJobs(ctx sessionapi.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
 	jobs, err := GetAllDDLJobs(context.Background(), ctx)
 	if err != nil {
 		return err
