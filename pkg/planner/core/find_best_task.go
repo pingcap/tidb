@@ -125,7 +125,7 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 	if (!prop.IsSortItemEmpty() && p.RowCount > 1) || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
-	dual := PhysicalTableDual{
+	dual := physicalop.PhysicalTableDual{
 		RowCount: p.RowCount,
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	dual.SetSchema(p.Schema())
@@ -1037,7 +1037,7 @@ func tryToGetDualTask(ds *logicalop.DataSource) (base.Task, error) {
 				return nil, err
 			}
 			if !result {
-				dual := PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
+				dual := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
 				dual.SetSchema(ds.Schema())
 				rt := &RootTask{}
 				rt.SetPlan(dual)
@@ -1877,7 +1877,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), path.AccessConds...) {
 				ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("get a TableDual plan")
 			}
-			dual := PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
+			dual := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
 			dual.SetSchema(ds.Schema())
 			cntPlan++
 			planCounter.Dec(1)
