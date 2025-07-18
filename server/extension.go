@@ -17,6 +17,7 @@ package server
 import (
 	"fmt"
 
+<<<<<<< HEAD:server/extension.go
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser"
@@ -26,6 +27,17 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+=======
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/param"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+>>>>>>> 8ce2ad16961 (parse: fix the type of date/time parameters (#48237)):pkg/server/extension.go
 )
 
 func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
@@ -54,7 +66,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 	cc.extensions.OnConnectionEvent(tp, info)
 }
 
-func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, err error, args ...expression.Expression) {
+func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, err error, args ...param.BinaryParam) {
 	if !cc.extensions.HasStmtEventListeners() {
 		return
 	}
@@ -82,9 +94,17 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, er
 	case PreparedStatement:
 		info.executeStmtID = uint32(stmt.ID())
 		prepared, _ := sessVars.GetPreparedStmtByID(info.executeStmtID)
+
+		// TODO: the `BinaryParam` is parsed two times: one in the `Execute` method and one here. It would be better to
+		// eliminate one of them by storing the parsed result.
+		typectx := ctx.GetSessionVars().StmtCtx.TypeCtx()
+		typectx = types.NewContext(typectx.Flags(), typectx.Location(), func(_ error) {
+			// ignore all warnings
+		})
+		params, _ := param.ExecArgs(typectx, args)
 		info.executeStmt = &ast.ExecuteStmt{
 			PrepStmt:   prepared,
-			BinaryArgs: args,
+			BinaryArgs: params,
 		}
 		info.stmtNode = info.executeStmt
 	case ast.StmtNode:
@@ -112,7 +132,7 @@ func (cc *clientConn) onExtensionSQLParseFailed(sql string, err error) {
 	})
 }
 
-func (cc *clientConn) onExtensionBinaryExecuteEnd(prep PreparedStatement, args []expression.Expression, stmtCtxValid bool, err error) {
+func (cc *clientConn) onExtensionBinaryExecuteEnd(prep PreparedStatement, args []param.BinaryParam, stmtCtxValid bool, err error) {
 	cc.onExtensionStmtEnd(prep, stmtCtxValid, err, args...)
 }
 
