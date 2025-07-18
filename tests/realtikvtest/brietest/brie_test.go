@@ -15,6 +15,7 @@
 package brietest
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
@@ -60,6 +62,7 @@ func TestShowBackupQuery(t *testing.T) {
 	restoreQuery := fmt.Sprintf("RESTORE TABLE `test`.`foo` FROM 'local://%s'", sqlTmp)
 	tk.MustQuery(restoreQuery)
 	res = tk.MustQuery("show br job query 2;")
+	tk.MustExec("drop table foo;")
 	res.CheckContain(restoreQuery)
 }
 
@@ -68,6 +71,7 @@ func TestShowBackupQueryRedact(t *testing.T) {
 
 	executor.ResetGlobalBRIEQueueForTest()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/block-on-brie", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/block-on-brie")
 	ch := make(chan any)
 	go func() {
 		tk := testkit.NewTestKit(t, tk.Session().GetStore())
@@ -102,6 +106,7 @@ func TestCancel(t *testing.T) {
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/block-on-brie", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/block-on-brie")
 
 	req := require.New(t)
 	ch := make(chan struct{})
@@ -124,5 +129,51 @@ func TestCancel(t *testing.T) {
 	case <-ch:
 	case <-time.After(5 * time.Second):
 		req.FailNow("the backup job doesn't be canceled")
+	}
+}
+
+func TestExistedTables(t *testing.T) {
+	tk := initTestKit(t)
+	tmp := makeTempDirForBackup(t)
+	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
+	executor.ResetGlobalBRIEQueueForTest()
+	tk.MustExec("use test;")
+	for i := 0; i < 10; i++ {
+		tableName := fmt.Sprintf("foo%d", i)
+		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
+		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
+		_ = tk.MustQuery(backupQuery)
+	}()
+	select {
+	case <-time.After(20 * time.Second):
+		t.Fatal("Backup operation exceeded")
+	case <-done:
+	}
+
+	done = make(chan struct{})
+	go func() {
+		defer close(done)
+		restoreQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s'", sqlTmp)
+		res, err := tk.Exec(restoreQuery)
+		require.NoError(t, err)
+
+		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
+		require.ErrorContains(t, err, "table already exists")
+	}()
+	select {
+	case <-time.After(20 * time.Second):
+		t.Fatal("Restore operation exceeded")
+	case <-done:
+	}
+
+	for i := 0; i < 10; i++ {
+		tableName := fmt.Sprintf("foo%d", i)
+		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
 }
