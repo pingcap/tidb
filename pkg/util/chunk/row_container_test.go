@@ -336,11 +336,9 @@ func insertBytesRowsIntoRowContainer(t *testing.T, chkCount int, rowPerChk int) 
 }
 
 func TestRowContainerReaderInDisk(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
-	})
+	})()
 
 	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 16)
 	rc.SpillToDisk()
@@ -357,11 +355,9 @@ func TestRowContainerReaderInDisk(t *testing.T) {
 }
 
 func TestCloseRowContainerReader(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
-	})
+	})()
 
 	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 16)
 	rc.SpillToDisk()
@@ -384,11 +380,9 @@ func TestCloseRowContainerReader(t *testing.T) {
 }
 
 func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
-	})
+	})()
 
 	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 1024)
 
@@ -413,11 +407,9 @@ func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
 }
 
 func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
-	})
+	})()
 
 	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 1024)
 
@@ -564,11 +556,9 @@ func BenchmarkRowContainerReaderInDiskWithRowSize4096(b *testing.B) {
 func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int) {
 	b.StopTimer()
 
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = b.TempDir()
-	})
+	})()
 
 	longVarCharTyp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(rowLength).Build()
 	fields := []*types.FieldType{&longVarCharTyp}
