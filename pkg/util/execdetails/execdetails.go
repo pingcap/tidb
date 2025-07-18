@@ -507,39 +507,39 @@ func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 		return nil
 	}
 	d := &CopTasksDetails{NumCopTasks: n}
-	d.TotProcessTime = s.execDetails.TimeDetail.ProcessTime
-	d.AvgProcessTime = d.TotProcessTime / time.Duration(n)
+	d.ProcessTimeStats = TaskTimeStats{
+		TotTime:    s.execDetails.TimeDetail.ProcessTime,
+		AvgTime:    s.execDetails.TimeDetail.ProcessTime / time.Duration(n),
+		P90Time:    time.Duration((s.detailsSummary.ProcessTimePercentile.GetPercentile(0.9))),
+		MaxTime:    s.detailsSummary.ProcessTimePercentile.GetMax().D,
+		MaxAddress: s.detailsSummary.ProcessTimePercentile.GetMax().Addr,
+	}
 
-	d.TotWaitTime = s.execDetails.TimeDetail.WaitTime
-	d.AvgWaitTime = d.TotWaitTime / time.Duration(n)
-
-	d.P90ProcessTime = time.Duration((s.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
-	d.MaxProcessTime = s.detailsSummary.ProcessTimePercentile.GetMax().D
-	d.MaxProcessAddress = s.detailsSummary.ProcessTimePercentile.GetMax().Addr
-
-	d.P90WaitTime = time.Duration((s.detailsSummary.WaitTimePercentile.GetPercentile(0.9)))
-	d.MaxWaitTime = s.detailsSummary.WaitTimePercentile.GetMax().D
-	d.MaxWaitAddress = s.detailsSummary.WaitTimePercentile.GetMax().Addr
+	d.WaitTimeStats = TaskTimeStats{
+		TotTime:    s.execDetails.TimeDetail.WaitTime,
+		AvgTime:    s.execDetails.TimeDetail.WaitTime / time.Duration(n),
+		P90Time:    time.Duration((s.detailsSummary.WaitTimePercentile.GetPercentile(0.9))),
+		MaxTime:    s.detailsSummary.WaitTimePercentile.GetMax().D,
+		MaxAddress: s.detailsSummary.WaitTimePercentile.GetMax().Addr,
+	}
 
 	if len(s.detailsSummary.BackoffInfo) > 0 {
-		d.MaxBackoffTime = make(map[string]time.Duration)
-		d.AvgBackoffTime = make(map[string]time.Duration)
-		d.P90BackoffTime = make(map[string]time.Duration)
-		d.TotBackoffTime = make(map[string]time.Duration)
+		d.BackoffTimeStatsMap = make(map[string]TaskTimeStats)
 		d.TotBackoffTimes = make(map[string]int)
-		d.MaxBackoffAddress = make(map[string]string)
 	}
 	for backoff, items := range s.detailsSummary.BackoffInfo {
 		if items == nil {
 			continue
 		}
 		n := items.ReqTimes
-		d.MaxBackoffAddress[backoff] = items.BackoffPercentile.GetMax().Addr
-		d.MaxBackoffTime[backoff] = items.BackoffPercentile.GetMax().D
-		d.P90BackoffTime[backoff] = time.Duration(items.BackoffPercentile.GetPercentile(0.9))
+		d.BackoffTimeStatsMap[backoff] = TaskTimeStats{
+			MaxAddress: items.BackoffPercentile.GetMax().Addr,
+			MaxTime:    items.BackoffPercentile.GetMax().D,
+			P90Time:    time.Duration(items.BackoffPercentile.GetPercentile(0.9)),
+			AvgTime:    items.TotBackoffTime / time.Duration(n),
+			TotTime:    items.TotBackoffTime,
+		}
 
-		d.AvgBackoffTime[backoff] = items.TotBackoffTime / time.Duration(n)
-		d.TotBackoffTime[backoff] = items.TotBackoffTime
 		d.TotBackoffTimes[backoff] = items.TotBackoffTimes
 	}
 	return d
@@ -568,24 +568,43 @@ func (s *SyncExecDetails) CopTasksSummary() *CopTasksSummary {
 type CopTasksDetails struct {
 	NumCopTasks int
 
-	AvgProcessTime    time.Duration
-	P90ProcessTime    time.Duration
-	MaxProcessAddress string
-	MaxProcessTime    time.Duration
-	TotProcessTime    time.Duration
+	ProcessTimeStats TaskTimeStats
+	WaitTimeStats    TaskTimeStats
 
-	AvgWaitTime    time.Duration
-	P90WaitTime    time.Duration
-	MaxWaitAddress string
-	MaxWaitTime    time.Duration
-	TotWaitTime    time.Duration
+	BackoffTimeStatsMap map[string]TaskTimeStats
+	TotBackoffTimes     map[string]int
+}
 
-	MaxBackoffTime    map[string]time.Duration
-	MaxBackoffAddress map[string]string
-	AvgBackoffTime    map[string]time.Duration
-	P90BackoffTime    map[string]time.Duration
-	TotBackoffTime    map[string]time.Duration
-	TotBackoffTimes   map[string]int
+// TaskTimeStats is used for recording time-related statistical metrics, including dimensions such as average values, percentile values, maximum values, etc.
+// It is suitable for scenarios involving latency statistics, wait time analysis, and similar use cases.
+type TaskTimeStats struct {
+	AvgTime    time.Duration
+	P90Time    time.Duration
+	MaxAddress string
+	MaxTime    time.Duration
+	TotTime    time.Duration
+}
+
+// String returns the TaskTimeStats fields as a string.
+func (s TaskTimeStats) String(numCopTasks int, spaceMarkStr, avgStr, p90Str, maxStr, addrStr string) string {
+	if numCopTasks == 1 {
+		fmt.Sprintf("%v%v%v %v%v%v",
+			avgStr, spaceMarkStr, s.AvgTime.Seconds(),
+			addrStr, spaceMarkStr, s.MaxAddress)
+	}
+
+	return fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
+		avgStr, spaceMarkStr, s.AvgTime.Seconds(),
+		p90Str, spaceMarkStr, s.P90Time.Seconds(),
+		maxStr, spaceMarkStr, s.MaxTime.Seconds(),
+		addrStr, spaceMarkStr, s.MaxAddress)
+}
+
+// FormatFloatFields returns the AvgTime, P90Time and MaxTime in float format.
+func (s TaskTimeStats) FormatFloatFields() (avgStr, p90Str, maxStr string) {
+	return strconv.FormatFloat(s.AvgTime.Seconds(), 'f', -1, 64),
+		strconv.FormatFloat(s.P90Time.Seconds(), 'f', -1, 64),
+		strconv.FormatFloat(s.MaxTime.Seconds(), 'f', -1, 64)
 }
 
 // CopTasksSummary collects some summary information of cop-tasks for statement summary.
@@ -606,14 +625,16 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	}
 	fields = make([]zap.Field, 0, 10)
 	fields = append(fields, zap.Int("num_cop_tasks", d.NumCopTasks))
-	fields = append(fields, zap.String("process_avg_time", strconv.FormatFloat(d.AvgProcessTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("process_p90_time", strconv.FormatFloat(d.P90ProcessTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("process_max_time", strconv.FormatFloat(d.MaxProcessTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("process_max_addr", d.MaxProcessAddress))
-	fields = append(fields, zap.String("wait_avg_time", strconv.FormatFloat(d.AvgWaitTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("wait_p90_time", strconv.FormatFloat(d.P90WaitTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
-	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
+	avgStr, p90Str, maxStr := d.ProcessTimeStats.FormatFloatFields()
+	fields = append(fields, zap.String("process_avg_time", avgStr+"s"))
+	fields = append(fields, zap.String("process_p90_time", p90Str+"s"))
+	fields = append(fields, zap.String("process_max_time", maxStr+"s"))
+	fields = append(fields, zap.String("process_max_addr", d.ProcessTimeStats.MaxAddress))
+	avgStr, p90Str, maxStr = d.WaitTimeStats.FormatFloatFields()
+	fields = append(fields, zap.String("wait_avg_time", avgStr+"s"))
+	fields = append(fields, zap.String("wait_p90_time", p90Str+"s"))
+	fields = append(fields, zap.String("wait_max_time", maxStr+"s"))
+	fields = append(fields, zap.String("wait_max_addr", d.WaitTimeStats.MaxAddress))
 	return fields
 }
 
