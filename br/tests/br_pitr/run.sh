@@ -25,7 +25,6 @@ TASK_NAME="br_pitr"
 
 # Filter testing control
 USE_TABLE_FILTER=${USE_TABLE_FILTER:-false}
-TABLE_FILTER_PATTERN="db_to_be_dropped.*,table_to_be_dropped_or_truncated.*,key_types_test.*,br_pitr.*,test.*"
 
 restart_services_allowing_huge_index() {
     echo "restarting services with huge indices enabled..."
@@ -39,7 +38,7 @@ run_pitr_core_test() {
     restart_services_allowing_huge_index
     
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        echo "Running with table filter: $TABLE_FILTER_PATTERN"
+        echo "Running with table filter"
     else
         echo "Running without table filter"
     fi
@@ -117,7 +116,12 @@ run_pitr_core_test() {
     echo "non compliant operation"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts -f "$TABLE_FILTER_PATTERN" || restore_fail=1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts \
+            -f "db_to_be_dropped.*" \
+            -f "table_to_be_dropped_or_truncated.*" \
+            -f "key_types_test.*" \
+            -f "br_pitr.*" \
+            -f "test.*" || restore_fail=1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
     fi
@@ -138,7 +142,12 @@ run_pitr_core_test() {
     run_sql "DROP DATABASE IF EXISTS \`$latest_sst_db\`;"
 
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "$TABLE_FILTER_PATTERN" > $res_file 2>&1 || ( cat $res_file && exit 1 )
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" \
+            -f "db_to_be_dropped.*" \
+            -f "table_to_be_dropped_or_truncated.*" \
+            -f "key_types_test.*" \
+            -f "br_pitr.*" \
+            -f "test.*" > $res_file 2>&1 || ( cat $res_file && exit 1 )
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
     fi
@@ -153,7 +162,12 @@ run_pitr_core_test() {
 
     echo "run incremental restore + log restore"
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" -f "$TABLE_FILTER_PATTERN" > $res_file 2>&1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" \
+            -f "db_to_be_dropped.*" \
+            -f "table_to_be_dropped_or_truncated.*" \
+            -f "key_types_test.*" \
+            -f "br_pitr.*" \
+            -f "test.*" > $res_file 2>&1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" > $res_file 2>&1
     fi
@@ -195,7 +209,12 @@ run_pitr_core_test() {
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "$TABLE_FILTER_PATTERN" || restore_fail=1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" \
+            -f "db_to_be_dropped.*" \
+            -f "table_to_be_dropped_or_truncated.*" \
+            -f "key_types_test.*" \
+            -f "br_pitr.*" \
+            -f "test.*" || restore_fail=1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
     fi
@@ -222,7 +241,12 @@ run_pitr_core_test() {
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "$TABLE_FILTER_PATTERN" || restore_fail=1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" \
+            -f "db_to_be_dropped.*" \
+            -f "table_to_be_dropped_or_truncated.*" \
+            -f "key_types_test.*" \
+            -f "br_pitr.*" \
+            -f "test.*" || restore_fail=1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
     fi
