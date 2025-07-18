@@ -664,8 +664,15 @@ func newFakeSctx() *stmtctx.StatementContext {
 
 func (b *castJSONAsArrayFunctionSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(ctx, row)
-	if isNull || err != nil {
-		return res, isNull, err
+	if err != nil {
+		return res, false, err
+	}
+
+	// When JSON path does not exist, return empty array instead of null
+	// More to check issue: #62461
+	if isNull {
+		// Return empty array when input is null (e.g., JSON path not found)
+		return types.CreateBinaryJSON([]any{}), false, nil
 	}
 
 	if val.TypeCode == types.JSONTypeCodeObject {
