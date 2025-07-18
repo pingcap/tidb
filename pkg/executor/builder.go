@@ -280,7 +280,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildStreamAgg(v)
 	case *plannercore.PhysicalProjection:
 		return b.buildProjection(v)
-	case *plannercore.PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		return b.buildMemTable(v)
 	case *physicalop.PhysicalTableDual:
 		return b.buildTableDual(v)
@@ -2303,7 +2303,7 @@ func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnRe
 	}
 }
 
-func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Executor {
+func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Executor {
 	switch v.DBName.L {
 	case metadef.MetricSchemaName.L:
 		return &MemTableReaderExec{
