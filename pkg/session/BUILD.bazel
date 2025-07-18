@@ -118,7 +118,7 @@ go_library(
         "//pkg/util/parser",
         "//pkg/util/ranger/context",
         "//pkg/util/redact",
-        "//pkg/util/sem",
+        "//pkg/util/sem/compat",
         "//pkg/util/sli",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
