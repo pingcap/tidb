@@ -607,11 +607,11 @@ Level	Code	Message
 Note	1105	unique index f_g of t1 is selected since the path only fetches limited number of rows with single scan
 explain format = 'verbose' select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
 id	estRows	estCost	task	access object	operator info
-Selection_7	1.00	289.88	root		eq(planner__core__casetest__index__index.t2.b, 2), in(planner__core__casetest__index__index.t2.c, 1, 2, 3, 4, 5)
-└─Point_Get_6	1.00	190.08	root	table:t2, index:idx_a(a)	
+IndexReader_7	1.25	36.19	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	1.25	305.25	cop[tikv]	table:t2, index:idx_b_c_a_d(b, c, a, d)	range:[2 1 1,2 1 1], [2 2 1,2 2 1], [2 3 1,2 3 1], [2 4 1,2 4 1], [2 5 1,2 5 1], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Note	1105	unique index idx_a of t2 is selected since the path only has point ranges with double scan
+Note	1105	[idx_b_c_a_d] remain after pruning paths for t2 given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t3 where (a = 1 or a = 3) and b = 'xx';
 id	estRows	estCost	task	access object	operator info
 Batch_Point_Get_6	2.00	1449.36	root	table:t3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
