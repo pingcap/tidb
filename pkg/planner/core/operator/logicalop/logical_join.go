@@ -715,8 +715,20 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 		for _, expr := range predicates {
 			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 			if isOk {
-				canBeSimplified = true
-				break
+				switch innerLogical := innerTable.(type) {
+				case *LogicalProjection:
+					for _, e := range innerLogical.Exprs {
+						if constValue, ok := e.(*expression.Constant); ok && constValue.Value.IsNull() {
+							isOk = false
+							break
+						}
+					}
+				default:
+				}
+				if isOk {
+					canBeSimplified = true
+					break
+				}
 			}
 		}
 		if canBeSimplified {
