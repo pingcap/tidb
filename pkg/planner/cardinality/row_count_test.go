@@ -39,7 +39,7 @@ func TestPseudoTable(t *testing.T) {
 	sctx := mock.NewContext()
 	count := columnLessRowCount(sctx, tbl, types.NewIntDatum(100), colInfo.ID)
 	require.Equal(t, 3333, int(count))
-	count, err := ColumnEqualRowCount(sctx, tbl, types.NewIntDatum(1000), colInfo.ID)
+	count, _, err := ColumnEqualRowCount(sctx, tbl, types.NewIntDatum(1000), colInfo.ID)
 	require.NoError(t, err)
 	require.Equal(t, 10, int(count))
 	count, _ = columnBetweenRowCount(sctx, tbl, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
