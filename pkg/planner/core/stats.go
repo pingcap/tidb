@@ -134,7 +134,8 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
-	maxEqOrIn := 0
+	maxEqOrIn, numTabFilters, numIdxFilters := 0, 0, 0
+	hasForce := false
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -143,15 +144,24 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		if err != nil {
 			return nil, false, err
 		}
-		if path.EqOrInCondCount > maxEqOrIn {
+		if path.Forced {
+			hasForce = true
+		}
+		if path.EqOrInCondCount >= maxEqOrIn {
 			maxEqOrIn = path.EqOrInCondCount
+			if numTabFilters == 0 || numTabFilters > len(path.TableFilters) {
+				numTabFilters = len(path.TableFilters)
+			}
+			if numIdxFilters == 0 || numIdxFilters > len(path.IndexFilters) {
+				numIdxFilters = len(path.IndexFilters)
+			}
 		}
 	}
 
 	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
 	// but where the other index also has a higher eqOrInCondCount
-	if maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20 {
-		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths)
+	if !hasForce && (maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20) {
+		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths, maxEqOrIn, numTabFilters, numIdxFilters)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -731,9 +741,43 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 
 // pruneIndexesByPrefixAndEqOrInCondCount prunes indexes that have the same prefix as other indexes
 // with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
-func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.AccessPath {
+func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn, numTabFilters, numIdxFilters int) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
+	}
+
+	// Early optimization: Check for perfect covering indexes
+	// If there's an index with maxEqOrIn and no filters, it's optimal
+	if maxEqOrIn > 0 && numTabFilters == 0 && numIdxFilters == 0 {
+		var perfectCoveringIndexes []*util.AccessPath
+		var forcedIndexes []*util.AccessPath
+		var tablePaths []*util.AccessPath
+
+		for _, path := range paths {
+			if path.IsTablePath() {
+				tablePaths = append(tablePaths, path)
+				continue
+			}
+			if path.Forced {
+				forcedIndexes = append(forcedIndexes, path)
+				continue
+			}
+			// Check if this is a perfect covering index
+			if path.EqOrInCondCount == maxEqOrIn &&
+				len(path.TableFilters) == 0 &&
+				len(path.IndexFilters) == 0 {
+				perfectCoveringIndexes = append(perfectCoveringIndexes, path)
+			}
+		}
+
+		// If we have perfect covering indexes, return only them plus forced indexes and table paths
+		if len(perfectCoveringIndexes) > 0 {
+			result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
+			result = append(result, tablePaths...)
+			result = append(result, forcedIndexes...)
+			result = append(result, perfectCoveringIndexes...)
+			return result
+		}
 	}
 
 	// Helper function to check if one index is a prefix of another
@@ -782,6 +826,10 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.Ac
 			}
 			for _, currentPath := range currentPaths {
 				for _, higherPath := range higherPaths {
+					if currentPath.EqOrInCondCount == maxEqOrIn &&
+						!(len(currentPath.TableFilters) > numTabFilters || len(currentPath.IndexFilters) > numIdxFilters) {
+						continue // Don't prune if the current index has max eqOrInCondCount and least filters
+					}
 					// Don't prune if the current index is a single scan and the higher index is not
 					// Single scan indexes can avoid table lookups, so they should be preserved
 					if currentPath.IsSingleScan && !higherPath.IsSingleScan {
@@ -789,9 +837,6 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath) []*util.Ac
 					}
 					if currentPath.Forced {
 						continue // Don't prune forced indexes
-					}
-					if len(currentPath.TableFilters) < len(higherPath.TableFilters) {
-						continue // Prefer indexes with fewer table filters
 					}
 					if isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
 						// The current index is a prefix of the higher index, and the higher index
