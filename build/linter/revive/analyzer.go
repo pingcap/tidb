@@ -69,7 +69,7 @@ var allRules = append([]lint.Rule{
 	&rule.UnusedParamRule{},
 	//&rule.AddConstantRule{},
 	//&rule.FlagParamRule{},
-	&rule.UnnecessaryStmtRule{},
+	//&rule.UnnecessaryStmtRule{},
 	//&rule.StructTagRule{},
 	//&rule.ModifiesValRecRule{},
 	//&rule.RedefinesBuiltinIDRule{},
