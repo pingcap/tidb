@@ -212,6 +212,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
@@ -230,6 +231,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][6])
+	tk.MustExec("set @@global.tidb_enable_auto_analyze=DEFAULT")
 }
 
 func TestFMSWithAnalyzePartition(t *testing.T) {
