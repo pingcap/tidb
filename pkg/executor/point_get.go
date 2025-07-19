@@ -143,6 +143,10 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
+	// coveredByIndex indicates whether the index covers all required columns,
+	// so we don't need to fetch row data from the table
+	coveredByIndex bool
+
 	stats *runtimeStatsWithSnapshot
 }
 
@@ -212,6 +216,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	e.rowDecoder = decoder
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
+	e.coveredByIndex = p.CoveredByIndex
 	e.buildVirtualColumnInfo()
 
 	sessVars := e.Ctx().GetSessionVars()
@@ -400,6 +405,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
+	sctx := e.BaseExecutor.Ctx()
+	schema := e.Schema()
+
+	// If the index covers all required columns, build result directly from index values
+	if e.idxInfo != nil && e.coveredByIndex && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+		return e.buildResultFromIndex(ctx, req, schema, sctx)
+	}
+
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {
@@ -429,8 +442,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	sctx := e.BaseExecutor.Ctx()
-	schema := e.Schema()
 	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
@@ -861,4 +872,117 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (*runtimeStatsWithSnapshot) Tp() int {
 	return execdetails.TpRuntimeStatsWithSnapshot
+}
+
+// buildResultFromIndex builds the result directly from index values when the index covers all required columns
+func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context) error {
+	// First verify that index key exists
+	if len(e.handleVal) == 0 {
+		return nil
+	}
+
+	// For string columns with collations, we should fall back to row data fetch
+	// because the index values might not preserve the original case/format
+	for _, col := range schema.Columns {
+		if col.RetType.EvalType() == types.ETString {
+			// For string columns, especially with case-insensitive collations,
+			// the index key values may not match the stored values exactly
+			return e.buildResultFromRowData(ctx, req, schema, sctx)
+		}
+	}
+
+	// Map index columns to their positions in the schema
+	idxColMap := make(map[int64]types.Datum)
+	for i, idxCol := range e.idxInfo.Columns {
+		if i < len(e.idxVals) {
+			idxColMap[e.tblInfo.Columns[idxCol.Offset].ID] = e.idxVals[i]
+		}
+	}
+
+	// Add handle column if needed
+	if e.handle != nil {
+		// Find handle column in schema
+		for _, col := range schema.Columns {
+			if col.ID == model.ExtraHandleID ||
+				(e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag())) {
+				if !e.handle.IsInt() {
+					// For common handle, we need to decode the handle value
+					// This is more complex and for now we'll fall back to row fetch
+					return e.buildResultFromRowData(ctx, req, schema, sctx)
+				}
+				idxColMap[col.ID] = types.NewIntDatum(e.handle.IntValue())
+			}
+		}
+	}
+
+	// Build the row from index values
+	for i, col := range schema.Columns {
+		datum, ok := idxColMap[col.ID]
+		if !ok {
+			// If column is not in index map, this shouldn't happen with proper covering index detection
+			// Fall back to row data fetch for safety
+			return e.buildResultFromRowData(ctx, req, schema, sctx)
+		}
+		req.AppendDatum(i, &datum)
+	}
+
+	// Handle virtual columns
+	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
+		schema.Columns, e.columns, sctx.GetExprCtx(), req)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// buildResultFromRowData builds the result by fetching and decoding row data (fallback method)
+func (e *PointGetExecutor) buildResultFromRowData(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context) error {
+	tblID := GetPhysID(e.tblInfo, e.partitionDefIdx)
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
+	val, err := e.getAndLock(ctx, key)
+	if err != nil {
+		return err
+	}
+	if len(val) == 0 {
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
+			!e.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
+			return (&consistency.Reporter{
+				HandleEncode: func(kv.Handle) kv.Key {
+					return key
+				},
+				IndexEncode: func(*consistency.RecordData) kv.Key {
+					return e.idxKey
+				},
+				Tbl:             e.tblInfo,
+				Idx:             e.idxInfo,
+				EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+				Storage:         e.Ctx().GetStore(),
+			}).ReportLookupInconsistent(ctx,
+				1, 0,
+				[]kv.Handle{e.handle},
+				[]kv.Handle{e.handle},
+				[]consistency.RecordData{{}},
+			)
+		}
+		return nil
+	}
+
+	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+	if err != nil {
+		return err
+	}
+
+	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val}, []kv.Handle{e.handle}, req, nil)
+	if err != nil {
+		return err
+	}
+
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
+		schema.Columns, e.columns, sctx.GetExprCtx(), req)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
