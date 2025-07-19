@@ -340,5 +340,11 @@ WHERE tla842d94a.col_1 IN ('與P)凥i5', 'AI禡=Ymm滕籔湾$IUKiF3撔')
 AND char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4) IN ('9eQ)6nzji', 'bF!pOc~')
 AND NOT (tla842d94a.col_2 <> 3496.9237290113774)
 ORDER BY char(tla842d94a.col_2, tla842d94a.col_2 using utf8mb4), tla842d94a.col_2;
-`).Check(testkit.Rows())
+`).Check(testkit.Rows(
+		`Projection_11 0.00 root  Column#4, Column#5, test.tla842d94a.col_2`,
+		`└─Sort_7 0.00 root  Column#6, test.tla842d94a.col_2`,
+		`  └─Projection_12 0.00 root  Column#4, Column#5, test.tla842d94a.col_2, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#6`,
+		`    └─Projection_8 0.00 root  1->Column#4, char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), utf8mb4)->Column#5, test.tla842d94a.col_2`,
+		`      └─Selection_9 0.00 root  in(char_func(cast(test.tla842d94a.col_2, bigint(22) BINARY), cast(test.tla842d94a.col_2, bigint(22) BINARY), "utf8mb4"), "9eQ)6nzji", "bF!pOc~")`,
+		`        └─TableDual_10 0.00 root  rows:0`))
 }
