@@ -309,14 +309,14 @@ func TestCreateTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 	tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost", CurrentUser: true, AuthUsername: "u1", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 	err := tk2.ExecToErr("create table t2 (a int, foreign key fk(a) references t1(id));")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't1'", err.Error())
+	require.Equal(t, "[planner:1143]REFERENCES command denied to user 'u1'@'%' for column 'id' in table 't1'", err.Error())
 
 	tk.MustExec("grant references on test.t1 to 'u1'@'%';")
 	tk2.MustExec("create table t2 (a int, foreign key fk(a) references t1(id));")
 	tk2.MustExec("create table t3 (id int key)")
 	err = tk2.ExecToErr("create table t4 (a int, foreign key fk(a) references t1(id), foreign key (a) references t3(id));")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't3'", err.Error())
+	require.Equal(t, "[planner:1143]REFERENCES command denied to user 'u1'@'%' for column 'id' in table 't3'", err.Error())
 
 	tk.MustExec("grant references on test.t3 to 'u1'@'%';")
 	tk2.MustExec("create table t4 (a int, foreign key fk(a) references t1(id), foreign key (a) references t3(id));")
@@ -335,7 +335,7 @@ func TestAlterTableWithForeignKeyPrivilegeCheck(t *testing.T) {
 	tk2.MustExec("create table t2 (a int)")
 	err := tk2.ExecToErr("alter table t2 add foreign key (a) references t1 (id) on update cascade")
 	require.Error(t, err)
-	require.Equal(t, "[planner:1142]REFERENCES command denied to user 'u1'@'%' for table 't1'", err.Error())
+	require.Equal(t, "[planner:1143]REFERENCES command denied to user 'u1'@'%' for column 'id' in table 't1'", err.Error())
 	tk.MustExec("grant references on test.t1 to 'u1'@'%';")
 	tk2.MustExec("alter table t2 add foreign key (a) references t1 (id) on update cascade")
 }

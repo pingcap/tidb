@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -82,6 +83,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -93,6 +95,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -319,6 +322,26 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildExpand(v)
 	case *plannercore.RecommendIndexPlan:
 		return b.buildRecommendIndex(v)
+	case *plannercore.CreateProcedure:
+		if !variable.TiDBEnableProcedureValue.Load() {
+			b.err = errors.New("if enterprise edition, please set global tidb_enable_procedure = ON")
+			return nil
+		}
+		return b.buildCreateProcedure(v)
+	case *plannercore.DropProcedure:
+		return b.buildDropProcedure(v)
+	case *plannercore.CallStmt:
+		if !variable.TiDBEnableProcedureValue.Load() {
+			b.err = errors.New("if enterprise edition, please set global tidb_enable_procedure = ON")
+			return nil
+		}
+		return b.buildCallProcedure(v)
+	case *plannercore.AlterProcedure:
+		return b.buildAlterProcedure(v)
+	case *plannercore.Signal:
+		return b.buildSignalExec(v)
+	case *plannercore.GetDiagnostics:
+		return b.buildGetDiagnosticsExec(v)
 	default:
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -879,6 +902,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		CountWarningsOrErrors: v.CountWarningsOrErrors,
 		DBName:                pmodel.NewCIStr(v.DBName),
 		Table:                 v.Table,
+		Procedure:             v.Procedure,
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,
@@ -954,6 +978,12 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 	}
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
+	var extensions *extension.SessionExtensions
+	if e, err := extension.GetExtensions(); err != nil {
+		logutil.BgLogger().Warn("get extensions failed", zap.Error(err))
+	} else {
+		extensions = e.NewSessionExtensions()
+	}
 	e := &SimpleExec{
 		BaseExecutor:    base,
 		Statement:       v.Statement,
@@ -961,6 +991,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 		IsFromRemote:    v.IsFromRemote,
 		is:              b.is,
 		staleTxnStartTS: v.StaleTxnStartTS,
+		extensions:      extensions,
 	}
 	return e
 }
@@ -1010,6 +1041,9 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
 		ignoreErr:                 v.IgnoreErr,
+		PolicyName:                v.PolicyName,
+		UserLabel:                 v.UserLabel,
+		LabelColumn:               v.LabelColumn,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -2377,13 +2411,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableMemoryUsageOpsHistory),
 			strings.ToLower(infoschema.ClusterTableMemoryUsage),
 			strings.ToLower(infoschema.ClusterTableMemoryUsageOpsHistory),
+			strings.ToLower(infoschema.TableUserLoginHistory),
 			strings.ToLower(infoschema.TableResourceGroups),
 			strings.ToLower(infoschema.TableRunawayWatches),
 			strings.ToLower(infoschema.TableCheckConstraints),
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
-			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
+			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableRoutines),
+			strings.ToLower(infoschema.TableColumnPrivileges),
+			strings.ToLower(infoschema.TableTablePrivileges),
+			strings.ToLower(infoschema.TableSchemaPrivileges):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -2463,6 +2502,25 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 					outputCols: v.Columns,
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 					memTracker: memTracker,
+				},
+			}
+		case strings.ToLower(infoschema.TableAuditLog), strings.ToLower(infoschema.ClusterTableAuditLog):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+			logPath, logFormat := "", ""
+			if GetGlobalAuditLogPathAndType != nil {
+				logPath, logFormat = GetGlobalAuditLogPathAndType()
+			}
+			return &MemTableReaderExec{
+				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &auditLogRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.AuditLogExtractor),
+					memTracker: memTracker,
+					auditLog:   logPath,
+					logType:    logFormat,
 				},
 			}
 		case strings.ToLower(infoschema.TableStorageStats):
@@ -2768,6 +2826,9 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) exec.Executor {
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
 		IgnoreError:               v.IgnoreError,
+		PolicyName:                v.PolicyName,
+		LabelColumn:               v.LabelColumn,
+		UserLabel:                 v.UserLabel,
 	}
 	updateExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
 	if b.err != nil {
@@ -5822,3 +5883,6 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 		Options:      v.Options,
 	}
 }
+
+// GetGlobalAuditLogPathAndType is used to get audit log path and type
+var GetGlobalAuditLogPathAndType func() (string, string)

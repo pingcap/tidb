@@ -65,7 +65,7 @@ elif [[ " ${!groups[*]} " =~ " ${group} " ]]; then
             echo "Run cases: ${case_name}"
             rm -rf /tmp/backup_restore_test
             mkdir -p /tmp/backup_restore_test
-            TEST_NAME=${case_name} ${CUR}/run.sh
+            TEST_NAME=${case_name} bash ${CUR}/run.sh
         done
 	fi
 else

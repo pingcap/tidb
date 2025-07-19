@@ -16,12 +16,13 @@ package handshake
 
 // Response41 is the response message for a successful initial handshake.
 type Response41 struct {
-	Attrs      map[string]string
-	User       string
-	DBName     string
-	AuthPlugin string
-	Auth       []byte
-	ZstdLevel  int
-	Capability uint32
-	Collation  uint8
+	Attrs          map[string]string
+	User           string
+	DBName         string
+	AuthPlugin     string
+	Auth           []byte
+	ZstdLevel      int
+	Capability     uint32
+	TLCPCapability uint8
+	Collation      uint8
 }
