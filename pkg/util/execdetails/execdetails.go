@@ -588,7 +588,7 @@ type TaskTimeStats struct {
 // String returns the TaskTimeStats fields as a string.
 func (s TaskTimeStats) String(numCopTasks int, spaceMarkStr, avgStr, p90Str, maxStr, addrStr string) string {
 	if numCopTasks == 1 {
-		fmt.Sprintf("%v%v%v %v%v%v",
+		return fmt.Sprintf("%v%v%v %v%v%v",
 			avgStr, spaceMarkStr, s.AvgTime.Seconds(),
 			addrStr, spaceMarkStr, s.MaxAddress)
 	}

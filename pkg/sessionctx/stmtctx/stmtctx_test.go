@@ -232,7 +232,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 				BackoffSleep:  make(map[string]time.Duration),
 				BackoffTimes:  make(map[string]int),
 				TimeDetail: util.TimeDetail{
-					: time.Second * time.Duration(rand.Int31n(valRange)),
+					ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
 					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
 				},
 			},
@@ -300,7 +300,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 		require.Equal(t, backoffStats.MaxAddress, details[n-1].CalleeAddress)
 		require.Equal(t, backoffStats.MaxTime, details[n-1].BackoffSleep[backoff])
 		require.InEpsilon(t, backoffStats.P90Time, details[n*9/10].BackoffSleep[backoff], 0.1)
-		require.Equal(t, backoffStats.AvgTime , timeSum/time.Duration(n))
+		require.Equal(t, backoffStats.AvgTime, timeSum/time.Duration(n))
 
 		require.Equal(t, d.TotBackoffTimes[backoff], timesSum)
 		require.Equal(t, backoffStats.TotTime, timeSum)
