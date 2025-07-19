@@ -341,6 +341,7 @@ type planExecInfo struct {
 // IsSimplePointPlan checks whether the plan is a simple point plan.
 // Expose this function for testing.
 func IsSimplePointPlan(plan string) bool {
+	empty := true
 	// if the plan only contains Point_Get, Batch_Point_Get, Selection and Projection, it's a simple point plan.
 	lines := strings.Split(plan, "\n")
 	for _, line := range lines {
@@ -348,6 +349,7 @@ func IsSimplePointPlan(plan string) bool {
 		if line == "" {
 			continue
 		}
+		empty = false
 		operatorName := strings.Split(line, " ")[0]
 		// TODO: these hard-coding lines are a temporary implementation, refactor this part later.
 		if operatorName == "id" || // the first line with column names
@@ -359,5 +361,5 @@ func IsSimplePointPlan(plan string) bool {
 		}
 		return false
 	}
-	return true
+	return !empty
 }
