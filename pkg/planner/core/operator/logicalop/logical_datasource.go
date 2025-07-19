@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -39,8 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -292,8 +296,41 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true)
-	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true)
+	ectx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	intest.AssertFunc(func() bool {
+		expected := make([]string, 0, len(p.PushedDownConds))
+		for _, cond := range p.PushedDownConds {
+			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, false)
+		actual := make([]string, 0, len(actualExprs))
+		for _, cond := range actualExprs {
+			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		if slices.Equal(expected, actual) {
+			return true
+		}
+		logutil.BgLogger().Error("The upstream does not perform good predicate simplification",
+			zap.Any("expected", expected), zap.Any("actual", actual), zap.String("sql", p.SCtx().GetSessionVars().StmtCtx.OriginalSQL))
+		return false
+	})
+	intest.AssertFunc(func() bool {
+		expected := make([]string, 0, len(p.AllConds))
+		for _, cond := range p.AllConds {
+			expected = append(expected, cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		actualExprs := utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds, false)
+		actual := make([]string, 0, len(actualExprs))
+		for _, cond := range actualExprs {
+			actual = append(actual, cond.StringWithCtx(ectx, errors.RedactLogDisable))
+		}
+		if slices.Equal(expected, actual) {
+			return true
+		}
+		logutil.BgLogger().Error("The upstream does not perform good predicate simplification",
+			zap.Any("expected", expected), zap.Any("actual", actual), zap.String("sql", p.SCtx().GetSessionVars().StmtCtx.OriginalSQL))
+		return false
+	})
 	return p
 }
 
