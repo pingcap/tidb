@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
@@ -836,11 +837,15 @@ func (config *TrxSummary) Valid() error {
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
+	pessimisticAutoCommit := false
+	if kerneltype.IsNextGen() {
+		pessimisticAutoCommit = true
+	}
 	return PessimisticTxn{
 		MaxRetryCount:                     256,
 		DeadlockHistoryCapacity:           10,
 		DeadlockHistoryCollectRetryable:   false,
-		PessimisticAutoCommit:             *NewAtomicBool(false),
+		PessimisticAutoCommit:             *NewAtomicBool(pessimisticAutoCommit),
 		ConstraintCheckInPlacePessimistic: true,
 	}
 }
