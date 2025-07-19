@@ -63,6 +63,12 @@ check-static: ## Run static code analysis checks
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
+.PHONY: check-ddl
+check-ddl: tools/bin/golangci-lint
+	GO111MODULE=on CGO_ENABLED=1 ./tools/bin/golangci-lint run -v pkg/ddl \
+		--config pkg/ddl/.golangci.yml \
+		--new-from-merge-base=$$(git remote -v | awk '/pingcap\/tidb.git/ {print $$1; exit}')/master
+
 .PHONY: check-file-perm
 check-file-perm:
 	@echo "check file permission"
@@ -671,7 +677,7 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_build
-bazel_build: ## Build TiDB using Bazel build system
+bazel_build: check-ddl ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
