@@ -190,5 +190,11 @@
     "cases": [
       "select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3"
     ]
+  },
+  {
+    "name": "TestQBHintHandlerDuplicateObjects",
+    "cases": [
+      "EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;",
+    ]
   }
 ]

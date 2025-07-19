@@ -123,6 +123,32 @@ func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk
 	}
 }
 
+// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body among two different planner modes. It can be used to set schema lease and store options.
+func RunTestUnderCascadesAndDomainWithSchemaLease(t *testing.T, lease time.Duration, opts []mockstore.MockTiKVStoreOption, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
+	options := []struct {
+		name string
+		opt  TestOption
+	}{
+		{"off", WithCascades(false)},
+		{"on", WithCascades(true)},
+	}
+	// get func name
+	pc, _, _, ok := runtime.Caller(1)
+	require.True(t, ok)
+	details := runtime.FuncForPC(pc)
+	funcNameIdx := strings.LastIndex(details.Name(), ".")
+	funcName := details.Name()[funcNameIdx+1:]
+	// iter the options
+	for _, val := range options {
+		t.Run(val.name, func(t *testing.T) {
+			store, do := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
+			tk := NewTestKit(t, store)
+			val.opt(tk)
+			testFunc(t, tk, do, val.name, funcName)
+		})
+	}
+}
+
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
 	if *WithTiKV != "" {
