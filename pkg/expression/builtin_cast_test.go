@@ -1762,6 +1762,80 @@ func TestCastArrayFunc(t *testing.T) {
 	}
 }
 
+func TestCastJSONAsArrayWithNullInput(t *testing.T) {
+	ctx := createContext(t)
+
+	// Test case for issue #62461: When JSON path does not exist (returns null),
+	// CAST should return empty array instead of null
+	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP()
+
+	// Test 1: null input should return empty array
+	nullConstant := &Constant{
+		Value:   types.NewDatum(nil),
+		RetType: types.NewFieldType(mysql.TypeJSON),
+	}
+
+	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{nullConstant}, tp)
+	require.NoError(t, err)
+
+	castFunc := &castJSONAsArrayFunctionSig{
+		baseBuiltinFunc: baseFunc,
+	}
+	castFunc.tp = tp
+
+	result, isNull, err := castFunc.evalJSON(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, isNull, "Result should not be null")
+	require.Equal(t, types.JSONTypeCodeArray, result.TypeCode)
+	require.Equal(t, 0, result.GetElemCount(), "Should return empty array")
+
+	expectedEmptyArray := types.CreateBinaryJSON([]any{})
+	cmp := types.CompareBinaryJSON(expectedEmptyArray, result)
+	require.Equal(t, 0, cmp, "Result should be an empty array")
+
+	// Test 2: non-null JSON input should work normally
+	jsonInput := types.CreateBinaryJSON([]any{int64(1), int64(2), int64(3)})
+	nonNullConstant := &Constant{
+		Value:   types.NewDatum(jsonInput),
+		RetType: types.NewFieldType(mysql.TypeJSON),
+	}
+
+	baseFunc2, err := newBaseBuiltinFunc(ctx, "", []Expression{nonNullConstant}, tp)
+	require.NoError(t, err)
+
+	castFunc2 := &castJSONAsArrayFunctionSig{
+		baseBuiltinFunc: baseFunc2,
+	}
+	castFunc2.tp = tp
+
+	result2, isNull2, err := castFunc2.evalJSON(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, isNull2, "Result should not be null for valid input")
+	require.Equal(t, types.JSONTypeCodeArray, result2.TypeCode)
+	require.Equal(t, 3, result2.GetElemCount(), "Should return array with 3 elements")
+
+	// Test 3: single non-array JSON value should be wrapped in array
+	jsonSingle := types.CreateBinaryJSON(int64(42))
+	singleConstant := &Constant{
+		Value:   types.NewDatum(jsonSingle),
+		RetType: types.NewFieldType(mysql.TypeJSON),
+	}
+
+	baseFunc3, err := newBaseBuiltinFunc(ctx, "", []Expression{singleConstant}, tp)
+	require.NoError(t, err)
+
+	castFunc3 := &castJSONAsArrayFunctionSig{
+		baseBuiltinFunc: baseFunc3,
+	}
+	castFunc3.tp = tp
+
+	result3, isNull3, err := castFunc3.evalJSON(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, isNull3, "Result should not be null for valid input")
+	require.Equal(t, types.JSONTypeCodeArray, result3.TypeCode)
+	require.Equal(t, 1, result3.GetElemCount(), "Should return array with 1 element")
+}
+
 func TestCastAsCharFieldType(t *testing.T) {
 	type testCase struct {
 		input      *Constant
