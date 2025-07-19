@@ -25,8 +25,8 @@ var ffiSysVars = []*SysVar{
 			}
 			return nil
 		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-		return BoolToOnOff(tikvrpc.EnableTiKVLocalCall.Load()), nil
-	}},
+			return BoolToOnOff(tikvrpc.EnableTiKVLocalCall.Load()), nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBXEnableScheduleLeaderRule, Value: BoolToOnOff(DefTiDBXEnableScheduleLeaderRule), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 			v := TiDBOptOn(s)
@@ -38,8 +38,8 @@ var ffiSysVars = []*SysVar{
 			}
 			return nil
 		}, GetGlobal: func(context.Context, *SessionVars) (string, error) {
-		return BoolToOnOff(EnableScheduleLeaderRule.Load()), nil
-	}},
+			return BoolToOnOff(EnableScheduleLeaderRule.Load()), nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBXEnablePDLocalCall, Value: BoolToOnOff(DefTiDBXEnableLocalRPCOpt), Type: TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 			if PDLocalCallVar == nil {
@@ -53,11 +53,11 @@ var ffiSysVars = []*SysVar{
 			}
 			return nil
 		}, GetGlobal: func(context.Context, *SessionVars) (string, error) {
-		if PDLocalCallVar == nil {
-			return "", errors.Errorf("%s is not initialized. Please check if this is fusion mode", TiDBXEnablePDLocalCall)
-		}
-		return BoolToOnOff((*PDLocalCallVar).Load()), nil
-	}},
+			if PDLocalCallVar == nil {
+				return "", errors.Errorf("%s is not initialized. Please check if this is fusion mode", TiDBXEnablePDLocalCall)
+			}
+			return BoolToOnOff((*PDLocalCallVar).Load()), nil
+		}},
 }
 
 // PDLocalCallVar will be set by the upper package tidbx-server to point to pd-server's

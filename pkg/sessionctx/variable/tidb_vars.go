@@ -1626,14 +1626,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-	DefTiDBEnableLabelSecurity                        = false
-	DefTiDBEnableLoginHistory                         = false
-	DefTiDBLoginHistoryRetainDuration                 = time.Hour * 24 * 90 // default 90 days.
-	DefStoredProgramCacheSize                         = 256
-	DefTiDBEnableProcedure                            = false
-	DefTiDBEnableDutySeparationMode                   = false
-	DefTiDBEnableUDVSubstitute                        = false
-	DefTiDBEnableSPParamSubstitute                    = false
+	DefTiDBLoadBindingTimeout                         = 200
 )
 
 // Process global variables.
@@ -1757,15 +1750,6 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
-	EnableLabelSecurity       = atomic.NewBool(DefTiDBEnableLabelSecurity)
-
-	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
-	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
-	StoredProgramCacheSize     = atomic.NewInt64(DefStoredProgramCacheSize)
-	TiDBEnableSPAstReuse       = atomic.NewBool(true)
-	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
-	AutomaticSPPrivileges      = atomic.NewBool(true)
-	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
 )
 
 var (
