@@ -54,7 +54,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
 	// stats loading for the determinate mode.
-	is := plan.SCtx().GetDomainInfoSchema()
+	is := plan.SCtx().GetLatestInfoSchema()
 	tblID2TblInfo := make(map[int64]*model.TableInfo)
 	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
 		tblInfo, _ := is.TableInfoByID(int64(physicalTblID))
@@ -440,7 +440,7 @@ func recordTableRuntimeStats(sctx base.PlanContext, tbls map[int64]struct{}) {
 func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *statistics.Table, skip bool, err error) {
 	dom := domain.GetDomain(sctx)
 	statsHandle := dom.StatsHandle()
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tblID)
 	if !ok {
 		return nil, false, nil

@@ -227,6 +227,21 @@ func InitDDLMetrics() {
 	DDLCleanMDLInfoHist = DDLWorkerHistogram.WithLabelValues("clean_mdl_info", "*", "*")
 }
 
+var (
+	// DDLSetTempIndexWrite records the number of writes to a temporary index.
+	DDLSetTempIndexWrite = func(connID uint64, tableID int64, opCount uint64, doubleWrite bool) {}
+	// DDLCommitTempIndexWrite commits the writes to a temporary index.
+	DDLCommitTempIndexWrite = func(connID uint64) {}
+	// DDLRollbackTempIndexWrite rolls back the writes to a temporary index.
+	DDLRollbackTempIndexWrite = func(connID uint64) {}
+	// DDLResetTempIndexWrite resets the write count for a temporary index.
+	DDLResetTempIndexWrite = func(tblID int64) {}
+	// DDLSetTempIndexScan sets the scan count for a temporary index.
+	DDLSetTempIndexScan = func(tableID int64, opCount uint64) {}
+	// DDLSetTempIndexMerge sets the merge count for a temporary index.
+	DDLSetTempIndexMerge = func(tableID int64, opCount uint64) {}
+)
+
 // Label constants.
 const (
 	LblAction = "action"
@@ -293,6 +308,9 @@ func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 
 // UnregisterLightningCommonMetricsForDDL unregisters the registered common metrics.
 func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
+	if metrics == nil {
+		return
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	metrics.UnregisterFrom(prometheus.DefaultRegisterer)

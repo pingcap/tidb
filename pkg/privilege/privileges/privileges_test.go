@@ -1323,7 +1323,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW VARIABLES LIKE 'tidb_force_priority'`).Check(testkit.Rows("tidb_force_priority NO_PRIORITY"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.variables_info WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows("1"))
 	tk.MustQuery(`SELECT COUNT(*) FROM performance_schema.session_variables WHERE variable_name = 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows("1"))
-	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry OFF"))
+	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.variables_info WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows("1"))
 	tk.MustQuery(`SELECT COUNT(*) FROM performance_schema.session_variables WHERE variable_name = 'tidb_enable_telemetry'`).Check(testkit.Rows("1"))
 
@@ -1332,7 +1332,7 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
 
 	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
-	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(vardef.DefHostname))
 	sem.Disable()
@@ -2083,7 +2083,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.ErrorContains(t, err, "Access denied")
 }
 
-func TestNilHandleInConnectionVerification(t *testing.T) {
+func TestNilHandleInSkipWithGrant(t *testing.T) {
 	config.GetGlobalConfig().Security.SkipGrantTable = true
 	privileges.SkipWithGrant = true
 	defer func() {
@@ -2092,7 +2092,13 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// check ConnectionVerification
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
+	// check GetUserResources
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	userLimit, err := pc.GetUserResources("root", "%")
+	require.NoError(t, err)
+	require.EqualValues(t, 0, userLimit)
 }
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {

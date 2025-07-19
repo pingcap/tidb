@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -576,7 +577,7 @@ func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum
 func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
 	var subPlans []base.PhysicalPlan
 	switch x := p.(type) {
-	case *PhysicalTableDual:
+	case *physicalop.PhysicalTableDual:
 		if paramNum > 0 {
 			return false, "get a TableDual plan"
 		}
@@ -586,7 +587,7 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
 		return false, "get a Shuffle plan"
-	case *PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {

@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -54,9 +56,10 @@ func getPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *optimi
 	return p.GetPlanCostVer1(taskType, option)
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalSelection returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + filter-cost
-func (p *PhysicalSelection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalSelection(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalSelection)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -457,7 +460,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalSort returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + sort-cpu-cost + sort-mem-cost + sort-disk-cost
 // sort-cpu-cost = rows * log2(rows) * len(sort-items) * cpu-factor
 // if no spill:
@@ -466,7 +469,9 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 // else if spill:
 // 1. sort-mem-cost = mem-quota * mem-factor
 // 2. sort-disk-cost = rows * row-size * disk-factor
-func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalSort(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalSort)
+	intest.Assert(p != nil)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -517,7 +522,8 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 // plan-cost = child-cost + topn-cpu-cost + topn-mem-cost
 // topn-cpu-cost = rows * log2(N) * len(sort-items) * cpu-factor
 // topn-mem-cost = N * row-size * mem-factor
-func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalTopN)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -823,9 +829,10 @@ func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType, option *opti
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// getPlanCostVer24PhysicalUnionAll calculates the cost of the plan if it has not been calculated yet and returns the cost.
 // plan-cost = sum(child-cost) / concurrency
-func (p *PhysicalUnionAll) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalUnionAll(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalUnionAll)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}

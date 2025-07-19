@@ -479,5 +479,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkUnionScanIndexReadDescRead,
 		BenchmarkUnionScanTableReadDescRead,
 		BenchmarkUnionScanIndexLookUpDescRead,
+		BenchmarkInfoschemaTables,
 	)
 }

@@ -15,7 +15,9 @@
 package executor
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -40,9 +42,9 @@ type DistributeTableExec struct {
 	tableInfo      *model.TableInfo
 	is             infoschema.InfoSchema
 	partitionNames []ast.CIStr
-	rule           ast.CIStr
-	engine         ast.CIStr
-	timeout        ast.CIStr
+	rule           string
+	engine         string
+	timeout        string
 
 	done      bool
 	keyRanges []*pdhttp.KeyRange
@@ -55,6 +57,9 @@ func (e *DistributeTableExec) Open(context.Context) error {
 		return err
 	}
 	e.keyRanges = ranges
+	slices.SortFunc(e.partitionNames, func(i, j ast.CIStr) int {
+		return cmp.Compare(i.L, j.L)
+	})
 	return nil
 }
 
@@ -90,7 +95,7 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	for _, job := range jobs {
 		// PD will ensure all the alias of uncompleted job are different.
 		// PD return err if the some job alredy exist in the scheduler.
-		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() && job["status"] != "finished" {
+		if job["alias"] == alias && job["engine"] == e.engine && job["rule"] == e.rule && job["status"] != "finished" {
 			id := job["job-id"].(float64)
 			if id > jobID {
 				jobID = id
@@ -106,10 +111,10 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
 	input := make(map[string]any)
 	input["alias"] = e.getAlias()
-	input["engine"] = e.engine.String()
-	input["rule"] = e.rule.String()
-	if len(e.timeout.L) > 0 {
-		input["timeout"] = e.timeout.String()
+	input["engine"] = e.engine
+	input["rule"] = e.rule
+	if len(e.timeout) > 0 {
+		input["timeout"] = e.timeout
 	}
 	startKeys := make([]string, 0, len(e.keyRanges))
 	endKeys := make([]string, 0, len(e.keyRanges))
@@ -158,13 +163,18 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 			}
 		}
 	}
+	slices.Sort(physicalIDs)
 
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
-	for _, pid := range physicalIDs {
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
-		r := pdhttp.NewKeyRange(startKey, endKey)
-		ranges = append(ranges, r)
+	for i, pid := range physicalIDs {
+		if i == 0 || physicalIDs[i] != physicalIDs[i-1]+1 {
+			startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+			endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+			r := pdhttp.NewKeyRange(startKey, endKey)
+			ranges = append(ranges, r)
+		} else {
+			ranges[len(ranges)-1].EndKey = codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+		}
 	}
 	return ranges, nil
 }

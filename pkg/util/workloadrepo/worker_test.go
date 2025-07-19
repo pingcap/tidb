@@ -580,7 +580,7 @@ func validatePartitionsMatchExpected(ctx context.Context, t *testing.T,
 		ep[generatePartitionName(p.AddDate(0, 0, 1))] = struct{}{}
 	}
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 	require.NoError(t, err)
 	tbInfo := tbSchema.Meta()
@@ -646,15 +646,15 @@ func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
 	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.False(t, firstTestFails == checkTableExistsByIS(ctx, is, tbl.destTable, now))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.NoError(t, createPartition(ctx, is, tbl, sess, now))
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, expectedParts))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.True(t, checkTableExistsByIS(ctx, is, tbl.destTable, now))
 }
 
@@ -723,7 +723,7 @@ func validatePartitionDrop(ctx context.Context, now time.Time, t *testing.T,
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	err := dropOldPartition(ctx, is, tbl, now, retention, sess)
 	if shouldErr {
 		require.Error(t, err)

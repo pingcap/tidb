@@ -820,12 +820,10 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#6",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#5",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1878,7 +1876,7 @@
         "Warn": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ ignore_index(t, idx_v)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+        "SQL": "explain format = 'brief' select /*+ ignore_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
         "Plan": [
           "TopN 1.00 root  Column#4, offset:0, count:1",
           "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",

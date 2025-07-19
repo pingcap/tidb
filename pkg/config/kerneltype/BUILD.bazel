@@ -6,6 +6,7 @@ go_library(
         "classic.go",
         "doc.go",
         "nextgen.go",  #keep
+        "type.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/config/kerneltype",
     visibility = ["//visibility:public"],

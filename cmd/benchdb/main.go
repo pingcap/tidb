@@ -60,7 +60,7 @@ func main() {
 	flag.PrintDefaults()
 	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
+	err = store.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")

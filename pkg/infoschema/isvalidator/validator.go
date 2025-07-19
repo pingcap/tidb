@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package isvalidator
 
 import (
 	"slices"
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -29,168 +29,122 @@ import (
 	"go.uber.org/zap"
 )
 
-type checkResult int
-
-const (
-	// ResultSucc means schemaValidator's check is passing.
-	ResultSucc checkResult = iota
-	// ResultFail means schemaValidator's check is fail.
-	ResultFail
-	// ResultUnknown means schemaValidator doesn't know the check would be success or fail.
-	ResultUnknown
-)
-
-// SchemaValidator is the interface for checking the validity of schema version.
-type SchemaValidator interface {
-	// Update the schema validator, add a new item, delete the expired deltaSchemaInfos.
-	// The latest schemaVer is valid within leaseGrantTime plus lease duration.
-	// Add the changed table IDs to the new schema information,
-	// which is produced when the oldSchemaVer is updated to the newSchemaVer.
-	Update(leaseGrantTime uint64, oldSchemaVer, newSchemaVer int64, change *transaction.RelatedSchemaChange)
-	// Check is it valid for a transaction to use schemaVer and related tables, at timestamp txnTS.
-	Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (*transaction.RelatedSchemaChange, checkResult)
-	// Stop stops checking the valid of transaction.
-	Stop()
-	// Restart restarts the schema validator after it is stopped.
-	Restart()
-	// Reset resets SchemaValidator to initial state.
-	Reset()
-	// IsStarted indicates whether SchemaValidator is started.
-	IsStarted() bool
-	// IsLeaseExpired checks whether the current lease has expired
-	IsLeaseExpired() bool
-}
-
 type deltaSchemaInfo struct {
 	schemaVersion  int64
 	relatedIDs     []int64
 	relatedActions []uint64
 }
 
-type schemaValidator struct {
+type validator struct {
 	isStarted          bool
 	mux                sync.RWMutex
 	lease              time.Duration
 	latestSchemaVer    int64
 	restartSchemaVer   int64
-	do                 *Domain
 	latestSchemaExpire time.Time
 	// deltaSchemaInfos is a queue that maintain the history of changes.
 	deltaSchemaInfos []deltaSchemaInfo
 }
 
-// NewSchemaValidator returns a SchemaValidator structure.
-func NewSchemaValidator(lease time.Duration, do *Domain) SchemaValidator {
+// New returns a Validator structure.
+func New(lease time.Duration) validatorapi.Validator {
 	intest.Assert(lease > 0, "lease should be greater than 0")
-	return &schemaValidator{
+	return &validator{
 		isStarted:        true,
 		lease:            lease,
 		deltaSchemaInfos: make([]deltaSchemaInfo, 0, vardef.DefTiDBMaxDeltaSchemaCount),
-		do:               do,
 	}
 }
 
-func (s *schemaValidator) IsStarted() bool {
-	s.mux.RLock()
-	isStarted := s.isStarted
-	s.mux.RUnlock()
+func (v *validator) IsStarted() bool {
+	v.mux.RLock()
+	isStarted := v.isStarted
+	v.mux.RUnlock()
 	return isStarted
 }
 
-func (s *schemaValidator) Stop() {
+func (v *validator) Stop() {
 	logutil.BgLogger().Info("the schema validator stops")
 	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorStop).Inc()
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	s.isStarted = false
-	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
+	v.mux.Lock()
+	defer v.mux.Unlock()
+	v.isStarted = false
+	v.latestSchemaVer = 0
+	v.deltaSchemaInfos = v.deltaSchemaInfos[:0]
 }
 
-func (s *schemaValidator) Restart() {
+func (v *validator) Restart(currSchemaVer int64) {
 	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorRestart).Inc()
 	logutil.BgLogger().Info("the schema validator restarts")
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	s.isStarted = true
-	if s.do != nil {
-		// When this instance reconnects PD, we should record the latest schema version after mustReload(),
-		// to prevent write txns using a stale schema version by aborting them before commit.
-		// However, the problem still exists for read-only txns.
-		s.restartSchemaVer = s.do.InfoSchema().SchemaMetaVersion()
-	}
+	v.mux.Lock()
+	defer v.mux.Unlock()
+	v.isStarted = true
+	// When this instance reconnects PD, we should record the latest schema version after mustReload(),
+	// to prevent write txns using a stale schema version by aborting them before commit.
+	// However, the problem still exists for read-only txns.
+	v.restartSchemaVer = currSchemaVer
 }
 
-func (s *schemaValidator) Reset() {
+func (v *validator) Reset() {
 	metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorReset).Inc()
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	s.isStarted = true
-	s.latestSchemaVer = 0
-	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
-	s.restartSchemaVer = 0
+	v.mux.Lock()
+	defer v.mux.Unlock()
+	v.isStarted = true
+	v.latestSchemaVer = 0
+	v.deltaSchemaInfos = v.deltaSchemaInfos[:0]
+	v.restartSchemaVer = 0
 }
 
-func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, change *transaction.RelatedSchemaChange) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
+func (v *validator) Update(leaseGrantTS uint64, oldVer, currVer int64, change *transaction.RelatedSchemaChange) {
+	v.mux.Lock()
+	defer v.mux.Unlock()
 
-	if !s.isStarted {
+	if !v.isStarted {
 		logutil.BgLogger().Info("the schema validator stopped before updating")
 		return
 	}
 
 	// Renew the lease.
-	s.latestSchemaVer = currVer
+	v.latestSchemaVer = currVer
 	leaseGrantTime := oracle.GetTimeFromTS(leaseGrantTS)
-	leaseExpire := leaseGrantTime.Add(s.lease - time.Millisecond)
-	s.latestSchemaExpire = leaseExpire
+	leaseExpire := leaseGrantTime.Add(v.lease - time.Millisecond)
+	v.latestSchemaExpire = leaseExpire
 	metrics.LeaseExpireTime.Set(float64(leaseExpire.Unix()))
 
 	// Update the schema deltaItem information.
 	if currVer != oldVer {
-		s.enqueue(currVer, change)
+		v.enqueue(currVer, change)
 		var tblIDs []int64
 		var actionTypes []uint64
 		if change != nil {
 			tblIDs = change.PhyTblIDS
 			actionTypes = change.ActionTypes
 		}
-		for idx, ac := range actionTypes {
-			if ac == uint64(model.ActionUnlockTable) {
-				s.do.Store().GetMemCache().Delete(tblIDs[idx])
-			}
-			if ac == uint64(model.ActionFlashbackCluster) {
-				if s.do != nil && s.do.InfoSyncer() != nil && s.do.InfoSyncer().GetSessionManager() != nil {
-					s.do.InfoSyncer().GetSessionManager().KillNonFlashbackClusterConn()
-				}
-			}
-		}
 		logutil.BgLogger().Debug("update schema validator", zap.Int64("oldVer", oldVer),
 			zap.Int64("currVer", currVer), zap.Int64s("changedTableIDs", tblIDs), zap.Uint64s("changedActionTypes", actionTypes))
 	}
 }
 
-func (s *schemaValidator) IsLeaseExpired() bool {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	return time.Now().After(s.latestSchemaExpire)
+func (v *validator) IsLeaseExpired() bool {
+	v.mux.Lock()
+	defer v.mux.Unlock()
+	return time.Now().After(v.latestSchemaExpire)
 }
 
 // isRelatedTablesChanged returns the result whether relatedTableIDs is changed
 // from usedVer to the latest schema version.
 // NOTE, this function should be called under lock!
-func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
-	if len(s.deltaSchemaInfos) == 0 {
+func (v *validator) isRelatedTablesChanged(currVer int64, tableIDs []int64) bool {
+	if len(v.deltaSchemaInfos) == 0 {
 		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheEmpty).Inc()
 		logutil.BgLogger().Info("schema change history is empty", zap.Int64("currVer", currVer))
 		return true
 	}
-	newerDeltas := s.findNewerDeltas(currVer)
-	if len(newerDeltas) == len(s.deltaSchemaInfos) {
+	newerDeltas := v.findNewerDeltas(currVer)
+	if len(newerDeltas) == len(v.deltaSchemaInfos) {
 		metrics.LoadSchemaCounter.WithLabelValues(metrics.SchemaValidatorCacheMiss).Inc()
 		logutil.BgLogger().Info("the schema version is much older than the latest version", zap.Int64("currVer", currVer),
-			zap.Int64("latestSchemaVer", s.latestSchemaVer), zap.Reflect("deltas", newerDeltas))
+			zap.Int64("latestSchemaVer", v.latestSchemaVer), zap.Reflect("deltas", newerDeltas))
 		return true
 	}
 
@@ -224,8 +178,8 @@ func (s *schemaValidator) isRelatedTablesChanged(currVer int64, tableIDs []int64
 	return false
 }
 
-func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
-	q := s.deltaSchemaInfos
+func (v *validator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
+	q := v.deltaSchemaInfos
 	pos := len(q)
 	for i := len(q) - 1; i >= 0 && q[i].schemaVersion > currVer; i-- {
 		pos = i
@@ -234,51 +188,51 @@ func (s *schemaValidator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
 }
 
 // Check checks schema validity, returns true if use schemaVer and related tables at txnTS is legal.
-func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (*transaction.RelatedSchemaChange, checkResult) {
-	s.mux.RLock()
-	defer s.mux.RUnlock()
-	if !s.isStarted {
+func (v *validator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchema bool) (*transaction.RelatedSchemaChange, validatorapi.Result) {
+	v.mux.RLock()
+	defer v.mux.RUnlock()
+	if !v.isStarted {
 		logutil.BgLogger().Info("the schema validator stopped before checking")
-		return nil, ResultUnknown
+		return nil, validatorapi.ResultUnknown
 	}
 
-	if schemaVer < s.restartSchemaVer {
+	if schemaVer < v.restartSchemaVer {
 		logutil.BgLogger().Info("the schema version is too old, TiDB and PD maybe unhealthy after the transaction started",
 			zap.Int64("schemaVer", schemaVer))
-		return nil, ResultFail
+		return nil, validatorapi.ResultFail
 	}
 
 	// Schema changed, result decided by whether related tables change.
-	if schemaVer < s.latestSchemaVer {
+	if schemaVer < v.latestSchemaVer {
 		// When a transaction executes a DDL and got an error, it should manually call this method to check if it is caused by schema change.
 		// And then it will pass a nil for relatedPhysicalTableIDs to indicate just check schema version.
 		// When a transaction only contains DML on temporary tables, relatedPhysicalTableIDs is [].
 		if relatedPhysicalTableIDs == nil {
 			logutil.BgLogger().Info("the related physical table ID is empty", zap.Int64("schemaVer", schemaVer),
-				zap.Int64("latestSchemaVer", s.latestSchemaVer))
-			return nil, ResultFail
+				zap.Int64("latestSchemaVer", v.latestSchemaVer))
+			return nil, validatorapi.ResultFail
 		}
 
 		// When disabling MDL -> enabling MDL, the old transaction's needCheckSchema is true, we need to check it.
 		// When enabling MDL -> disabling MDL, the old transaction's needCheckSchema is false, so still need to check it, and variable EnableMDL is false now.
 		if needCheckSchema || !vardef.EnableMDL.Load() {
-			changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
+			changed := v.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
 			if changed {
-				return nil, ResultFail
+				return nil, validatorapi.ResultFail
 			}
 		}
-		return nil, ResultSucc
+		return nil, validatorapi.ResultSucc
 	}
 
 	// Schema unchanged, maybe success or the schema validator is unavailable.
 	t := oracle.GetTimeFromTS(txnTS)
-	if t.After(s.latestSchemaExpire) {
-		return nil, ResultUnknown
+	if t.After(v.latestSchemaExpire) {
+		return nil, validatorapi.ResultUnknown
 	}
-	return nil, ResultSucc
+	return nil, validatorapi.ResultSucc
 }
 
-func (s *schemaValidator) enqueue(schemaVersion int64, change *transaction.RelatedSchemaChange) {
+func (v *validator) enqueue(schemaVersion int64, change *transaction.RelatedSchemaChange) {
 	maxCnt := int(vardef.GetMaxDeltaSchemaCount())
 	if maxCnt <= 0 {
 		logutil.BgLogger().Info("the schema validator enqueue", zap.Int("delta max count", maxCnt))
@@ -290,23 +244,23 @@ func (s *schemaValidator) enqueue(schemaVersion int64, change *transaction.Relat
 		delta.relatedIDs = change.PhyTblIDS
 		delta.relatedActions = change.ActionTypes
 	}
-	if len(s.deltaSchemaInfos) == 0 {
-		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+	if len(v.deltaSchemaInfos) == 0 {
+		v.deltaSchemaInfos = append(v.deltaSchemaInfos, delta)
 		return
 	}
 
-	lastOffset := len(s.deltaSchemaInfos) - 1
+	lastOffset := len(v.deltaSchemaInfos) - 1
 	// The first item we needn't to merge, because we hope to cover more versions.
-	if lastOffset != 0 && containIn(s.deltaSchemaInfos[lastOffset], delta) {
-		s.deltaSchemaInfos[lastOffset] = delta
+	if lastOffset != 0 && containIn(v.deltaSchemaInfos[lastOffset], delta) {
+		v.deltaSchemaInfos[lastOffset] = delta
 	} else {
-		s.deltaSchemaInfos = append(s.deltaSchemaInfos, delta)
+		v.deltaSchemaInfos = append(v.deltaSchemaInfos, delta)
 	}
 
-	if len(s.deltaSchemaInfos) > maxCnt {
+	if len(v.deltaSchemaInfos) > maxCnt {
 		logutil.BgLogger().Info("the schema validator enqueue, queue is too long",
-			zap.Int("delta max count", maxCnt), zap.Int64("remove schema version", s.deltaSchemaInfos[0].schemaVersion))
-		s.deltaSchemaInfos = s.deltaSchemaInfos[1:]
+			zap.Int("delta max count", maxCnt), zap.Int64("remove schema version", v.deltaSchemaInfos[0].schemaVersion))
+		v.deltaSchemaInfos = v.deltaSchemaInfos[1:]
 	}
 }
 
@@ -331,4 +285,36 @@ func containIn(lastDelta, curDelta deltaSchemaInfo) bool {
 	}
 
 	return true
+}
+
+type noop struct{}
+
+var _ validatorapi.Validator = (*noop)(nil)
+
+// NewNoop creates a new noop validator.
+// currently, SYSTEM ks info schema is not synced, so use a noop validator to avoid
+// "Information schema is changed during the execution" error.
+// TODO remove it when we sync SYSTEM ks info schema
+func NewNoop() validatorapi.Validator {
+	return &noop{}
+}
+
+func (*noop) Update(uint64, int64, int64, *transaction.RelatedSchemaChange) {}
+
+func (*noop) Check(uint64, int64, []int64, bool) (*transaction.RelatedSchemaChange, validatorapi.Result) {
+	return nil, validatorapi.ResultSucc
+}
+
+func (*noop) Stop() {}
+
+func (*noop) Restart(int64) {}
+
+func (*noop) Reset() {}
+
+func (*noop) IsStarted() bool {
+	return true
+}
+
+func (*noop) IsLeaseExpired() bool {
+	return false
 }

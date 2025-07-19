@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -93,9 +94,14 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease))
-		factory := createSessionFunc(store)
-		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory, etcdClient)
+		factory := getSessionFactory(store)
+		sysFactory := getSessionFactoryWithDom(store)
+		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory,
+			func(targetKS string) pools.Factory {
+				return getCrossKSSessionFactory(store, targetKS)
+			},
+			etcdClient,
+		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {

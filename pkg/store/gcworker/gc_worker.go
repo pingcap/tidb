@@ -372,6 +372,13 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency gcCon
 	return nil
 }
 
+func (w *GCWorker) isUnifiedGC() bool {
+	const cfgGCManagementType = "gc_management_type"
+	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
+	keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta()
+	return keyspaceMeta != nil && keyspaceMeta.Config[cfgGCManagementType] != cfgGCManagementTypeKeyspaceLevel
+}
+
 // leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
@@ -394,9 +401,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
 	// Therefore only one TiDB node in each key space will be responsible to do delete range.
 	// TODO: Use result of AdvanceTxnSafePoint instead, which makes it unnecessary to manually check the config.
-	const cfgGCManagementType = "gc_management_type"
-	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
-	if keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta(); keyspaceMeta != nil && keyspaceMeta.Config[cfgGCManagementType] != cfgGCManagementTypeKeyspaceLevel {
+	if w.isUnifiedGC() {
 		err = w.runKeyspaceGCJobInUnifiedGCMode(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -1378,7 +1383,13 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 }
 
 func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
-	metrics.GCWorkerCounter.WithLabelValues("check_leader").Inc()
+	var label string
+	if w.isUnifiedGC() {
+		label = "check_leader"
+	} else {
+		label = "check_leader_keyspace"
+	}
+	metrics.GCWorkerCounter.WithLabelValues(label).Inc()
 	se := createSession(w.store)
 	defer se.Close()
 

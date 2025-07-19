@@ -26,7 +26,7 @@ import (
 
 // DecodeBinaryPlan decode the binary plan and display it similar to EXPLAIN ANALYZE statement.
 func DecodeBinaryPlan(binaryPlan string) (string, error) {
-	protoBytes, err := decompress(binaryPlan)
+	protoBytes, err := Decompress(binaryPlan)
 	if err != nil {
 		return "", err
 	}
@@ -106,8 +106,8 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 
 // DecodeBinaryPlan4Connection decodes a binary execution plan for the `EXPLAIN FOR CONNECTION` statement.
 // This function is also used by TopSQL for plan analysis.
-func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, error) {
-	protoBytes, err := decompress(binaryPlan)
+func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql bool) ([][]string, error) {
+	protoBytes, err := Decompress(binaryPlan)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func DecodeBinaryPlan4Connection(binaryPlan string, format string) ([][]string, 
 
 	// Define column indices for each format
 	var columnIndices []int
-	if pb.WithRuntimeStats {
+	if pb.WithRuntimeStats && !forTopsql {
 		switch format {
 		case types.ExplainFormatBrief, types.ExplainFormatROW:
 			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}

@@ -728,6 +728,11 @@ type Storage interface {
 	SetOption(k any, v any)
 	// GetOption is a thin wrapper around sync.Map.
 	GetOption(k any) (any, bool)
+	// GetClusterID returns the physical cluster ID of the storage.
+	// for nextgen, all keyspace in the storage share the same cluster ID.
+	GetClusterID() uint64
+	// GetKeyspace returns the keyspace name of the storage.
+	GetKeyspace() string
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/context"
@@ -105,9 +106,7 @@ func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type RootTask struct {
-	p       base.PhysicalPlan
-	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
-	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
+	p base.PhysicalPlan
 
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
@@ -125,16 +124,6 @@ func (t *RootTask) GetPlan() base.PhysicalPlan {
 // SetPlan sets the root task' plan.
 func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
-}
-
-// IsEmpty indicates whether root task is empty.
-func (t *RootTask) IsEmpty() bool {
-	return t.isEmpty
-}
-
-// SetEmpty set the root task as empty.
-func (t *RootTask) SetEmpty(x bool) {
-	t.isEmpty = x
 }
 
 // Copy implements Task interface.
@@ -300,7 +289,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
 		// so this Selection will be executed in TiDB.
 		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
+		_, isSelection := t.p.(*physicalop.PhysicalSelection)
 		if isSelection {
 			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
 		}
@@ -316,8 +305,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
-		sel.fromDataSource = true
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
+		sel.FromDataSource = true
 		sel.SetChildren(rt.GetPlan())
 		rt.SetPlan(sel)
 	}

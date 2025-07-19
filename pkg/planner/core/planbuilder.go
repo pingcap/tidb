@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -52,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -64,13 +66,13 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -563,6 +565,9 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt, *ast.DropProcedureStmt:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case ast.DDLNode:
+		if b.ctx.IsCrossKS() {
+			return nil, errors.New("DDL is not supported in cross keyspace session")
+		}
 		return b.buildDDL(ctx, x)
 	case *ast.CreateBindingStmt:
 		return b.buildCreateBindPlan(x)
@@ -836,9 +841,13 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string) (schema, query, planHint, charset, collation string, err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec := sctx.GetSQLExecutor()
+	prefix := "cluster_"
+	if intest.InTest {
+		prefix = ""
+	}
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
-	sql := fmt.Sprintf("select %s from information_schema.cluster_statements_summary where plan_digest = '%s' union distinct ", fields, planDigest) +
-		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
+	sql := fmt.Sprintf("select %s from information_schema.%stidb_statements_stats where plan_digest = '%s' union distinct ", fields, prefix, planDigest) +
+		fmt.Sprintf("select %s from information_schema.%sstatements_summary_history where plan_digest = '%s' ", fields, prefix, planDigest) +
 		"order by length(plan_digest) desc"
 	rs, err := exec.ExecuteInternal(ctx, sql)
 	if err != nil {
@@ -1362,6 +1371,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	for _, availablePath := range available {
 		if !isMVIndexPath(availablePath) {
 			allMVIIndexPath = false
+			break
 		}
 	}
 	if allMVIIndexPath {
@@ -1373,7 +1383,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, tblName ast.CIStr, dbName ast.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
-	if util2.IsSysDB(dbName.L) {
+	if metadef.IsSystemRelatedDB(dbName.L) {
 		return paths, nil
 	}
 	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
@@ -1856,6 +1866,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 }
 
 func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStmt) (*CheckTable, error) {
+	if len(as.Tables) > 1 {
+		return nil, errors.New("admin check only supports one table at a time")
+	}
 	tblName := as.Tables[0]
 	tnW := b.resolveCtx.GetTableName(tblName)
 	tableInfo := tnW.TableInfo
@@ -3414,7 +3427,7 @@ func buildColumnWithName(tableName, name string, tp byte, size int) (*expression
 	fieldType.SetFlag(flag)
 	return &expression.Column{
 		RetType: fieldType,
-	}, &types.FieldName{DBName: util2.InformationSchemaName, TblName: ast.NewCIStr(tableName), ColName: ast.NewCIStr(name)}
+	}, &types.FieldName{DBName: metadef.InformationSchemaName, TblName: ast.NewCIStr(tableName), ColName: ast.NewCIStr(name)}
 }
 
 type columnsWithNames struct {
@@ -3899,7 +3912,7 @@ func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *
 }
 
 func genAuthErrForGrantStmt(sctx base.PlanContext, dbName string) error {
-	if !strings.EqualFold(dbName, vardef.PerformanceSchema) {
+	if !strings.EqualFold(dbName, metadef.PerformanceSchemaName.L) {
 		return nil
 	}
 	user := sctx.GetSessionVars().User
@@ -3934,11 +3947,16 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 	return &expression.Constant{Value: value, RetType: col.FieldType.Clone()}, nil
 }
 
-// resolveGeneratedColumns resolves generated columns with their generation
-// expressions respectively. onDups indicates which columns are in on-duplicate list.
+// resolveGeneratedColumns resolves generated columns with their generation expressions respectively.
+// onDups indicates which columns are in on-duplicate list
+// and it will be **modified** inside this function.
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
+			// columns having on-update-now flag should also be considered.
+			if mysql.HasOnUpdateNowFlag(column.GetFlag()) {
+				onDups[column.Name.L] = struct{}{}
+			}
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}
@@ -3962,10 +3980,14 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		if onDups == nil {
 			continue
 		}
+		// There may be chain dependencies between columns,
+		// so we need to add new columns into onDups.
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
 				assign := &expression.Assignment{Col: colExpr, ColName: column.Name, Expr: expr}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
+				// onDups use lower column name, see Insert.resolveOnDuplicate
+				onDups[column.Name.L] = struct{}{}
 				break
 			}
 		}
@@ -4506,16 +4528,36 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 }
 
 var (
-	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+	importIntoSchemaNames = []string{
+		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 		"Phase", "Status", "Source_File_Size", "Imported_Rows",
-		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
-	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By", "Last_Update_Time",
+		"Cur_Step", "Cur_Step_Processed_Size", "Cur_Step_Total_Size", "Cur_Step_Progress_Pct", "Cur_Step_Speed", "Cur_Step_ETA",
+	}
+	// ImportIntoSchemaFTypes store the field types of the show import jobs schema.
+	ImportIntoSchemaFTypes = []byte{
+		mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
-		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString, mysql.TypeTimestamp,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+	}
+
+	// ImportIntoFieldMap store the mapping from field names to their indices.
+	// As there are many test cases that use the index to check the result from
+	// `SHOW IMPORT JOBS`, this structure is used to avoid hardcoding these indexs,
+	// so adding new fields does not require modifying all the tests.
+	ImportIntoFieldMap = make(map[string]int)
 
 	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
 	ImportIntoDataSource = "data source"
 )
+
+func init() {
+	for idx, name := range importIntoSchemaNames {
+		normalized := strings.ReplaceAll(name, "_", "")
+		ImportIntoFieldMap[normalized] = idx
+	}
+}
 
 var (
 	distributionJobsSchemaNames = []string{"Job_ID", "Database", "Table", "Partition_List", "Engine", "Rule", "Status",
@@ -4717,7 +4759,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	//
 	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
 	// TableInfo.ID matches with the latest schema.
-	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	latestIS := b.ctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tableInPlan, ok := latestIS.TableByID(ctx, tableInfo.ID)
 	if !ok {
 		// adaptor.handleNoDelayExecutor has a similar check, but we want to give
@@ -4758,7 +4800,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, err2
 		}
 	} else {
-		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes, []uint{})
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, ImportIntoSchemaFTypes, []uint{})
 		p.setSchemaAndNames(outputSchema, outputFields)
 	}
 	return p, nil
@@ -4820,14 +4862,14 @@ var engineList = []string{"tikv", "tiflash"}
 func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
-	if !slices.Contains(ruleList, node.Rule.L) {
-		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, follower-scatter or learner-scatter")
+	if !slices.Contains(ruleList, node.Rule) {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be leader-scatter, peer-scatter or learner-scatter")
 	}
-	if !slices.Contains(engineList, node.Engine.L) {
+	if !slices.Contains(engineList, node.Engine) {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be tikv or tiflash")
 	}
 
-	if node.Engine.L == "tiflash" && node.Rule.L != "learner-scatter" {
+	if node.Engine == "tiflash" && node.Rule != "learner-scatter" {
 		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("the rule of tiflash must be learner-scatter")
 	}
 	plan := &DistributeTable{
@@ -5573,9 +5615,48 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, false, nil, processInfo.RuntimeStatsColl, "")
 }
 
+// getHintedStmtThroughPlanDigest gets the hinted SQL like `select /*+ ... */ * from t where ...` from `stmt_summary`
+// for `explain [analyze] <plan_digest>` statements.
+func getHintedStmtThroughPlanDigest(ctx base.PlanContext, planDigest string) (stmt ast.StmtNode, err error) {
+	err = domain.GetDomain(ctx).AdvancedSysSessionPool().WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			defer func(warnings []stmtctx.SQLWarn) {
+				sctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
+			}(sctx.GetSessionVars().StmtCtx.GetWarnings())
+			// The warnings will be broken in fetchRecordFromClusterStmtSummary(), so we need to save and restore it to make the
+			// warnings for repeated SQL Digest work.
+			schema, query, planHint, characterSet, collation, err := fetchRecordFromClusterStmtSummary(sctx.GetPlanCtx(), planDigest)
+			if err != nil {
+				return err
+			}
+			if query == "" {
+				return errors.NewNoStackErrorf("can't find any plans for '" + planDigest + "'")
+			}
+
+			p := parser.New()
+			originNode, err := p.ParseOneStmt(query, characterSet, collation)
+			if err != nil {
+				return errors.NewNoStackErrorf("failed to parse SQL for Plan Digest: %v", planDigest)
+			}
+			hintedSQL := bindinfo.GenerateBindingSQL(originNode, planHint, schema)
+			stmt, err = p.ParseOneStmt(hintedSQL, characterSet, collation)
+			return err
+		})
+	})
+	return
+}
+
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (base.Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(ctx, show)
+	}
+
+	if explain.PlanDigest != "" { // explain [analyze] <SQLDigest>
+		hintedStmt, err := getHintedStmtThroughPlanDigest(b.ctx, explain.PlanDigest)
+		if err != nil {
+			return nil, err
+		}
+		explain.Stmt = hintedStmt
 	}
 
 	sctx, err := AsSctx(b.ctx)
@@ -5613,7 +5694,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 		return nil, err
 	}
 	nodeW := resolve.NewNodeWWithCtx(sel, b.resolveCtx)
-	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
+	targetPlan, _, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -5877,7 +5958,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
 		names = importIntoSchemaNames
-		ftypes = importIntoSchemaFTypes
+		ftypes = ImportIntoSchemaFTypes
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
@@ -6108,7 +6189,6 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 
 func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
 	options := make([]*AlterDDLJobOpt, 0, len(as.AlterJobOptions))
-	optionNames := make([]string, 0, len(as.AlterJobOptions))
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	for _, opt := range as.AlterJobOptions {
 		_, ok := allowedAlterDDLJobParams[opt.Name]
@@ -6126,7 +6206,6 @@ func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminSt
 			return nil, err
 		}
 		options = append(options, &alterDDLJobOpt)
-		optionNames = append(optionNames, opt.Name)
 	}
 	p := &AlterDDLJob{
 		JobID:   as.JobNumber,
