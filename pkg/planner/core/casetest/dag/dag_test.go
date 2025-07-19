@@ -52,7 +52,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	var input []string
 	var output []struct {
@@ -85,7 +85,7 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.ExecutorConcurrency = 4
 	sessionVars.SetDistSQLScanConcurrency(15)
@@ -122,7 +122,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -302,7 +302,7 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	sessionVars := tk.Session().GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)

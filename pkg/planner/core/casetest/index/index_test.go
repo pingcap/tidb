@@ -42,7 +42,7 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
   KEY idx1 (c1),
   KEY idx2 (c1,c2(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t2(a int, b varchar(10), index idx(b(5)))")
 	tk.MustExec("create table t3(a int, b varchar(10), c int, primary key (a, b(5)) clustered)")
 	tk.MustExec("set tidb_opt_prefix_index_single_scan = 1")
@@ -81,10 +81,10 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"StreamAgg_17 1.00 root  funcs:count(Column#7)->Column#5",
-		"└─IndexReader_18 1.00 root  index:StreamAgg_9",
-		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#7",
-		"    └─IndexRangeScan_16 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+		"StreamAgg_19 1.00 root  funcs:count(Column#7)->Column#5",
+		"└─IndexReader_20 1.00 root  index:StreamAgg_11",
+		"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#7",
+		"    └─IndexRangeScan_18 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 }
 
 func TestInvisibleIndex(t *testing.T) {
@@ -95,13 +95,13 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);")
 	tk.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
 		testkit.Rows(
-			`TableReader_5 10000.00 root  data:TableFullScan_4`,
-			`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+			`TableReader_6 10000.00 root  data:TableFullScan_5`,
+			`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 	tk.MustExec("set session tidb_opt_use_invisible_indexes=on;")
 	tk.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
 		testkit.Rows(
-			`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
-			`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
+			`IndexReader_8 10000.00 root  index:IndexFullScan_7`,
+			`└─IndexFullScan_7 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
 }
 
 func TestRangeDerivation(t *testing.T) {
@@ -229,18 +229,18 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1 (a int key, b int, c int, index (b, c));")
 	tk.MustQuery("explain select a from t1 where b is null order by c").Check(testkit.Rows(
 		"Projection_6 10.00 root  test.t1.a",
-		"└─IndexReader_12 10.00 root  index:IndexRangeScan_11",
-		"  └─IndexRangeScan_11 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
+		"└─IndexReader_14 10.00 root  index:IndexRangeScan_13",
+		"  └─IndexRangeScan_13 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
 	))
 	// https://github.com/pingcap/tidb/issues/56116
 	tk.MustExec("create table t2(id bigint(20) DEFAULT NULL, UNIQUE KEY index_on_id (id))")
 	tk.MustExec("insert into t2 values (), (), ()")
 	tk.MustExec("analyze table t2")
 	tk.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
-		"StreamAgg_17 1.00 root  funcs:count(Column#5)->Column#3",
-		"└─IndexReader_18 1.00 root  index:StreamAgg_9",
-		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#5",
-		"    └─IndexRangeScan_16 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+		"StreamAgg_19 1.00 root  funcs:count(Column#5)->Column#3",
+		"└─IndexReader_20 1.00 root  index:StreamAgg_11",
+		"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#5",
+		"    └─IndexRangeScan_18 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
 }
 
 const tiflashReplicaLease = 600 * time.Millisecond
@@ -271,7 +271,39 @@ func TestVectorIndex(t *testing.T) {
 	tk.MustExecToErr("select * from t use index(vecIdx1) where a = 5 order by vec_cosine_distance(d, '[1,1,1,1]') limit 1")
 }
 
-func TestAnalyzeVectorIndex(t *testing.T) {
+func TestInvertedIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+
+	tk.MustExec("create table t (a int, b bigint, c tinyint, d smallint unsigned, columnar index idx_a (a) using inverted, columnar index idx_b (b) using inverted);")
+	tk.MustExec("alter table t add columnar index idx_c (c) USING inverted;")
+	tk.MustExec("alter table t add columnar index idx_d (d) USING inverted;")
+	tk.MustExec("insert into t values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4);")
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustUseIndex("select * from t force index(idx_a) where a > 0", "idx_a")
+	tk.MustUseIndex("select * from t force index(idx_b) where b < 0", "idx_b")
+	tk.MustUseIndex("select * from t force index(idx_c) where c = 0", "idx_c")
+	tk.MustUseIndex("select * from t force index(idx_d) where d != 0", "idx_d")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_a) where a = 1")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_b) where b = 2")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_c) where c = 3")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_d) where d < 1")
+}
+
+func TestAnalyzeColumnarIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -284,8 +316,8 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 		tiflash.StatusServer.Close()
 		tiflash.Unlock()
 	}()
-	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
-	tk.MustExec("insert into t values(1, '[1, 0]', '[1, 0, 0]', '{\"a\": 1}')")
+	tk.MustExec(`create table t(a int, b vector(2), c datetime, j json, index(a))`)
+	tk.MustExec("insert into t values(1, '[1, 0]', '2022-01-01 12:00:00', '{\"a\": 1}')")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -296,7 +328,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
-	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
+	tk.MustExec("alter table t add columnar index idx2(c) USING INVERTED")
 
 	tk.MustUseIndex("select * from t use index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
 	tk.MustUseIndex("select * from t order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")

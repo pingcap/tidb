@@ -43,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1780,6 +1782,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	extEngine := external.NewExternalEngine(
+		ctx,
 		memStore,
 		dataFiles,
 		statFiles,
@@ -1848,7 +1851,7 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 		},
 		{
 			ingest: injectedIngestBehaviour{
-				err: &ingestAPIError{err: common.ErrKVEpochNotMatch},
+				err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch},
 			},
 		},
 	}

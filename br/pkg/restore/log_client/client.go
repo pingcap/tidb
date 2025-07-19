@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -108,11 +109,14 @@ func NewLogRestoreManager(
 	}
 
 	if logCheckpointMetaManager != nil {
+		log.Info("starting checkpoint runner for log restore")
 		var err error
 		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	} else {
+		log.Info("log checkpoint meta manager is disabled, checkpoint runner not started")
 	}
 	return l, nil
 }
@@ -201,6 +205,7 @@ type LogClient struct {
 	currentTS uint64
 
 	upstreamClusterID uint64
+	restoreID         uint64
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -609,6 +614,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	}
 	if exists {
 		// load the checkpoint since this is not the first time to restore
+		log.Info("loading existing log restore checkpoint")
 		meta, err := logCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return "", errors.Trace(err)
@@ -881,8 +887,16 @@ func (rc *LogClient) RestoreKVFiles(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	var applyWg sync.WaitGroup
-	eg, ectx := errgroup.WithContext(ctx)
+	var (
+		applyWg  sync.WaitGroup
+		eg, ectx = errgroup.WithContext(ctx)
+
+		skipped    = metrics.KVApplyTasksEvents.WithLabelValues("skipped")
+		submitted  = metrics.KVApplyTasksEvents.WithLabelValues("submitted")
+		started    = metrics.KVApplyTasksEvents.WithLabelValues("started")
+		finished   = metrics.KVApplyTasksEvents.WithLabelValues("finished")
+		memApplied = metrics.KVLogFileEmittedMemory.WithLabelValues("2-applied")
+	)
 	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
 			return
@@ -891,16 +905,23 @@ func (rc *LogClient) RestoreKVFiles(
 		// because the tableID of files is the same.
 		rule, ok := rules[files[0].TableId]
 		if !ok {
+			skipped.Add(float64(len(files)))
 			onProgress(kvCount)
 			summary.CollectInt("FileSkip", len(files))
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
+			submitted.Add(float64(len(files)))
 			applyWg.Add(1)
 			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+				started.Add(float64(len(files)))
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
+					for _, file := range files {
+						memApplied.Add(float64(file.Size()))
+					}
+					finished.Add(float64(len(files)))
 					onProgress(kvCount)
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
@@ -1325,7 +1346,7 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 			var e error
 			// To trigger full-reload instead of diff-reload, we need to increase the schema version
 			// by at least `domain.LoadSchemaDiffVersionGapThreshold`.
-			schemaVersion, e = t.GenSchemaVersions(64 + domain.LoadSchemaDiffVersionGapThreshold)
+			schemaVersion, e = t.GenSchemaVersions(64 + issyncer.LoadSchemaDiffVersionGapThreshold)
 			if e != nil {
 				return e
 			}
@@ -1889,59 +1910,139 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 }
 
 // RefreshMetaForTables refreshes metadata for all tables in the schemasReplace map.
+// The ordering is critical for dependency management:
+// - DELETE operations: tables first, then databases
+// - ADD/UPDATE operations: databases first, then tables (to ensure parent exists)
 func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *stream.SchemasReplace) error {
 	deletedTablesMap := schemasReplace.GetDeletedTables()
 
-	deletedCount := 0
+	// Step 1: Process DELETIONS in dependency-safe order (tables first, then databases)
+	deletedTableCount := 0
+
+	// First, delete all tables
 	for dbID, tableIDsSet := range deletedTablesMap {
-		for tableID := range tableIDsSet {
-			args := &model.RefreshMetaArgs{
-				SchemaID: dbID,
-				TableID:  tableID,
+		if len(tableIDsSet) > 0 {
+			// handle table deletions
+			for tableID := range tableIDsSet {
+				args := &model.RefreshMetaArgs{
+					SchemaID: dbID,
+					TableID:  tableID,
+				}
+
+				// Get table and database names for logging
+				var dbName, tableName string
+				if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
+					dbName = dbReplace.Name
+					if tableReplace, ok := dbReplace.TableMap[tableID]; ok {
+						tableName = tableReplace.Name
+					}
+				}
+
+				log.Info("refreshing deleted table meta",
+					zap.Int64("schemaID", dbID),
+					zap.String("dbName", dbName),
+					zap.Any("tableID", tableID),
+					zap.String("tableName", tableName))
+				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+					return errors.Annotatef(err,
+						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
+						dbID, tableID, dbName, tableName)
+				}
+				deletedTableCount++
 			}
-			log.Info("refreshing deleted table meta", zap.Int64("schemaID", dbID),
-				zap.Any("tableID", tableID))
-			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
-				return errors.Annotatef(err,
-					"failed to refresh meta for deleted table with schemaID=%d, tableID=%d", dbID, tableID)
-			}
-			deletedCount++
 		}
 	}
-	log.Info("refreshed metadata for deleted tables", zap.Int("deletedTableCount", deletedCount))
 
+	// Then, delete databases if needed
+	for dbID := range deletedTablesMap {
+		args := &model.RefreshMetaArgs{
+			SchemaID: dbID,
+			TableID:  0, // 0 for database-only refresh
+		}
+
+		// Get database name for logging
+		var dbName string
+		if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
+			dbName = dbReplace.Name
+		}
+
+		log.Info("refreshing potential deleted database meta",
+			zap.Int64("schemaID", dbID),
+			zap.String("dbName", dbName))
+		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+			return errors.Annotatef(err, "failed to refresh meta for deleted database with schemaID=%d, dbName=%s",
+				dbID, dbName)
+		}
+	}
+
+	log.Info("refreshed metadata for deleted items",
+		zap.Int("deletedTableCount", deletedTableCount))
+
+	// Step 2: Process ADD/UPDATE operations in dependency-safe order (databases first, then tables)
 	regularCount := 0
+
+	// First, handle database-only operations
 	for _, dbReplace := range schemasReplace.DbReplaceMap {
 		if dbReplace.FilteredOut {
 			continue
 		}
 
-		for _, tableReplace := range dbReplace.TableMap {
-			if tableReplace.FilteredOut {
-				continue
-			}
+		// Skip if we already processed this database in delete section
+		if _, alreadyProcessed := deletedTablesMap[dbReplace.DbID]; alreadyProcessed {
+			continue
+		}
 
-			// skip if this table is in the deleted list
-			if tableIDsSet, dbExists := deletedTablesMap[dbReplace.DbID]; dbExists {
-				if _, isDeleted := tableIDsSet[tableReplace.TableID]; isDeleted {
-					continue
-				}
-			}
-
-			args := &model.RefreshMetaArgs{
-				SchemaID: dbReplace.DbID,
-				TableID:  tableReplace.TableID,
-			}
-			log.Info("refreshing regular table meta", zap.Int64("schemaID", dbReplace.DbID),
-				zap.Any("tableID", tableReplace.TableID))
-			if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
-				return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d",
-					dbReplace.DbID, tableReplace.TableID)
-			}
-			regularCount++
+		args := &model.RefreshMetaArgs{
+			SchemaID: dbReplace.DbID,
+			TableID:  0, // tableID = 0 for database-only refresh
+		}
+		log.Info("refreshing database-only meta",
+			zap.Int64("schemaID", dbReplace.DbID),
+			zap.String("dbName", dbReplace.Name))
+		if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+			return errors.Annotatef(err, "failed to refresh meta for database with schemaID=%d, dbName=%s",
+				dbReplace.DbID, dbReplace.Name)
 		}
 	}
 
-	log.Info("refreshed metadata for regular tables", zap.Int("regularTableCount", regularCount))
+	// Then, handle table operations
+	for _, dbReplace := range schemasReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+
+		if len(dbReplace.TableMap) > 0 {
+			for _, tableReplace := range dbReplace.TableMap {
+				if tableReplace.FilteredOut {
+					continue
+				}
+
+				// skip if this table is in the deleted list
+				if tableIDsSet, dbExists := deletedTablesMap[dbReplace.DbID]; dbExists {
+					if _, isDeleted := tableIDsSet[tableReplace.TableID]; isDeleted {
+						continue
+					}
+				}
+
+				args := &model.RefreshMetaArgs{
+					SchemaID: dbReplace.DbID,
+					TableID:  tableReplace.TableID,
+				}
+				log.Info("refreshing regular table meta",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.String("dbName", dbReplace.Name),
+					zap.Any("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name))
+				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
+					return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
+						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+				}
+				regularCount++
+			}
+		}
+	}
+
+	log.Info("refreshed metadata for add/update operations",
+		zap.Int("regularTableCount", regularCount))
 	return nil
 }

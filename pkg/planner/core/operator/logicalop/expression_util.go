@@ -21,9 +21,13 @@ import (
 
 // Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
 func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
+	if len(conds) == 0 {
+		return nil
+	}
+	exprCtx := p.SCtx().GetExprCtx()
 	for _, cond := range conds {
 		if expression.IsConstNull(cond) {
-			if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), conds) {
+			if expression.MaybeOverOptimized4PlanCache(exprCtx, conds...) {
 				return nil
 			}
 			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
@@ -40,7 +44,7 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return nil
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
+	if expression.MaybeOverOptimized4PlanCache(exprCtx, con) {
 		return nil
 	}
 	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {

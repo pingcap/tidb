@@ -1162,15 +1162,19 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrStorageClassInvalidSpec:      mysql.Message("Invalid storage class: %s", nil),
 
 	// TiKV/PD errors.
-	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
-	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),
-	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
-	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
-	ErrTiFlashServerBusy:         mysql.Message("TiFlash server is busy", nil),
-	ErrTiFlashBackfillIndex:      mysql.Message("TiFlash backfill index failed: %s", nil),
-	ErrResolveLockTimeout:        mysql.Message("Resolve lock timeout", nil),
-	ErrRegionUnavailable:         mysql.Message("Region is unavailable", nil),
-	ErrGCTooEarly:                mysql.Message("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", nil),
+	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),
+	ErrTiKVServerTimeout:    mysql.Message("TiKV server timeout", nil),
+	ErrTiKVServerBusy:       mysql.Message("TiKV server is busy", nil),
+	ErrTiFlashServerTimeout: mysql.Message("TiFlash server timeout", nil),
+	ErrTiFlashServerBusy:    mysql.Message("TiFlash server is busy", nil),
+	ErrTiFlashBackfillIndex: mysql.Message("TiFlash backfill index failed: %s", nil),
+	ErrResolveLockTimeout:   mysql.Message("Resolve lock timeout", nil),
+	ErrRegionUnavailable:    mysql.Message("Region is unavailable", nil),
+	// In most cases, the error `ErrTxnAbortedByGC` is caused by the transaction runs too long, instead of improper GC
+	// life time configuration. This means the description of this error is not accurate.
+	// However, as this error message is already widely acknowledged and might have become part of our diagnosing
+	// process, we keep the old error message format.
+	ErrTxnAbortedByGC:            mysql.Message("GC life time is shorter than transaction duration, transaction start ts is %v (%v), txn safe point is %v (%v)", nil),
 	ErrWriteConflict:             mysql.Message("Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s", []int{3, 4, 5, 6}), // the first and third parts of the key are the optional database names and table names
 	ErrTiKVStoreLimit:            mysql.Message("Store token is up to the limit, store id = %d", nil),
 	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
@@ -1185,4 +1189,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGlobalIndexNotExplicitlySet: mysql.Message("Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption", nil),
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
+	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 }

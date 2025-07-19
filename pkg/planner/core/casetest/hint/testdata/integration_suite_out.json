@@ -128,12 +128,12 @@
         "Plan": [
           "PartitionUnion 33.00 root  ",
           "├─IndexMerge 11.00 root  type: union",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p0 range:[1,1], keep order:false, stats:pseudo",
+          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
           "├─IndexMerge 11.00 root  type: union",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
+          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
           "└─TableReader 11.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 11.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -820,12 +820,10 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#6",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:sum(Column#5)->Column#4",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#5",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx_a(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -1845,35 +1843,46 @@
         "Warn": null
       },
       {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, PRIMARY)*/ * from t",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index 'PRIMARY' in the isolation read engines(value: 'tiflash')"
+        ]
+      },
+      {
         "SQL": "explain format = 'brief' select /*+ use_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
         "Plan": [
-          "TopN 1.00 root  Column#6, offset:0, count:1",
+          "TopN 1.00 root  Column#5, offset:0, count:1",
           "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#6"
+          "    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1",
+          "      └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#5"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select /*+ use_index(t, idx_v)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
         "Plan": [
-          "TopN 1.00 root  Column#6, offset:0, count:1",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN 1.00 mpp[tiflash]  Column#6, offset:0, count:1",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#6"
-        ],
-        "Warn": null
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ ignore_index(t, idx_v)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
-        "Plan": [
           "TopN 1.00 root  Column#5, offset:0, count:1",
           "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1",
-          "      └─Projection 1.00 mpp[tiflash]  test.t.a, vec_cosine_distance(test.t.vec, [1,2,3])->Column#5",
+          "      └─TableFullScan 1.00 mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#5"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ ignore_index(t, idx_vec)*/ a from t order by VEC_COSINE_DISTANCE(`vec`, '[1, 2, 3]') limit 1;",
+        "Plan": [
+          "TopN 1.00 root  Column#4, offset:0, count:1",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 1.00 mpp[tiflash]  Column#4, offset:0, count:1",
+          "      └─Projection 1.00 mpp[tiflash]  test.t.a, vec_cosine_distance(test.t.vec, [1,2,3])->Column#4",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null

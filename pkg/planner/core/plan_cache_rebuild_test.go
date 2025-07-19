@@ -240,7 +240,7 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
 			".ctx", ".AccessCondition", ".filterCondition", ".Conditions", ".Exprs", ".IndexConstants",
 			"*collate", ".IdxCols", ".OutputColumns", ".EqualConditions", ".OuterHashKeys", ".InnerHashKeys",
-			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".physicalSchemaProducer.schema",
+			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".PhysicalSchemaProducer.schema",
 			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".baseSchemaProducer.schema",
 			".pkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
 	})

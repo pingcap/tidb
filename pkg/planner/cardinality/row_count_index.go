@@ -427,7 +427,16 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-	if histNDV <= 0 {
+	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
+	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
+	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
+	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
+	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
+		// branch 1: all NDV's are in TopN, and no histograms
+		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
+		if histNDV > 0 && modifyCount == 0 {
+			return max(float64(idx.TopN.MinCount()-1), 1)
+		}
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
 		// The histogram wont have a NotNullCount - so it needs to be derived.
 		notNullCount := idx.Histogram.NotNullCount()
@@ -437,6 +446,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	}
+	// branch 2: some NDV's are in histograms
 	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
 	skewEstimate := float64(0)
@@ -591,7 +601,7 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 }
 
 // betweenRowCountOnIndex estimates the row count for interval [l, r).
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+// The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
 func betweenRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, l, r types.Datum) float64 {
 	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == statistics.Version1 {

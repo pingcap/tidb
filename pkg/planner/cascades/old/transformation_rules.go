@@ -870,7 +870,7 @@ func (*pushDownJoin) predicatePushDown(
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond)
+		tempCond = expression.PropagateConstant(sctx.GetExprCtx(), tempCond...)
 		// Return table dual when filter is constant false or null.
 		dual := logicalop.Conds2TableDual(join, tempCond)
 		if dual != nil {

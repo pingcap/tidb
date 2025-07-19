@@ -779,3 +779,19 @@ select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s'
 
 # TestIssue56641
 select ((exists (select 1)) * -5) as c1;
+
+# TestIssue59457
+SELECT IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ');
+-- error 1411
+SELECT UUID_TO_BIN(' 6ccd780c-baba-1026-9564-5b8c656024db ');
+# TestIssue59456
+SELECT is_ipv4_mapped(NULL);
+SELECT IS_IPV4(NULL);
+SELECT IS_IPV4(IF(1, NULL, '127.0.0.1'));
+SELECT IS_IPV4_COMPAT(NULL);
+SELECT IS_IPV6(NULL + INTERVAL 1 DAY);
+
+# TestIssue62457 should raise error
+CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
+-- error 3146 
+ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;

@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/infoschema/context",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/store/driver/error",
         "//pkg/tablecodec",

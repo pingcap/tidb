@@ -17,6 +17,7 @@ go_test(
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
         "//pkg/ddl/testutil",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/operator",
         "//pkg/domain",

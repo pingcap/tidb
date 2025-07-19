@@ -30,6 +30,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -136,7 +137,7 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -540,16 +541,20 @@ func TestFlushKVsRetry(t *testing.T) {
 }
 
 func TestGetAdjustedIndexBlockSize(t *testing.T) {
-	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB))
-	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
+	// our block size is calculated based on MaxTxnEntrySizeLimit, if you want to
+	// change it, contact with us please.
+	require.EqualValues(t, 120*units.MiB, tidbconfig.MaxTxnEntrySizeLimit)
+
+	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB, DefaultBlockSize))
 }
 
 func readKVFile(t *testing.T, store storage.ExternalStorage, filename string) []kvPair {
 	t.Helper()
-	reader, err := newKVReader(context.Background(), filename, store, 0, units.KiB)
+	reader, err := NewKVReader(context.Background(), filename, store, 0, units.KiB)
 	require.NoError(t, err)
 	kvs := make([]kvPair, 0)
 	for {
