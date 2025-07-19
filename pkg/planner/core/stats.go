@@ -748,18 +748,13 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 
 	// Early optimization: Check for perfect covering indexes
 	// If there's an index with maxEqOrIn and no filters, it's optimal
-	if maxEqOrIn > 0 && numTabFilters == 0 && numIdxFilters == 0 {
+	if numTabFilters == 0 && numIdxFilters == 0 {
 		var perfectCoveringIndexes []*util.AccessPath
-		var forcedIndexes []*util.AccessPath
 		var tablePaths []*util.AccessPath
 
 		for _, path := range paths {
 			if path.IsTablePath() {
 				tablePaths = append(tablePaths, path)
-				continue
-			}
-			if path.Forced {
-				forcedIndexes = append(forcedIndexes, path)
 				continue
 			}
 			// Check if this is a perfect covering index
@@ -772,9 +767,8 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 
 		// If we have perfect covering indexes, return only them plus forced indexes and table paths
 		if len(perfectCoveringIndexes) > 0 {
-			result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
+			result := make([]*util.AccessPath, 0, len(tablePaths)+len(perfectCoveringIndexes))
 			result = append(result, tablePaths...)
-			result = append(result, forcedIndexes...)
 			result = append(result, perfectCoveringIndexes...)
 			return result
 		}
@@ -832,11 +826,8 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 					}
 					// Don't prune if the current index is a single scan and the higher index is not
 					// Single scan indexes can avoid table lookups, so they should be preserved
-					if currentPath.IsSingleScan && !higherPath.IsSingleScan {
+					if currentPath.EqOrInCondCount > 1 && currentPath.IsSingleScan && !higherPath.IsSingleScan {
 						continue
-					}
-					if currentPath.Forced {
-						continue // Don't prune forced indexes
 					}
 					if isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
 						// The current index is a prefix of the higher index, and the higher index
