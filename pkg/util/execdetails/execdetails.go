@@ -403,23 +403,9 @@ type SyncExecDetails struct {
 
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
-func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *util.CommitDetails) {
+func (s *SyncExecDetails) MergeExecDetails(commitDetails *util.CommitDetails) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if details != nil {
-		s.execDetails.CopTime += details.CopTime
-		s.execDetails.BackoffTime += details.BackoffTime
-		s.execDetails.RequestCount++
-		s.mergeScanDetail(details.ScanDetail)
-		s.mergeTimeDetail(details.TimeDetail)
-		detail := &DetailsNeedP90{
-			BackoffSleep:  details.BackoffSleep,
-			BackoffTimes:  details.BackoffTimes,
-			CalleeAddress: details.CalleeAddress,
-			TimeDetail:    details.TimeDetail,
-		}
-		s.detailsSummary.Merge(detail)
-	}
 	if commitDetails != nil {
 		if s.execDetails.CommitDetail == nil {
 			s.execDetails.CommitDetail = commitDetails

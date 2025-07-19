@@ -842,15 +842,6 @@ func (sc *StatementContext) SetIndexForce() {
 // PlanCacheType is the flag of plan cache
 type PlanCacheType int
 
-const (
-	// DefaultNoCache no cache
-	DefaultNoCache PlanCacheType = iota
-	// SessionPrepared session prepared plan cache
-	SessionPrepared
-	// SessionNonPrepared session non-prepared plan cache
-	SessionNonPrepared
-)
-
 // SetHintWarning sets the hint warning and records the reason.
 func (sc *StatementContext) SetHintWarning(reason string) {
 	sc.AppendWarning(plannererrors.ErrInternal.FastGen(reason))
