@@ -328,7 +328,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if col != nil && col.GetType() == mysql.TypeTimestamp &&
 		types.ErrTimestampInDSTTransition.Equal(err) {
 		newErr := exeerrors.ErrTruncateWrongInsertValue.FastGenByArgs(types.TypeStr(col.GetType()), val.GetString(), col.Name.O, rowIdx+1)
-		if e.Ctx().GetSessionVars().SQLMode.HasStrictMode() {
+		// IGNORE takes precedence over STRICT mode.
+		if !e.ignoreErr && e.Ctx().GetSessionVars().SQLMode.HasStrictMode() {
 			return newErr
 		}
 		// timestamp already adjusted to end of DST transition, convert error to warning
