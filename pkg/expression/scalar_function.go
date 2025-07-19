@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var _ base.HashEquals = &ScalarFunction{}
@@ -45,6 +47,7 @@ type ScalarFunction struct {
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
+	testStackTrace    intest.TestStackTrace
 }
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.
@@ -366,7 +369,17 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
+	if intest.InTest {
+		c.testStackTrace = sf.testStackTrace.Copy()
+	}
 	return c
+}
+
+// CloneWithoutHashcode implements Expression interface.
+func (sf *ScalarFunction) CloneWithoutHashcode() Expression {
+	result := sf.Clone().(*ScalarFunction)
+	result.hashcode = result.hashcode[:0]
+	return result
 }
 
 // GetType implements Expression interface.
@@ -564,8 +577,21 @@ func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (typ
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
+		if intest.InTest {
+			copyhashcode := make([]byte, len(sf.hashcode))
+			copy(copyhashcode, sf.hashcode)
+			ReHashCode(sf)
+			intest.AssertFunc(func() bool {
+				if bytes.Equal(sf.hashcode, copyhashcode) {
+					return true
+				}
+				logutil.BgLogger().Error("hashcode not equal", zap.String("last_stack_trace", sf.testStackTrace.String()))
+				return false
+			}, "HashCode should not change after ReHashCode is called")
+		}
 		return sf.hashcode
 	}
+	sf.testStackTrace = intest.NewTestStackTrace()
 	ReHashCode(sf)
 	return sf.hashcode
 }
