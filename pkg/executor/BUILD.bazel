@@ -403,6 +403,7 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/distsql",
         "//pkg/distsql/context",
+        "//pkg/disttask/importinto",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/errctx",

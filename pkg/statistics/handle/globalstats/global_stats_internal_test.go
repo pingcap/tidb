@@ -404,7 +404,6 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set tidb_cost_model_version=2")
 	// Disable auto analyze to ensure that stats are not automatically collected
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 

@@ -414,11 +414,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
@@ -461,14 +456,6 @@ func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
 	}
 	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rows:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -912,21 +899,4 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return res
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
-	if len(operatorInfo) == 0 {
-		return accessObject
-	}
-	return accessObject + ", " + operatorInfo
-}
-
-// OperatorInfo implements DataAccesser interface.
-func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
-	if p.Extractor != nil {
-		return p.Extractor.ExplainInfo(p)
-	}
-	return ""
 }
