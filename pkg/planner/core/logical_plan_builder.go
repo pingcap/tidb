@@ -5161,7 +5161,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp logicalop.JoinType, markNoDecorrelate bool) base.LogicalPlan {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin | rule.FlagConstantPropagation
 	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
@@ -5876,20 +5876,23 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if err != nil {
 				return nil, nil, false, err
 			}
-			// check if the column is modified
+			// check if the column may be modified.
 			dependentColumns := expression.ExtractDependentColumns(newExpr)
-			var isModified bool
+			var mayModified bool
 			for _, col := range dependentColumns {
-				if dependentColumnsModified[col.UniqueID] {
-					isModified = true
+				colTp := col.GetType(b.ctx.GetExprCtx().GetEvalCtx()).GetFlag()
+				// If any of the dependent column has on-update-now flag,
+				// this virtual generated column may be modified too.
+				if mysql.HasOnUpdateNowFlag(colTp) || dependentColumnsModified[col.UniqueID] {
+					mayModified = true
 					break
 				}
 			}
-			if isModified {
+			if mayModified {
 				dependentColumnsModified[col.UniqueID] = true
 			}
 			// skip unmodified generated columns
-			if !isModified {
+			if !mayModified {
 				continue
 			}
 		}
