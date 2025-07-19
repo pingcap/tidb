@@ -470,6 +470,6 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 	// Reset auto analyze after test
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
-	// Reset table cost factor high
+	// Reset table cost factor
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
 }
