@@ -135,7 +135,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
 	maxEqOrIn, numTabFilters, numIdxFilters := 0, 0, 0
-	hasForce := false
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -143,9 +142,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		err := fillIndexPath(ds, path, ds.PushedDownConds)
 		if err != nil {
 			return nil, false, err
-		}
-		if path.Forced {
-			hasForce = true
 		}
 		if path.EqOrInCondCount >= maxEqOrIn {
 			maxEqOrIn = path.EqOrInCondCount
@@ -160,7 +156,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 
 	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
 	// but where the other index also has a higher eqOrInCondCount
-	if !hasForce && (maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20) {
+	if maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20 {
 		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths, maxEqOrIn, numTabFilters, numIdxFilters)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
@@ -750,11 +746,16 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 	// If there's an index with maxEqOrIn and no filters, it's optimal
 	if numTabFilters == 0 && numIdxFilters == 0 {
 		var perfectCoveringIndexes []*util.AccessPath
+		var forcedIndexes []*util.AccessPath
 		var tablePaths []*util.AccessPath
 
 		for _, path := range paths {
 			if path.IsTablePath() {
 				tablePaths = append(tablePaths, path)
+				continue
+			}
+			if path.Forced {
+				forcedIndexes = append(forcedIndexes, path)
 				continue
 			}
 			// Check if this is a perfect covering index
@@ -767,8 +768,9 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 
 		// If we have perfect covering indexes, return only them plus forced indexes and table paths
 		if len(perfectCoveringIndexes) > 0 {
-			result := make([]*util.AccessPath, 0, len(tablePaths)+len(perfectCoveringIndexes))
+			result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
 			result = append(result, tablePaths...)
+			result = append(result, forcedIndexes...)
 			result = append(result, perfectCoveringIndexes...)
 			return result
 		}
@@ -820,6 +822,9 @@ func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn,
 			}
 			for _, currentPath := range currentPaths {
 				for _, higherPath := range higherPaths {
+					if currentPath.Forced {
+						continue
+					}
 					if currentPath.EqOrInCondCount == maxEqOrIn &&
 						!(len(currentPath.TableFilters) > numTabFilters || len(currentPath.IndexFilters) > numIdxFilters) {
 						continue // Don't prune if the current index has max eqOrInCondCount and least filters
