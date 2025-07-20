@@ -163,10 +163,7 @@ func (w *FileWriter) WriteHeader(
 		return errors.New("TICIFileWriter dataWriter is nil")
 	}
 
-	pkLen := 0
-	if pkIdxInBytes != nil {
-		pkLen = len(pkIdxInBytes)
-	}
+	pkLen := len(pkIdxInBytes)
 	headerLen := 1 + 8 + len(tblInBytes) + 8 + len(idxInBytes) +
 		8 + pkLen + 8
 	header := make([]byte, headerLen)
