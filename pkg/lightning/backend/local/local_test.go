@@ -2335,7 +2335,7 @@ func TestExternalEngine(t *testing.T) {
 		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
-	engineID := int32(-1) // dummy engine ID, marked as an index engine
+	engineID := int32(common.IndexEngineID) // dummy engine ID, marked as an index engine
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{

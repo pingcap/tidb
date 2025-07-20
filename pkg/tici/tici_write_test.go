@@ -45,8 +45,6 @@ func (s *stubMetaService) MarkTableUploadFinished(
 	return &MarkTableUploadFinishedResponse{Status: 0}, nil
 }
 
-const bufSize = 1024 * 1024
-
 func startStubMetaService(t *testing.T) (cleanup func(), dialOpt grpc.DialOption, target string) {
 	const bufSize = 1024 * 1024
 	lis := bufconn.Listen(bufSize)

@@ -411,6 +411,9 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, cou
 // in longer-term architectural improvements.
 func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) *DataWriterGroup {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
+	if len(fulltextIndexes) == 0 {
+		return nil
+	}
 	writers := make([]*DataWriter, 0, len(fulltextIndexes))
 
 	logger := log.FromContext(ctx)

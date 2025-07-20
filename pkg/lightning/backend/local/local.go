@@ -1462,14 +1462,16 @@ func (local *Backend) doImport(
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
 
-	if err == nil && local.ticiWriteGroup != nil {
-		// If the import is done, we can close the write group.
-		if err2 := local.ticiWriteGroup.MarkTableUploadFinished(ctx); err2 != nil {
-			err = err2 // mark upload itself failed
-		}
+	if err != nil {
+		return err
 	}
 
-	return err
+	if local.ticiWriteGroup != nil {
+		// If the import is done, we can close the write group.
+		return local.ticiWriteGroup.MarkTableUploadFinished(ctx)
+	}
+
+	return nil
 }
 
 func (local *Backend) newRegionJobWorker(
@@ -1766,7 +1768,7 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 	return 0, 0, errors.New("get region split size and keys failed")
 }
 
-// SetTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
-func (local *Backend) SetTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) {
+// InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) {
 	local.ticiWriteGroup = tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
 }

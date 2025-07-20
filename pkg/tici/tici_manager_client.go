@@ -113,7 +113,7 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 			DatabaseName: schemaName,
 			Version:      int64(tblInfo.Version),
 			Columns:      tableColumns,
-			IsClustered:  tblInfo.PKIsHandle || tblInfo.IsCommonHandle,
+			IsClustered:  tblInfo.HasClusteredIndex(),
 		},
 	}
 	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
@@ -184,7 +184,7 @@ func (t *ManagerCtx) GetCloudStoragePath(
 		DatabaseName: schemaName,
 		Version:      int64(tblInfo.Version),
 		Columns:      tableColumns,
-		IsClustered:  tblInfo.PKIsHandle || tblInfo.IsCommonHandle,
+		IsClustered:  tblInfo.HasClusteredIndex(),
 	}
 
 	req := &GetCloudStoragePathRequest{
@@ -296,7 +296,7 @@ func ModelTableToTiCITableInfo(tblInfo *model.TableInfo, schemaName string) *Tab
 		DatabaseName: schemaName,
 		Version:      int64(tblInfo.Version),
 		Columns:      tableColumns,
-		IsClustered:  tblInfo.PKIsHandle || tblInfo.IsCommonHandle,
+		IsClustered:  tblInfo.HasClusteredIndex(),
 	}
 }
 
