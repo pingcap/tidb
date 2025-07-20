@@ -76,7 +76,7 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 	// 1. We simple the predicates to avoid complex evaluation. such as or(ne(test.t1.c2, test.t1.c2), 1) => 1
 	// 2. We split the And Condition, and check each condition separately.
 	// 3. Const null will be removed, so we can avoid the case that
-	predicates := utilfuncp.ApplyPredicateSimplification(ctx, []expression.Expression{predicate})
+	predicates := utilfuncp.ApplyPredicateSimplification(ctx, []expression.Expression{predicate}, false)
 	for _, p := range predicates {
 		if isNullRejectedInternal(ctx, innerSchema, p, skipPlanCacheCheck) {
 			return true
