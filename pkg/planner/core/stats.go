@@ -143,12 +143,15 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		if err != nil {
 			return nil, false, err
 		}
-		if path.EqOrInCondCount >= maxEqOrIn {
+		if path.EqOrInCondCount > maxEqOrIn {
+			// If we've found a new maxEqOrIn, reset the filter counts
 			maxEqOrIn = path.EqOrInCondCount
+			numTabFilters = len(path.TableFilters)
+			numIdxFilters = len(path.IndexFilters)
+		} else if path.EqOrInCondCount == maxEqOrIn {
+			// If this path ties for maxEqOrIn, take the min filters based on table filters first
 			if numTabFilters == 0 || numTabFilters > len(path.TableFilters) {
 				numTabFilters = len(path.TableFilters)
-			}
-			if numIdxFilters == 0 || numIdxFilters > len(path.IndexFilters) {
 				numIdxFilters = len(path.IndexFilters)
 			}
 		}
