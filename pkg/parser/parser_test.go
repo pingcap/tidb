@@ -822,6 +822,13 @@ func TestDMLStmt(t *testing.T) {
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' enclosed BY '\"' lines terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\r'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' optionally enclosed BY '\"' lines starting by 'xy' terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' enclosed BY '\"' lines starting by 'xy' terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'"},
+		// select into var list
+		{"select a into @a from t", true, "SELECT `a` INTO @`a` FROM `t`"},
+		{"select a, b into @a, @bc from t", true, "SELECT `a`,`b` INTO @`a`,@`bc` FROM `t`"},
+		{"select a, b+1 into @a, @bc from t", true, "SELECT `a`,`b`+1 INTO @`a`,@`bc` FROM `t`"},
+		{"select a into a from t", true, "SELECT `a` INTO `a` FROM `t`"},
+		{"select a, b into a, bc from t", true, "SELECT `a`,`b` INTO `a`,`bc` FROM `t`"},
+		{"select a, b+1 into a, bc from t", true, "SELECT `a`,`b`+1 INTO `a`,`bc` FROM `t`"},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true, "SELECT * FROM ((`t1`) JOIN `t2`) JOIN `t3`"},
@@ -7413,6 +7420,54 @@ func TestGBKEncoding(t *testing.T) {
 		{"select '\x65\x5c'", true},
 	} {
 		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
+}
+
+func TestGB18030Encoding(t *testing.T) {
+	p := parser.New()
+	gb18030Encoding, _ := charset.Lookup("gb18030")
+	encoder := gb18030Encoding.NewEncoder()
+	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GB18030测试用例');")
+	require.NoError(t, err)
+
+	stmt, _, err := p.ParseSQL(sql)
+	require.NoError(t, err)
+	checker := &gbkEncodingChecker{}
+	_, _ = stmt[0].Accept(checker)
+	require.NotEqual(t, "测试表", checker.tblName)
+	require.NotEqual(t, "测试列", checker.colName)
+
+	gb18030Opt := parser.CharsetClient("gb18030")
+	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
+	require.NoError(t, err)
+	_, _ = stmt[0].Accept(checker)
+	require.Equal(t, "测试表", checker.tblName)
+	require.Equal(t, "测试列", checker.colName)
+	require.Equal(t, "GB18030测试用例", checker.expr)
+
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gb18030Opt)
 		if test.err {
 			require.Error(t, err, test.sql)
 		} else {

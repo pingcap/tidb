@@ -91,7 +91,6 @@ go_test(
         "writer_serial_test.go",
         "writer_test.go",
     ],
-    data = glob(["**"]),
     embed = [":export"],
     flaky = True,
     shard_count = 50,
