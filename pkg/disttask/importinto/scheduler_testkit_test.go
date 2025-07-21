@@ -241,7 +241,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			Type:        proto.ImportInto,
 			Step:        proto.StepInit,
 			State:       proto.TaskStatePending,
-			Concurrency: 8,
+			Concurrency: 16,
 		},
 		Meta:            bs,
 		StateUpdateTime: time.Now(),
