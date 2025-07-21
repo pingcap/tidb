@@ -194,7 +194,7 @@
   {
     "name": "TestQBHintHandlerDuplicateObjects",
     "cases": [
-      "EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;",
+      "EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;"
     ]
   }
 ]
