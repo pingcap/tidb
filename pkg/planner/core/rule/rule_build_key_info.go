@@ -42,8 +42,9 @@ func (*BuildKeySolver) Optimize(_ context.Context, p base.LogicalPlan, _ *optimi
 }
 
 // **************************** end implementation of LogicalOptRule interface ****************************
-
-var childSchemaSlicePool = zeropool.Pool[[]*expression.Schema]{}
+var childSchemaSlicePool = zeropool.New[[]*expression.Schema](func() []*expression.Schema {
+	return make([]*expression.Schema, 0, 4)
+})
 
 // buildKeyInfo recursively calls base.LogicalPlan's BuildKeyInfo method.
 func buildKeyInfo(lp base.LogicalPlan) {
