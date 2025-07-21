@@ -112,7 +112,7 @@ func (w *Writer) handleTask(task Task) error {
 	case *TaskPolicyMeta:
 		return w.WritePolicyMeta(t.PolicyName, t.CreatePolicySQL)
 	case *TaskTableData:
-		err := w.WriteTableData(t.Meta, t.Data, t.ChunkIndex, t.TotalChunks, t.IsLastChunk)
+		err := w.WriteTableData(t.Meta, t.Data, t.ChunkIndex, t.IsLastChunk)
 		if err != nil {
 			return err
 		}
@@ -185,7 +185,7 @@ func (w *Writer) WriteSequenceMeta(db, sequence, createSQL string) error {
 }
 
 // WriteTableData writes table data to a file with retry
-func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int, totalChunks int, isLastChunk bool) error {
+func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int, isLastChunk bool) error {
 	tctx, conf, conn := w.tctx, w.conf, w.conn
 	retryTime := 0
 	var lastErr error
@@ -225,11 +225,11 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		defer func() {
 			_ = ir.Close()
 		}()
-		return w.tryToWriteTableData(tctx, meta, ir, currentChunk, totalChunks, isLastChunk)
+		return w.tryToWriteTableData(tctx, meta, ir, currentChunk, isLastChunk)
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int, totalChunks int, isLastChunk bool) error {
+func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int, isLastChunk bool) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileName, err := namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
@@ -240,7 +240,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	somethingIsWritten := false
 	for {
 		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
-		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics, curChkIdx, totalChunks, isLastChunk)
+		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics, curChkIdx, isLastChunk)
 		tearDownErr := tearDown(tctx)
 		if err != nil {
 			return err

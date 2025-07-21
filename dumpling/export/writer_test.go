@@ -131,7 +131,7 @@ func TestWriteTableData(t *testing.T) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true)
+	err := writer.WriteTableData(tableIR, tableIR, 0, true)
 	require.NoError(t, err)
 
 	p := path.Join(dir, "test.employee.000000000.sql")
@@ -152,7 +152,7 @@ func TestWriteTableData(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)")
 
 	tableIR = newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err = writer.WriteTableData(tableIR, tableIR, 0, 1, true)
+	err = writer.WriteTableData(tableIR, tableIR, 0, true)
 	require.ErrorContains(t, err, "injected error: fail to close data file")
 }
 
@@ -180,7 +180,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true)
+	err := writer.WriteTableData(tableIR, tableIR, 0, true)
 	require.NoError(t, err)
 
 	cases := map[string]string{
@@ -231,7 +231,7 @@ func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	err := writer.WriteTableData(tableIR, tableIR, 0, 1, true)
+	err := writer.WriteTableData(tableIR, tableIR, 0, true)
 	require.NoError(t, err)
 
 	cases := map[string]string{
@@ -282,7 +282,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("te%/st", "employee", data, specCmts, colTypes)
-	err = writer.WriteTableData(tableIR, tableIR, 0, 1, true)
+	err = writer.WriteTableData(tableIR, tableIR, 0, true)
 	require.NoError(t, err)
 
 	// only with statement size
@@ -336,7 +336,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	}
 
 	tableIR = newMockTableIR("te%/st", "employee", data, specCmts, colTypes)
-	require.NoError(t, writer.WriteTableData(tableIR, tableIR, 0, 1, true))
+	require.NoError(t, writer.WriteTableData(tableIR, tableIR, 0, true))
 	require.NoError(t, err)
 	for p, expected := range cases {
 		p = path.Join(config.OutputDirPath, p)
