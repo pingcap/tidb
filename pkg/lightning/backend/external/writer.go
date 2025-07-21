@@ -53,10 +53,10 @@ var (
 	// TODO need data on AWS and other machine types
 	maxUploadWorkersPerThread = 8
 
-	// mergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
+	// mergeSortOverlapThreshold is the default threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files. Note: Use GetAdjustedMergeSortOverlapThreshold() instead.
 	mergeSortOverlapThreshold int64 = 4000
-	// MergeSortFileCountStep is the step of file count when we split the sorted kv files. Note: Use GetAdjustedMergeSortFileCountStep() instead.
+	// MergeSortFileCountStep is the default step of file count when we split the sorted kv files. Note: Use GetAdjustedMergeSortFileCountStep() instead.
 	MergeSortFileCountStep = 4000
 	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
 	MergeSortMaxSubtaskTargetFiles = 16
@@ -70,6 +70,9 @@ const (
 )
 
 // GetAdjustedMergeSortOverlapThreshold adjusts the merge sort overlap threshold based on concurrency.
+// The bigger the threshold, the bigger the statistical bias. In CPU:Memory = 1:2 machine, if the concurrency
+// is less than 8, the memory can be used to load data is small, and may get blocked by the memory limiter.
+// So we lower the threshold here if concurrency too low.
 func GetAdjustedMergeSortOverlapThreshold(concurrency int) int64 {
 	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
 	if concurrency < 4 {
