@@ -853,7 +853,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *physicalop.PhysicalSelection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeReceiver:

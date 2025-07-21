@@ -59,7 +59,7 @@ import (
 
 var (
 	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
-	_ base.PhysicalPlan = &PhysicalProjection{}
+	_ base.PhysicalPlan = &physicalop.PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
@@ -386,7 +386,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
+		case *PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
