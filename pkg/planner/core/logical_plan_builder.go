@@ -3519,9 +3519,13 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 	n.Accept(extractor)
 }
 
-func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (base.LogicalPlan, []expression.Expression, bool, error) {
+// resolveGbyExprs resolves group by expressions from the group by clause of a select statement.
+// The returned `[]ast.Node` may differ from the original `gby.Items` in the group by clause for params. For params, the
+// `gby.Items[].Expr` will not be overwritten. However, the resolved expression is still needed for further processing, so
+// it's returned out.
+func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, error) {
 	b.curClause = groupByClause
-	exprs := make([]expression.Expression, 0, len(gby.Items))
+	exprs := make([]ast.ExprNode, 0, len(gby.Items))
 	resolver := &gbyResolver{
 		ctx:        b.ctx,
 		fields:     fields,
@@ -3535,14 +3539,22 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, g
 		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return nil, nil, false, errors.Trace(resolver.err)
+			return exprs, errors.Trace(resolver.err)
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
 		}
 
-		itemExpr := retExpr.(ast.ExprNode)
-		expr, np, err := b.rewrite(ctx, itemExpr, p, nil, true, requireColumnPriv)
+		exprs = append(exprs, retExpr.(ast.ExprNode))
+	}
+	return exprs, nil
+}
+
+func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, items []ast.ExprNode) (base.LogicalPlan, []expression.Expression, bool, error) {
+	exprs := make([]expression.Expression, 0, len(gby.Items))
+
+	for _, item := range items {
+		expr, np, err := b.rewrite(ctx, item, p, nil, true, requireColumnPriv)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -3819,15 +3831,25 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		originalFields = sel.Fields.Fields
 	}
 
+	var gbyExprs []ast.ExprNode
 	if sel.GroupBy != nil {
-		p, gbyCols, rollup, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
+		gbyExprs, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	// `checkOnlyFullGroupBy` should be executed before rewrite gbyExprs, because the field type of the fields
+	// may change. For example, the length of a string field may change in `adjustRetFtForCastString`
 	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
 		err = b.checkOnlyFullGroupBy(p, sel)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if sel.GroupBy != nil {
+		p, gbyCols, rollup, err = b.rewriteGbyExprs(ctx, p, sel.GroupBy, gbyExprs)
 		if err != nil {
 			return nil, err
 		}
