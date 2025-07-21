@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 41,
-=======
-    shard_count = 40,
->>>>>>> bf1913e7968 (planner: fix mpp task spreading blocked by virtual column substitution (#48041))
     deps = [
         "//pkg/config",
         "//pkg/domain",
