@@ -47,7 +47,6 @@ type ScalarFunction struct {
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
-	testStackTrace    intest.TestStackTrace
 }
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.
@@ -363,9 +362,6 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
-	if intest.InTest {
-		c.testStackTrace = sf.testStackTrace.Copy()
-	}
 	return c
 }
 
@@ -579,13 +575,11 @@ func (sf *ScalarFunction) HashCode() []byte {
 				if bytes.Equal(sf.hashcode, copyhashcode) {
 					return true
 				}
-				logutil.BgLogger().Error("hashcode not equal", zap.String("last_stack_trace", sf.testStackTrace.String()))
 				return false
 			}, "HashCode should not change after ReHashCode is called")
 		}
 		return sf.hashcode
 	}
-	sf.testStackTrace = intest.NewTestStackTrace()
 	ReHashCode(sf)
 	return sf.hashcode
 }

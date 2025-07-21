@@ -16,40 +16,5 @@
 
 package intest
 
-import (
-	"runtime/debug"
-)
-
 // InTest checks if the code is running in test.
 var InTest = true
-
-// TestStackTrace provides a way to capture the stack trace in tests.
-type TestStackTrace struct {
-	stack []byte
-}
-
-// NewTestStackTrace creates a new TestStackTrace instance with the current stack trace.
-func NewTestStackTrace() TestStackTrace {
-	return TestStackTrace{
-		stack: debug.Stack(),
-	}
-}
-
-// IsEmpty checks if the stack trace is empty.
-func (t *TestStackTrace) IsEmpty() bool {
-	return len(t.stack) == 0
-}
-
-// String returns a string representation of the stack trace.
-func (t *TestStackTrace) String() string {
-	return string(t.stack)
-}
-
-// Copy creates a copy of the TestStackTrace instance.
-func (t *TestStackTrace) Copy() TestStackTrace {
-	result := TestStackTrace{
-		stack: make([]byte, len(t.stack)),
-	}
-	copy(result.stack, t.stack)
-	return result
-}
