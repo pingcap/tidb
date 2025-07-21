@@ -357,8 +357,14 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 			action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
 			vars.MemTracker.FallbackOldAndSetNewAction(action)
 		}
+		// store the rowContainer in the statement right after it's created, so that even if the logic in defer is not triggered,
+		// the rowContainer will be released when the statement is closed.
+		stmt.StoreRowContainer(rowContainer)
 		defer func() {
 			if err != nil {
+				// if the execution panic, it'll not reach this branch. The `rowContainer` will be released in the `stmt.Close`.
+				stmt.StoreRowContainer(nil)
+
 				rowContainer.GetMemTracker().Detach()
 				rowContainer.GetDiskTracker().Detach()
 				errCloseRowContainer := rowContainer.Close()
@@ -389,7 +395,6 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		reader := chunk.NewRowContainerReader(rowContainer)
 		crs.StoreRowContainerReader(reader)
 		stmt.StoreResultSet(crs)
-		stmt.StoreRowContainer(rowContainer)
 		if cl, ok := crs.(resultset.FetchNotifier); ok {
 			cl.OnFetchReturned()
 		}

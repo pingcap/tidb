@@ -7558,6 +7558,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_yangkeao_go_mysql_driver",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/YangKeao/go-mysql-driver",
+        sha256 = "66ba9bed8b68899ea4adc729fbaf160bd634fe1afa51621a3dc5b153b538eb57",
+        strip_prefix = "github.com/YangKeao/go-mysql-driver@v0.0.0-20240627104025-dd5589458cfa",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/YangKeao/go-mysql-driver/com_github_yangkeao_go_mysql_driver-v0.0.0-20240627104025-dd5589458cfa.zip",
+            "http://ats.apps.svc/gomod/github.com/YangKeao/go-mysql-driver/com_github_yangkeao_go_mysql_driver-v0.0.0-20240627104025-dd5589458cfa.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/YangKeao/go-mysql-driver/com_github_yangkeao_go_mysql_driver-v0.0.0-20240627104025-dd5589458cfa.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/YangKeao/go-mysql-driver/com_github_yangkeao_go_mysql_driver-v0.0.0-20240627104025-dd5589458cfa.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_yeya24_promlinter",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/yeya24/promlinter",
@@ -9665,6 +9678,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/go.etcd.io/gofail/io_etcd_go_gofail-v0.1.0.zip",
             "https://cache.hawkingrei.com/gomod/go.etcd.io/gofail/io_etcd_go_gofail-v0.1.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/go.etcd.io/gofail/io_etcd_go_gofail-v0.1.0.zip",
+        ],
+    )
+    go_repository(
+        name = "io_filippo_edwards25519",
+        build_file_proto_mode = "disable_global",
+        importpath = "filippo.io/edwards25519",
+        sha256 = "9ac43a686d06fdebd719f7af3866c87eb069302272dfb131007adf471c308b65",
+        strip_prefix = "filippo.io/edwards25519@v1.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/filippo.io/edwards25519/io_filippo_edwards25519-v1.1.0.zip",
+            "http://ats.apps.svc/gomod/filippo.io/edwards25519/io_filippo_edwards25519-v1.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/filippo.io/edwards25519/io_filippo_edwards25519-v1.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/filippo.io/edwards25519/io_filippo_edwards25519-v1.1.0.zip",
         ],
     )
     go_repository(

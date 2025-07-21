@@ -12,6 +12,7 @@ require (
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/Masterminds/semver v1.5.0
 	github.com/Shopify/sarama v1.29.0
+	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/ashanbrown/makezero v1.1.1
@@ -144,6 +145,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.1.1 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/golang-jwt/jwt v3.2.1+incompatible // indirect
