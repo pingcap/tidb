@@ -365,13 +365,6 @@ func (sf *ScalarFunction) Clone() Expression {
 	return c
 }
 
-// CloneWithoutHashcode implements Expression interface.
-func (sf *ScalarFunction) CloneWithoutHashcode() Expression {
-	result := sf.Clone().(*ScalarFunction)
-	result.hashcode = result.hashcode[:0]
-	return result
-}
-
 // GetType implements Expression interface.
 func (sf *ScalarFunction) GetType(_ EvalContext) *types.FieldType {
 	return sf.GetStaticType()
