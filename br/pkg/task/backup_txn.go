@@ -177,7 +177,10 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 	updateCh := g.StartProgress(
 		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
 
-	progressCallBack := func() {
+	progressCallBack := func(unit backup.ProgressUnit) {
+		if unit == backup.UnitRange {
+			return
+		}
 		updateCh.Inc()
 	}
 	backupTS, err := client.GetCurrentTS(ctx)
