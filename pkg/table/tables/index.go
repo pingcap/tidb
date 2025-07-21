@@ -579,11 +579,6 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 
 func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
 	indexedValues := c.getIndexedValue(indexedValue)
-	// For multi-valued index with null/empty values, if getIndexedValue returns empty slice,
-	// it means no index records exist, so return false directly.
-	if len(indexedValues) == 0 {
-		return false, nil, nil
-	}
 	for _, val := range indexedValues {
 		key, distinct, err := c.GenIndexKey(ec, loc, val, h, nil)
 		if err != nil {
