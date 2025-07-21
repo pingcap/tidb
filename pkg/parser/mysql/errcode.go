@@ -882,6 +882,7 @@ const (
 	ErrMustChangePasswordLogin                               = 1862
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
+	ErrGetStackedDaWithoutActiveHandler                      = 3004
 	ErrInvalidFieldSize                                      = 3013
 	ErrPasswordExpireAnonymousUser                           = 3016
 	ErrMaxExecTimeExceeded                                   = 3024

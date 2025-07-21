@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -94,6 +95,15 @@ type SimpleExec struct {
 
 	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
 	staleTxnStartTS uint64
+
+	extensions *extension.SessionExtensions
+}
+
+type resourceOptionsInfo struct {
+	maxQueriesPerHour     int64
+	maxUpdatesPerHour     int64
+	maxConnectionsPerHour int64
+	maxUserConnections    int64
 }
 
 type passwordOrLockOptionsInfo struct {
@@ -806,6 +816,22 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+func (info *resourceOptionsInfo) loadResourceOptions(userResource []*ast.ResourceOption) error {
+	for _, option := range userResource {
+		switch option.Type {
+		case ast.MaxQueriesPerHour:
+			info.maxQueriesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUpdatesPerHour:
+			info.maxUpdatesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxConnectionsPerHour:
+			info.maxConnectionsPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUserConnections:
+			info.maxUserConnections = min(option.Count, math.MaxInt16)
+		}
+	}
+	return nil
+}
+
 func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	var passwdSaveNum, passwdSaveTime int64
 	// If the user specifies a default, read the global variable.
@@ -1035,6 +1061,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		maxUserConnections:    0,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
+	if err != nil {
+		return err
+	}
+
 	plOptions := &passwordOrLockOptionsInfo{
 		lockAccount:                 "N",
 		passwordExpired:             "N",
@@ -1103,8 +1141,8 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
@@ -1185,7 +1223,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
+		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime, userResource.maxUserConnections)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
@@ -1679,6 +1717,20 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		// can't set 0 to maxUserConnections as default, because user could set 0 to this field.
+		// -1(invalid value) as a default parameter.
+		maxUserConnections: -1,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
+	if err != nil {
+		return err
+	}
+
 	plOptions := passwordOrLockOptionsInfo{
 		lockAccount:                 "",
 		passwordExpired:             "",
@@ -1877,6 +1929,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(plOptions.lockAccount) != 0 {
 			fields = append(fields, alterField{"account_locked=%?", plOptions.lockAccount})
+			if plOptions.lockAccount == "N" && e.extensions != nil {
+				e.extensions.OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+					ConnectionInfo: e.Ctx().GetSessionVars().ConnectionInfo,
+					ActiveRoles:    e.Ctx().GetSessionVars().ActiveRoles,
+					Info:           fmt.Sprintf("unlock %s@%s", spec.User.Username, spec.User.Hostname),
+				})
+			}
 		}
 
 		// support alter Password_reuse_history and Password_reuse_time.
@@ -1909,6 +1968,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		}
 		if plOptions.passwordLifetime != notSpecified {
 			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
+		}
+
+		if userResource.maxUserConnections >= 0 {
+			fields = append(fields, alterField{"max_user_connections=%?", userResource.maxUserConnections})
 		}
 
 		var newAttributes []string
@@ -2168,6 +2231,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			break
 		}
 
+		// rename privileges from mysql.columns_priv
+		if err = renameUserHostInSystemTable(sqlExecutor, mysql.ColumnPrivTable, "User", "Host", userToUser); err != nil {
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.ColumnPrivTable + " error"
+			break
+		}
+
 		// rename relationship from mysql.role_edges
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "TO_USER", "TO_HOST", userToUser); err != nil {
 			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.RoleEdgeTable + " (to) error"
@@ -2198,7 +2267,6 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 		// rename relationship from mysql.global_grants
 		// TODO: add global_grants into the parser
-		// TODO: need update columns_priv once we implement columns_priv functionality.
 		// When that is added, please refactor both executeRenameUser and executeDropUser to use an array of tables
 		// to loop over, so it is easier to maintain.
 		if err = renameUserHostInSystemTable(sqlExecutor, "global_grants", "User", "Host", userToUser); err != nil {
@@ -2280,6 +2348,12 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 				break
 			}
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.FastGenByArgs(user))
+		}
+
+		// if the mode of duty-separation is enabled, forbidding dropping admin roles.
+		if variable.EnableDutySeparationMode.Load() && IsAdminRole(user.Username) {
+			failedUsers = append(failedUsers, user.String())
+			break
 		}
 
 		// Certain users require additional privileges in order to be modified.
@@ -2383,6 +2457,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete privileges from mysql.procs_priv
+		sql.Reset()
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ProcsPriv, user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// delete from activeRoles
 		if s.IsDropRole {
 			for i := 0; i < len(activeRoles); i++ {
@@ -2391,7 +2473,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		} // TODO: need delete columns_priv once we implement columns_priv functionality.
+		}
 	}
 
 	if len(failedUsers) != 0 {
@@ -2847,7 +2929,110 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminSetBDRRole(s)
 	case ast.AdminUnsetBDRRole:
 		return e.executeAdminUnsetBDRRole()
+	case ast.AdminLBACEnable:
+		return e.executeAdminLBACEnable(s)
 	}
+	return nil
+}
+
+// clearSysSession close the session does not return the session.
+// Since the environment variables in the session are changed, the session object is not returned.
+func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
+	if sctx == nil {
+		return
+	}
+	_, _ = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+	sctx.(pools.Resource).Close()
+}
+
+func (e *SimpleExec) executeAdminLBACEnable(s *ast.AdminStmt) error {
+	sysSession, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	defer clearSysSession(internalCtx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	defer func() {
+		if err == nil {
+			return
+		}
+		// In fact, we need only execute dropLabelSecuritySchema, but TiDB currently can't
+		// drop the procedures in the schema when we drop the schema.
+		// TODO: remove all drop sqls execept dropLabelSecuritySchema.
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreatePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropPolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateLevel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropLevel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateCompart)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropCompart)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateGroup)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropGroup)
+		sqlExecutor.ExecuteInternal(internalCtx, dropSetUserLabel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropUserLabel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropApplyTablePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropRemoveTablePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropLabelSecuritySchema)
+	}()
+
+	sqlMod, ok := e.Ctx().GetSessionVars().GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		return errors.New("unknown system var " + variable.SQLModeVar)
+	}
+	sysSession.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlMod)
+	chs, ok := e.Ctx().GetSessionVars().GetSystemVar(variable.CharacterSetClient)
+	if !ok {
+		return errors.New("unknown system var " + variable.CharacterSetClient)
+	}
+	sysSession.GetSessionVars().SetSystemVar(variable.CharacterSetClient, chs)
+
+	// Create schema LABELSECURITY_SCHEMA
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createLabelSecuritySchema); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createPolicy); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropPolicy); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createLevel); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropLevel); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createCompart); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropCompart); err != nil {
+		return err
+	}
+
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, createGroup); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropGroup); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, setUserLabel); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropUserLabel); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, applyTablePolicy); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, removeTablePolicy); err != nil {
+		return err
+	}
+
 	return nil
 }
 

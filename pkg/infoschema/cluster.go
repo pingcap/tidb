@@ -34,7 +34,9 @@ import (
 // 2. For tables that need to get data from all other TiDB nodes, clusterTableName should equal to "CLUSTER_" + memTableTableName.
 const (
 	// ClusterTableSlowLog is the string constant of cluster slow query memory table.
-	ClusterTableSlowLog     = "CLUSTER_SLOW_QUERY"
+	ClusterTableSlowLog = "CLUSTER_SLOW_QUERY"
+	// ClusterTableAuditLog is the string constant of cluster audit log memory table.
+	ClusterTableAuditLog    = "CLUSTER_AUDIT_LOG"
 	ClusterTableProcesslist = "CLUSTER_PROCESSLIST"
 	// ClusterTableStatementsSummary is the string constant of cluster statement summary table.
 	ClusterTableStatementsSummary = "CLUSTER_STATEMENTS_SUMMARY"
@@ -59,6 +61,7 @@ const (
 // memTableToAllTiDBClusterTables means add memory table to cluster table that will send cop request to all TiDB nodes.
 var memTableToAllTiDBClusterTables = map[string]string{
 	TableSlowQuery:                ClusterTableSlowLog,
+	TableAuditLog:                 ClusterTableAuditLog,
 	TableProcesslist:              ClusterTableProcesslist,
 	TableStatementsSummary:        ClusterTableStatementsSummary,
 	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
