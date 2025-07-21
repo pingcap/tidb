@@ -116,7 +116,7 @@ run_pitr_core_test() {
     echo "non compliant operation"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts -f "db_to_be_dropped.*" -f "table_to_be_dropped_or_truncated.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated_2.*" -f "partition_to_be_removed_or_altered_2.*" -f "index_or_primarykey_to_be_dropped_2.*" -f "indexes_to_be_dropped_2.*" -f "column_s_to_be_dropped_2.*" -f "column_to_be_modified_2.*" || restore_fail=1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" || restore_fail=1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
     fi
@@ -127,17 +127,18 @@ run_pitr_core_test() {
 
     # clean up failed restore registry entry
     echo "clean up failed restore registry entry"
-    run_sql "DELETE FROM mysql.tidb_restore_registry WHERE cmd LIKE '%Point Restore%' AND status = 'paused';"
-
-    # PITR restore
-    echo "run pitr"
-    latest_log_db=$(run_sql "select table_schema from information_schema.tables where table_schema like '__TiDB_BR_Temporary_Log_Restore_Checkpoint%' order by table_schema desc limit 1;" | tail -n 1 | awk '{print $2}')
-    latest_sst_db=$(run_sql "select table_schema from information_schema.tables where table_schema like '__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint%' order by table_schema desc limit 1;" | tail -n 1 | awk '{print $2}')
-    run_sql "DROP DATABASE IF EXISTS \`$latest_log_db\`;"
-    run_sql "DROP DATABASE IF EXISTS \`$latest_sst_db\`;"
+    if [ "$USE_TABLE_FILTER" = "true" ]; then
+        run_br --pd $PD_ADDR abort restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" || restore_fail=1
+    else
+        run_br --pd $PD_ADDR abort restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
+    fi
+    if [ $restore_fail -ne 1 ]; then
+        echo 'pitr success on non compliant operation'
+        exit 1
+    fi
 
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped.*" -f "table_to_be_dropped_or_truncated.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated_2.*" -f "partition_to_be_removed_or_altered_2.*" -f "index_or_primarykey_to_be_dropped_2.*" -f "indexes_to_be_dropped_2.*" -f "column_s_to_be_dropped_2.*" -f "column_to_be_modified_2.*" > $res_file 2>&1 || ( cat $res_file && exit 1 )
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" > $res_file 2>&1 || ( cat $res_file && exit 1 )
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
     fi
@@ -152,7 +153,7 @@ run_pitr_core_test() {
 
     echo "run incremental restore + log restore"
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" -f "db_to_be_dropped.*" -f "table_to_be_dropped_or_truncated.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated_2.*" -f "partition_to_be_removed_or_altered_2.*" -f "index_or_primarykey_to_be_dropped_2.*" -f "indexes_to_be_dropped_2.*" -f "column_s_to_be_dropped_2.*" -f "column_to_be_modified_2.*" > $res_file 2>&1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" > $res_file 2>&1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/inc" > $res_file 2>&1
     fi
@@ -194,7 +195,7 @@ run_pitr_core_test() {
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped.*" -f "table_to_be_dropped_or_truncated.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated_2.*" -f "partition_to_be_removed_or_altered_2.*" -f "index_or_primarykey_to_be_dropped_2.*" -f "indexes_to_be_dropped_2.*" -f "column_s_to_be_dropped_2.*" -f "column_to_be_modified_2.*" || restore_fail=1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" || restore_fail=1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
     fi
@@ -221,7 +222,7 @@ run_pitr_core_test() {
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
-        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped.*" -f "table_to_be_dropped_or_truncated.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated_2.*" -f "partition_to_be_removed_or_altered_2.*" -f "index_or_primarykey_to_be_dropped_2.*" -f "indexes_to_be_dropped_2.*" -f "column_s_to_be_dropped_2.*" -f "column_to_be_modified_2.*" || restore_fail=1
+        run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" || restore_fail=1
     else
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
     fi
