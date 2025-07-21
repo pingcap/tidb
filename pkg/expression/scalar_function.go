@@ -355,6 +355,10 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function: sf.Function.Clone(),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
+	if sf.hashcode != nil {
+		c.hashcode = make([]byte, len(sf.hashcode))
+		copy(c.hashcode, sf.hashcode)
+	}
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
 		copy(c.canonicalhashcode, sf.canonicalhashcode)
