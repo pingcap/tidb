@@ -1182,7 +1182,7 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 		x, ok := p.(*physicalop.PhysicalUnionAll)
 		if ok {
 			for _, child := range x.Children() {
-				if proj, ok := child.(*PhysicalProjection); ok {
+				if proj, ok := child.(*physicalop.PhysicalProjection); ok {
 					proj.AvoidColumnEvaluator = true
 				}
 			}

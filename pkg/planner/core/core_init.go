@@ -85,6 +85,11 @@ func init() {
 	// for physical union scan.
 	utilfuncp.Attach2Task4PhysicalUnionScan = attach2Task4PhysicalUnionScan
 	utilfuncp.ResolveIndices4PhysicalUnionScan = resolveIndices4PhysicalUnionScan
+	// for physical projection.
+	utilfuncp.Attach2Task4PhysicalProjection = attach2Task4PhysicalProjection
+	utilfuncp.GetPlanCostVer14PhysicalProjection = getPlanCostVer14PhysicalProjection
+	utilfuncp.GetPlanCostVer24PhysicalProjection = getPlanCostVer24PhysicalProjection
+	utilfuncp.ResolveIndices4PhysicalProjection = resolveIndices4PhysicalProjection
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost

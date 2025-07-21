@@ -7,6 +7,7 @@ go_library(
         "nominal_sort.go",
         "physical_limit.go",
         "physical_mem_table.go",
+        "physical_projection.go",
         "physical_schema_producer.go",
         "physical_selection.go",
         "physical_sort.go",
