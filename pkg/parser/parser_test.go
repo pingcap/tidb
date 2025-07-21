@@ -1079,10 +1079,11 @@ AAAAAAAAAAAA5gm5Mg==
 		{"distribute table t1 partition(p0)", false, ""},
 		{"distribute table t1 partition(p0,p1)", false, ""},
 		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
-		{"distribute table t1 rule = `leader-scatter` engine = tikv", true, "DISTRIBUTE TABLE `t1` RULE = `leader-scatter` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0,p1) rule = `learner-scatter` engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `learner-scatter` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0) rule = `peer-scatter` engine = tiflash", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `peer-scatter` ENGINE = `tiflash`"},
-		{"distribute table t1 partition(p0) rule = `peer-scatter` engine = tiflash timeout = 30m", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `peer-scatter` ENGINE = `tiflash` TIMEOUT = `30m`"},
+		{"distribute table t1 rule = 'leader-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 rule = \"leader-scatter\" engine = \"tikv\"", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0,p1) rule = 'learner-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = 'learner-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash' timeout = '30m'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash' TIMEOUT = '30m'"},
 
 		// for show distribution job(s)
 		{"show distribution jobs 1", false, ""},
@@ -5706,6 +5707,10 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN FORMAT = TIDB_JSON FOR CONNECTION 1", true, "EXPLAIN FORMAT = 'TIDB_JSON' FOR CONNECTION 1"},
 		{"EXPLAIN FORMAT = tidb_json SELECT 1", true, "EXPLAIN FORMAT = 'tidb_json' SELECT 1"},
 		{"EXPLAIN ANALYZE FORMAT = tidb_json SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'tidb_json' SELECT 1"},
+		{"EXPLAIN 'sqldigest'", true, "EXPLAIN FORMAT = 'row' 'sqldigest'"},
+		{"EXPLAIN ANALYZE 'sqldigest'", true, "EXPLAIN ANALYZE 'sqldigest'"},
+		{"EXPLAIN format='json' 'sqldigest'", true, "EXPLAIN FORMAT = 'json' 'sqldigest'"},
+		{"EXPLAIN ANALYZE format='json' 'sqldigest'", true, "EXPLAIN ANALYZE FORMAT = 'json' 'sqldigest'"},
 	}
 	RunTest(t, table, false)
 }

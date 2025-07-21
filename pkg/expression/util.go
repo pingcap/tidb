@@ -1399,16 +1399,18 @@ func IsImmutableFunc(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(exprs []Expression) []Expression {
-	res := make([]Expression, 0, len(exprs))
+	if len(exprs) <= 1 {
+		return exprs
+	}
 	exists := make(map[string]struct{}, len(exprs))
-	for _, expr := range exprs {
+	return slices.DeleteFunc(exprs, func(expr Expression) bool {
 		key := string(expr.HashCode())
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
-			res = append(res, expr)
 			exists[key] = struct{}{}
+			return false
 		}
-	}
-	return res
+		return true
+	})
 }
 
 // GetUint64FromConstant gets a uint64 from constant expression.
@@ -1589,7 +1591,10 @@ func RemoveMutableConst(ctx BuildContext, exprs ...Expression) (err error) {
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			return RemoveMutableConst(ctx, v.GetArgs()...)
+			err := RemoveMutableConst(ctx, v.GetArgs()...)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

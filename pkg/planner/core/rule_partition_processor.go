@@ -124,11 +124,6 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	return lp, nil
 }
 
-// partitionTable is for those tables which implement partition.
-type partitionTable interface {
-	PartitionExpr() *tables.PartitionExpr
-}
-
 func generateHashPartitionExpr(ctx base.PlanContext, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
 	schema := expression.NewSchema(columns...)
 	// Increase the PlanID to make sure some tests will pass. The old implementation to rewrite AST builds a `TableDual`
@@ -282,7 +277,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 	tbl table.Table, partitionNames []ast.CIStr, columns []*expression.Column,
 	conds []expression.Expression, _ types.NameSlice) ([]int, error) {
 	pi := tbl.Meta().Partition
-	partExpr := tbl.(partitionTable).PartitionExpr()
+	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
 	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
@@ -819,7 +814,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl table.Table, partitionNames []ast.CIStr,
 	conds []expression.Expression, columns []*expression.Column) ([]int, error) {
 	pi := tbl.Meta().Partition
-	partExpr := tbl.(partitionTable).PartitionExpr()
+	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 
 	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, partExpr.ForListPruning, columns)
 	var used map[int]struct{}
@@ -873,12 +868,16 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	if pi == nil {
 		return ds, nil
 	}
+	exprCtx := ds.SCtx().GetExprCtx()
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
-	for i, cond := range ds.AllConds {
-		ds.AllConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
-	}
+	ds.AllConds = pushDownNotOnConds(exprCtx, ds.AllConds)
+
+	// AllConds and PushedDownConds may become inconsistent in subsequent ApplyPredicateSimplification calls.
+	// They must be kept in sync to ensure correctness after PR #61571.
+	ds.PushedDownConds = pushDownNotOnConds(exprCtx, ds.PushedDownConds)
+
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not
 	// apply for some partitions like:
@@ -1032,7 +1031,7 @@ func intersectionRange(start, end, newStart, newEnd int) (s int, e int) {
 
 func (s *PartitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
 	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
-	partExpr := tbl.(partitionTable).PartitionExpr()
+	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {
@@ -1365,13 +1364,14 @@ func partitionRangeForExpr(sctx base.PlanContext, expr expression.Expression,
 	pruner partitionRangePruner, result partitionRangeOR) partitionRangeOR {
 	// Handle AND, OR respectively.
 	if op, ok := expr.(*expression.ScalarFunction); ok {
-		if op.FuncName.L == ast.LogicAnd {
+		switch op.FuncName.L {
+		case ast.LogicAnd:
 			return partitionRangeForCNFExpr(sctx, op.GetArgs(), pruner, result)
-		} else if op.FuncName.L == ast.LogicOr {
+		case ast.LogicOr:
 			args := op.GetArgs()
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], pruner)
 			return result.intersection(newRange)
-		} else if op.FuncName.L == ast.In {
+		case ast.In:
 			if p, ok := pruner.(*rangePruner); ok {
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
@@ -1453,7 +1453,6 @@ func partitionRangeColumnForInExpr(sctx base.PlanContext, args []expression.Expr
 		switch constExpr.Value.Kind() {
 		case types.KindInt64, types.KindUint64, types.KindMysqlTime, types.KindString: // for safety, only support string,int and datetime now
 		case types.KindNull:
-			result = append(result, partitionRange{0, 1})
 			continue
 		default:
 			return pruner.fullRange()
@@ -1488,7 +1487,6 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 			return pruner.fullRange()
 		}
 		if constExpr.Value.Kind() == types.KindNull {
-			result = append(result, partitionRange{0, 1})
 			continue
 		}
 
@@ -2231,4 +2229,14 @@ func appendNoPartitionChildTraceStep(ds *logicalop.DataSource, dual base.Logical
 		return fmt.Sprintf("%v_%v doesn't have needed partition table after pruning", ds.TP(), ds.ID())
 	}
 	opt.AppendStepToCurrent(dual.ID(), dual.TP(), reason, action)
+}
+
+func pushDownNotOnConds(ctx expression.BuildContext, conds []expression.Expression) []expression.Expression {
+	if len(conds) == 0 {
+		return conds
+	}
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(ctx, cond)
+	}
+	return conds
 }

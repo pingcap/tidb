@@ -87,14 +87,8 @@ type OperatorCtx struct {
 }
 
 // NewDistTaskOperatorCtx is used for adding index with dist framework.
-func NewDistTaskOperatorCtx(
-	ctx context.Context,
-	taskID, subtaskID int64,
-) (*OperatorCtx, context.CancelFunc) {
+func NewDistTaskOperatorCtx(ctx context.Context) (*OperatorCtx, context.CancelFunc) {
 	opCtx, cancel := context.WithCancel(ctx)
-	opCtx = logutil.WithFields(opCtx,
-		zap.Int64("task-id", taskID),
-		zap.Int64("subtask-id", subtaskID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
@@ -198,7 +192,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	store kv.Storage,
 	extStoreURI string,
 	sessPool opSessPool,
-	jobID, subtaskID int64,
+	taskID, subtaskID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
@@ -243,7 +237,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
 		reorgMeta.GetBatchSize(), reorgMeta, nil)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID,
+		ctx, copCtx, sessPool, taskID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
 	)
@@ -254,7 +248,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	operator.Compose(writeOp, sinkOp)
 
 	logutil.Logger(ctx).Info("build add index cloud storage operators",
-		zap.Int64("jobID", jobID),
+		zap.Int64("taskID", taskID),
 		zap.String("memCap", units.BytesSize(float64(memCap))),
 		zap.String("memSizePerIdx", units.BytesSize(float64(memSizePerIndex))),
 		zap.Int("avgRowSize", avgRowSize),
@@ -557,7 +551,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
-	var idxResult IndexRecordChunk
+	var idxResults []IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
@@ -580,17 +574,21 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
-			if w.cpOp != nil {
-				w.cpOp.UpdateChunk(task.ID, srcChk.NumRows(), done)
-			}
-			w.totalCount.Add(int64(srcChk.NumRows()))
-			sender(idxResult)
+			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx})
 		}
 		return rs.Close()
 	})
 	if err != nil {
 		w.ctx.onError(err)
+	}
+	for i, idxResult := range idxResults {
+		sender(idxResult)
+		rowCnt := idxResult.Chunk.NumRows()
+		if w.cpOp != nil {
+			done := i == len(idxResults)-1
+			w.cpOp.UpdateChunk(task.ID, rowCnt, done)
+		}
+		w.totalCount.Add(int64(rowCnt))
 	}
 }
 
@@ -624,7 +622,7 @@ func NewWriteExternalStoreOperator(
 	ctx *OperatorCtx,
 	copCtx copr.CopContext,
 	sessPool opSessPool,
-	jobID int64,
+	taskID int64,
 	subtaskID int64,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
@@ -658,7 +656,7 @@ func NewWriteExternalStoreOperator(
 					SetGroupOffset(i).
 					SetOnDup(onDuplicateKey)
 				writerID := uuid.New().String()
-				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+				prefix := path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
 				writers = append(writers, writer)
 			}

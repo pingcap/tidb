@@ -32,16 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
@@ -246,7 +245,7 @@ func (f *Fragment) init(p base.PhysicalPlan) error {
 		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
 		f.singleton = f.singleton || x.Children()[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
-	case *PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		return errors.New("unexpected union all detected")
 	case *PhysicalCTE:
 		f.CTEReaders = append(f.CTEReaders, x)
@@ -278,7 +277,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		}
 		*forest = append(*forest, p.(*PhysicalExchangeSender))
 		for i := 1; i < len(stack); i++ {
-			if _, ok := stack[i].(*PhysicalUnionAll); ok {
+			if _, ok := stack[i].(*physicalop.PhysicalUnionAll); ok {
 				continue
 			}
 			if _, ok := stack[i].(*PhysicalSequence); ok {
@@ -303,7 +302,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
 		stack = stack[:len(stack)-1]
 		return errors.Trace(err)
-	case *PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		for _, ch := range x.Children() {
 			stack = append(stack, ch)
 			err := e.untwistPlanAndRemoveUnionAll(stack, forest)
@@ -591,15 +590,11 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		return nil, errors.Trace(err)
 	}
 
-	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
-	if err != nil {
-		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
-		ttl = 30 * time.Second
-	}
+	// ttl is always 0, `tidb_mpp_store_fail_ttl` variable has been deprecated
+	ttl := time.Duration(0)
 	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
-		ttl = time.Duration(0)
 	}
 	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
 

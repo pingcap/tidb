@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
+	"github.com/pingcap/tidb/pkg/planner/cascades/impl"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -65,6 +66,9 @@ import (
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
+
+// OptimizeAstNodeNoCache bypasses the plan cache and generates a physical plan directly.
+var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
@@ -107,6 +111,8 @@ var optRuleList = []base.LogicalOptRule{
 	&JoinReOrderSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
+	&EliminateUnionAllDualItem{},
+	&EmptySelectionEliminator{},
 	&ResolveExpand{},
 }
 
@@ -304,27 +310,14 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		return nil, nil, 0, err
 	}
 	var (
+		cost     float64
 		physical base.PhysicalPlan
-		cost     = math.MaxFloat64
 	)
-	// At current phase, cascades just iterate every logic plan out for feeding physicalOptimize.
-	// TODO: In the near future, physicalOptimize will be refactored as receiving *Group as param directly.
-	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
-		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-		if planCounter == 0 {
-			planCounter = -1
-		}
-		tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
-		if tmpErr != nil {
-			err = tmpErr
-			return false
-		}
-		if tmpCost < cost {
-			physical = tmpPhysical
-			cost = tmpCost
-		}
-		return true
-	})
+	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	if planCounter == 0 {
+		planCounter = -1
+	}
+	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup(), &planCounter)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -433,7 +426,7 @@ func refineCETrace(sctx base.PlanContext) {
 		return cmp.Compare(i.RowCount, j.RowCount)
 	})
 	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
 		tbl, _ := infoschema.FindTableByTblOrPartID(is, rec.TableID)
 		if tbl != nil {
@@ -447,10 +440,10 @@ func refineCETrace(sctx base.PlanContext) {
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
 func mergeContinuousSelections(p base.PhysicalPlan) {
-	if sel, ok := p.(*PhysicalSelection); ok {
+	if sel, ok := p.(*physicalop.PhysicalSelection); ok {
 		for {
 			childSel := sel.Children()[0]
-			tmp, ok := childSel.(*PhysicalSelection)
+			tmp, ok := childSel.(*physicalop.PhysicalSelection)
 			if !ok {
 				break
 			}
@@ -848,7 +841,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// which will break data partition.
 		helper.updateTarget(window, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		if x.IsPartialSort {
 			// Partial sort will keep the data partition.
 			helper.plans = append(helper.plans, &x.BasePhysicalPlan)
@@ -857,7 +850,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			helper.clear()
 		}
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalProjection:
@@ -1186,7 +1179,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 // avoidColumnEvaluatorForProjBelowUnion sets AvoidColumnEvaluator to false for the projection operator which is a child of Union operator.
 func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPlan {
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
-		x, ok := p.(*PhysicalUnionAll)
+		x, ok := p.(*physicalop.PhysicalUnionAll)
 		if ok {
 			for _, child := range x.Children() {
 				if proj, ok := child.(*PhysicalProjection); ok {
@@ -1204,7 +1197,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
 	var physLock *PhysicalLock
-	var unionScan *PhysicalUnionScan
+	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
 			return false
@@ -1216,7 +1209,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			batchPointGet = x
 		case *PhysicalLock:
 			physLock = x
-		case *PhysicalUnionScan:
+		case *physicalop.PhysicalUnionScan:
 			unionScan = x
 		}
 		return true

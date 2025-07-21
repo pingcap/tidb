@@ -378,10 +378,14 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return slices.Equal(ft.elems, other.elems)
 }
 
-// PartialEqual checks whether two FieldType objects are equal.
+// PartialEqual checks whether two FieldType objects are equal. Please use this function with caution.
 // If unsafe is true and the objects is string type, PartialEqual will ignore flen.
 // See https://github.com/pingcap/tidb/issues/35490#issuecomment-1211658886 for more detail.
 func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
+	// Special case for NotNUll flag. See https://github.com/pingcap/tidb/issues/61290.
+	if mysql.HasNotNullFlag(ft.flag) != mysql.HasNotNullFlag(other.flag) {
+		return false
+	}
 	if !unsafe || ft.EvalType() != ETString || other.EvalType() != ETString {
 		return ft.Equal(other)
 	}

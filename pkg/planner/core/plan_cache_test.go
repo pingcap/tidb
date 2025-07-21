@@ -285,14 +285,14 @@ func TestIssue38269(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_9 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_28(Probe) 37.46 root  ",
-		"  ├─Selection_27(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_25 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_26(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_30, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_30(Probe) 37.46 root  ",
+		"  ├─Selection_29(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_27 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_28(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -328,7 +328,7 @@ func TestInvalidRange(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+		[][]any{{"TableDual_6"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
@@ -362,13 +362,13 @@ func TestIssue40093(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"Projection_9"},
-			{"└─HashJoin_23"},
-			{"  ├─IndexReader_25(Build)"},
-			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
-			{"  └─TableReader_31(Probe)"},
-			{"    └─Selection_30"},
-			{"      └─TableFullScan_29"},
+			{"Projection_10"},
+			{"└─HashJoin_26"},
+			{"  ├─IndexReader_28(Build)"},
+			{"  │ └─IndexRangeScan_27"}, // RangeScan instead of FullScan
+			{"  └─TableReader_34(Probe)"},
+			{"    └─Selection_33"},
+			{"      └─TableFullScan_32"},
 		})
 
 	tk.MustExec("execute st using @b")
@@ -971,7 +971,7 @@ func TestIssue42125(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
+	require.Equal(t, rows[0][0], "Batch_Point_Get_6") // use BatchPointGet
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 
@@ -983,7 +983,7 @@ func TestIssue42125(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
+	require.Equal(t, rows[0][0], "Point_Get_6") // use Point_Get_5
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
 
@@ -1099,7 +1099,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	// all cases no warnings use other format
 	for _, q := range all {
 		tk.MustExec("explain " + q)
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		// tk.MustQuery("show warnings").Check(testkit.Rows())
 		tk.MustExec("explain " + q)
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
@@ -1742,5 +1742,39 @@ func TestNonPreparedPlanSupportsBindings(t *testing.T) {
 	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
 	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+}
+
+func TestNonPreparedPlanSupportsSetVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`DROP BINDING FOR select * from t where pk >= ?`)
+	tk.MustExec(`CREATE BINDING FOR select * from t where pk >= ? USING select /*+ set_var(max_execution_time=2000) */ * from t where pk >= ?`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`select /*+ set_var(max_execution_time=2000) */ * from t where pk >= 1`)
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
 }

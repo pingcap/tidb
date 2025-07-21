@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -56,6 +55,9 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*infosync.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
+
+	// summary for next step
+	summary importer.StepSummary
 }
 
 // GetTaskExtraParams implements the planner.LogicalPlan interface.
@@ -332,6 +334,10 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 			},
 			Plan: p.Plan,
 		}
+		p.summary.Bytes = p.Plan.TotalFileSize
+		for _, chunk := range chunks {
+			p.summary.RowCnt = max(p.summary.RowCnt, chunk.RowIDMax)
+		}
 		importSpecs = append(importSpecs, importSpec)
 	}
 	return importSpecs, nil
@@ -367,6 +373,10 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
 			continue
+		}
+		p.summary.Bytes += int64(kvMeta.TotalKVSize)
+		if kvGroup == dataKVGroup {
+			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
 		}
 		dataFiles := kvMeta.GetDataFiles()
 		nodeCnt := max(1, planCtx.ExecuteNodesCnt)
@@ -415,15 +425,18 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		}, nil)
 	})
 
-	pTS, lTS, err := planCtx.Store.GetPDClient().GetTS(ctx)
+	ver, err := planCtx.Store.CurrentVersion(tidbkv.GlobalTxnScope)
 	if err != nil {
 		return nil, err
 	}
-	ts := oracle.ComposeTS(pTS, lTS)
 
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
-		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ts)
+		p.summary.Bytes += int64(kvMeta.TotalKVSize)
+		if kvGroup == dataKVGroup {
+			p.summary.RowCnt += int64(kvMeta.TotalKVCnt)
+		}
+		specsForOneSubtask, err3 := splitForOneSubtask(ctx, store, kvGroup, kvMeta, ver.Ver)
 		if err3 != nil {
 			return nil, err3
 		}

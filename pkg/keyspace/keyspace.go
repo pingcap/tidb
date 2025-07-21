@@ -27,6 +27,9 @@ import (
 )
 
 const (
+	// System is the keyspace name for SYSTEM keyspace.
+	// see doc.go for more detail.
+	System = "SYSTEM"
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 )
@@ -86,4 +89,16 @@ func WrapZapcoreWithKeyspace() zap.Option {
 		}
 		return core
 	})
+}
+
+// IsRunningOnUser return true if we are on nextgen, and keyspace of current
+// instance is a user keyspace.
+func IsRunningOnUser() bool {
+	return kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() != System
+}
+
+// IsRunningOnSystem return true if we are on nextgen, and keyspace of current
+// instance is the system keyspace.
+func IsRunningOnSystem() bool {
+	return kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() == System
 }

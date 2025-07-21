@@ -1422,8 +1422,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if isPiTR && cfg.tableMappingManager != nil {
+			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
+		}
 		keyRange := rewriteKeyRanges(preAllocRange)
-		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
+			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1432,7 +1436,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// need to know whether restore has been completed so can restore schedulers
 	canRestoreSchedulers := false
 	defer func() {
-		cancel()
 		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
 		if cfg.UseCheckpoint && !canRestoreSchedulers {
 			log.Info("skip removing pd scheduler for next retry")
@@ -2569,4 +2572,133 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 		}
 		log.Info("set tables to restore mode for filtered PiTR restore", zap.Int("table count", len(tables)))
 	}
+}
+
+// RunRestoreAbort aborts a restore task by finding it in the registry and cleaning up
+// Similar to resumeOrCreate, it first resolves the restoredTS then finds and deletes the matching paused task
+func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
+	cfg.Adjust()
+	defer summary.Summary(cmdName)
+	ctx, cancel := context.WithCancel(c)
+	defer cancel()
+
+	// update keyspace to be user specified
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = cfg.KeyspaceName
+	})
+
+	keepaliveCfg := GetKeepalive(&cfg.Config)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	// get upstream cluster ID and startTS from backup storage if not already set
+	if cfg.UpstreamClusterID == 0 {
+		if IsStreamRestore(cmdName) {
+			// For PiTR restore, get cluster ID from log storage
+			_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			logInfo, err := getLogInfoFromStorage(ctx, s)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.UpstreamClusterID = logInfo.clusterID
+
+			// For PiTR with full backup, get startTS from full backup meta
+			if len(cfg.FullBackupStorage) > 0 && cfg.StartTS == 0 {
+				startTS, fullClusterID, err := getFullBackupTS(ctx, cfg)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if logInfo.clusterID > 0 && fullClusterID > 0 && logInfo.clusterID != fullClusterID {
+					return errors.Annotatef(berrors.ErrInvalidArgument,
+						"cluster ID mismatch: log backup from cluster %d, full backup from cluster %d",
+						logInfo.clusterID, fullClusterID)
+				}
+				cfg.StartTS = startTS
+				log.Info("extracted startTS from full backup storage for abort",
+					zap.Uint64("start_ts", cfg.StartTS))
+			}
+		} else {
+			// For snapshot restore, get cluster ID from backup meta
+			_, _, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			cfg.UpstreamClusterID = backupMeta.ClusterId
+		}
+		log.Info("extracted upstream cluster ID from backup storage for abort",
+			zap.Uint64("upstream_cluster_id", cfg.UpstreamClusterID),
+			zap.String("cmd", cmdName))
+	}
+
+	// build restore registry
+	restoreRegistry, err := registry.NewRestoreRegistry(g, mgr.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer restoreRegistry.Close()
+
+	// determine if restoredTS was user-specified
+	// if RestoreTS is 0, it means user didn't specify it (similar to resumeOrCreate logic)
+	isRestoredTSUserSpecified := cfg.RestoreTS != 0
+
+	// create registration info from config to find matching tasks
+	registrationInfo := registry.RegistrationInfo{
+		FilterStrings:     cfg.FilterStr,
+		StartTS:           cfg.StartTS,
+		RestoredTS:        cfg.RestoreTS,
+		UpstreamClusterID: cfg.UpstreamClusterID,
+		WithSysTable:      cfg.WithSysTable,
+		Cmd:               cmdName,
+	}
+
+	// find and delete matching paused task atomically
+	// this will first resolve the restoredTS (similar to resumeOrCreate) then find and delete the task
+	deletedRestoreID, err := restoreRegistry.FindAndDeleteMatchingTask(ctx, registrationInfo, isRestoredTSUserSpecified)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if deletedRestoreID == 0 {
+		log.Info("no paused restore task found with matching parameters")
+		return nil
+	}
+
+	log.Info("successfully deleted matching paused restore task", zap.Uint64("restoreId", deletedRestoreID))
+
+	// clean up checkpoint data for the deleted task
+	log.Info("cleaning up checkpoint data", zap.Uint64("restoreId", deletedRestoreID))
+
+	// update config with restore ID to clean up checkpoint
+	cfg.RestoreID = deletedRestoreID
+
+	// initialize all checkpoint managers for cleanup (deletion is noop if checkpoints not exist)
+	if len(cfg.CheckpointStorage) > 0 {
+		clusterID := mgr.GetPDClient().GetClusterID(ctx)
+		log.Info("initializing storage checkpoint meta managers for cleanup",
+			zap.Uint64("restoreID", deletedRestoreID),
+			zap.Uint64("clusterID", clusterID))
+		if err := cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, deletedRestoreID); err != nil {
+			log.Warn("failed to initialize storage checkpoint meta managers for cleanup", zap.Error(err))
+		}
+	} else {
+		log.Info("initializing table checkpoint meta managers for cleanup",
+			zap.Uint64("restoreID", deletedRestoreID))
+		if err := cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), deletedRestoreID); err != nil {
+			log.Warn("failed to initialize table checkpoint meta managers for cleanup", zap.Error(err))
+		}
+	}
+
+	// clean up checkpoint data
+	cleanUpCheckpoints(ctx, cfg)
+
+	log.Info("successfully aborted restore task and cleaned up checkpoint data. "+
+		"Use drop statements to clean up the restored data from the cluster if you want to.",
+		zap.Uint64("restoreId", deletedRestoreID))
+	return nil
 }

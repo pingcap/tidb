@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -204,8 +205,8 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 // HashCode inherits the BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
-func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
+func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -214,7 +215,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
@@ -233,7 +234,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
@@ -255,12 +256,12 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(p.SCtx().GetExprCtx(), tempCond)
+		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, tempCond, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
@@ -270,12 +271,12 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), predicates)
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
-			return ret, dual
+			return ret, dual, nil
 		}
 		// `predicates` should only contain left conditions or constant filters.
 		_, leftPushCond, rightPushCond, _ = p.extractOnCondition(predicates, true, true)
@@ -290,13 +291,25 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
-	leftRet, lCh := p.Children()[0].PredicatePushDown(leftCond, opt)
-	rightRet, rCh := p.Children()[1].PredicatePushDown(rightCond, opt)
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	children := p.Children()
+	rightChild := children[1]
+	leftChild := children[0]
+	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
+	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
+	leftRet, lCh, err := leftChild.PredicatePushDown(leftCond, opt)
+	if err != nil {
+		return nil, nil, err
+	}
+	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond, opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	addSelection(p, lCh, leftRet, 0, opt)
 	addSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
-	return ret, p.Self()
+	return ret, p.Self(), nil
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -336,31 +349,47 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if len(p.EqualConditions) == 0 {
 			return
 		}
-		lOk := false
-		rOk := false
-		// Such as 'select * from t1 join t2 where t1.a = t2.a and t1.b = t2.b'.
-		// If one sides (a, b) is a unique key, then the unique key information is remained.
-		// But we don't consider this situation currently.
-		// Only key made by one column is considered now.
-		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+		// Extract all left and right columns from equal conditions
+		leftCols := make([]*expression.Column, 0, len(p.EqualConditions))
+		rightCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		for _, expr := range p.EqualConditions {
-			ln := expr.GetArgs()[0].(*expression.Column)
-			rn := expr.GetArgs()[1].(*expression.Column)
-			for _, key := range childSchema[0].PKOrUK {
-				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
-					lOk = true
-					break
-				}
-			}
-			for _, key := range childSchema[1].PKOrUK {
-				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
-					rOk = true
-					break
-				}
-			}
+			leftCols = append(leftCols, expr.GetArgs()[0].(*expression.Column))
+			rightCols = append(rightCols, expr.GetArgs()[1].(*expression.Column))
 		}
-		// For inner join, if one side of one equal condition is unique key,
-		// another side's unique key information will all be reserved.
+		checkColumnsMatchPKOrUK := func(cols []*expression.Column, pkOrUK []expression.KeyInfo) bool {
+			if len(pkOrUK) == 0 {
+				return false
+			}
+			colSet := intset.NewFastIntSet()
+			for _, col := range cols {
+				colSet.Insert(int(col.UniqueID))
+			}
+			// Check if any key is a subset of the join key columns
+			// A match is considered valid if join key columns contain all columns of any PKOrUK
+			for _, key := range pkOrUK {
+				allMatch := true
+				for _, k := range key {
+					if !colSet.Has(int(k.UniqueID)) {
+						allMatch = false
+						break
+					}
+				}
+				if allMatch {
+					return true
+				}
+			}
+			return false
+		}
+		lOk := checkColumnsMatchPKOrUK(leftCols, childSchema[0].PKOrUK)
+		rOk := checkColumnsMatchPKOrUK(rightCols, childSchema[1].PKOrUK)
+
+		// When both sides match different unique keys (e.g., left side matches unique key setA, right side matches unique key setB),
+		// we can derive additional functional dependencies through join conditions:
+		// 1. Original FDs: setA -> left row, setB -> right row
+		// 2. Join condition: setA from left = setA from right
+		// 3. By augmentation rule (X->Y implies XZ->YZ): setA from right + setB -> left row + setB
+		// 4. By transitivity rule (X->Y and Y->Z implies X->Z): setA from right + setB -> left row + right row
+		// This allows us to preserve unique key information from both sides when join keys provide stronger uniqueness guarantees.
 		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
 		if lOk && p.JoinType != LeftOuterJoin {
 			selfSchema.PKOrUK = append(selfSchema.PKOrUK, childSchema[1].PKOrUK...)
@@ -1672,7 +1701,10 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.RightConditions = nil
 	p.OtherConditions = nil
 	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
-	joinConds, predicates = expression.PropConstOverOuterJoin(p.SCtx().GetExprCtx(), joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
+	exprCtx := p.SCtx().GetExprCtx()
+	outerTableSchema := outerTable.Schema()
+	innerTableSchema := innerTable.Schema()
+	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
