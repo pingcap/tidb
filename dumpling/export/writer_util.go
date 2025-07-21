@@ -252,6 +252,8 @@ func WriteInsert(
 			failpoint.Inject("AtEveryRow", nil)
 
 			fileRowIter.Next()
+			// Check if we need to end current INSERT statement and start a new one
+			// This can happen due to file size limit or statement size limit
 			shouldSwitch := wp.ShouldSwitchStatement()
 
 			// Determine row terminator based on chunk position and remaining rows
@@ -283,10 +285,11 @@ func WriteInsert(
 			}
 
 			if shouldSwitch {
+				// Need to end current INSERT statement due to size limits
 				wp.currentStatementSize = 0
-				// For statement size switching, only reset to write prefix if we're in the first chunk
-				// and this is the first statement in that chunk
-				isFirstChunk = true
+				// Don't restart with INSERT prefix for statement switching within same logical dump
+				// This ensures chunks can be concatenated without duplicate INSERT statements
+				isFirstChunk = false
 				break
 			}
 		}
