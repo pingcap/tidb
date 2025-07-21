@@ -46,6 +46,7 @@ go_library(
         "//pkg/infoschema/perfschema",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/lightning/backend/local",
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
