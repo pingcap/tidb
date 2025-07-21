@@ -84,7 +84,7 @@ func checkBootstrapDotGo(pass *analysis.Pass, file *ast.File) {
 							pass.Reportf(elt.Pos(), "the name of the constant of table ID in tablesInMySQLDatabase must end with TableID, but got %q", idIdentName)
 						}
 						if !strings.HasPrefix(sqlIdentName, "Create") || !strings.HasSuffix(sqlIdentName, "Table") {
-							pass.Reportf(elt.Pos(), "the name of the constant of the create table SQL in tablesInMySQLDatabase must start follow 'CreateXXXTable' style, but got %q", sqlIdentName)
+							pass.Reportf(elt.Pos(), "the name of the constant of the create table SQL in tablesInMySQLDatabase must start 'CreateXXXTable' style, but got %q", sqlIdentName)
 						}
 						if strings.TrimSuffix(idIdentName, "TableID") !=
 							strings.TrimSuffix(strings.TrimPrefix(sqlIdentName, "Create"), "Table") {
@@ -92,7 +92,7 @@ func checkBootstrapDotGo(pass *analysis.Pass, file *ast.File) {
 						}
 						nameInCamel := strings.ReplaceAll(tableName, "_", "")
 						if strings.ToLower(strings.TrimSuffix(idIdentName, "TableID")) != nameInCamel {
-							pass.Reportf(elt.Pos(), "the name of the constant of table ID in tablesInMySQLDatabase must match the name of the table, but got %q and %q", idIdentName, nameInCamel)
+							pass.Reportf(elt.Pos(), "the name of the constant of table ID in tablesInMySQLDatabase must match the name of the table, but got %q and %q", idIdentName, tableName)
 						}
 					}
 					found = true
