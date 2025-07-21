@@ -689,3 +689,54 @@ func toPB4PhysicalSort(pp base.PhysicalPlan, ctx *base.BuildPBContext, storeType
 		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
 	}, nil
 }
+
+func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	childPb, err := p.Children()[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, err
+	}
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
+		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, kv.TiFlash)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fieldTypes = append(fieldTypes, pbType)
+	}
+	cteSink := &tipb.CTESink{
+		CteId:        uint32(p.IDForStorage),
+		Child:        childPb,
+		FieldTypes:   fieldTypes,
+		CteSinkNum:   p.DuplicatedSinkNum,
+		CteSourceNum: p.DuplicatedSourceNum,
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{
+		Tp:         tipb.ExecType_TypeCTESink,
+		CteSink:    cteSink,
+		ExecutorId: &executorID,
+	}, nil
+}
+
+func (p *PhysicalCTESource) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	cteSource := &tipb.CTESource{
+		CteId:        uint32(p.IDForStorage),
+		CteSinkNum:   p.DuplicatedSinkNum,
+		CteSourceNum: p.DuplicatedSourceNum,
+	}
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
+		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, kv.TiFlash)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fieldTypes = append(fieldTypes, pbType)
+	}
+	cteSource.FieldTypes = fieldTypes
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{
+		Tp:         tipb.ExecType_TypeCTESource,
+		CteSource:  cteSource,
+		ExecutorId: &executorID,
+	}, nil
+}
