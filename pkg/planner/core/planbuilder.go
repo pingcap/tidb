@@ -5558,6 +5558,14 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
+	if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
+		origin := sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
+		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+		defer func() {
+			sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+		}()
+	}
+
 	nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
 	if err != nil {
