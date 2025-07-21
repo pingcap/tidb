@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/hex"
+	goerrors "errors"
 	"flag"
 	"fmt"
 	"io"
@@ -268,7 +269,7 @@ func readFileSequential(t *testing.T, s *readTestSuite) {
 				break
 			}
 		}
-		intest.Assert(err == io.EOF)
+		intest.Assert(goerrors.Is(err, io.EOF))
 		totalFileSize.Add(int64(sz))
 		err = reader.Close()
 		intest.AssertNoError(err)
@@ -312,7 +313,7 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 					break
 				}
 			}
-			intest.Assert(err == io.EOF)
+			intest.Assert(goerrors.Is(err, io.EOF))
 			totalFileSize.Add(int64(sz))
 			err = reader.Close()
 			intest.AssertNoError(err)

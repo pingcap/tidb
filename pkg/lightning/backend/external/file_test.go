@@ -176,7 +176,7 @@ func TestKVReadWrite(t *testing.T) {
 		require.Equal(t, values[i], value)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 
 	require.NoError(t, kvReader.Close())
 }
