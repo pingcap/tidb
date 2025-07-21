@@ -209,6 +209,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
+	children := p.Children()
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.outerJoinPropConst(predicates)
@@ -271,7 +272,38 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
+		leftSchema := children[0].Schema()
+		tempCond := make([]expression.Expression, 0, len(p.EqualConditions)+len(predicates)+1)
+		canPropagateConstantPredicates := make([]expression.Expression, 0, len(predicates))
+		cannotPropagateConstantPredicates := make([]expression.Expression, 0, len(predicates))
+		for _, predicate := range predicates {
+			// If it is a anti semi join, we need to check the predicate can be propagated to the left child.
+			// If the predicate contains columns from the right child, we cannot propagate it.
+			// reference: https://github.com/pingcap/tidb/issues/62536
+			columns := expression.ExtractColumns(predicate)
+			canPropagateConstant := true
+			for _, column := range columns {
+				if leftSchema.Contains(column) {
+					continue
+				}
+				canPropagateConstant = false
+			}
+			if canPropagateConstant {
+				canPropagateConstantPredicates = append(canPropagateConstantPredicates, predicate)
+			} else {
+				cannotPropagateConstantPredicates = append(cannotPropagateConstantPredicates, predicate)
+			}
+		}
+		if len(canPropagateConstantPredicates) != 0 {
+			tempCond = append(tempCond, canPropagateConstantPredicates...)
+			tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+			tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
+		}
+		if len(cannotPropagateConstantPredicates) != 0 {
+			tempCond = append(tempCond, cannotPropagateConstantPredicates...)
+			tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, false)
+		}
+		predicates = tempCond
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -292,7 +324,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	children := p.Children()
+
 	rightChild := children[1]
 	leftChild := children[0]
 	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
