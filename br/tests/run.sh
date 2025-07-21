@@ -36,7 +36,7 @@ fi
 rm -rf $TEST_DIR && mkdir -p $TEST_DIR
 
 # Generate TLS certs
-generate_certs &> /dev/null
+bash  generate_certs &> /dev/null
 
 # Use the environment variable TEST_NAME if set, otherwise find all test cases
 SELECTED_TEST_NAME="${TEST_NAME:-$(find "$CUR" -mindepth 2 -maxdepth 2 -name run.sh | awk -F'/' '{print $(NF-1)}' | sort)}"

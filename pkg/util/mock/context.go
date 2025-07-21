@@ -76,6 +76,7 @@ type Context struct {
 	tblctx        *tblsession.MutateContext
 	cancel        context.CancelFunc
 	pcache        sessionctx.SessionPlanCache
+	sessionExec   sessionctx.SessionExec
 	level         kvrpcpb.DiskFullOpt
 	inSandBoxMode bool
 	isDDLOwner    bool
@@ -687,3 +688,13 @@ func newContext() *Context {
 // HookKeyForTest is as alias, used by context.WithValue.
 // golint forbits using string type as key in context.WithValue.
 type HookKeyForTest string
+
+// SetSessionExec set cc interface
+func (c *Context) SetSessionExec(cc sessionctx.SessionExec) {
+	c.sessionExec = cc
+}
+
+// GetSessionExec get cc interface
+func (c *Context) GetSessionExec() sessionctx.SessionExec {
+	return c.sessionExec
+}
