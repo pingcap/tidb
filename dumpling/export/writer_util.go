@@ -148,8 +148,7 @@ func WriteInsert(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
-	_ int,
-	_ int,
+	chunkIndex int,
 	isLastChunk bool,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
@@ -215,17 +214,24 @@ func WriteInsert(
 
 	selectedField := meta.SelectedField()
 
-	// if has generated column
-	if selectedField != "" && selectedField != "*" {
-		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
-			wrapBackTicks(escapeString(meta.TableName())), selectedField)
-	} else {
-		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
-			wrapBackTicks(escapeString(meta.TableName())))
-	}
-	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
+	// Determine if we should write INSERT prefix based on chunk position
+	// For string chunking, only first chunk gets prefix; for row chunking, each chunk is independent
+	shouldWritePrefix := (chunkIndex == 0) || !cfg.IsStringChunking
 
-	isFirstChunk := true
+	var insertStatementPrefixLen uint64
+	if shouldWritePrefix {
+		// if has generated column
+		if selectedField != "" && selectedField != "*" {
+			insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
+				wrapBackTicks(escapeString(meta.TableName())), selectedField)
+		} else {
+			insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
+				wrapBackTicks(escapeString(meta.TableName())))
+		}
+		insertStatementPrefixLen = uint64(len(insertStatementPrefix))
+	}
+
+	isFirstChunk := shouldWritePrefix
 	for fileRowIter.HasNext() {
 		if isFirstChunk {
 			wp.currentStatementSize = 0
@@ -287,9 +293,9 @@ func WriteInsert(
 			if shouldSwitch {
 				// Need to end current INSERT statement due to size limits
 				wp.currentStatementSize = 0
-				// Don't restart with INSERT prefix for statement switching within same logical dump
-				// This ensures chunks can be concatenated without duplicate INSERT statements
-				isFirstChunk = false
+				// For statement size switching, only restart with INSERT prefix
+				// if we're doing row-based chunking (not string-based chunking)
+				isFirstChunk = shouldWritePrefix
 				break
 			}
 		}
@@ -320,7 +326,6 @@ func WriteInsertInCsv(
 	tblIR TableDataIR,
 	w storage.ExternalFileWriter,
 	metrics *metrics,
-	_ int,
 	_ int,
 	_ bool,
 ) (n uint64, err error) {
@@ -683,14 +688,13 @@ func (f FileFormat) WriteInsert(
 	w storage.ExternalFileWriter,
 	metrics *metrics,
 	chunkIndex int,
-	totalChunks int,
 	isLastChunk bool,
 ) (uint64, error) {
 	switch f {
 	case FileFormatSQLText:
-		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk)
+		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, isLastChunk)
 	case FileFormatCSV:
-		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, totalChunks, isLastChunk)
+		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics, chunkIndex, isLastChunk)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}
