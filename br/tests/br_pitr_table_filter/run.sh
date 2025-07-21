@@ -1336,14 +1336,14 @@ test_pitr_chaining() {
 }
 
 test_cover_all_ddl
-#test_basic_filter
-#test_with_full_backup_filter
-#test_table_rename
-#test_with_checkpoint
-#test_partition_exchange
-#test_system_tables
-#test_sequential_restore
-#test_log_compaction
-#test_pitr_chaining
+test_basic_filter
+test_with_full_backup_filter
+test_table_rename
+test_with_checkpoint
+test_partition_exchange
+test_system_tables
+test_sequential_restore
+test_log_compaction
+test_pitr_chaining
 
 echo "br pitr table filter all tests passed"
