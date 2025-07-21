@@ -22,6 +22,7 @@ import (
 )
 
 // ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
+// TODO: rehash
 func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
 	switch expr := origin.(type) {
 	case *expression.Column:
