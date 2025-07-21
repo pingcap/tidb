@@ -562,12 +562,7 @@ func (sf *ScalarFunction) HashCode() []byte {
 			copyhashcode := make([]byte, len(sf.hashcode))
 			copy(copyhashcode, sf.hashcode)
 			ReHashCode(sf)
-			intest.AssertFunc(func() bool {
-				if bytes.Equal(sf.hashcode, copyhashcode) {
-					return true
-				}
-				return false
-			}, "HashCode should not change after ReHashCode is called")
+			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
 		}
 		return sf.hashcode
 	}
