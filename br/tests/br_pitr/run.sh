@@ -133,7 +133,7 @@ run_pitr_core_test() {
         run_br --pd $PD_ADDR abort restore point -s "local://$TEST_DIR/$PREFIX/log" --start-ts $current_ts || restore_fail=1
     fi
     if [ $restore_fail -ne 1 ]; then
-        echo 'pitr success on non compliant operation'
+        echo 'failed to abort pitr to clean up'
         exit 1
     fi
 
