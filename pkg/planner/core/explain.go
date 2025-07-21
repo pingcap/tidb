@@ -900,20 +900,3 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 	}
 	return res
 }
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
-	if len(operatorInfo) == 0 {
-		return accessObject
-	}
-	return accessObject + ", " + operatorInfo
-}
-
-// OperatorInfo implements DataAccesser interface.
-func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
-	if p.Extractor != nil {
-		return p.Extractor.ExplainInfo(p)
-	}
-	return ""
-}

@@ -877,28 +877,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 	return columns, schema, true
 }
 
-// PhysicalMemTable reads memory table.
-type PhysicalMemTable struct {
-	physicalop.PhysicalSchemaProducer
-
-	DBName         ast.CIStr
-	Table          *model.TableInfo
-	Columns        []*model.ColumnInfo
-	Extractor      base.MemTablePredicateExtractor
-	QueryTimeRange util.QueryTimeRange
-}
-
-// MemoryUsage return the memory usage of PhysicalMemTable
-func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfPointer + size.SizeOfSlice +
-		int64(cap(p.Columns))*size.SizeOfPointer + size.SizeOfInterface + p.QueryTimeRange.MemoryUsage()
-	return
-}
-
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalop.PhysicalSchemaProducer

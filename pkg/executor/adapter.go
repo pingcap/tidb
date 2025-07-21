@@ -65,7 +65,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -1735,7 +1734,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
-		Warnings:          collectWarningsForSlowLog(stmtCtx),
+		Warnings:          variable.CollectWarningsForSlowLog(stmtCtx),
 		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
@@ -1802,33 +1801,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			})
 		}
 	}
-}
-
-func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
-	// Currently, this function is only used in collectWarningsForSlowLog.
-	// collectWarningsForSlowLog can make sure SQLWarn is not nil so no need to add a nil check here.
-	warn := errors.Cause(sqlWarn.Err)
-	if x, ok := warn.(*terror.Error); ok && x != nil {
-		sqlErr := terror.ToSQLError(x)
-		return sqlErr.Message
-	}
-	return warn.Error()
-}
-
-func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSONSQLWarnForSlowLog {
-	warnings := stmtCtx.GetWarnings()
-	extraWarnings := stmtCtx.GetExtraWarnings()
-	res := make([]variable.JSONSQLWarnForSlowLog, len(warnings)+len(extraWarnings))
-	for i := range warnings {
-		res[i].Level = warnings[i].Level
-		res[i].Message = extractMsgFromSQLWarn(&warnings[i])
-	}
-	for i := range extraWarnings {
-		res[len(warnings)+i].Level = extraWarnings[i].Level
-		res[len(warnings)+i].Message = extractMsgFromSQLWarn(&extraWarnings[i])
-		res[len(warnings)+i].IsExtra = true
-	}
-	return res
 }
 
 func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {

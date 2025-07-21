@@ -129,6 +129,7 @@ go_library(
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/impl",
         "//pkg/planner/cascades/memo",
+        "//pkg/planner/core/access",
         "//pkg/planner/core/base",
         "//pkg/planner/core/constraint",
         "//pkg/planner/core/cost",
