@@ -950,7 +950,7 @@ func upgradeToVer37(s sessiontypes.Session, _ int64) {
 }
 
 func upgradeToVer38(s sessiontypes.Session, _ int64) {
-	doReentrantDDL(s, CreateGlobalPrivTable)
+	doReentrantDDL(s, CreateGlobalPrivaTable)
 }
 
 func writeNewCollationParameter(s sessiontypes.Session, flag bool) {

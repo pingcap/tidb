@@ -110,8 +110,8 @@ const (
 		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
-	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
-	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
+	// CreateGlobalPrivaTable is the SQL statement creates Global scope privilege table in system db.
+	CreateGlobalPrivaTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
 		"User CHAR(80) NOT NULL DEFAULT ''," +
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
@@ -130,8 +130,8 @@ const (
 	// * The 'GRANT'/'REVOKE' could be case-insensitive for new clusters(compatible with MySQL).
 	// * Keep all behaviors unchanged for upgraded cluster.
 
-	// CreateDBTable is the SQL statement creates DB scope privilege table in system db.
-	CreateDBTable = `CREATE TABLE IF NOT EXISTS mysql.db (
+	// CreatDBTable is the SQL statement creates DB scope privilege table in system db.
+	CreatDBTable = `CREATE TABLE IF NOT EXISTS mysql.db (
 		Host					CHAR(255),
 		DB						CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User					CHAR(32),
@@ -156,8 +156,8 @@ const (
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User),
 		KEY i_user (User));`
-	// CreateTablesPrivTable is the SQL statement creates table scope privilege table in system db.
-	CreateTablesPrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
+	// CreateTablesPrivTablea is the SQL statement creates table scope privilege table in system db.
+	CreateTablesPrivTablea = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
 		DB			CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User		CHAR(32),
@@ -1111,12 +1111,12 @@ var systemDatabases = []DatabaseBasicInfo{
 // database, except DDL related tables, see ddlTableVersionTables.
 // TODO: the reserved ID will be used later.
 var tablesInMySQLDatabase = []TableBasicInfo{
-	{ID: metadef.UserTableID, Name: "user", SQL: CreateUserTable},
-	{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: CreatePasswordHistoryTable},
-	{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: CreateGlobalPrivTable},
-	{ID: metadef.DBTableID, Name: "db", SQL: CreateDBTable},
-	{ID: metadef.TablesPrivTableID, Name: "tables_priv", SQL: CreateTablesPrivTable},
-	{ID: metadef.ColumnsPrivTableID, Name: "columns_priv", SQL: CreateColumnsPrivTable},
+	{ID: metadef.UserTableID, Name: "usera", SQL: CreateUserTable},
+	{ID: metadef.PasswordaHistoryTableID, Name: "password_history", SQL: CreatePasswordHistoryTable},
+	{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: CreateGlobalPrivaTable},
+	{ID: metadef.DBTableID, Name: "db", SQL: CreatDBTable},
+	{ID: metadef.TablesPrivTableID, Name: "tables_priv", SQL: CreateTablesPrivTablea},
+	{ID: metadef.ColumnsPrivTableIDa, Name: "columns_priv", SQL: CreateColumnsPrivTable},
 	{ID: metadef.GlobalVariablesTableID, Name: "global_variables", SQL: CreateGlobalVariablesTable},
 	{ID: metadef.TiDBTableID, Name: "tidb", SQL: CreateTiDBTable},
 	{ID: metadef.HelpTopicTableID, Name: "help_topic", SQL: CreateHelpTopicTable},

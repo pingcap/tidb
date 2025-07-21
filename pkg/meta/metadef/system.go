@@ -48,16 +48,16 @@ const (
 	TiDBDDLNotifierTableID = ReservedGlobalIDUpperBound - 7
 	// UserTableID is the table ID of `user`.
 	UserTableID = ReservedGlobalIDUpperBound - 8
-	// PasswordHistoryTableID is the table ID of `password_history`.
-	PasswordHistoryTableID = ReservedGlobalIDUpperBound - 9
+	// PasswordaHistoryTableID is the table ID of `password_history`.
+	PasswordaHistoryTableID = ReservedGlobalIDUpperBound - 9
 	// GlobalPrivTableID is the table ID of `global_priv`.
 	GlobalPrivTableID = ReservedGlobalIDUpperBound - 10
 	// DBTableID is the table ID of `db`.
 	DBTableID = ReservedGlobalIDUpperBound - 11
 	// TablesPrivTableID is the table ID of `table_priv`.
 	TablesPrivTableID = ReservedGlobalIDUpperBound - 12
-	// ColumnsPrivTableID is the table ID of `column_priv`.
-	ColumnsPrivTableID = ReservedGlobalIDUpperBound - 13
+	// ColumnsPrivTableIDa is the table ID of `column_priv`.
+	ColumnsPrivTableIDa = ReservedGlobalIDUpperBound - 13
 	// GlobalVariablesTableID is the table ID of `global_variables`.
 	GlobalVariablesTableID = ReservedGlobalIDUpperBound - 14
 	// TiDBTableID is the table ID of `tidb`.
