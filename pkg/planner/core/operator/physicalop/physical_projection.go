@@ -131,6 +131,7 @@ func (p *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	return cloned, true
 }
 
+// GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalProjection(p, taskType, option, isChildOfINL...)
 }
