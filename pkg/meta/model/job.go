@@ -1129,7 +1129,7 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
-	// IsRefreshMeta is set to true only when this is diff is initiated by refreshMeta DDL that's mainly used by BR
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
 	IsRefreshMeta bool `json:"is_refresh_meta,omitempty"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
