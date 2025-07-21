@@ -233,6 +233,7 @@ func TestQ9(t *testing.T) {
 
 func TestQ13(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
 		createCustomer(t, tk, dom)
 		createOrders(t, tk, dom)
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
