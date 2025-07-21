@@ -55,10 +55,10 @@ func buildKeyInfo(lp base.LogicalPlan) {
 		buildKeyInfo(child)
 	}
 	childSchema := childSchemaSlicePool.Get().([]*expression.Schema)
-	slices.Grow(childSchema, len(lp.Children()))
+	childSchema = slices.Grow(childSchema, len(lp.Children()))
 	defer func() {
 		childSchema = childSchema[:0]
-		childSchemaSlicePool.Put(childSchema)
+		childSchemaSlicePool.Put(&childSchema)
 	}()
 	for _, child := range lp.Children() {
 		childSchema = append(childSchema, child.Schema())
