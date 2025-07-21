@@ -2154,7 +2154,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    DefTiDBRetryLimit,
@@ -2258,12 +2258,16 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
 		CostModelVersion:              DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
+		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
 		inCallProcedure: struct {
 			inCall bool
 			num    int
 		}{inCall: false, num: 0},
 		ProcedurePlanCache: make(map[string]any),
 	}
+	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
