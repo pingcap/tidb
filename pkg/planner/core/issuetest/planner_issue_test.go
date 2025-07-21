@@ -244,7 +244,7 @@ func TestIssue59902(t *testing.T) {
 	tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
 		Check(testkit.Rows(
 			"Projection 8.00 root  test.t1.b, ifnull(Column#9, 0)->Column#9",
-			"└─HashJoin 8.00 root  CARTESIAN left outer join, left side:Point_Get",
+			"└─HashJoin 8.00 root  CARTESIAN left outer join",
 			"  ├─Point_Get(Build) 1.00 root table:t1 handle:1",
 			"  └─StreamAgg(Probe) 8.00 root  group by:test.t2.a, funcs:count(Column#11)->Column#9",
 			"    └─IndexReader 8.00 root  index:StreamAgg",
