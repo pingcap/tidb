@@ -30,8 +30,8 @@ const (
 )
 
 const (
-	// MySQLDatabaseID is the database ID of `mysql`.
-	MySQLDatabaseID = ReservedGlobalIDUpperBound
+	// SystemDatabaseID is the database ID of `mysql`.
+	SystemDatabaseID = ReservedGlobalIDUpperBound
 	// TiDBDDLJobTableID is the table ID of `tidb_ddl_job`.
 	TiDBDDLJobTableID = ReservedGlobalIDUpperBound - 1
 	// TiDBDDLReorgTableID is the table ID of `tidb_ddl_reorg`.

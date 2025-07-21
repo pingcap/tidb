@@ -775,9 +775,6 @@ const (
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
 
-	// CreateSysSchema creates a new schema called `sys`.
-	CreateSysSchema = `CREATE DATABASE IF NOT EXISTS sys;`
-
 	// CreateSchemaUnusedIndexesView creates a view to use `information_schema.tidb_index_usage` to get the unused indexes.
 	CreateSchemaUnusedIndexesView = `CREATE OR REPLACE VIEW sys.schema_unused_indexes AS
 		SELECT
@@ -1106,7 +1103,7 @@ func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
 }
 
 var systemDatabases = []DatabaseBasicInfo{
-	{ID: metadef.MySQLDatabaseID, Name: mysql.SystemDB},
+	{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB},
 	{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
 }
 
