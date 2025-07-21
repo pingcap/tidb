@@ -1574,8 +1574,8 @@ func createStoreAndPrepareDB(t *testing.T) kv.Storage {
 	tk.MustExec(`CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));`)
 	tk.MustExec(fmt.Sprintf("create database if not exists %s;", mysql.SystemDB))
 	tk.MustExec(session.CreateUserTable)
-	tk.MustExec(session.CreatDBTable)
-	tk.MustExec(session.CreateTablesPrivTablea)
+	tk.MustExec(session.CreateDBTable)
+	tk.MustExec(session.CreateTablesPrivTable)
 	tk.MustExec(session.CreateColumnsPrivTable)
 	return store
 }
