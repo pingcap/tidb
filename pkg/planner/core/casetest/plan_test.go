@@ -515,5 +515,3 @@ ORDER BY res.branch_id;
 `, errno.ErrNotSupportedYet)
 	})
 }
-
-//trigger retest
