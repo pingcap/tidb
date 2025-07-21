@@ -842,11 +842,13 @@ func TestGetAdjustedMergeSortOverlapThreshold(t *testing.T) {
 		want        int64
 	}{
 		{1, 250},
-		{2, 250},
+		{2, 500},
 		{4, 1000},
-		{6, 1000},
-		{8, 4000},
+		{6, 1250},
+		{8, 2000},
 		{16, 4000},
+		{17, 4000},
+		{32, 4000},
 	}
 	for _, tt := range tests {
 		if got := GetAdjustedMergeSortOverlapThreshold(tt.concurrency); got != tt.want {
@@ -861,11 +863,13 @@ func TestGetAdjustedMergeSortFileCountStep(t *testing.T) {
 		want        int
 	}{
 		{1, 250},
-		{2, 250},
+		{2, 500},
 		{4, 1000},
-		{6, 1000},
-		{8, 4000},
+		{6, 1250},
+		{8, 2000},
 		{16, 4000},
+		{17, 4000},
+		{32, 4000},
 	}
 	for _, tt := range tests {
 		if got := GetAdjustedMergeSortFileCountStep(tt.concurrency); got != tt.want {

@@ -532,7 +532,7 @@ func doRemoveDuplicates[E any](
 
 // DivideMergeSortDataFiles divides the data files into multiple groups for
 // merge sort. Each group will be assigned to a node for sorting.
-// The number of files in each group is limited to MergeSortFileCountStep.
+// The number of files in each group is limited to MaxMergeSortFileCountStep.
 func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
 	if nodeCnt == 0 {
 		return nil, errors.Errorf("unsupported zero node count")

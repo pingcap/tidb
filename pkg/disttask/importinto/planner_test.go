@@ -180,10 +180,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := external.MergeSortFileCountStep
-	external.MergeSortFileCountStep = 2
+	stepBak := external.MaxMergeSortFileCountStep
+	external.MaxMergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		external.MergeSortFileCountStep = stepBak
+		external.MaxMergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
