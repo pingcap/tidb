@@ -154,6 +154,11 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 		vals = append(vals, val)
 	}
 out:
+	// For multi-valued index, if all values result in null or empty arrays,
+	// should handle it more to check issue: #62461
+	if c.idxInfo.MVIndex && (len(vals) == 0 || (len(vals) == 1 && len(vals[0]) > 0 && vals[0][0].IsNull())) {
+		return [][]types.Datum{}
+	}
 	return vals
 }
 
@@ -574,6 +579,11 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 
 func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
 	indexedValues := c.getIndexedValue(indexedValue)
+	// For multi-valued index with null/empty values, if getIndexedValue returns empty slice,
+	// it means no index records exist, so return false directly.
+	if len(indexedValues) == 0 {
+		return false, nil, nil
+	}
 	for _, val := range indexedValues {
 		key, distinct, err := c.GenIndexKey(ec, loc, val, h, nil)
 		if err != nil {
