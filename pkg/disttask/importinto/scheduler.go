@@ -167,6 +167,7 @@ func NewImportScheduler(
 func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
 	return &importScheduler{
 		GlobalSort: globalSort,
+		taskKS:     tidb.GetGlobalKeyspaceName(),
 	}
 }
 
