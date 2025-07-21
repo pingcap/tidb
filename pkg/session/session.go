@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -3507,6 +3508,13 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 	err = dom.InitDistTaskLoop()
 	if err != nil {
 		return nil, err
+	}
+	if err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		logger := logutil.BgLogger()
+		return local.InitializeRateLimiterParam(m, logger)
+	}); err != nil {
+		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
 	return dom, err
 }

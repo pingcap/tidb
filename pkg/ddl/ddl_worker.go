@@ -42,11 +42,13 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -1328,13 +1330,31 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		return nil
 	}
 
-	ver, _ := d.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := d.store.CurrentVersion(kv.GlobalTxnScope)
+	failpoint.Inject("mockGetCurrentVersionFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532
+			ver, err = kv.NewVersion(0), tikverr.NewErrPDServerTimeout("mock PD timeout")
+		}
+	})
+
+	// If we failed to get the current version, caller will retry after one second again.
+	if err != nil {
+		logutil.Logger(d.ctx).Warn("get current version failed", zap.Int64("jobID", job.ID), zap.Error(err))
+		return err
+	}
+
 	snapshot := d.store.GetSnapshot(ver)
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.Logger(d.ctx).Warn("get global version failed", zap.String("category", "ddl"), zap.Error(err))
 		return err
+	}
+
+	// Adding guard for schema version in test
+	if intest.InTest {
+		intest.Assert(latestSchemaVersion > 0, "latestSchemaVersion should be greater than 0")
 	}
 
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {

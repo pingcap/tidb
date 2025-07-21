@@ -15,6 +15,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -110,5 +111,11 @@ func TestKeysNeedLock(t *testing.T) {
 		need = keyNeedToLock(test.key, test.val, flag)
 		require.True(t, flag.HasPresumeKeyNotExists())
 		require.True(t, need)
+
+		if bytes.Equal(test.key, nonUniqueIndexKey) && bytes.Equal(test.val, nonUniqueVal) {
+			flag = kv.ApplyFlagsOps(kv.KeyFlags(0), kv.SetNeedLocked)
+			require.True(t, flag.HasNeedLocked())
+			require.True(t, keyNeedToLock(test.key, test.val, flag))
+		}
 	}
 }

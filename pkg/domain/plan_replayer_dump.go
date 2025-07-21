@@ -128,6 +128,10 @@ func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tab
 			TableName: fk.RefTable.L,
 			IsView:    false,
 		}
+		// Skip already visited tables to prevent infinite recursion in case of circular foreign key definitions.
+		if _, ok := tableMap[key]; ok {
+			continue
+		}
 		tableMap[key] = struct{}{}
 		err := findFK(is, key.DBName, key.TableName, tableMap)
 		if err != nil {

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
@@ -133,7 +134,13 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) {
+				intest.AssertFunc(func() bool {
+					if sctx.GetSessionVars().ConnectionID == 0 {
+						return sctx.GetSessionVars().RegardNULLAsPoint
+					}
+					return true
+				})
+				if err != nil || (!sctx.GetSessionVars().RegardNULLAsPoint && val.IsNull()) || (f.FuncName.L == ast.NullEQ && val.IsNull()) {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1

@@ -286,25 +286,25 @@
         "SQL": "explain format = 'verbose' select count(*) from t3 where b = 0",
         "Plan": [
           "StreamAgg_10 1.00 64.98 root  funcs:count(1)->Column#4",
-          "└─IndexReader_15 0.00 15.08 root  index:IndexRangeScan_14",
-          "  └─IndexRangeScan_14 0.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
+          "└─IndexReader_15 1.00 15.08 root  index:IndexRangeScan_14",
+          "  └─IndexRangeScan_14 1.00 162.80 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
         "Plan": [
           "StreamAgg_10 1.00 2001.63 root  funcs:count(test.t3.a)->Column#4",
-          "└─IndexLookUp_17 0.00 1951.73 root  ",
-          "  ├─IndexRangeScan_15(Build) 0.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
-          "  └─TableRowIDScan_16(Probe) 0.00 227.31 cop[tikv] table:t3 keep order:false"
+          "└─IndexLookUp_17 1.00 1951.73 root  ",
+          "  ├─IndexRangeScan_15(Build) 1.00 203.50 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
+          "  └─TableRowIDScan_16(Probe) 1.00 227.31 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 where a = 0",
         "Plan": [
           "StreamAgg_12 1.00 109.57 root  funcs:count(1)->Column#4",
-          "└─TableReader_20 0.00 59.67 root  data:Selection_19",
-          "  └─Selection_19 0.00 831.62 cop[tikv]  eq(test.t2.a, 0)",
+          "└─TableReader_20 1.00 59.67 root  data:Selection_19",
+          "  └─Selection_19 1.00 831.62 cop[tikv]  eq(test.t2.a, 0)",
           "    └─TableFullScan_18 3.00 681.92 cop[tikv] table:t2 keep order:false"
         ]
       },
@@ -356,7 +356,7 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
         "Plan": [
-          "HashJoin_19 3.00 65286.81 root  CARTESIAN left outer semi join",
+          "HashJoin_19 3.00 65297.11 root  CARTESIAN left outer semi join",
           "├─Selection_35(Build) 0.80 31149.25 root  eq(2, Column#18)",
           "│ └─StreamAgg_42 1.00 31099.35 root  funcs:count(1)->Column#18",
           "│   └─TableReader_54 3.00 30949.65 root  MppVersion: 2, data:ExchangeSender_53",

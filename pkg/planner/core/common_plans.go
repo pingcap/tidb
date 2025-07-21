@@ -902,16 +902,6 @@ func (e *Explain) RenderResult() error {
 		}
 	}
 
-	if strings.ToLower(e.Format) == types.ExplainFormatCostTrace {
-		if pp, ok := e.TargetPlan.(PhysicalPlan); ok {
-			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
-			if _, err := getPlanCost(pp, property.RootTaskType,
-				NewDefaultPlanCostOption().WithCostFlag(CostFlagRecalculate|CostFlagTrace)); err != nil {
-				return err
-			}
-		}
-	}
-
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
 		if e.Rows == nil || e.Analyze {

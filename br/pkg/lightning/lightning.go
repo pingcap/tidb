@@ -531,7 +531,9 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
+	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s,
+		mydump.WithScanFileConcurrency(l.curTask.App.RegionConcurrency*2),
+	)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)

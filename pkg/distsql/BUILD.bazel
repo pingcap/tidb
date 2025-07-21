@@ -32,6 +32,7 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/execdetails",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/ranger",

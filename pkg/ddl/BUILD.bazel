@@ -69,6 +69,7 @@ go_library(
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/config",
+        "//br/pkg/lightning/metric",
         "//br/pkg/storage",
         "//pkg/config",
         "//pkg/ddl/copr",

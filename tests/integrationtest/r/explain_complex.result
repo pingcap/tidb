@@ -251,19 +251,19 @@ Sort	1.00	root		explain_complex.org_department.left_value
 └─HashAgg	1.00	root		group by:explain_complex.org_department.id, funcs:firstrow(explain_complex.org_department.id)->explain_complex.org_department.id, funcs:firstrow(explain_complex.org_department.ctx)->explain_complex.org_department.ctx, funcs:firstrow(explain_complex.org_department.name)->explain_complex.org_department.name, funcs:firstrow(explain_complex.org_department.left_value)->explain_complex.org_department.left_value, funcs:firstrow(explain_complex.org_department.right_value)->explain_complex.org_department.right_value, funcs:firstrow(explain_complex.org_department.depth)->explain_complex.org_department.depth, funcs:firstrow(explain_complex.org_department.leader_id)->explain_complex.org_department.leader_id, funcs:firstrow(explain_complex.org_department.status)->explain_complex.org_department.status, funcs:firstrow(explain_complex.org_department.created_on)->explain_complex.org_department.created_on, funcs:firstrow(explain_complex.org_department.updated_on)->explain_complex.org_department.updated_on
   └─Selection	0.01	root		or(eq(explain_complex.org_employee_position.user_id, 62), or(eq(explain_complex.org_department.id, 20), eq(explain_complex.org_department.id, 20)))
     └─HashJoin	0.02	root		left outer join, equal:[eq(explain_complex.org_position.id, explain_complex.org_employee_position.position_id)]
-      ├─IndexJoin(Build)	0.01	root		left outer join, inner:IndexLookUp, outer key:explain_complex.org_department.id, inner key:explain_complex.org_position.department_id, equal cond:eq(explain_complex.org_department.id, explain_complex.org_position.department_id)
-      │ ├─IndexLookUp(Build)	0.01	root		
-      │ │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
-      │ │ └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.org_department.status, 1000)
-      │ │   └─TableRowIDScan	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-      │ └─IndexLookUp(Probe)	0.01	root		
-      │   ├─Selection(Build)	12.50	cop[tikv]		not(isnull(explain_complex.org_position.department_id))
-      │   │ └─IndexRangeScan	12.51	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(explain_complex.org_position.department_id, explain_complex.org_department.id)], keep order:false, stats:pseudo
-      │   └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.org_position.status, 1000)
-      │     └─TableRowIDScan	12.50	cop[tikv]	table:p	keep order:false, stats:pseudo
-      └─TableReader(Probe)	9.99	root		data:Selection
-        └─Selection	9.99	cop[tikv]		eq(explain_complex.org_employee_position.status, 1000), not(isnull(explain_complex.org_employee_position.position_id))
-          └─TableFullScan	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
+      ├─TableReader(Build)	9.99	root		data:Selection
+      │ └─Selection	9.99	cop[tikv]		eq(explain_complex.org_employee_position.status, 1000), not(isnull(explain_complex.org_employee_position.position_id))
+      │   └─TableFullScan	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
+      └─IndexJoin(Probe)	0.01	root		left outer join, inner:IndexLookUp, outer key:explain_complex.org_department.id, inner key:explain_complex.org_position.department_id, equal cond:eq(explain_complex.org_department.id, explain_complex.org_position.department_id)
+        ├─IndexLookUp(Build)	0.01	root		
+        │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
+        │ └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.org_department.status, 1000)
+        │   └─TableRowIDScan	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+        └─IndexLookUp(Probe)	0.01	root		
+          ├─Selection(Build)	12.50	cop[tikv]		not(isnull(explain_complex.org_position.department_id))
+          │ └─IndexRangeScan	12.51	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(explain_complex.org_position.department_id, explain_complex.org_department.id)], keep order:false, stats:pseudo
+          └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.org_position.status, 1000)
+            └─TableRowIDScan	12.50	cop[tikv]	table:p	keep order:false, stats:pseudo
 set tidb_cost_model_version=1;
 create table Tab_A (id int primary key,bid int,cid int,name varchar(20),type varchar(20),num int,amt decimal(11,2));
 create table Tab_B (id int primary key,name varchar(20));

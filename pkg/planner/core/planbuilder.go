@@ -3018,7 +3018,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
-// TODO(hi-rustin): give some explanation about the default value.
+// TODO(0xPoe): give some explanation about the default value.
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    256,
 	ast.AnalyzeOptNumTopN:       20,
@@ -5305,6 +5305,15 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(ctx, show)
+	}
+	if explain.Stmt != nil {
+		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
+			origin := b.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace
+			b.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+			defer func() {
+				b.ctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = origin
+			}()
+		}
 	}
 	targetPlan, _, err := OptimizeAstNode(ctx, b.ctx, explain.Stmt, b.is)
 	if err != nil {

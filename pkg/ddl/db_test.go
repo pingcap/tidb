@@ -1152,3 +1152,20 @@ func TestDDLJobErrEntrySizeTooLarge(t *testing.T) {
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t add column b int;") // Should not block.
 }
+
+func TestGetVersionFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	// Simulate the failure of getting the current version twice.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed"))
+	})
+
+	tk.MustExec("alter table t add column b int")
+}

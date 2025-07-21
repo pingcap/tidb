@@ -104,6 +104,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return nil
 	}
 
+	tableAndPartitionIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		tableID := getTableIDFromTask(task)
+		tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.TableID)
+		if tableID.IsPartitionTable() {
+			tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.PartitionID)
+		}
+	}
+
 	// Get the min number of goroutines for parallel execution.
 	concurrency, err := getBuildStatsConcurrency(e.Ctx())
 	if err != nil {
@@ -174,7 +183,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(infoSchema)
+	return statsHandle.Update(infoSchema, tableAndPartitionIDs...)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {

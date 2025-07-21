@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -258,4 +259,15 @@ func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, 
 	sm := MockSessionManager{}
 	dom.InfoSyncer().SetSessionManager(&sm)
 	return schematracker.UnwrapStorage(store), dom
+}
+
+// SetTiFlashReplica is to set TiFlash replica
+func SetTiFlashReplica(t testing.TB, dom *domain.Domain, dbName, tableName string) {
+	is := dom.InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	require.NoError(t, err)
+	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
 }

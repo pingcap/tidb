@@ -267,7 +267,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 
 		for _, uk := range r.uniqueKeys {
-			_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+			handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn, uk.commonHandle)
 			if err != nil {
 				return err
 			}

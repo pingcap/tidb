@@ -190,7 +190,9 @@ func (e *HashAggExec) Close() error {
 		channel.Clear(e.finalOutputCh)
 		e.executed = false
 		if e.memTracker != nil {
-			e.memTracker.ReplaceBytesUsed(0)
+			if e.memTracker.BytesConsumed() > 0 {
+				e.memTracker.ReplaceBytesUsed(0)
+			}
 		}
 		e.parallelExecValid = false
 	}
@@ -351,6 +353,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		ok    bool
 		err   error
 	)
+
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(e.finalOutputCh, r)

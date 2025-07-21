@@ -338,7 +338,7 @@ func (w *backfillWorker) sendResult(result *backfillResult) {
 }
 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
-	logger := ddlLogger.With(zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
+	logger := logutil.BgLogger().With(zap.String("category", "ddl"), zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
 	var (
 		curTaskID int
 		task      *reorgBackfillTask
@@ -399,13 +399,44 @@ func splitAndValidateTableRanges(
 	t table.PhysicalTable,
 	store kv.Storage,
 	startKey, endKey kv.Key,
+	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	ranges, err := splitTableRanges(ctx, t, store, startKey, endKey, limit)
 	if err != nil {
 		return nil, err
 	}
+	ranges = splitRangesByKeys(ranges, splitKeys)
 	return validateTableRanges(ranges, startKey, endKey)
+}
+
+func splitRangesByKeys(ranges []kv.KeyRange, splitKeys []kv.Key) []kv.KeyRange {
+	if len(splitKeys) == 0 {
+		return ranges
+	}
+	ret := make([]kv.KeyRange, 0, len(ranges)+len(splitKeys))
+	for _, r := range ranges {
+		start := r.StartKey
+		finishOneRange := false
+		for !finishOneRange {
+			if len(splitKeys) == 0 {
+				break
+			}
+			split := splitKeys[0]
+			switch {
+			case split.Cmp(start) <= 0:
+				splitKeys = splitKeys[1:]
+			case split.Cmp(r.EndKey) < 0:
+				splitKeys = splitKeys[1:]
+				ret = append(ret, kv.KeyRange{StartKey: start, EndKey: split})
+				start = split
+			default:
+				finishOneRange = true
+			}
+		}
+		ret = append(ret, kv.KeyRange{StartKey: start, EndKey: r.EndKey})
+	}
+	return ret
 }
 
 func validateTableRanges(ranges []kv.KeyRange, start, end kv.Key) ([]kv.KeyRange, error) {
@@ -606,6 +637,9 @@ func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocat
 	return nil
 }
 
+// MockDMLExecutionBeforeScan is only used for test.
+var MockDMLExecutionBeforeScan func()
+
 var backfillTaskChanSize = 128
 
 // SetBackfillTaskChanSizeForTest is only used for test.
@@ -634,6 +668,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	bfWorkerType backfillerType,
 	reorgInfo *reorgInfo,
 ) error {
+	logger := logutil.BgLogger().With(zap.String("category", "ddl"))
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
@@ -651,6 +686,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	sessCtx := newReorgSessCtx(reorgInfo.d.store)
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(dc.ctx)
+
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
 
 	scheduler, err := newBackfillScheduler(egCtx, reorgInfo, sessPool, bfWorkerType, t, sessCtx, jc)
 	if err != nil {
@@ -674,7 +715,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				return egCtx.Err()
 			case result, ok := <-scheduler.resultChan():
 				if !ok {
-					ddlLogger.Info("backfill workers successfully processed",
+					logger.Info("backfill workers successfully processed",
 						zap.Stringer("element", reorgInfo.currElement),
 						zap.Int64("total added count", totalAddedCount),
 						zap.String("start key", hex.EncodeToString(startKey)))
@@ -683,7 +724,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				cnt++
 
 				if result.err != nil {
-					ddlLogger.Warn("backfill worker failed",
+					logger.Warn("backfill worker failed",
 						zap.Int64("job ID", reorgInfo.ID),
 						zap.Int64("total added count", totalAddedCount),
 						zap.String("start key", hex.EncodeToString(startKey)),
@@ -704,7 +745,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				if cnt%(scheduler.currentWorkerSize()*4) == 0 {
 					err2 := reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)
 					if err2 != nil {
-						ddlLogger.Warn("update reorg meta failed",
+						logger.Warn("update reorg meta failed",
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
@@ -712,7 +753,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 					// the overhead of loading the DDL related global variables.
 					err2 = scheduler.adjustWorkerSize()
 					if err2 != nil {
-						ddlLogger.Warn("cannot adjust backfill worker size",
+						logger.Warn("cannot adjust backfill worker size",
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
@@ -728,14 +769,18 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := splitAndValidateTableRanges(egCtx, t, reorgInfo.d.store, start, end, backfillTaskChanSize)
+			var splitKeys []kv.Key
+			if reorgInfo.mergingTmpIdx {
+				splitKeys = getSplitKeysForTempIndexRanges(t.GetPhysicalID(), reorgInfo.elements)
+			}
+			kvRanges, err2 := splitAndValidateTableRanges(egCtx, t, reorgInfo.d.store, start, end, splitKeys, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
 			if len(kvRanges) == 0 {
 				break
 			}
-			ddlLogger.Info("start backfill workers to reorg record",
+			logutil.BgLogger().Info("start backfill workers to reorg record",
 				zap.Stringer("type", bfWorkerType),
 				zap.Int("workerCnt", scheduler.currentWorkerSize()),
 				zap.Int("regionCnt", len(kvRanges)),

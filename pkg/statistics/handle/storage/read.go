@@ -118,12 +118,12 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
-			lowerBound, err = d.ConvertTo(sc, tp)
+			lowerBound, err = convertBoundFromBlob(sctx.GetSessionVars().StmtCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(sc, tp)
+			upperBound, err = convertBoundFromBlob(sctx.GetSessionVars().StmtCtx, d, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -604,7 +604,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache(util.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	statistics.HistogramNeededItems.Delete(col)
 	return nil
 }
@@ -663,7 +665,9 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache(util.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
 }
@@ -686,4 +690,38 @@ func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snaps
 	modifyCount = rows[0].GetInt64(1)
 	count = rows[0].GetInt64(2)
 	return
+}
+
+// convertBoundFromBlob reads the bound from blob. The `blob` is read from the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundFromBlob(sc *stmtctx.StatementContext, blob types.Datum, tp *types.FieldType) (types.Datum, error) {
+	// For `BIT` type, when converting to `BLOB`, it's formated as an integer (when it's possible). Therefore, we should try to
+	// parse it as an integer first.
+	if tp.GetType() == mysql.TypeBit {
+		var ret types.Datum
+
+		// The implementation of converting BIT to BLOB will try to format it as an integer first. Theoretically, it should
+		// always be able to format the integer because the `BIT` length is limited to 64. Therefore, this err should never
+		// happen.
+		uintValue, err := strconv.ParseUint(string(blob.GetBytes()), 10, 64)
+		intest.Assert(err == nil)
+		if err != nil {
+			// Fail to parse, return the original blob as BIT directly.
+			ret.SetBinaryLiteral(types.BinaryLiteral(blob.GetBytes()))
+			return ret, nil
+		}
+
+		// part of the code is copied from `(*Datum).convertToMysqlBit`.
+		if tp.GetFlen() < 64 && uintValue >= 1<<(uint64(tp.GetFlen())) {
+			logutil.BgLogger().Warn("bound in stats exceeds the bit length", zap.Uint64("bound", uintValue), zap.Int("flen", tp.GetFlen()))
+			err = types.ErrDataTooLong.GenWithStack("Data Too Long, field len %d", tp.GetFlen())
+			intest.Assert(false, "bound in stats exceeds the bit length")
+			uintValue = (1 << (uint64(tp.GetFlen()))) - 1
+		}
+		byteSize := (tp.GetFlen() + 7) >> 3
+		ret.SetMysqlBit(types.NewBinaryLiteralFromUint(uintValue, byteSize))
+		return ret, errors.Trace(err)
+	}
+	return blob.ConvertTo(sc, tp)
 }

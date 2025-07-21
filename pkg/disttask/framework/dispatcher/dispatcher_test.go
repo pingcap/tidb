@@ -178,14 +178,18 @@ func TestGetInstance(t *testing.T) {
 
 	dispatcher.MockServerInfo = []*infosync.ServerInfo{
 		{
-			ID:   uuids[0],
-			IP:   "10.123.124.10",
-			Port: 32457,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   uuids[0],
+				IP:   "10.123.124.10",
+				Port: 32457,
+			},
 		},
 		{
-			ID:   uuids[1],
-			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
-			Port: 65535,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   uuids[1],
+				IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
+				Port: 65535,
+			},
 		},
 	}
 	instanceIDs, err = dsp.GetAllSchedulerIDs(ctx, task)

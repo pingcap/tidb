@@ -3213,3 +3213,14 @@ func TestAnalyzePartitionVerify(t *testing.T) {
 		}
 	}
 }
+
+func TestVirutalColumnAsFirstColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table analyze_virtual_col(a int generated always as (1) virtual, b int);")
+	tk.MustExec("insert into analyze_virtual_col(b) values(2);")
+	tk.MustExec("analyze table analyze_virtual_col")
+	tk.MustExec("select * from analyze_virtual_col where a > 1 and b > 1;")
+	tk.MustQuery("show stats_topn where table_name = 'analyze_virtual_col';").Check(testkit.Rows("test analyze_virtual_col  b 0 2 1"))
+}

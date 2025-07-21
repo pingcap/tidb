@@ -1940,7 +1940,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                    DefTiDBRetryLimit,
@@ -2023,7 +2023,11 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		EnableWindowFunction:          DefEnableWindowFunction,
+		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
+		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
+		CostModelVersion:              DefTiDBCostModelVer,
 	}
+	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.Concurrency = Concurrency{

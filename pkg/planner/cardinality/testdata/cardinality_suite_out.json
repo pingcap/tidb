@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 752.004166655054
+        "Count": 735.504166655054
       },
       {
         "Start": 900,
@@ -74,12 +74,12 @@
       {
         "Start": 300,
         "End": 899,
-        "Count": 4498.5
+        "Count": 4500
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1201.196869573942
+        "Count": 1193.696869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1211.5288209899081
+        "Count": 1218.0288209899081
       },
       {
         "Start": 200,
@@ -1058,6 +1058,26 @@
         ]
       },
       {
+        "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.d, 9950)",
+          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 1.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
+          "    └─TableRowIDScan 1.01 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 0.1",
         "Result": null
       },
@@ -1094,11 +1114,11 @@
       {
         "Query": "explain format = 'brief' select * from t where b >= 9000 order by c limit 1",
         "Result": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 9000)",
-          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 10000.00 cop[tikv]  ge(test.t.b, 9000)",
+          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1124,11 +1144,10 @@
       {
         "Query": "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
         "Result": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "│ └─Selection 1.00 cop[tikv]  lt(test.t.a, 10000)",
-          "│   └─IndexFullScan 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─TableRangeScan 10000.00 cop[tikv] table:t range:[-inf,10000), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1170,6 +1189,50 @@
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
           "    └─Selection 5.00 cop[tikv]  ge(test.t.c, 9900)",
           "      └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 200.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.d, 9950)",
+          "    └─TableRowIDScan 200.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 1.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
+          "    └─TableRowIDScan 1.01 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 1",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 500.00 cop[tikv]  ge(test.t.d, 9950)",
+          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+        "Result": [
+          "TopN 1.00 root  test.t.c, offset:0, count:1",
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
+          "    └─Selection 99500.00 cop[tikv]  lt(test.t.d, 9950)",
+          "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -2403,7 +2466,7 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -2684,7 +2747,7 @@
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -2692,7 +2755,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 0
+                    "Result": 1
                   }
                 ]
               },
@@ -3244,11 +3307,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
-                "Result": 0
+                "Result": 2.1082813290605499e-7
               }
             ]
           }
@@ -3652,24 +3715,33 @@
                       {
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
-                            "lDatum": "KindBytes \\x01",
+                            "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+                            "rDatum": "KindInt64 -1500"
                           },
                           {
                             "commonPrefix": 0,
-                            "lScalar": 72057594037927940,
-                            "rScalar": 252201579132747780,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
                             "unsigned": false
                           },
                           {
-                            "Result": 0
+                            "boundL": -2997,
+                            "boundR": 2997,
+                            "histL": -999,
+                            "histR": 999,
+                            "lPercent": 0.5613744375005636,
+                            "rPercent": 0,
+                            "rowCount": 555.760693125558
+                          },
+                          {
+                            "Result": 100
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 100,
                           "Type": "Range"
                         }
                       }
@@ -3677,7 +3749,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 0
+                    "Result": 100
                   }
                 ]
               },
@@ -3804,11 +3876,11 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0,
+                "Selectivity": 0.032467532467532464,
                 "partial cover": false
               },
               {
-                "Result": 0
+                "Result": 0.000019066503965832824
               }
             ]
           }

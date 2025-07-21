@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -248,8 +249,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	leftCond = expression.RemoveDupExprs(p.SCtx(), leftCond)
 	rightCond = expression.RemoveDupExprs(p.SCtx(), rightCond)
-	leftRet, lCh := p.children[0].PredicatePushDown(leftCond, opt)
-	rightRet, rCh := p.children[1].PredicatePushDown(rightCond, opt)
+	children := p.Children()
+	rightChild := children[1]
+	leftChild := children[0]
+	rightCond = constraint.DeleteTrueExprsBySchema(rightChild.Schema(), rightCond)
+	leftCond = constraint.DeleteTrueExprsBySchema(leftChild.Schema(), leftCond)
+	leftRet, lCh := leftChild.PredicatePushDown(leftCond, opt)
+	rightRet, rCh := rightChild.PredicatePushDown(rightCond, opt)
 	addSelection(p, lCh, leftRet, 0, opt)
 	addSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()

@@ -202,5 +202,7 @@ func removeExtendedStatsItem(statsCache statsutil.StatsCache,
 	}
 	newTbl := tbl.Copy()
 	delete(newTbl.ExtendedStats.Stats, statsName)
-	statsCache.UpdateStatsCache([]*statistics.Table{newTbl}, nil)
+	statsCache.UpdateStatsCache(statsutil.CacheUpdate{
+		Updated: []*statistics.Table{newTbl},
+	})
 }

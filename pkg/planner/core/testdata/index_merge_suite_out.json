@@ -252,7 +252,7 @@
       {
         "SQL": "select * from vh",
         "Plan": [
-          "PartitionUnion 0.50 root  ",
+          "PartitionUnion 1.50 root  ",
           "├─IndexMerge 0.50 root  type: intersection",
           "│ ├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, partition:p0, index:ia(a) range:[10,10], keep order:false",
           "│ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p0, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
@@ -276,7 +276,7 @@
       {
         "SQL": "select /*+ qb_name(v, v), use_index_merge(@v t1, ia, ibc, id) */ * from v",
         "Plan": [
-          "PartitionUnion 0.50 root  ",
+          "PartitionUnion 1.50 root  ",
           "├─IndexMerge 0.50 root  type: intersection",
           "│ ├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, partition:p0, index:ia(a) range:[10,10], keep order:false",
           "│ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p0, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
@@ -300,7 +300,7 @@
       {
         "SQL": "select /*+ qb_name(v, v@sel_1), use_index_merge(@v t1, ia, ibc, id) */ * from v",
         "Plan": [
-          "PartitionUnion 0.50 root  ",
+          "PartitionUnion 1.50 root  ",
           "├─IndexMerge 0.50 root  type: intersection",
           "│ ├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, partition:p0, index:ia(a) range:[10,10], keep order:false",
           "│ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p0, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
@@ -324,7 +324,7 @@
       {
         "SQL": "select /*+ qb_name(v, v@sel_1 .@sel_1), use_index_merge(@v t1, ia, ibc, id) */ * from v",
         "Plan": [
-          "PartitionUnion 0.50 root  ",
+          "PartitionUnion 1.50 root  ",
           "├─IndexMerge 0.50 root  type: intersection",
           "│ ├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, partition:p0, index:ia(a) range:[10,10], keep order:false",
           "│ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p0, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
@@ -348,7 +348,7 @@
       {
         "SQL": "select /*+ qb_name(v, v@sel_1 .@sel_1), use_index_merge(@v t1, ia, ibc, id) */ * from v",
         "Plan": [
-          "PartitionUnion 0.50 root  ",
+          "PartitionUnion 1.50 root  ",
           "├─IndexMerge 0.50 root  type: intersection",
           "│ ├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, partition:p0, index:ia(a) range:[10,10], keep order:false",
           "│ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p0, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
