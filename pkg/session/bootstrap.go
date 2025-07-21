@@ -1108,7 +1108,7 @@ var systemDatabases = []DatabaseBasicInfo{
 }
 
 // tablesInMySQLDatabase contains the definitions of system tables in the mysql
-// database, except DDL related tables, see ddlTableVersionTables.
+// database, or the system database, except DDL related tables, see ddlTableVersionTables.
 // TODO: the reserved ID will be used later.
 var tablesInMySQLDatabase = []TableBasicInfo{
 	{ID: metadef.UserTableID, Name: "user", SQL: CreateUserTable},
