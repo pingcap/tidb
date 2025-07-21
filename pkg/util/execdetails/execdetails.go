@@ -1756,6 +1756,20 @@ func (e *RootRuntimeStats) GetActRows() int64 {
 	return e.basic.rows.Load()
 }
 
+func (e *RootRuntimeStats) GetLoops() int32 {
+	if e.basic == nil {
+		return 0
+	}
+	return e.basic.loop.Load()
+}
+
+func (e *RootRuntimeStats) GetConsume() string {
+	if e.basic == nil {
+		return ""
+	}
+	return FormatDuration(time.Duration(e.basic.consume.Load()))
+}
+
 // MergeStats merges stats in the RootRuntimeStats and return the stats suitable for display directly.
 func (e *RootRuntimeStats) MergeStats() (basic *BasicRuntimeStats, groups []RuntimeStats) {
 	return e.basic, e.groupRss
