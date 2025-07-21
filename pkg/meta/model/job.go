@@ -392,6 +392,10 @@ type Job struct {
 
 	// SessionVars store session variables
 	SessionVars map[string]string `json:"session_vars,omitempty"`
+
+	// IgnoreVersionUpdate is set if the schema version returned by runOneJobStep is zero.
+	// For non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
+	IgnoreVersionUpdate bool `json:"ignore_version_update"`
 }
 
 // FinishTableJob is called when a job is finished.

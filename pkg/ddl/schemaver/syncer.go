@@ -290,8 +290,6 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 		path = s.selfSchemaVerPath
 		err = util.PutKVToEtcd(ctx, s.etcdCli, putKeyRetryUnlimited, path, ver,
 			clientv3.WithLease(s.loadSession().Lease()))
-		logutil.DDLLogger().Warn("[cbc] UpdateSelfVersion", zap.Int64("jobID", jobID),
-			zap.Int64("version", version), zap.Stack("UpdateSelfVersion"))
 	}
 
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())

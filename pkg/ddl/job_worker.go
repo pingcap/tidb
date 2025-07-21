@@ -616,7 +616,6 @@ func (w *worker) transitOneJobStep(
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
-	jobCtx.logger.Warn("[cbc] runOneJobStep", zap.Int64("jobID", job.ID), zap.Int64("schemaVer", schemaVer))
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
@@ -817,7 +816,7 @@ func (w *worker) runOneJobStep(
 
 	failpoint.InjectCall("onRunOneJobStep")
 	if job.Type != model.ActionMultiSchemaChange {
-		jobCtx.logger.Info("run one job step", zap.String("job", job.String()), zap.Stack("stack"))
+		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
 		failpoint.InjectCall("onRunOneJobStep")
 	}
 	timeStart := time.Now()
@@ -1054,6 +1053,7 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
+	job.IgnoreVersionUpdate = ver == 0 && err == nil
 
 	// there are too many job types, instead let every job type output its own
 	// updateRawArgs, we try to use these rules as a generalization:
@@ -1115,7 +1115,7 @@ func updateGlobalVersionAndWaitSynced(
 		if jobCtx.stepCtx != nil {
 			return nil
 		}
-		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID), zap.Stack("stack"))
+		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID))
 		return nil
 	}
 

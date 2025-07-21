@@ -853,9 +853,6 @@ func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_metadata_lock = on;")
-	tk.MustExec("create table t(col1 int, col2 int, col3 int);")
-	tk.MustExec("set global tidb_enable_metadata_lock = off;")
 	defer func() {
 		tk.MustExec("set global tidb_enable_metadata_lock = default;")
 	}()
@@ -864,10 +861,10 @@ func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
 		name string
 		sql  string
 	}{
-		{"drop column", "alter table t drop column col2, add column col5 int"},
-		{"add column", "alter table t add column col4 int, drop column col3"},
-		{"modify column", "alter table t modify column col4 varchar(8), modify column col5 varchar(8)"},
-		{"add index", "alter table t add index (col4), add index (col5)"},
+		{"drop column", "alter table t drop column col2, drop column col3"},
+		{"drop index", "alter table t drop index idx2, drop index idx3"},
+		{"modify column", "alter table t modify column col2 bigint, modify column col3 bigint"},
+		{"modify column with reorg", "alter table t modify column col2 varchar(4) charset utf8mb4;"},
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -880,6 +877,10 @@ func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
 					return res[0][11] == "synced"
 				}, 3*time.Second, 500*time.Millisecond)
 			}()
+			tk.MustExec("set global tidb_enable_metadata_lock = on;")
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t(col1 int, col2 int, col3 int, index idx2(col2), index idx3(col2));")
+			tk.MustExec("set global tidb_enable_metadata_lock = off;")
 			tk.MustExec(tc.sql)
 			wg.Wait()
 		})
