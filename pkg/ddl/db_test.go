@@ -18,11 +18,8 @@ import (
 	"context"
 	"fmt"
 	"math"
-<<<<<<< HEAD
-=======
 	"math/rand"
 	"slices"
->>>>>>> 1f0f3560e1c (table: use writable columns to avoid columns not match when add column DDL exec parallel with update DML (#60048))
 	"strconv"
 	"strings"
 	"sync"
