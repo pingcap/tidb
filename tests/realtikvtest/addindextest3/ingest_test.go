@@ -829,7 +829,7 @@ func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
 	tk1.MustExec("use addindexlit;")
 
 	var runInsert bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if t.Failed() || runInsert {
 			return
 		}
