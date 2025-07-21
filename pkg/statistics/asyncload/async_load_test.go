@@ -22,13 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -76,7 +75,7 @@ func TestLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 
 func TestLoadStatisticsAfterColumnDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -124,7 +123,7 @@ func TestLoadStatisticsAfterColumnDrop(t *testing.T) {
 
 func TestLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -172,7 +171,7 @@ func TestLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 
 func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -220,7 +219,7 @@ func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 
 func TestLoadCorruptedStatistics(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")

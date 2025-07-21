@@ -56,6 +56,7 @@ go_library(
         "//pkg/resourcemanager/util",
         "//pkg/sessionctx",
         "//pkg/table/tables",
+        "//pkg/types",
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/disttask",
@@ -91,7 +92,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 17,
+    shard_count = 19,
     deps = [
         "//br/pkg/storage",
         "//pkg/config",

@@ -46,14 +46,17 @@ func (p LogicalUnionAll) Init(ctx base.PlanContext, offset int) *LogicalUnionAll
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	for i, proj := range p.Children() {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
-		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
+		retCond, newChild, err := proj.PredicatePushDown(newExprs, opt)
+		if err != nil {
+			return nil, nil, err
+		}
 		addSelection(p, newChild, retCond, i, opt)
 	}
-	return nil, p
+	return nil, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

@@ -122,8 +122,9 @@ func (t *CopTask) getStoreType() kv.StoreType {
 	return kv.TiKV
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalUnionScan) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalUnionScan implements PhysicalPlan interface.
+func attach2Task4PhysicalUnionScan(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalUnionScan)
 	// when it arrives here, physical union scan will absolutely require a root task type,
 	// so convert child to root task type first.
 	task := tasks[0].ConvertToRootTask(p.SCtx())
@@ -1523,7 +1524,7 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 		case *PhysicalHashAgg, *PhysicalStreamAgg:
 			// todo: for simplicity, we can just inherit it from child.
 			p.SetStats(stats.Scale(1))
-		case *PhysicalUnionScan:
+		case *physicalop.PhysicalUnionScan:
 			// todo: for simplicity, we can just inherit it from child.
 			p.SetStats(stats.Scale(1))
 		default:

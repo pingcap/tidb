@@ -179,6 +179,7 @@ go_test(
         "//pkg/util/codec",
         "//pkg/util/engine",
         "//pkg/util/hack",
+        "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/mock",
         "@com_github_cockroachdb_pebble//:pebble",

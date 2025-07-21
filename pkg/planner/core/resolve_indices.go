@@ -357,8 +357,9 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalUnionScan) ResolveIndices() (err error) {
+// resolveIndices4PhysicalUnionScan implements Plan interface.
+func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalUnionScan)
 	err = p.BasePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err

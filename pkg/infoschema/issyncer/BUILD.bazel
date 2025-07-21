@@ -58,6 +58,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/store/mockstore",
+        "//pkg/util/logutil",
         "@com_github_stretchr_testify//require",
     ],
 )

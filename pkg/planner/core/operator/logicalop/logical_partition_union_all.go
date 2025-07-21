@@ -15,8 +15,10 @@
 package logicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -33,6 +35,24 @@ func (p LogicalPartitionUnionAll) Init(ctx base.PlanContext, offset int) *Logica
 }
 
 // *************************** start implementation of LogicalPlan interface ***************************
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalPartitionUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	prunedPlan, err := p.LogicalUnionAll.PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+
+	unionAll, ok := prunedPlan.(*LogicalUnionAll)
+	if !ok {
+		// Return the transformed plan if it's no longer a LogicalUnionAll
+		return prunedPlan, nil
+	}
+
+	// Update the wrapped LogicalUnionAll with the pruned result
+	p.LogicalUnionAll = *unionAll
+	return p, nil
+}
 
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

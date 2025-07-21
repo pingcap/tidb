@@ -811,9 +811,9 @@ func cleanDDLReorgHandles(se *sess.Session, job *model.Job) error {
 func getJobsBySQL(
 	ctx context.Context,
 	se *sess.Session,
-	tbl, condition string,
+	condition string,
 ) ([]*model.Job, error) {
-	rows, err := se.Execute(ctx, fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition), "get_job")
+	rows, err := se.Execute(ctx, fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where %s", condition), "get_job")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

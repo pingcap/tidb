@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/ast",

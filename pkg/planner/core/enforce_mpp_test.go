@@ -31,7 +31,6 @@ func TestRowSizeInMPP(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(10), b varchar(20), c varchar(256))")
 	tk.MustExec("insert into t values (space(10), space(20), space(256))")

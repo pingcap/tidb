@@ -30,7 +30,6 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
-        "//pkg/lightning/log",
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/util",

@@ -145,6 +145,7 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 
 // CreateLocalBackend creates a local backend for adding index.
 func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+	ctx = logutil.WithLogger(ctx, logutil.Logger(ctx))
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)
 	if err != nil {
 		return nil, nil, err

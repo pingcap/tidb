@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 var (
@@ -159,7 +160,7 @@ func NewCSVParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &CSVParser{
-		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
+		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
 		cfg:               cfg,
 		charsetConvertor:  charsetConvertor,
 		comma:             []byte(fieldTerminator),

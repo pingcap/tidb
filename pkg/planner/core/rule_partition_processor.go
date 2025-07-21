@@ -868,12 +868,16 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	if pi == nil {
 		return ds, nil
 	}
+	exprCtx := ds.SCtx().GetExprCtx()
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
-	for i, cond := range ds.AllConds {
-		ds.AllConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
-	}
+	ds.AllConds = pushDownNotOnConds(exprCtx, ds.AllConds)
+
+	// AllConds and PushedDownConds may become inconsistent in subsequent ApplyPredicateSimplification calls.
+	// They must be kept in sync to ensure correctness after PR #61571.
+	ds.PushedDownConds = pushDownNotOnConds(exprCtx, ds.PushedDownConds)
+
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not
 	// apply for some partitions like:
@@ -2225,4 +2229,14 @@ func appendNoPartitionChildTraceStep(ds *logicalop.DataSource, dual base.Logical
 		return fmt.Sprintf("%v_%v doesn't have needed partition table after pruning", ds.TP(), ds.ID())
 	}
 	opt.AppendStepToCurrent(dual.ID(), dual.TP(), reason, action)
+}
+
+func pushDownNotOnConds(ctx expression.BuildContext, conds []expression.Expression) []expression.Expression {
+	if len(conds) == 0 {
+		return conds
+	}
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(ctx, cond)
+	}
+	return conds
 }

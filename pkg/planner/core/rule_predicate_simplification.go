@@ -179,7 +179,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	if len(predicates) == 0 {
 		return predicates
 	}
-	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
+	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
@@ -194,6 +194,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 			}
 		}
 	}
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)

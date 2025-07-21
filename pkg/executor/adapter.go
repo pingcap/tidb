@@ -50,6 +50,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -490,7 +491,7 @@ func IsFastPlan(p base.Plan) bool {
 	switch p.(type) {
 	case *plannercore.PointGetPlan:
 		return true
-	case *plannercore.PhysicalTableDual:
+	case *physicalop.PhysicalTableDual:
 		// Plan of following SQL is PhysicalTableDual:
 		// select 1;
 		// select @@autocommit;
@@ -1675,21 +1676,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		buf.WriteByte(']')
 		indexNames = buf.String()
 	}
-	var stmtDetail execdetails.StmtExecDetails
-	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
-	if stmtDetailRaw != nil {
-		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-	}
-	var tikvExecDetail util.ExecDetails
-	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
-	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
-	}
-	ruDetails := util.NewRUDetails()
-	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
-		ruDetails = ruDetailsVal.(*util.RUDetails)
-	}
 
+	stmtDetail, tikvExecDetail, ruDetails := execdetails.GetExecDetailsFromContext(a.GoCtx)
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
@@ -1704,13 +1692,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 	}
 
-	resultRows := stmtCtx.GetResultRowsCount()
-
-	var (
-		keyspaceName string
-		keyspaceID   uint32
-	)
-	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	var keyspaceID uint32
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
@@ -1746,7 +1729,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		RewriteInfo:       sessVars.RewritePhaseInfo,
 		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
-		ResultRows:        resultRows,
+		ResultRows:        stmtCtx.GetResultRowsCount(),
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
 		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
@@ -1877,14 +1860,13 @@ func (a *ExecStmt) updateMPPNetworkTraffic() bool {
 	if tiflashNetworkStats == nil {
 		return false
 	}
-	var tikvExecDetail *util.ExecDetails
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw == nil {
 		tikvExecDetailRaw = &util.ExecDetails{}
 		a.GoCtx = context.WithValue(a.GoCtx, util.ExecDetailsKey, tikvExecDetailRaw)
 	}
 
-	tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+	tikvExecDetail := tikvExecDetailRaw.(*util.ExecDetails)
 	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
 	return true
 }
@@ -2035,20 +2017,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	var stmtDetail execdetails.StmtExecDetails
-	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
-	if stmtDetailRaw != nil {
-		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-	}
-	var tikvExecDetail util.ExecDetails
-	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
-	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
-	}
-	var ruDetail *util.RUDetails
-	if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
-		ruDetail = ruDetailRaw.(*util.RUDetails)
-	}
+	stmtDetail, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -2059,13 +2028,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 
-	resultRows := stmtCtx.GetResultRowsCount()
-
-	var (
-		keyspaceName string
-		keyspaceID   uint32
-	)
-	keyspaceName = keyspace.GetKeyspaceNameBySettings()
+	var keyspaceID uint32
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
@@ -2098,7 +2062,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
 	stmtExecInfo.ExecRetryCount = a.retryCount
 	stmtExecInfo.StmtExecDetails = stmtDetail
-	stmtExecInfo.ResultRows = resultRows
+	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName

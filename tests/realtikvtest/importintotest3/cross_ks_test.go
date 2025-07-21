@@ -32,7 +32,8 @@ func TestOnUserKeyspace(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only runs in nextgen kernel")
 	}
-	userStore, _ := realtikvtest.Setup(t, "cross_ks")
+	userStore := realtikvtest.CreateMockStoreAndSetup(t,
+		realtikvtest.WithKeyspaceName("cross_ks"))
 	userTK := testkit.NewTestKit(t, userStore)
 	prepareAndUseDB("cross_ks", userTK)
 	userTK.MustExec("create table t (a bigint, b varchar(100));")

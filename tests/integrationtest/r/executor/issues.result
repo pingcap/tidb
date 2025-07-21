@@ -1037,3 +1037,6 @@ NULL
 SELECT IS_IPV6(NULL + INTERVAL 1 DAY);
 IS_IPV6(NULL + INTERVAL 1 DAY)
 NULL
+CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
+ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_extract; a JSON string or JSON type is required.

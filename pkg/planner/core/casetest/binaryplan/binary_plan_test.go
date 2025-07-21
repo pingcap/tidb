@@ -86,7 +86,6 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	// If we don't set this, it will be false sometimes and the cost in the result will be different.
 	tk.MustExec("set @@tidb_enable_chunk_rpc=true")
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))

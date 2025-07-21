@@ -56,4 +56,8 @@ func TestResourceGroupHintInTxn(t *testing.T) {
 	// for final prewrite/commit the resource group should be rg2
 	tk.MustExec("update /*+ RESOURCE_GROUP(unknown_2) */ t set val = val + 1 where id = 5;")
 	tk.MustExec("COMMIT;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/TxnResourceGroupChecker", `return("rg1")`))
+	tk.MustExec("insert /*+ RESOURCE_GROUP(RG1) */ into t values (6, 6);")
+	require.NoError(t, tk.ExecToErr("select /*+ RESOURCE_GROUP(RG1) */ * from t;"))
 }

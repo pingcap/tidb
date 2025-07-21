@@ -40,7 +40,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
 		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
-		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}}
+		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}}
 
 	// todo: add all back with physicalop.x
 	// var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},

@@ -1514,7 +1514,7 @@ func TestParallelApply(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create database test_parallel_apply")
 	tk.MustExec("use test_parallel_apply")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")

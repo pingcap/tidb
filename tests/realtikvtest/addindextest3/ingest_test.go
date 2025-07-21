@@ -458,12 +458,12 @@ func TestAddIndexDiskQuotaTS(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	testAddIndexDiskQuotaTS(tk)
+	testAddIndexDiskQuotaTS(t, tk)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	testAddIndexDiskQuotaTS(tk)
+	testAddIndexDiskQuotaTS(t, tk)
 }
 
-func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
+func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -477,8 +477,20 @@ func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
 
 	ingest.ForceSyncFlagForTest.Store(true)
 	tk.MustExec("alter table t add index idx_test(b);")
-	ingest.ForceSyncFlagForTest.Store(false)
 	tk.MustExec("update t set b = b + 1;")
+
+	counter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(uint64) {
+		counter++
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", func() {
+		counter--
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+		assert.Equal(t, counter, 0)
+	})
+	tk.MustExec("alter table t add index idx_test2(b);")
+	ingest.ForceSyncFlagForTest.Store(false)
 }
 
 func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
@@ -888,4 +900,51 @@ func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport", "1*return")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge", "1*return")
 	tk.MustExec("alter table t add unique index idx(b);")
+}
+
+func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	var runInsert bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if t.Failed() || runInsert {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			for i := range 4 {
+				_, err := tk1.Exec("insert into t values (?, ?);", i, i)
+				assert.NoError(t, err)
+			}
+			runInsert = true
+		}
+	})
+
+	var runUpdate bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", func() {
+		if t.Failed() || runUpdate {
+			return
+		}
+		for i := range 4 {
+			_, err := tk1.Exec("update t set b = b+10 where a = ?;", i)
+			assert.NoError(t, err)
+		}
+		runUpdate = true
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0 10", "1 11", "2 12", "3 13"))
 }

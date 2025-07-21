@@ -575,8 +575,10 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 		result := min(lessCountB, hg.NotNullCount()-lessCountA)
 		rangeEst = min(result, lowEqual+ndvAvg)
 	}
+	// LessCounts are equal only if no valid buckets or both values are out of range
+	isInValidBucket := lessCountA != lessCountB
 	// If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
-	if len(hg.Buckets) != 0 && bktIndexA == bktIndexB {
+	if isInValidBucket && bktIndexA == bktIndexB {
 		// sctx may be nil for stats version 1
 		if sctx != nil {
 			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio

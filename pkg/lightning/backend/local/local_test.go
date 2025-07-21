@@ -1782,6 +1782,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	extEngine := external.NewExternalEngine(
+		ctx,
 		memStore,
 		dataFiles,
 		statFiles,

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/statistics"
 )
@@ -33,7 +34,7 @@ type TableDualImpl struct {
 }
 
 // NewTableDualImpl creates a new table dual Implementation.
-func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
+func NewTableDualImpl(dual *physicalop.PhysicalTableDual) *TableDualImpl {
 	return &TableDualImpl{baseImpl{plan: dual}}
 }
 
@@ -48,7 +49,7 @@ type MemTableScanImpl struct {
 }
 
 // NewMemTableScanImpl creates a new table dual Implementation.
-func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
+func NewMemTableScanImpl(dual *physicalop.PhysicalMemTable) *MemTableScanImpl {
 	return &MemTableScanImpl{baseImpl{plan: dual}}
 }
 

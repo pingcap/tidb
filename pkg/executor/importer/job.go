@@ -55,7 +55,8 @@ const (
 	JobStatusRunning   = "running"
 	jogStatusCancelled = "cancelled"
 	jobStatusFailed    = "failed"
-	jobStatusFinished  = "finished"
+	// JobStatusFinished exported since it's used in show import jobs
+	JobStatusFinished = "finished"
 
 	// when the job is finished, step will be set to none.
 	jobStepNone = ""
@@ -97,12 +98,6 @@ func (ip *ImportParameters) String() string {
 	return string(b)
 }
 
-// JobSummary is the summary info of import into job.
-type JobSummary struct {
-	// ImportedRows is the number of rows imported into TiKV.
-	ImportedRows uint64 `json:"imported-rows,omitempty"`
-}
-
 // JobInfo is the information of import into job.
 type JobInfo struct {
 	ID             int64
@@ -116,12 +111,13 @@ type JobInfo struct {
 	Parameters     ImportParameters
 	SourceFileSize int64
 	Status         string
-	// in SHOW IMPORT JOB, we name it as phase.
-	// here, we use the same name as in distributed framework.
+	// Step corresponds to the `phase` field in `SHOW IMPORT JOB`
+	// Here we just use the same name as in distributed framework.
 	Step string
-	// the summary info of the job, it's updated only when the job is finished.
-	// for running job, we should query the progress from the distributed framework.
-	Summary      *JobSummary
+	// The summary of the job, it will store info for each step of the import and
+	// will be updated when switching to a new step.
+	// If the ingest step is finished, the number of ingested rows will also stored in it.
+	Summary      *Summary
 	ErrorMessage string
 }
 
@@ -251,29 +247,43 @@ func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 	return err
 }
 
-// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step.
+// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step and update summary.
 // It will not return error when there's no matched job.
-func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *JobSummary) error {
-	bytes, err := json.Marshal(summary)
-	if err != nil {
-		return err
+func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *Summary) error {
+	summaryStr := "{}"
+	if summary != nil {
+		bytes, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		summaryStr = string(bytes)
 	}
+
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFinished, jobStepNone, bytes, jobID, JobStatusRunning)
+		JobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 
 // FailJob fails import into job. A job can only be failed once.
 // It will not return error when there's no matched job.
-func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string) error {
+func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string, summary *Summary) error {
+	summaryStr := "{}"
+	if summary != nil {
+		bytes, err := json.Marshal(summary)
+		if err != nil {
+			return err
+		}
+		summaryStr = string(bytes)
+	}
+
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?
+		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		jobStatusFailed, errorMsg, jobID, JobStatusRunning)
+		jobStatusFailed, errorMsg, summaryStr, jobID, JobStatusRunning)
 	return err
 }
 
@@ -293,13 +303,13 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var summary *JobSummary
+	var summary *Summary
 	var summaryStr string
 	if !row.IsNull(12) {
 		summaryStr = row.GetString(12)
 	}
 	if len(summaryStr) > 0 {
-		summary = &JobSummary{}
+		summary = &Summary{}
 		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
 			return nil, errors.Trace(err)
 		}
