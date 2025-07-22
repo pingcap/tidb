@@ -69,35 +69,30 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
-// GetAdjustedMergeSortOverlapThreshold adjusts the merge sort overlap threshold based on concurrency.
-// The bigger the threshold, the bigger the statistical bias. In CPU:Memory = 1:2 machine, if the concurrency
-// is less than 8, the memory can be used to load data is small, and may get blocked by the memory limiter.
-// So we lower the threshold here if concurrency too low.
-func GetAdjustedMergeSortOverlapThreshold(concurrency int) int64 {
+func commonGetAdjustCount(concurrency int) int64 {
 	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
 	if concurrency > 16 {
 		return maxMergeSortOverlapThreshold
 	}
-	if concurrency < 0 {
-		// Even though we check it use intest.Assert, it may still goto here in the produce environment.
-		logutil.BgLogger().Error("concurrency is less than 0, set to 1", zap.Int("concurrency", concurrency))
+	if concurrency <= 0 {
+		// Even though we check it use intest.Assert, it may still goto here in the prod environment with bug.
+		logutil.BgLogger().Error("concurrency is less than 0 or equal to 0, set to 1", zap.Int("concurrency", concurrency))
 		concurrency = 1
 	}
 	return 250 * int64(concurrency)
 }
 
+// GetAdjustedMergeSortOverlapThreshold adjusts the merge sort overlap threshold based on concurrency.
+// The bigger the threshold, the bigger the statistical bias. In CPU:Memory = 1:2 machine, if the concurrency
+// is less than 8, the memory can be used to load data is small, and may get blocked by the memory limiter.
+// So we lower the threshold here if concurrency too low.
+func GetAdjustedMergeSortOverlapThreshold(concurrency int) int64 {
+	return commonGetAdjustCount(concurrency)
+}
+
 // GetAdjustedMergeSortFileCountStep adjusts the merge sort file count step based on concurrency.
 func GetAdjustedMergeSortFileCountStep(concurrency int) int {
-	intest.Assert(concurrency > 0, "concurrency must be greater than 0, got %d", concurrency)
-	if concurrency > 16 {
-		return MaxMergeSortFileCountStep
-	}
-	if concurrency < 0 {
-		// Even though we check it use intest.Assert, it may still goto here in the produce environment.
-		logutil.BgLogger().Error("concurrency is less than 0, set to 1", zap.Int("concurrency", concurrency))
-		concurrency = 1
-	}
-	return 250 * concurrency
+	return int(commonGetAdjustCount(concurrency))
 }
 
 // GetAdjustedBlockSize gets the block size after alignment.

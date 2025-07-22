@@ -836,7 +836,7 @@ func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(s
 	})
 }
 
-func TestGetAdjustedMergeSortOverlapThreshold(t *testing.T) {
+func TestGetAdjustedMergeSortOverlapThresholdAndMergeSortFileCountStep(t *testing.T) {
 	tests := []struct {
 		concurrency int
 		want        int64
@@ -844,7 +844,7 @@ func TestGetAdjustedMergeSortOverlapThreshold(t *testing.T) {
 		{1, 250},
 		{2, 500},
 		{4, 1000},
-		{6, 1250},
+		{6, 1500},
 		{8, 2000},
 		{16, 4000},
 		{17, 4000},
@@ -854,25 +854,7 @@ func TestGetAdjustedMergeSortOverlapThreshold(t *testing.T) {
 		if got := GetAdjustedMergeSortOverlapThreshold(tt.concurrency); got != tt.want {
 			t.Errorf("GetAdjustedMergeSortOverlapThreshold() = %v, want %v", got, tt.want)
 		}
-	}
-}
-
-func TestGetAdjustedMergeSortFileCountStep(t *testing.T) {
-	tests := []struct {
-		concurrency int
-		want        int
-	}{
-		{1, 250},
-		{2, 500},
-		{4, 1000},
-		{6, 1250},
-		{8, 2000},
-		{16, 4000},
-		{17, 4000},
-		{32, 4000},
-	}
-	for _, tt := range tests {
-		if got := GetAdjustedMergeSortFileCountStep(tt.concurrency); got != tt.want {
+		if got := GetAdjustedMergeSortFileCountStep(tt.concurrency); got != int(tt.want) {
 			t.Errorf("GetAdjustedMergeSortFileCountStep() = %v, want %v", got, tt.want)
 		}
 	}
