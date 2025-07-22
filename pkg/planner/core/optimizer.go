@@ -109,6 +109,7 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownTopNOptimizer{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
+	&PPDSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
@@ -1076,27 +1077,32 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	}
 	var err error
 	var againRuleList []base.LogicalOptRule
-	for i, rule := range logicalRuleList {
+	for i, rulee := range logicalRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
-		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		// apply i-th optimizing rulee.
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rulee) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		if !logic.SCtx().GetSessionVars().InRestrictedSQL && 1<<uint(i) == rule.FlagJoinReOrder {
+			fmt.Println("wwz")
+		}
+		opt.AppendBeforeRuleOptimize(i, rulee.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
+		logic, planChanged, err = rulee.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
 		// Compute interaction rules that should be optimized again
-		interactionRule, ok := optInteractionRuleList[rule]
+		interactionRule, ok := optInteractionRuleList[rulee]
 		if planChanged && ok && isLogicalRuleDisabled(interactionRule) {
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
-
-	// Trigger the interaction rule
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
+	// Trigger the interaction rulee
 	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		logic, _, err = rule.Optimize(ctx, logic, opt)
