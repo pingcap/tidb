@@ -375,7 +375,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	collector := external.NewMergeCollector(ctx, &m.summary)
+	// collector := external.NewMergeCollector(ctx, &m.summary)
 
 	partSize := m.dataKVPartSize
 	if sm.KVGroup != dataKVGroup {
@@ -389,7 +389,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		external.DefaultOneWriterBlockSize,
 		onClose,
-		collector,
+		nil,
 		int(m.GetResource().CPU.Capacity()),
 		false,
 		engineapi.OnDuplicateKeyIgnore)
