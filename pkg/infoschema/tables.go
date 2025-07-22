@@ -2874,3 +2874,23 @@ func FilterClusterServerInfo(serversInfo []ServerInfo, nodeTypes, addresses set.
 	}
 	return filterServers
 }
+
+func GetDataFromStatusByConn(sctx sessionctx.Context) ([][]types.Datum, error) {
+	sm := sctx.GetSessionManager()
+	if sm == nil {
+		return nil, nil
+	}
+	statusVars := sm.GetStatusVars()
+	rows := make([][]types.Datum, 0, 1000)
+	for pid, svar := range statusVars {
+		for varkey, varval := range svar {
+			row := types.MakeDatums(
+				pid,
+				varkey,
+				varval,
+			)
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
