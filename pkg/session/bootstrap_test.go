@@ -49,6 +49,7 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
+	require.Len(t, tablesInSystemDatabase, 52)
 	testTableBasicInfoSlice(t, tablesInSystemDatabase)
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
@@ -269,7 +270,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ver, err := m.CheckDDLTableVersion()
+	ver, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
@@ -301,7 +302,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ver, err := m.CheckDDLTableVersion()
+	ver, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
 
@@ -2018,7 +2019,7 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ddlTableVer, err := m.CheckDDLTableVersion()
+	ddlTableVer, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 
 	// Verify that 'ddl_table_version' has been set to the correct value
@@ -2041,7 +2042,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	ddlTableVer, err := m.CheckDDLTableVersion()
+	ddlTableVer, err := m.GetDDLTableVersion()
 	require.NoError(t, err)
 
 	// bootstrap as version177

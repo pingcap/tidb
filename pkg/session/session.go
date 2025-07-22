@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -3274,8 +3275,9 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 
 // DatabaseBasicInfo contains the basic information of a database.
 type DatabaseBasicInfo struct {
-	ID   int64
-	Name string
+	ID     int64
+	Name   string
+	Tables []TableBasicInfo
 }
 
 // TableBasicInfo contains the basic information of a table used in DDL.
@@ -3342,7 +3344,7 @@ func InitDDLTables(store kv.Storage) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
-		currVer, err := t.CheckDDLTableVersion()
+		currVer, err := t.GetDDLTableVersion()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3531,6 +3533,11 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	err := InitDDLTables(store)
 	if err != nil {
 		return nil, err
+	}
+	if kerneltype.IsNextGen() {
+		if err = bootstrapSchemas(store); err != nil {
+			return nil, err
+		}
 	}
 	err = InitTiDBSchemaCacheSize(store)
 	if err != nil {

@@ -88,7 +88,7 @@ func TestInitDDLTables(t *testing.T) {
 			require.True(t, slices.EqualFunc(c.tables, gotTables, func(a, b session.TableBasicInfo) bool {
 				return a.ID == b.ID && a.Name == b.Name
 			}))
-			postVer, err2 := m.CheckDDLTableVersion()
+			postVer, err2 := m.GetDDLTableVersion()
 			require.NoError(t, err2)
 			require.Equal(t, meta.DDLNotifierTableVersion, postVer)
 

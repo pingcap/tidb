@@ -30,10 +30,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1165,13 +1167,63 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: CreateTiDBWorkloadValuesTable},
 }
 
+type versionedBootstrapSchema struct {
+	ver       meta.BootTableVersion
+	databases []DatabaseBasicInfo
+}
+
+var versionedBootstrapSchemas = []versionedBootstrapSchema{
+	{ver: meta.BaseBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[:52]},
+		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+	}},
+}
+
+func bootstrapSchemas(store kv.Storage) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		currVer, err := m.GetBootTableVersion()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		largestVer := currVer
+		for _, vt := range versionedBootstrapSchemas {
+			if currVer >= vt.ver {
+				continue
+			}
+			logutil.BgLogger().Info("bootstrap tables", zap.Int("currVer", int(currVer)),
+				zap.Int("targetVer", int(vt.ver)))
+			for _, bdb := range vt.databases {
+				if err = m.CreateSysDatabaseByIDIfNotExists(bdb.Name, bdb.ID); err != nil {
+					return err
+				}
+				if len(bdb.Tables) > 0 {
+					if err = createAndSplitTables(store, m, bdb.ID, bdb.Tables); err != nil {
+						return err
+					}
+				}
+			}
+			largestVer = max(largestVer, vt.ver)
+		}
+		if largestVer > currVer {
+			return m.SetBootTableVersion(largestVer)
+		}
+		return nil
+	})
+}
+
 // doDDLWorks executes DDL statements in bootstrap stage.
 func doDDLWorks(s sessionapi.Session) {
-	for _, db := range systemDatabases {
-		mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
-	}
-	for _, tbl := range tablesInSystemDatabase {
-		mustExecute(s, tbl.SQL)
+	// for nextgen, system schemas are created in bootstrapSessionImpl
+	if kerneltype.IsClassic() {
+		for _, db := range systemDatabases {
+			mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
+		}
+		for _, tbl := range tablesInSystemDatabase {
+			mustExecute(s, tbl.SQL)
+		}
 	}
 	// Create bind_info table.
 	insertBuiltinBindInfoRow(s)

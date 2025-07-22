@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -94,6 +95,7 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
+	mBootTableVersion    = []byte("BootTableVersion")
 	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
 	mSchemaCacheSize     = []byte("SchemaCacheSize")
@@ -158,6 +160,18 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
+// BootTableVersion is the version of nextgen bootstrapping.
+type BootTableVersion int
+
+const (
+	// InitBootTableVersion means it's a fresh cluster, we haven't bootstrapped yet.
+	InitBootTableVersion BootTableVersion = 0
+	// BaseBootTableVersion is the first version of nextgen bootstrapping, we
+	// will create 52 physical tables.
+	// Note: DDL related tables are created separately, see DDLTableVersion.
+	BaseBootTableVersion BootTableVersion = 1
+)
+
 // DDLTableVersion is to display ddl related table versions
 type DDLTableVersion int
 
@@ -174,9 +188,8 @@ const (
 	DDLNotifierTableVersion DDLTableVersion = 4
 )
 
-// Bytes returns the byte slice.
-func (ver DDLTableVersion) Bytes() []byte {
-	return []byte(strconv.Itoa(int(ver)))
+func encodeIntVal(i int) []byte {
+	return []byte(strconv.Itoa(i))
 }
 
 // Option is for Mutator option.
@@ -673,6 +686,17 @@ func (m *Mutator) CreateDatabase(dbInfo *model.DBInfo) error {
 	return nil
 }
 
+// IsDatabaseExist checks whether a database exists by dbID.
+// exported for testing.
+func (m *Mutator) IsDatabaseExist(dbID int64) (bool, error) {
+	dbKey := m.dbKey(dbID)
+	v, err := m.txn.HGet(mDBs, dbKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return v != nil, nil
+}
+
 // UpdateDatabase updates a database with db info.
 func (m *Mutator) UpdateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
@@ -735,27 +759,50 @@ func (m *Mutator) ClearBDRRole() error {
 
 // SetDDLTableVersion write a key into storage.
 func (m *Mutator) SetDDLTableVersion(ddlTableVersion DDLTableVersion) error {
-	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
+	return m.setTableVersion(mDDLTableVersion, int(ddlTableVersion))
 }
 
-// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
-func (m *Mutator) CheckDDLTableVersion() (DDLTableVersion, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
+// SetBootTableVersion set the table version on initial bootstrap.
+func (m *Mutator) SetBootTableVersion(version BootTableVersion) error {
+	return m.setTableVersion(mBootTableVersion, int(version))
+}
+
+func (m *Mutator) setTableVersion(key []byte, version int) error {
+	return errors.Trace(m.txn.Set(key, encodeIntVal(version)))
+}
+
+// GetDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Mutator) GetDDLTableVersion() (DDLTableVersion, error) {
+	v, err := m.getTableVersion(mDDLTableVersion)
+	return DDLTableVersion(v), err
+}
+
+// GetBootTableVersion checks the version of the bootstrapping tables.
+func (m *Mutator) GetBootTableVersion() (BootTableVersion, error) {
+	v, err := m.getTableVersion(mBootTableVersion)
+	return BootTableVersion(v), err
+}
+
+func (m *Mutator) getTableVersion(key []byte) (int, error) {
+	v, err := m.txn.Get(key)
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
 	if string(v) == "" {
-		return InitDDLTableVersion, nil
+		return 0, nil
 	}
 	ver, err := strconv.Atoi(string(v))
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
-	return DDLTableVersion(ver), nil
+	return ver, nil
 }
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
+	if kerneltype.IsNextGen() {
+		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
+	}
 	id, err := m.GetSystemDBID()
 	if id != 0 || err != nil {
 		return id, err
@@ -765,15 +812,33 @@ func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	return id, m.CreateSysDatabaseByID(mysql.SystemDB, id)
+}
+
+// CreateSysDatabaseByIDIfNotExists creates a system database with the given name
+// and ID if it does not already exist.
+func (m *Mutator) CreateSysDatabaseByIDIfNotExists(name string, id int64) error {
+	exist, err := m.IsDatabaseExist(id)
+	if err != nil {
+		return err
+	}
+	if exist {
+		return nil
+	}
+	return m.CreateSysDatabaseByID(name, id)
+}
+
+// CreateSysDatabaseByID creates a system database with the given name and ID.
+// exported for testing.
+func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 	db := model.DBInfo{
 		ID:      id,
-		Name:    ast.NewCIStr(mysql.SystemDB),
+		Name:    ast.NewCIStr(name),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
 	}
-	err = m.CreateDatabase(&db)
-	return db.ID, err
+	return m.CreateDatabase(&db)
 }
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.

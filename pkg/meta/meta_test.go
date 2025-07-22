@@ -25,10 +25,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -647,7 +649,11 @@ func TestCreateMySQLDatabase(t *testing.T) {
 
 	dbID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
-	require.Greater(t, dbID, int64(0))
+	if kerneltype.IsNextGen() {
+		require.Equal(t, metadef.SystemDatabaseID, dbID)
+	} else {
+		require.EqualValues(t, 1, dbID)
+	}
 
 	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
@@ -1194,4 +1200,71 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, referredFk[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 	// temp table
 	require.True(t, is.HasTemporaryTable())
+}
+
+func TestIsDatabaseExist(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		exist, err := m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.False(t, exist)
+
+		require.NoError(t, m.CreateSysDatabaseByID("aaa", 123))
+		exist, err = m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.True(t, exist)
+		return nil
+	}))
+}
+
+func TestBootTableVersion(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ver, err := m.GetBootTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.InitBootTableVersion, ver)
+
+		require.NoError(t, m.SetBootTableVersion(meta.BaseBootTableVersion))
+		ver, err = m.GetBootTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.BaseBootTableVersion, ver)
+		// make sure we use correct key
+		ddlVer, err := m.GetDDLTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.InitDDLTableVersion, ddlVer)
+		return nil
+	}))
+}
+
+func TestCreateSysDatabaseByIDIfNotExists(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err = m.CreateSysDatabaseByIDIfNotExists("aaa", 123)
+		require.NoError(t, err)
+		exist, err := m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.True(t, exist)
+		err = m.CreateSysDatabaseByIDIfNotExists("aaa", 123)
+		require.NoError(t, err)
+		return nil
+	}))
 }
