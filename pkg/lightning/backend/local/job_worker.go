@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -170,7 +171,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 					job.convertStageTo(needRescan)
 				}
 				job.lastRetryableErr = err
-				log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
+				tidblogutil.Logger(ctx).Warn("meet retryable error when writing to TiKV",
 					log.ShortError(err), zap.Stringer("job stage", job.stage))
 				return nil
 			}
@@ -199,7 +200,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				}
 				job.lastRetryableErr = err
 
-				log.FromContext(ctx).Warn("meet retryable error when ingesting, will handle the job later",
+				tidblogutil.Logger(ctx).Warn("meet retryable error when ingesting, will handle the job later",
 					log.ShortError(err), zap.Stringer("job stage", job.stage),
 					job.region.ToZapFields(),
 					logutil.Key("start", job.keyRange.Start),
@@ -252,7 +253,7 @@ func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob)
 		for _, peer := range job.region.Region.GetPeers() {
 			store, err := w.pdHTTPCli.GetStore(ctx, peer.StoreId)
 			if err != nil {
-				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
+				tidblogutil.Logger(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
 				continue
 			}
 			err = checkDiskAvail(ctx, store)

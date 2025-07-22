@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -167,13 +167,7 @@ func TestBootstrapWithError(t *testing.T) {
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
-		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-		require.NoError(t, err)
-		err = InitMDLTable(store)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.BackfillTableVersion)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		err := InitDDLTables(store)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
@@ -258,7 +252,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
 	// downgrade `mDDLTableVersion`
-	m.SetDDLTables(meta.MDLTableVersion)
+	m.SetDDLTableVersion(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
@@ -290,7 +284,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
 
 	// downgrade DDL table version
-	m.SetDDLTables(meta.BackfillTableVersion)
+	m.SetDDLTableVersion(meta.BackfillTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -305,7 +299,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	dom.Close()
 }
 
-func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
+func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
@@ -1534,7 +1528,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s sessiontypes.Session) {
+	resetTo139 := func(s sessionapi.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMutator(txn)

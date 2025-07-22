@@ -43,7 +43,6 @@ go_library(
         "//pkg/privilege",
         "//pkg/session/txninfo",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",
         "//pkg/table",
