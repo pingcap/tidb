@@ -65,13 +65,13 @@ check-static: tools/bin/golangci-lint
 
 .PHONY: check-ddl
 check-ddl: tools/bin/golangci-lint
-	@MERGE_BASE=$$(git status | awk '/HEAD detached at/ {print $$NF}'); \
-	if [ "$$MERGE_BASE" != "origin/master" ]; then \
+	@MERGE_BASE=$$(git branch --show-current); \
+	if [ "$$MERGE_BASE" != "master" ]; then \
 		echo "Skipping check-ddl: not on master branch $$MERGE_BASE"; \
 	else \
 		GO111MODULE=on CGO_ENABLED=1 ./tools/bin/golangci-lint run -v pkg/ddl \
 			--config pkg/ddl/.golangci.yml \
-			--new-from-merge-base=$$MERGE_BASE; \
+			--new-from-merge-base=origin/$$MERGE_BASE; \
 	fi
 
 .PHONY: check-file-perm
