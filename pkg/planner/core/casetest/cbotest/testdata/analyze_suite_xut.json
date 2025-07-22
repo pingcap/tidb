@@ -542,7 +542,7 @@
         "SQL": "EXPLAIN format=brief select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
         "Plan": [
           "Limit 2.00 root  offset:0, count:2837",
-          "└─HashJoin 2.00 root  inner join, equal:[eq(test.t19f3e4f1.colc864, test.t19f3e4f1.colc864)]",
+          "└─IndexHashJoin 2.00 root  inner join, inner:IndexLookUp, outer key:test.t19f3e4f1.colc864, inner key:test.t19f3e4f1.colc864, equal cond:eq(test.t19f3e4f1.colc864, test.t19f3e4f1.colc864)",
           "  ├─StreamAgg(Build) 1.60 root  group by:test.t19f3e4f1.colc864, funcs:firstrow(test.t19f3e4f1.colc864)->test.t19f3e4f1.colc864",
           "  │ └─Apply 2.00 root  semi join, left side:Projection, equal:[eq(test.t19f3e4f1.colaadb, test.t0da79f8d.colf2af)]",
           "  │   ├─Projection(Build) 2.00 root  test.t19f3e4f1.colc864, test.t19f3e4f1.colaadb",
@@ -553,9 +553,10 @@
           "  │   └─TableReader(Probe) 2.00 root  data:Selection",
           "  │     └─Selection 2.00 cop[tikv]  eq(test.t19f3e4f1.colc864, NULL), not(isnull(test.t0da79f8d.colf2af))",
           "  │       └─TableFullScan 2.00 cop[tikv] table:t0da79f8d keep order:false, stats:pseudo",
-          "  └─IndexLookUp(Probe) 2.00 root  ",
-          "    ├─IndexFullScan(Build) 2.00 cop[tikv] table:t19f3e4f1, index:ee56e6aa(colc864) keep order:false, stats:pseudo",
-          "    └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t19f3e4f1 keep order:false, stats:pseudo"
+          "  └─IndexLookUp(Probe) 1.60 root  ",
+          "    ├─Selection(Build) 1.60 cop[tikv]  not(isnull(test.t19f3e4f1.colc864))",
+          "    │ └─IndexRangeScan 1.60 cop[tikv] table:t19f3e4f1, index:ee56e6aa(colc864) range: decided by [eq(test.t19f3e4f1.colc864, test.t19f3e4f1.colc864)], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 1.60 cop[tikv] table:t19f3e4f1 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
@@ -566,21 +567,7 @@
           "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
-          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
-          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs"
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'."
         ]
       },
       {

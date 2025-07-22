@@ -440,18 +440,15 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
-	// before analyzing, the planner will choose TableScan to access the 1% of records
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	// Set table cost factor high to ensure index is preferred without bindings.
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 
 	// create SQL bindings
 	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
@@ -468,9 +465,11 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("drop session binding for select * from trange where a<100")
 	tk.MustExec("drop session binding for select * from tlist where a<100")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 	// Reset auto analyze after test
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
+	// Reset table cost factor
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
 }
