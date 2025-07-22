@@ -284,7 +284,7 @@ func TestForceLockNonUniqueIndexInDDLMergingTempIndex(t *testing.T) {
 			}()
 			txn.SetOption(kv.Pessimistic, true)
 
-			err = idx.Delete(mockCtx.GetSessionVars().StmtCtx, txn, []types.Datum{types.NewIntDatum(100)}, kv.IntHandle(1))
+			err = idx.Delete(mockCtx, txn, []types.Datum{types.NewIntDatum(100)}, kv.IntHandle(1))
 			require.NoError(t, err)
 			flags, err := txn.GetMemBuffer().GetFlags(indexKey)
 			require.NoError(t, err)
