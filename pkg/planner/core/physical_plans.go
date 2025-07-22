@@ -58,16 +58,16 @@ import (
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
 
 var (
-	_ base.PhysicalPlan = &PhysicalSelection{}
+	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
 	_ base.PhysicalPlan = &PhysicalProjection{}
-	_ base.PhysicalPlan = &PhysicalTopN{}
+	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
-	_ base.PhysicalPlan = &PhysicalTableDual{}
-	_ base.PhysicalPlan = &PhysicalUnionAll{}
-	_ base.PhysicalPlan = &PhysicalSort{}
-	_ base.PhysicalPlan = &NominalSort{}
+	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
+	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
+	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
+	_ base.PhysicalPlan = &physicalop.NominalSort{}
 	_ base.PhysicalPlan = &PhysicalLock{}
-	_ base.PhysicalPlan = &PhysicalLimit{}
+	_ base.PhysicalPlan = &physicalop.PhysicalLimit{}
 	_ base.PhysicalPlan = &PhysicalIndexScan{}
 	_ base.PhysicalPlan = &PhysicalTableScan{}
 	_ base.PhysicalPlan = &PhysicalTableReader{}
@@ -80,7 +80,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
-	_ base.PhysicalPlan = &PhysicalUnionScan{}
+	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
 	_ base.PhysicalPlan = &PhysicalWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
@@ -877,28 +877,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 	return columns, schema, true
 }
 
-// PhysicalMemTable reads memory table.
-type PhysicalMemTable struct {
-	physicalop.PhysicalSchemaProducer
-
-	DBName         ast.CIStr
-	Table          *model.TableInfo
-	Columns        []*model.ColumnInfo
-	Extractor      base.MemTablePredicateExtractor
-	QueryTimeRange util.QueryTimeRange
-}
-
-// MemoryUsage return the memory usage of PhysicalMemTable
-func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfPointer + size.SizeOfSlice +
-		int64(cap(p.Columns))*size.SizeOfPointer + size.SizeOfInterface + p.QueryTimeRange.MemoryUsage()
-	return
-}
-
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalop.PhysicalSchemaProducer
@@ -1200,67 +1178,6 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfBool*2
 	for _, expr := range p.Exprs {
 		sum += expr.MemoryUsage()
-	}
-	return
-}
-
-// PhysicalTopN is the physical operator of topN.
-type PhysicalTopN struct {
-	physicalop.PhysicalSchemaProducer
-
-	ByItems     []*util.ByItems
-	PartitionBy []property.SortItem
-	Offset      uint64
-	Count       uint64
-}
-
-// GetPartitionBy returns partition by fields
-func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
-	return lt.PartitionBy
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (lt *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalTopN)
-	*cloned = *lt
-	cloned.SetSCtx(newCtx)
-	base, err := lt.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
-	for _, it := range lt.ByItems {
-		cloned.ByItems = append(cloned.ByItems, it.Clone())
-	}
-	cloned.PartitionBy = make([]property.SortItem, 0, len(lt.PartitionBy))
-	for _, it := range lt.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
-	for _, item := range lt.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalTopN
-func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
-	if lt == nil {
-		return
-	}
-
-	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
-	for _, byItem := range lt.ByItems {
-		sum += byItem.MemoryUsage()
-	}
-	for _, item := range lt.PartitionBy {
-		sum += item.MemoryUsage()
 	}
 	return
 }
@@ -2034,75 +1951,6 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalLimit is the physical operator of Limit.
-type PhysicalLimit struct {
-	physicalop.PhysicalSchemaProducer
-
-	PartitionBy []property.SortItem
-	Offset      uint64
-	Count       uint64
-}
-
-// GetPartitionBy returns partition by fields
-func (p *PhysicalLimit) GetPartitionBy() []property.SortItem {
-	return p.PartitionBy
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalLimit) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalLimit)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
-	for _, it := range p.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	cloned.PhysicalSchemaProducer = *base
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalLimit
-func (p *PhysicalLimit) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
-	return
-}
-
-// PhysicalUnionAll is the physical operator of UnionAll.
-type PhysicalUnionAll struct {
-	physicalop.PhysicalSchemaProducer
-
-	mpp bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalUnionAll) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalUnionAll)
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalUnionAll
-func (p *PhysicalUnionAll) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfBool
-}
-
 // AggMppRunMode defines the running mode of aggregation in MPP
 type AggMppRunMode int
 
@@ -2316,115 +2164,6 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 	return p.basePhysicalAgg.MemoryUsage()
 }
 
-// PhysicalSort is the physical operator of sort, which implements a memory sort.
-type PhysicalSort struct {
-	physicalop.BasePhysicalPlan
-
-	ByItems []*util.ByItems
-	// whether this operator only need to sort the data of one partition.
-	// it is true only if it is used to sort the sharded data of the window function.
-	IsPartialSort bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (ls *PhysicalSort) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalSort)
-	cloned.SetSCtx(newCtx)
-	cloned.IsPartialSort = ls.IsPartialSort
-	base, err := ls.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalPlan = *base
-	for _, it := range ls.ByItems {
-		cloned.ByItems = append(cloned.ByItems, it.Clone())
-	}
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
-	for _, item := range ls.ByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(item.Expr)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalSort
-func (ls *PhysicalSort) MemoryUsage() (sum int64) {
-	if ls == nil {
-		return
-	}
-
-	sum = ls.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ls.ByItems))*size.SizeOfPointer +
-		size.SizeOfBool
-	for _, byItem := range ls.ByItems {
-		sum += byItem.MemoryUsage()
-	}
-	return
-}
-
-// NominalSort asks sort properties for its child. It is a fake operator that will not
-// appear in final physical operator tree. It will be eliminated or converted to Projection.
-type NominalSort struct {
-	physicalop.BasePhysicalPlan
-
-	// These two fields are used to switch ScalarFunctions to Constants. For these
-	// NominalSorts, we need to converted to Projections check if the ScalarFunctions
-	// are out of bounds. (issue #11653)
-	ByItems    []*util.ByItems
-	OnlyColumn bool
-}
-
-// MemoryUsage return the memory usage of NominalSort
-func (ns *NominalSort) MemoryUsage() (sum int64) {
-	if ns == nil {
-		return
-	}
-
-	sum = ns.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(ns.ByItems))*size.SizeOfPointer +
-		size.SizeOfBool
-	for _, byItem := range ns.ByItems {
-		sum += byItem.MemoryUsage()
-	}
-	return
-}
-
-// PhysicalUnionScan represents a union scan operator.
-type PhysicalUnionScan struct {
-	physicalop.BasePhysicalPlan
-
-	Conditions []expression.Expression
-
-	HandleCols util.HandleCols
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalUnionScan
-func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice
-	if p.HandleCols != nil {
-		sum += p.HandleCols.MemoryUsage()
-	}
-	for _, cond := range p.Conditions {
-		sum += cond.MemoryUsage()
-	}
-	return
-}
-
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 	return p.isPartition, p.physicalTableID
@@ -2436,60 +2175,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
 		p.Ranges[0].IsPointNonNullable(tc)
-}
-
-// PhysicalSelection represents a filter.
-type PhysicalSelection struct {
-	physicalop.BasePhysicalPlan
-
-	Conditions []expression.Expression
-
-	// The flag indicates whether this Selection is from a DataSource.
-	// The flag is only used by cost model for compatibility and will be removed later.
-	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
-	fromDataSource bool
-
-	// todo Since the feature of adding filter operators has not yet been implemented,
-	// the following code for this function will not be used for now.
-	// The flag indicates whether this Selection is used for RuntimeFilter
-	// True: Used for RuntimeFilter
-	// False: Only for normal conditions
-	// hasRFConditions bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalSelection) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalSelection)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalPlan = *base
-	cloned.Conditions = util.CloneExprs(p.Conditions)
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalSelection
-func (p *PhysicalSelection) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfBool
-	for _, expr := range p.Conditions {
-		sum += expr.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
@@ -2516,40 +2201,6 @@ func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
 	}
 
 	return p.BasePhysicalPlan.MemoryUsage()
-}
-
-// PhysicalTableDual is the physical operator of dual.
-type PhysicalTableDual struct {
-	physicalop.PhysicalSchemaProducer
-
-	RowCount int
-
-	// names is used for OutputNames() method. Dual may be inited when building point get plan.
-	// So it needs to hold names for itself.
-	names []*types.FieldName
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() types.NameSlice {
-	return p.names
-}
-
-// SetOutputNames sets the outputting name by the given slice.
-func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
-	p.names = names
-}
-
-// MemoryUsage return the memory usage of PhysicalTableDual
-func (p *PhysicalTableDual) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfSlice + int64(cap(p.names))*size.SizeOfPointer
-	for _, name := range p.names {
-		sum += name.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalWindow is the physical operator of window function.

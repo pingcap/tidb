@@ -40,7 +40,7 @@ func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
 func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
-	p := PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
+	p := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
 	task := &RootTask{
 		p: p,
 	}
@@ -217,7 +217,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 	task, _, err := mockPlan0.FindBestTask(prop0, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
-	_, enforcedSort := task.Plan().(*PhysicalSort)
+	_, enforcedSort := task.Plan().(*physicalop.PhysicalSort)
 	require.True(t, enforcedSort)
 	plan2 := task.Plan().Children()[0]
 	mockPhysicalPlan, ok := plan2.(*mockPhysicalPlan4Test)
@@ -233,7 +233,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 	task, _, err = mockPlan0.FindBestTask(prop1, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
-	_, enforcedSort = task.Plan().(*PhysicalSort)
+	_, enforcedSort = task.Plan().(*physicalop.PhysicalSort)
 	require.True(t, enforcedSort)
 	plan2 = task.Plan().Children()[0]
 	mockPhysicalPlan, ok = plan2.(*mockPhysicalPlan4Test)

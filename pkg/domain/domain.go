@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -86,10 +87,10 @@ import (
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -106,7 +107,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/workloadlearning"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -151,7 +151,6 @@ type Domain struct {
 	info            *infosync.InfoSyncer
 	isSyncer        *issyncer.Syncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
-	m               syncutil.Mutex
 	schemaLease     time.Duration
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 	// some misuse of the session to avoid potential bugs.
@@ -822,7 +821,8 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
-	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
+	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
@@ -1068,6 +1068,21 @@ func (do *Domain) InitDistTaskLoop() error {
 	})
 
 	taskManager := storage.NewTaskManager(do.sysSessionPool)
+	storage.SetTaskManager(taskManager)
+
+	if keyspace.IsRunningOnUser() {
+		sp, err := do.GetKSSessPool(keyspace.System)
+		if err != nil {
+			return err
+		}
+		storage.SetDXFSvcTaskMgr(storage.NewTaskManager(sp))
+
+		// in nextgen, DXF runs as a service on SYSTEM ks and are shared by all
+		// user keyspace
+		logutil.BgLogger().Info("skip running DXF in user keyspace")
+		return nil
+	}
+
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()
@@ -1094,7 +1109,6 @@ func (do *Domain) InitDistTaskLoop() error {
 		return err
 	}
 
-	storage.SetTaskManager(taskManager)
 	if err = executorManager.InitMeta(); err != nil {
 		// executor manager loop will try to recover meta repeatedly, so we can
 		// just log the error here.
@@ -1106,6 +1120,13 @@ func (do *Domain) InitDistTaskLoop() error {
 		}()
 		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID, nodeRes)
 	}, "distTaskFrameworkLoop")
+	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		logger := logutil.BgLogger()
+		return local.InitializeRateLimiterParam(m, logger)
+	}); err != nil {
+		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+	}
 	return nil
 }
 
@@ -1120,22 +1141,6 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	totalCPU := cpu.GetCPUCount()
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
-	}
-	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
-	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
-	if err == nil && version == cgroup.V2 {
-		// see cgroup.detectMemLimitInV2 for more details.
-		// below are some real memory limits tested on GCP:
-		// node-spec  real-limit  percent
-		// 16c32g        27.83Gi    87%
-		// 32c64g        57.36Gi    89.6%
-		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
-		// content of 'memory.max' might be 'max', so we use the min of them.
-		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
-		logger.Info("adjust memory limit for cgroup v2",
-			zap.String("before", units.BytesSize(float64(totalMem))),
-			zap.String("after", units.BytesSize(float64(adjustedMem))))
-		totalMem = adjustedMem
 	}
 	var totalDisk uint64
 	cfg := config.GetGlobalConfig()
@@ -1578,6 +1583,40 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
+}
+
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := telemetry.InitialRun(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+	}
+
+	reportTicker := time.NewTicker(telemetry.ReportInterval)
+	subWindowTicker := time.NewTicker(telemetry.SubWindowSize)
+
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
+
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-reportTicker.C:
+				err := telemetry.ReportUsageData(ctx)
+				if err != nil {
+					logutil.BgLogger().Warn("TelemetryLoop retports usaged data failed", zap.Error(err))
+				}
+			case <-subWindowTicker.C:
+				telemetry.RotateSubWindow()
+			}
+		}
+	}, "TelemetryLoop")
 }
 
 // SetupPlanReplayerHandle setup plan replayer handle
@@ -2080,6 +2119,13 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		// We should wait for statistics owner to close on exit.
+		// Otherwise, the goroutine leak detection may fail.
+		<-ch
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
@@ -2179,7 +2225,12 @@ func (do *Domain) deltaUpdateTickerWorker() {
 	lease := do.statsLease
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
 	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
-	deltaUpdateTicker := time.NewTicker(20*lease + randDuration)
+	updateDuration := 20*lease + randDuration
+	failpoint.Inject("deltaUpdateDuration", func() {
+		updateDuration = 20 * time.Second
+	})
+
+	deltaUpdateTicker := time.NewTicker(updateDuration)
 	statsHandle := do.StatsHandle()
 	for {
 		select {
@@ -2862,6 +2913,9 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle,
 
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (

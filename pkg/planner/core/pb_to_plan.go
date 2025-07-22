@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -67,6 +68,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		p, err = b.pbToTableScan(e)
 	case tipb.ExecType_TypeSelection:
 		p, err = b.pbToSelection(e)
+	case tipb.ExecType_TypeProjection:
+		p, err = b.pbToProjection(e)
 	case tipb.ExecType_TypeTopN:
 		p, err = b.pbToTopN(e)
 	case tipb.ExecType_TypeLimit:
@@ -84,11 +87,12 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
 	}
 	if subPlan != nil {
+		// p may nil if the executor is not supported, for example, Projection.
 		p.SetChildren(subPlan)
 	}
 	// The limit missed its output cols via the protobuf.
 	// We need to add it back and do a ResolveIndicies for the later inline projection.
-	if limit, ok := p.(*PhysicalLimit); ok {
+	if limit, ok := p.(*physicalop.PhysicalLimit); ok {
 		limit.SetSchema(p.Children()[0].Schema().Clone())
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
@@ -116,7 +120,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 		return nil, err
 	}
 	schema := b.buildTableScanSchema(tbl.Meta(), columns)
-	p := PhysicalMemTable{
+	p := physicalop.PhysicalMemTable{
 		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
@@ -159,12 +163,23 @@ func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns [
 	return schema
 }
 
+func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, error) {
+	exprs, err := expression.PBToExprs(b.sctx.GetExprCtx(), e.Projection.Exprs, b.tps)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	p := PhysicalProjection{
+		Exprs: exprs,
+	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+	return p, nil
+}
+
 func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (base.PhysicalPlan, error) {
 	conds, err := expression.PBToExprs(b.sctx.GetExprCtx(), e.Selection.Conditions, b.tps)
 	if err != nil {
 		return nil, err
 	}
-	p := PhysicalSelection{
+	p := physicalop.PhysicalSelection{
 		Conditions: conds,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -181,7 +196,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 		}
 		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
 	}
-	p := PhysicalTopN{
+	p := physicalop.PhysicalTopN{
 		ByItems: byItems,
 		Count:   topN.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
@@ -189,7 +204,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 }
 
 func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (base.PhysicalPlan, error) {
-	p := PhysicalLimit{
+	p := physicalop.PhysicalLimit{
 		Count: e.Limit.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -292,7 +307,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		return predicates, physicalPlan
 	}
 	switch plan := physicalPlan.(type) {
-	case *PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		memTable := plan
 		if memTable.Extractor == nil {
 			return predicates, plan
@@ -315,7 +330,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		}
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		selection := plan
 		conditions, child := b.predicatePushDown(plan.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {

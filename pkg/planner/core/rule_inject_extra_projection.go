@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
@@ -68,20 +69,20 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *NominalSort:
+	case *physicalop.NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
-	case *PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		plan = injectProjBelowUnion(p)
 	}
 	return plan
 }
 
-func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
-	if !un.mpp {
+func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalUnionAll {
+	if !un.Mpp {
 		return un
 	}
 	for i, ch := range un.Children() {

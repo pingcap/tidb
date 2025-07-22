@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -317,7 +318,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0},
 			requiredRows:   []int{1, 1, 1, 1, 10},
 			expectedRows:   []int{1, 1, 1, 1, 7},
-			expectedRowsDS: []int{26, 100 - 26, 0},
+			expectedRowsDS: []int{100, 0},
 		},
 		{
 			totalRows:      100,
@@ -335,7 +336,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 3, 7, 10},
 			expectedRows:   []int{1, 3, 1, 0},
-			expectedRowsDS: []int{6, maxChunkSize, 14, 0},
+			expectedRowsDS: []int{maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize + maxChunkSize + 20,
@@ -344,7 +345,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 2, 3, 5, 7},
 			expectedRows:   []int{1, 2, 3, 2, 0},
-			expectedRowsDS: []int{maxChunkSize, 18, maxChunkSize, 2, 0},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize*5 + 10,
@@ -396,7 +397,7 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 	}
 	return &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Limit:       &physicalop.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
 		Concurrency: 5,
 	}
 }
@@ -741,7 +742,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, inn
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(j)
 }
 

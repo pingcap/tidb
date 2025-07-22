@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -233,7 +234,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
@@ -282,7 +283,7 @@ func TestJoinHintCompatibilityWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
@@ -309,7 +310,7 @@ func TestJoinHintCompatibilityWithVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
@@ -374,7 +375,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tests := []struct {
 		sql  string
 		plan string
@@ -440,7 +441,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 
 func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	// PhysicalSort
-	ls := core.PhysicalSort{}
+	ls := physicalop.PhysicalSort{}
 	size := ls.MemoryUsage()
 	ls.ByItems = append(ls.ByItems, &util.ByItems{})
 	require.Greater(t, ls.MemoryUsage(), size)
@@ -472,13 +473,13 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	p, ok := info.Plan.(base.Plan)
 	require.True(t, ok)
 
-	var findSelection func(p base.Plan) *core.PhysicalSelection
-	findSelection = func(p base.Plan) *core.PhysicalSelection {
+	var findSelection func(p base.Plan) *physicalop.PhysicalSelection
+	findSelection = func(p base.Plan) *physicalop.PhysicalSelection {
 		if p == nil {
 			return nil
 		}
 		switch v := p.(type) {
-		case *core.PhysicalSelection:
+		case *physicalop.PhysicalSelection:
 			if len(v.Children()) == 1 {
 				if ts, ok := v.Children()[0].(*core.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
 					return v
@@ -551,7 +552,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 			return projsBelowUnion, normalProjs
 		}
 		switch v := p.(type) {
-		case *core.PhysicalUnionAll:
+		case *physicalop.PhysicalUnionAll:
 			for _, child := range v.Children() {
 				if proj, ok := child.(*core.PhysicalProjection); ok {
 					projsBelowUnion = append(projsBelowUnion, proj)

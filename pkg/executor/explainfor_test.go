@@ -50,8 +50,8 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
-		"TableReader_5 10000.00 root  data:TableFullScan_4",
-		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"TableReader_6 10000.00 root  data:TableFullScan_5",
+		"└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
 	check := func() {
@@ -74,8 +74,8 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, `TableReader_5 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TableFullScan_4 N/A N/A\n`+
-			`└─TableFullScan_4 10000\.00 0 cop\[tikv\] table:t1  keep order:false, stats:pseudo N/A N/A`,
+		require.Regexp(t, `TableReader_6 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TableFullScan_5 N/A N/A\n`+
+			`└─TableFullScan_5 10000\.00 0 cop\[tikv\] table:t1  keep order:false, stats:pseudo N/A N/A`,
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")
@@ -264,7 +264,7 @@ func TestExplainDotForQuery(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk2.MustQuery("explain format=\"dot\" select 1").Check(testkit.Rows(
-		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_4\"\n}\n}\n",
+		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_5\"\n}\n}\n",
 	))
 	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
 	require.Error(t, err)
@@ -279,7 +279,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1")
@@ -730,7 +730,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 func TestSPM4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")

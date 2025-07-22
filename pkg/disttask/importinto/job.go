@@ -18,9 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
@@ -30,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -64,7 +69,21 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		return 0, nil, err
 	}
 
-	var jobID, taskID int64
+	logicalPlan := &LogicalPlan{
+		Plan:              *plan,
+		Stmt:              stmt,
+		EligibleInstances: instances,
+		ChunkMap:          chunkMap,
+	}
+	planCtx := planner.PlanCtx{
+		Ctx:        ctx,
+		TaskType:   proto.ImportInto,
+		ThreadCnt:  plan.ThreadCnt,
+		MaxNodeCnt: plan.MaxNodeCnt,
+	}
+	var (
+		jobID, taskID int64
+	)
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		var err2 error
 		exec := se.GetSQLExecutor()
@@ -73,41 +92,52 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		if err2 != nil {
 			return err2
 		}
-
-		// TODO: use planner.Run to run the logical plan
-		// now creating import job and submitting distributed task should be in the same transaction.
-		logicalPlan := &LogicalPlan{
-			JobID:             jobID,
-			Plan:              *plan,
-			Stmt:              stmt,
-			EligibleInstances: instances,
-			ChunkMap:          chunkMap,
-		}
-		planCtx := planner.PlanCtx{
-			Ctx:        ctx,
-			SessionCtx: se,
-			TaskKey:    TaskKey(jobID),
-			TaskType:   proto.ImportInto,
-			ThreadCnt:  plan.ThreadCnt,
-			MaxNodeCnt: plan.MaxNodeCnt,
-		}
-		p := planner.NewPlanner()
-		taskID, err2 = p.Run(planCtx, logicalPlan)
-		if err2 != nil {
-			return err2
+		// in classical kernel or if we are inside SYSTEM keyspace itself, we
+		// submit the task to DXF in the same transaction as creating the job.
+		if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == keyspace.System {
+			logicalPlan.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = TaskKey(jobID)
+			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, taskManager); err2 != nil {
+				return err2
+			}
 		}
 		return nil
 	}); err != nil {
 		return 0, nil, err
 	}
+	// in next-gen kernel and we are not running in SYSTEM KS, we submit the task
+	// to DXF service after creating the job, as DXF service runs in SYSTEM keyspace.
+	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
+	dxfTaskMgr := taskManager
+	if keyspace.IsRunningOnUser() {
+		var err2 error
+		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
+		if err2 != nil {
+			return 0, nil, err2
+		}
+		if err2 = dxfTaskMgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			logicalPlan.JobID = jobID
+			planCtx.SessionCtx = se
+			planCtx.TaskKey = TaskKey(jobID)
+			var err2 error
+			if taskID, err2 = submitTask2DXF(logicalPlan, planCtx, dxfTaskMgr); err2 != nil {
+				return err2
+			}
+			return nil
+		}); err2 != nil {
+			return 0, nil, err2
+		}
+	}
 	handle.NotifyTaskChange()
-	task, err := taskManager.GetTaskBaseByID(ctx, taskID)
+	task, err := dxfTaskMgr.GetTaskBaseByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
 	}
 
 	logutil.BgLogger().Info("job submitted to task queue",
 		zap.Int64("job-id", jobID),
+		zap.String("task-key", task.Key),
 		zap.Int64("task-id", task.ID),
 		zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
 		zap.Int("thread-cnt", plan.ThreadCnt),
@@ -116,64 +146,175 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	return jobID, task, nil
 }
 
+func submitTask2DXF(logicalPlan *LogicalPlan, planCtx planner.PlanCtx, taskMgr *storage.TaskManager) (int64, error) {
+	// TODO: use planner.Run to run the logical plan
+	// now creating import job and submitting distributed task should be in the same transaction.
+	p := planner.NewPlanner()
+	return p.Run(planCtx, logicalPlan, taskMgr)
+}
+
 // RuntimeInfo is the runtime information of the task for corresponding job.
 type RuntimeInfo struct {
 	Status     proto.TaskState
-	ImportRows uint64
+	ImportRows int64
 	ErrorMsg   string
+
+	Step       proto.Step
+	StartTime  types.Time
+	UpdateTime types.Time
+	Processed  int64
+	Total      int64
+}
+
+var notAvailable = "N/A"
+
+// Percent returns the progress percentage of the current step.
+func (ri *RuntimeInfo) Percent() string {
+	// Currently, we can't track the progress of post process
+	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit {
+		return notAvailable
+	}
+
+	percentage := 0.0
+	if ri.Total > 0 {
+		percentage = float64(ri.Processed) / float64(ri.Total)
+		percentage = min(percentage, 1.0)
+	}
+	return strconv.FormatInt(int64(percentage*100), 10)
+}
+
+// FormatSecondAsTime formats the given seconds into the given format
+// If the duration is less than a day, it returns the time in HH:MM:SS format.
+// Otherwise, it returns the time in DD d HH:MM:SS format.
+func FormatSecondAsTime(sec int64) string {
+	day := ""
+	dur := time.Duration(sec) * time.Second
+	if dur.Hours() >= 24 {
+		day = fmt.Sprintf("%d d ", int(dur.Hours()/24))
+	}
+	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
+}
+
+// SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
+func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
+	s := int64(0)
+	duration := types.TimestampDiff("SECOND", ri.StartTime, ri.UpdateTime)
+	if duration > 0 && ri.Processed > 0 {
+		s = ri.Processed / duration
+	}
+
+	remainTime := notAvailable
+	if s > 0 && ri.Total > 0 {
+		remainSecond := max((ri.Total-ri.Processed)/s, 0)
+		remainTime = FormatSecondAsTime(remainSecond)
+	}
+
+	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
+}
+
+// TotalSize returns the total size of the current step in human-readable format.
+func (ri *RuntimeInfo) TotalSize() string {
+	return units.HumanSize(float64(ri.Total))
+}
+
+// ProcessedSize returns the processed size of the current step in human-readable format.
+func (ri *RuntimeInfo) ProcessedSize() string {
+	return units.HumanSize(float64(ri.Processed))
+}
+
+// convertToMySQLTime converts go time to MySQL time with the specified location.
+// It's partially copied from builtin_time.go
+func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
+	tr, err := types.TruncateFrac(t, 0)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	result := types.NewTime(types.FromGoTime(tr), mysql.TypeDatetime, 0)
+	err = result.ConvertTimeZone(t.Location(), loc)
+	return result, err
 }
 
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
-func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
-	taskManager, err := storage.GetTaskManager()
+func GetRuntimeInfoForJob(
+	ctx context.Context,
+	location *time.Location,
+	jobID int64,
+) (*RuntimeInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	dxfTaskMgr, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
 	}
-	taskKey := TaskKey(jobID)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+
+	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, TaskKey(jobID))
 	if err != nil {
 		return nil, err
 	}
-	taskMeta := TaskMeta{}
+
+	var (
+		taskMeta    TaskMeta
+		taskSummary importer.Summary
+
+		latestTime time.Time
+		ri         = &RuntimeInfo{
+			Status: task.State,
+			Step:   task.Step,
+		}
+	)
+
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var importedRows uint64
-	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta ImportStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
-	} else {
-		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
-		if err != nil {
-			return nil, err
-		}
-		for _, subtask := range subtasks {
-			var subtaskMeta WriteIngestStepMeta
-			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return nil, errors.Trace(err2)
-			}
-			importedRows += subtaskMeta.Result.LoadedRowCnt
-		}
-	}
-	var errMsg string
+
 	if task.Error != nil {
-		errMsg = task.Error.Error()
+		ri.ErrorMsg = task.Error.Error()
+		return ri, nil
 	}
-	return &RuntimeInfo{
-		Status:     task.State,
-		ImportRows: importedRows,
-		ErrorMsg:   errMsg,
-	}, nil
+
+	if len(taskMeta.TaskResult) != 0 {
+		if err = json.Unmarshal(taskMeta.TaskResult, &taskSummary); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	summaries, err := dxfTaskMgr.GetAllSubtaskSummaryByStep(ctx, task.ID, task.Step)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, s := range summaries {
+		ri.Processed += s.Bytes.Load()
+		ri.ImportRows += s.RowCnt.Load()
+		if s.UpdateTime.After(latestTime) {
+			latestTime = s.UpdateTime
+		}
+	}
+
+	if task.Step == proto.ImportStepPostProcess {
+		ri.ImportRows = taskSummary.ImportedRows
+	} else if task.Step != proto.ImportStepWriteAndIngest && task.Step != proto.ImportStepImport {
+		ri.ImportRows = 0
+	}
+
+	switch task.Step {
+	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+		ri.Total = taskSummary.IngestSummary.Bytes
+	case proto.ImportStepEncodeAndSort:
+		ri.Total = taskSummary.EncodeSummary.Bytes
+	case proto.ImportStepMergeSort:
+		ri.Total = taskSummary.MergeSummary.Bytes
+	}
+
+	if !latestTime.IsZero() {
+		ri.UpdateTime, err = convertToMySQLTime(latestTime, location)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return ri, nil
 }
 
 // TaskKey returns the task key for a job.

@@ -403,23 +403,9 @@ type SyncExecDetails struct {
 
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
-func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *util.CommitDetails) {
+func (s *SyncExecDetails) MergeExecDetails(commitDetails *util.CommitDetails) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if details != nil {
-		s.execDetails.CopTime += details.CopTime
-		s.execDetails.BackoffTime += details.BackoffTime
-		s.execDetails.RequestCount++
-		s.mergeScanDetail(details.ScanDetail)
-		s.mergeTimeDetail(details.TimeDetail)
-		detail := &DetailsNeedP90{
-			BackoffSleep:  details.BackoffSleep,
-			BackoffTimes:  details.BackoffTimes,
-			CalleeAddress: details.CalleeAddress,
-			TimeDetail:    details.TimeDetail,
-		}
-		s.detailsSummary.Merge(detail)
-	}
 	if commitDetails != nil {
 		if s.execDetails.CommitDetail == nil {
 			s.execDetails.CommitDetail = commitDetails
@@ -1693,6 +1679,16 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) mergeExecSummary(summary *ti
 	networkTraffic.interZoneSendBytes += *summary.InterZoneSendBytes
 	networkTraffic.innerZoneReceiveBytes += *summary.InnerZoneReceiveBytes
 	networkTraffic.interZoneReceiveBytes += *summary.InterZoneReceiveBytes
+}
+
+// GetInterZoneTrafficBytes returns the inter zone network traffic bytes involved
+// between tiflash instances.
+func (networkTraffic *TiFlashNetworkTrafficSummary) GetInterZoneTrafficBytes() uint64 {
+	// NOTE: we only count the inter zone sent bytes here because tiflash count the traffic bytes
+	// of all sub request. For each sub request, both side with count the send and recv traffic.
+	// So here, we only use the send bytes as the overall traffic to avoid count the traffic twice.
+	// While this statistics logic seems a bit weird to me, but this is the tiflash side desicion.
+	return networkTraffic.interZoneSendBytes
 }
 
 // BasicRuntimeStats is the basic runtime stats.

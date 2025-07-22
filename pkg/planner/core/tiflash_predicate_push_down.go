@@ -309,6 +309,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 
 	selectedColumns := make(map[string]bool, len(indexedColumnNameToIndexInfoMap))
 	selectedConditions := make([]expression.Expression, 0, len(ts.filterCondition))
+	columnNames := make([]string, 0, 4)
 	for _, cond := range ts.filterCondition {
 		// 1. The predicate only contains >, >=, =, !=, <=, <, in.
 		if !isPredicateSimpleCompare(cond) {
@@ -317,7 +318,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 		// 2. The columns of predicate all have inverted index.
 		allHaveInvertedIndex := true
 		columns := expression.ExtractColumns(cond)
-		columnNames := make([]string, 0, len(columns))
+		columnNames = slices.Grow(columnNames, len(columns))
 		for _, col := range columns {
 			parts := strings.Split(col.OrigName, ".")
 			columnNames = append(columnNames, strings.ToLower(parts[len(parts)-1]))
@@ -345,6 +346,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			selectedColumns[colName] = true
 		}
 		selectedConditions = append(selectedConditions, cond)
+		columnNames = columnNames[:0] // reset columnNames slice to avoid unnecessary memory allocation
 	}
 
 	for colName := range selectedColumns {
