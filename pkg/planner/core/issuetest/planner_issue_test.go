@@ -292,7 +292,7 @@ func TestIssue61303VirtualGenerateColumnSubstitute(t *testing.T) {
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
 }
 
-func TestABCV(t *testing.T) {
+func TestJoinReorderWithAddSelection(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

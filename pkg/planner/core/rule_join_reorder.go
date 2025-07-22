@@ -665,19 +665,13 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.Lo
 	if newJoin.EqualConditions != nil && newJoin.JoinType == logicalop.InnerJoin {
 		if newJoin.LeftConditions != nil {
 			left := newJoin.Children()[0]
-			ret, newNode, err := left.PredicatePushDown(newJoin.LeftConditions, opt)
-			if err == nil {
-				logicalop.AddSelection(newJoin, newNode, ret, 0, opt)
-				newJoin.LeftConditions = nil
-			}
+			logicalop.AddSelection(newJoin, left, newJoin.LeftConditions, 0, opt)
+			newJoin.LeftConditions = nil
 		}
 		if newJoin.RightConditions != nil {
 			right := newJoin.Children()[1]
-			ret, newNode, err := right.PredicatePushDown(newJoin.RightConditions, opt)
-			if err == nil {
-				logicalop.AddSelection(newJoin, newNode, ret, 1, opt)
-				newJoin.RightConditions = nil
-			}
+			logicalop.AddSelection(newJoin, right, newJoin.RightConditions, 1, opt)
+			newJoin.RightConditions = nil
 		}
 	}
 	return newJoin
