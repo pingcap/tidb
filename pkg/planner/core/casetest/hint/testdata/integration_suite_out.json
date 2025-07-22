@@ -1927,5 +1927,21 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestQBHintHandlerDuplicateObjects",
+    "Cases": [
+      {
+        "SQL": "EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;",
+        "Plan": [
+          "IndexJoin_18 12500.00 root  inner join, inner:IndexReader_34, outer key:test.t_employees.store_id, inner key:test.t_employees.department_id, equal cond:eq(test.t_employees.store_id, test.t_employees.department_id)",
+          "├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31",
+          "│ └─TableFullScan_31 10000.00 cop[tikv] table:em keep order:false, stats:pseudo",
+          "└─IndexReader_34(Probe) 12500.00 root  index:IndexRangeScan_33",
+          "  └─IndexRangeScan_33 12500.00 cop[tikv] table:e, index:idx(department_id) range: decided by [eq(test.t_employees.department_id, test.t_employees.store_id)], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]

@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -321,7 +321,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	dom.Close()
 }
 
-func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
+func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
@@ -1550,7 +1550,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s sessiontypes.Session) {
+	resetTo139 := func(s sessionapi.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMutator(txn)

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -602,7 +602,7 @@ func TestIssue42662(t *testing.T) {
 	sm := &testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	}
-	sm.Conn = make(map[uint64]sessiontypes.Session)
+	sm.Conn = make(map[uint64]sessionapi.Session)
 	sm.Conn[tk.Session().GetSessionVars().ConnectionID] = tk.Session()
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
