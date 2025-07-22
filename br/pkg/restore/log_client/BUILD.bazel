@@ -72,6 +72,7 @@ go_library(
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
         "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//keepalive",
