@@ -64,7 +64,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		}); err != nil {
 			return err
 		}
-		if err = markTaskResetTableMode(ctx, taskManager, taskMeta); err != nil {
+		if err = markTaskResetTableMode(ctx, taskManager, task, taskMeta); err != nil {
 			return err
 		}
 	}

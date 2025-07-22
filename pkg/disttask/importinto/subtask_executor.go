@@ -173,7 +173,11 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		if err2 != nil {
 			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
 		} else {
-			err2 = markTaskResetTableMode(ctx, taskManager, p.taskMeta)
+			task, err2 := taskManager.GetTaskByID(ctx, p.taskMeta.JobID)
+			if err2 != nil {
+				return err2
+			}
+			err2 = markTaskResetTableMode(ctx, taskManager, task, p.taskMeta)
 		}
 		if err != nil {
 			return err
@@ -182,13 +186,9 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	})
 }
 
-func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManager, taskMeta *TaskMeta) error {
-	task, err := taskManager.GetTaskByID(ctx, taskMeta.JobID)
-	if err != nil {
-		return err
-	}
+func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManager, task *proto.Task, taskMeta *TaskMeta) error {
 	taskMeta.ResetTableMode = true
-	if err = updateMeta(task, taskMeta); err != nil {
+	if err := updateMeta(task, taskMeta); err != nil {
 		return err
 	}
 	return taskManager.ModifiedTask(ctx, task)
