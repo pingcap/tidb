@@ -17,9 +17,6 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
-	"slices"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -35,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"slices"
 )
 
 // LogicalSelection represents a where or having predicate.
@@ -337,7 +335,7 @@ func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotB
 	canBePushDown = make([]expression.Expression, 0, len(filters))
 	canNotBePushDown = make([]expression.Expression, 0, len(filters))
 	for _, expr := range filters {
-		if expression.HasGetSetVarFunc(expr) || expression.HasGroupingFunc(expr) {
+		if expression.HasGetSetVarFunc(expr) {
 			canNotBePushDown = append(canNotBePushDown, expr)
 		} else {
 			canBePushDown = append(canBePushDown, expr)
