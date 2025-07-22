@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -73,13 +75,22 @@ func TestPostProcessStepExecutor(t *testing.T) {
 		},
 	}
 
+	metaBytes, err := json.Marshal(taskMeta)
+	require.NoError(t, err)
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "post_process")
+	taskID, err := mgr.CreateTask(ctx, "key1", proto.ImportInto, 1, "", 0, proto.ExtraParams{}, metaBytes)
+	require.NoError(t, err)
+	taskMeta.JobID = 1
 	bytes, err := json.Marshal(stepMeta)
 	require.NoError(t, err)
 	var taskKS string
 	if kerneltype.IsNextGen() {
 		taskKS = keyspace.System
 	}
-	executor := importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	executor := importinto.NewPostProcessStepExecutor(taskID, store, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
@@ -88,17 +99,17 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	stepMeta.Checksum[-1] = tmp
 	bytes, err = json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(taskID, store, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.ErrorContains(t, err, "checksum mismatched remote vs local")
 
 	taskMeta.Plan.Checksum = config.OpLevelOptional
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(taskID, store, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
 	taskMeta.Plan.Checksum = config.OpLevelOff
-	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, taskKS, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(taskID, store, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 }
