@@ -1898,7 +1898,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 							continue
 						}
 						if do.serverID != 0 && do.serverID == tmp.ServerID {
-							eventCnt -= 1
+							eventCnt--
 						}
 					}
 				}
