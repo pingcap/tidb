@@ -931,10 +931,10 @@ Limit_9	1.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
       └─TableFullScan_13	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:false, stats:partial[c:unInitialized]	<memory>	<disk>
 explain analyze select * from t order by id limit 100;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
-└─TableReader_17	100.00	<actRows>	root	NULL	max_distsql_concurrency: 1	NULL	<memory>	<disk>
-  └─Limit_16	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
-    └─TableFullScan_15	101.56	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+Limit_12	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_22	100.00	<actRows>	root	NULL	max_distsql_concurrency: 1	NULL	<memory>	<disk>
+  └─Limit_21	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─TableFullScan_20	101.56	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from t order by id limit 100000;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_12	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
@@ -983,10 +983,10 @@ Limit_9	1.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
       └─TableFullScan_13	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:false	<memory>	<disk>
 explain analyze select * from pt order by id limit 100;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
-└─TableReader_17	100.00	<actRows>	root	partition:all	max_distsql_concurrency: 1	NULL	<memory>	<disk>
-  └─Limit_16	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
-    └─TableFullScan_15	101.56	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+Limit_12	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
+└─TableReader_22	100.00	<actRows>	root	partition:all	max_distsql_concurrency: 1	NULL	<memory>	<disk>
+  └─Limit_21	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
+    └─TableFullScan_20	101.56	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from pt order by id limit 100000;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_12	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
