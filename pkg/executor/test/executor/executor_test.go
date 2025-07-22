@@ -956,7 +956,6 @@ func TestCheckIndex(t *testing.T) {
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 
 	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
 	require.Error(t, err)
@@ -995,9 +994,9 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
+	err = idx.Delete(ctx, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
 	require.NoError(t, err)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
+	err = idx.Delete(ctx, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
