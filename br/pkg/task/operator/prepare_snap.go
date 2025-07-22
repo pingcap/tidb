@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -238,11 +239,9 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error
 	}
 	cx.ReadyL("pause_gc", zap.Object("safepoint", sp))
 	defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
-		cancelSP := utils.BRServiceSafePoint{
-			ID:  sp.ID,
-			TTL: 0,
-		}
-		return utils.UpdateServiceSafePoint(ctx, cx.pdMgr.GetPDClient(), cancelSP)
+		cli := cx.pdMgr.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
+		_, err := cli.DeleteGCBarrier(ctx, sp.ID)
+		return errors.Trace(err)
 	})
 	// Note: in fact we can directly return here.
 	// But the name `keeper` implies once the function exits,

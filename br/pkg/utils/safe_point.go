@@ -50,16 +50,6 @@ func (sp BRServiceSafePoint) MarshalLogObject(encoder zapcore.ObjectEncoder) err
 	return nil
 }
 
-// getGCSafePoint returns the current gc safe point.
-// TODO: Some cluster may not enable distributed GC.
-func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	safePoint, err := pdClient.UpdateGCSafePoint(ctx, 0)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return safePoint, nil
-}
-
 // MakeSafePointID makes a unique safe point ID, for reduce name conflict.
 func MakeSafePointID() string {
 	return fmt.Sprintf(brServiceSafePointIDFormat, uuid.New())
@@ -68,19 +58,19 @@ func MakeSafePointID() string {
 // CheckGCSafePoint checks whether the ts is older than GC safepoint.
 // Note: It ignores errors other than exceed GC safepoint.
 func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error {
-	// TODO: use PDClient.GetGCSafePoint instead once PD client exports it.
-	safePoint, err := getGCSafePoint(ctx, pdClient)
+	cli := pdClient.GetGCStatesClient(constants.NullKeyspaceID)
+	state, err := cli.GetGCState(ctx)
 	if err != nil {
-		log.Warn("fail to get GC safe point", zap.Error(err))
+		log.Warn("fail to get GC state", zap.Error(err))
 		return nil
 	}
-	if ts <= safePoint {
-		return errors.Annotatef(berrors.ErrBackupGCSafepointExceeded, "GC safepoint %d exceed TS %d", safePoint, ts)
+	if ts < state.TxnSafePoint {
+		return errors.Annotatef(berrors.ErrBackupGCSafepointExceeded, "txn safe point %d exceed ts %d", state.TxnSafePoint, ts)
 	}
 	return nil
 }
 
-// StartServiceSafePointKeeper will run UpdateServiceSafePoint periodicity
+// StartServiceSafePointKeeper will run SetGCBarrier periodicity
 // hence keeping service safepoint won't lose.
 func StartServiceSafePointKeeper(
 	ctx context.Context,
