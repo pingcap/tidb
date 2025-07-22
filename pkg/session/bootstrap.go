@@ -650,7 +650,7 @@ const (
 
 	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
 	CreateRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch (
-		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		id BIGINT(20) NOT NULL PRIMARY KEY AUTO_RANDOM,
 		resource_group_name varchar(32) not null,
 		start_time datetime(6) NOT NULL,
 		end_time datetime(6),
@@ -662,7 +662,7 @@ const (
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin SHARD_ROW_ID_BITS = 4;`
 
 	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
 	CreateDoneRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch_done (
