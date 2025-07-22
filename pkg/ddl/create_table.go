@@ -145,9 +145,9 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
-		// Updating auto id metakv is done in a separate txn.
-		// It's ok as these data are binded with table ID, and we won't use see these table IDs
-		// until info schema version is updated.
+		// Updating auto id meta kv is done in a separate txn.
+		// It's ok as these data are bind with table ID, and we won't use these
+		// table IDs until info schema version is updated.
 		if err := handleAutoIncID(r, job, tbInfo); err != nil {
 			return tbInfo, errors.Trace(err)
 		}
@@ -291,7 +291,6 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 }
 
 func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
-	failpoint.InjectCall("beforeCreateTables")
 	var ver int64
 
 	args, err := model.GetBatchCreateTableArgs(job)
