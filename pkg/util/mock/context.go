@@ -605,13 +605,13 @@ func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
 }
 
-// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
-func (*Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// EncodeStates implements the sessionapi.Session interface
+func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 
-// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
-func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// DecodeStates implements the sessionapi.Session interface
+func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 

@@ -34,7 +34,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -97,7 +97,7 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	}
 }
 
-func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
+func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 	session.MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= 195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
@@ -459,7 +459,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 }
 
 // checkDDLJobExecSucc is used to make sure the DDL operation is successful.
-func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
+func checkDDLJobExecSucc(t *testing.T, se sessionapi.Session, jobID int64) {
 	sql := fmt.Sprintf(" admin show ddl jobs 20 where job_id=%d", jobID)
 	suc := false
 	for range 20 {
@@ -685,7 +685,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 
 	tc := session.TestCallback{Cnt: atomicutil.NewInt32(0)}
 	sql := "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) order by processing desc, job_id"
-	tc.OnBootstrapBeforeExported = func(s sessiontypes.Session) {
+	tc.OnBootstrapBeforeExported = func(s sessionapi.Session) {
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
 		require.Len(t, rows, 0)
@@ -714,7 +714,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		}()
 		<-ch
 	}
-	checkDDLJobState := func(s sessiontypes.Session) {
+	checkDDLJobState := func(s sessionapi.Session) {
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
 		for _, row := range rows {
@@ -732,7 +732,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		}
 	}
 	// Before every test bootstrap(DDL operation), we add a user and a system DB's DDL operations.
-	tc.OnBootstrapExported = func(s sessiontypes.Session) {
+	tc.OnBootstrapExported = func(s sessionapi.Session) {
 		var query1, query2 string
 		switch tc.Cnt.Load() % 2 {
 		case 0:
@@ -750,7 +750,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		checkDDLJobState(s)
 	}
 
-	tc.OnBootstrapAfterExported = func(s sessiontypes.Session) {
+	tc.OnBootstrapAfterExported = func(s sessionapi.Session) {
 		checkDDLJobState(s)
 	}
 	session.TestHook = tc

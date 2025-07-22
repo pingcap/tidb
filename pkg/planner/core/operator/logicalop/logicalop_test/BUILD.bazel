@@ -29,7 +29,7 @@ go_test(
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/session",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util/chunk",
