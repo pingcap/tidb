@@ -17,7 +17,7 @@ package asyncload
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 // AsyncLoadHistogramNeededItems stores the columns/indices whose Histograms need to be loaded from physical kv layer.

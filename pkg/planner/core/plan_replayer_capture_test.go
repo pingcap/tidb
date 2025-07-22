@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -65,7 +66,8 @@ func getTableStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	sctx.GetSessionVars().EnablePlanReplayerCapture = true
@@ -74,7 +76,7 @@ func getTableStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	plan, err := builder.Build(context.TODO(), stmt)
+	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
 	_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)

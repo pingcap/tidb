@@ -380,9 +380,8 @@ func WriteInsertInCsv(
 			row.WriteToBufferInCsv(bf, escapeBackslash, opt)
 		}
 		counter++
-		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
-
 		bf.Write(opt.lineTerminator)
+		wp.currentFileSize += uint64(bf.Len() - lastBfSize)
 		if bf.Len() >= lengthLimit {
 			select {
 			case <-pCtx.Done():

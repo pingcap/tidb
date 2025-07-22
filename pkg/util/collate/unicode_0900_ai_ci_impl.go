@@ -24,6 +24,10 @@ import (
 type unicode0900Impl struct {
 }
 
+func (unicode0900Impl) Clone() unicode0900Impl {
+	return unicode0900Impl{}
+}
+
 func (unicode0900Impl) Preprocess(s string) string {
 	return s
 }

@@ -36,8 +36,8 @@ upper(group_concat(distinct value order by 1))
 ABC,DEF
 desc format='brief' select group_concat(distinct value collate utf8mb4_bin order by 1) from t;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:group_concat(distinct Column#6 order by Column#7 separator ",")->Column#5
-└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#7
+StreamAgg	1.00	root		funcs:group_concat(distinct Column#6 order by Column#6 separator ",")->Column#5
+└─Projection	10000.00	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select upper(group_concat(distinct value collate utf8mb4_bin order by 1)) from t;

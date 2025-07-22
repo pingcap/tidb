@@ -14,9 +14,11 @@ dynamic
 set @@session.tidb_partition_prune_mode = "static";
 show warnings;
 Level	Code	Message
+Warning	1681	static prune mode is deprecated and will be removed in the future release.
 set @@global.tidb_partition_prune_mode = "static";
 show warnings;
 Level	Code	Message
+Warning	1681	static prune mode is deprecated and will be removed in the future release.
 select @@session.tidb_partition_prune_mode;
 @@session.tidb_partition_prune_mode
 static
@@ -354,7 +356,7 @@ partition p0 values less than (5),
 partition p1 values less than (10),
 partition p2 values less than (15));
 insert into t values (2), (7), (12);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a < 3;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection

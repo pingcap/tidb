@@ -16,7 +16,6 @@ package ast
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 var (
@@ -30,8 +29,8 @@ type AnalyzeTableStmt struct {
 	stmtNode
 
 	TableNames     []*TableName
-	PartitionNames []model.CIStr
-	IndexNames     []model.CIStr
+	PartitionNames []CIStr
+	IndexNames     []CIStr
 	AnalyzeOpts    []AnalyzeOpt
 
 	// IndexFlag is true when we only analyze indices for a table.
@@ -41,8 +40,8 @@ type AnalyzeTableStmt struct {
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
 	// ColumnNames indicate the columns whose statistics need to be collected.
-	ColumnNames  []model.CIStr
-	ColumnChoice model.ColumnChoice
+	ColumnNames  []CIStr
+	ColumnChoice ColumnChoice
 }
 
 // AnalyzeOptType is the type for analyze options.
@@ -139,11 +138,11 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	switch n.ColumnChoice {
-	case model.AllColumns:
+	case AllColumns:
 		ctx.WriteKeyWord(" ALL COLUMNS")
-	case model.PredicateColumns:
+	case PredicateColumns:
 		ctx.WriteKeyWord(" PREDICATE COLUMNS")
-	case model.ColumnList:
+	case ColumnList:
 		ctx.WriteKeyWord(" COLUMNS ")
 		for i, columnName := range n.ColumnNames {
 			if i != 0 {
@@ -199,7 +198,7 @@ type DropStatsStmt struct {
 	stmtNode
 
 	Tables         []*TableName
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 	IsGlobalStats  bool
 }
 

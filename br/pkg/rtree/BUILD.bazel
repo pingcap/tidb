@@ -10,7 +10,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
-        "//pkg/kv",
         "//pkg/tablecodec",
         "//pkg/util/redact",
         "@com_github_google_btree//:btree",
@@ -33,7 +32,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         ":rtree",
         "//pkg/kv",

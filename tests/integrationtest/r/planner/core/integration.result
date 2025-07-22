@@ -4,23 +4,23 @@ create table t(a varchar(10), b int, c int);
 show columns from t where true;
 Field	Type	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
-b	int(11)	YES		NULL	
-c	int(11)	YES		NULL	
+b	int	YES		NULL	
+c	int	YES		NULL	
 show columns from t where field = 'b';
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b');
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and true;
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and false;
 Field	Type	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 a	varchar(10)	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);
@@ -62,7 +62,7 @@ explain format='brief' select c_custkey, count(o_orderkey) as c_count from custo
 id	estRows	task	access object	operator info
 Projection	8000.00	root		planner__core__integration.customer.c_custkey, Column#7
 └─HashAgg	8000.00	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
-  └─HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__integration.customer.c_custkey, planner__core__integration.orders.o_custkey)]
+  └─HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(planner__core__integration.customer.c_custkey, planner__core__integration.orders.o_custkey)]
     ├─HashAgg(Build)	8000.00	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
     │ └─TableReader	8000.00	root		data:HashAgg
     │   └─HashAgg	8000.00	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column#9
@@ -76,7 +76,7 @@ explain format='brief' select c_custkey, count(o_orderkey) as c_count from order
 id	estRows	task	access object	operator info
 Projection	8000.00	root		planner__core__integration.customer.c_custkey, Column#7
 └─HashAgg	8000.00	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
-  └─HashJoin	10000.00	root		right outer join, equal:[eq(planner__core__integration.orders.o_custkey, planner__core__integration.customer.c_custkey)]
+  └─HashJoin	10000.00	root		right outer join, left side:HashAgg, equal:[eq(planner__core__integration.orders.o_custkey, planner__core__integration.customer.c_custkey)]
     ├─HashAgg(Build)	8000.00	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
     │ └─TableReader	8000.00	root		data:HashAgg
     │   └─HashAgg	8000.00	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column#9
@@ -312,16 +312,16 @@ drop table if exists t;
 create table t(a int);
 explain format='verbose' select /*+ stream_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_14	1.00	168985.35	root		funcs:count(Column#4)->Column#3
-└─TableReader_15	1.00	168935.45	root		data:StreamAgg_8
-  └─StreamAgg_8	1.00	2534000.00	cop[tikv]		funcs:count(1)->Column#4
-    └─TableFullScan_13	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+StreamAgg_14	1.00	304652.01	root		funcs:count(Column#4)->Column#3
+└─TableReader_15	1.00	304602.11	root		data:StreamAgg_8
+  └─StreamAgg_8	1.00	4569000.00	cop[tikv]		funcs:count(1)->Column#4
+    └─TableFullScan_13	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='verbose' select /*+ hash_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-HashAgg_9	1.00	150603.19	root		funcs:count(Column#4)->Column#3
-└─TableReader_10	1.00	149075.93	root		data:HashAgg_5
-  └─HashAgg_5	1.00	2236107.30	cop[tikv]		funcs:count(1)->Column#4
-    └─TableFullScan_8	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashAgg_9	1.00	286269.86	root		funcs:count(Column#4)->Column#3
+└─TableReader_10	1.00	284742.60	root		data:HashAgg_5
+  └─HashAgg_5	1.00	4271107.30	cop[tikv]		funcs:count(1)->Column#4
+    └─TableFullScan_8	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, pt, vt;
 create table t(a int, b int);
 insert into t values(1, 1);
@@ -681,10 +681,10 @@ explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 ord
 id	estRows	task	access object	operator info
 Sort_5	5548.89	root		planner__core__integration.t.a, planner__core__integration.t.b
 └─Projection_7	5548.89	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_11	5548.89	root		type: union
-    ├─TableRangeScan_8(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	5548.89	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	5548.89	root		type: union
+    ├─TableRangeScan_9(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	5548.89	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by a, b;
 a	b
 1	1
@@ -692,11 +692,11 @@ explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a > 88 or c >
 id	estRows	task	access object	operator info
 Sort_5	7771.11	root		planner__core__integration.t.a, planner__core__integration.t.b
 └─Projection_7	7771.11	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_12	7771.11	root		type: union
-    ├─TableRangeScan_8(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:(88,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	7771.11	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	7771.11	root		type: union
+    ├─TableRangeScan_9(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:(88,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	7771.11	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or a > 88 or c > 10000 order by a, b;
 a	b
 1	1
@@ -705,14 +705,14 @@ explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and 
 id	estRows	task	access object	operator info
 Sort_5	8015.79	root		planner__core__integration.t.a, planner__core__integration.t.b
 └─Projection_7	8015.79	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_15	7119.80	root		type: union
-    ├─TableRangeScan_8(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─Selection_14(Probe)	7119.80	cop[tikv]		or(or(lt(planner__core__integration.t.a, 2), and(ge(planner__core__integration.t.a, 10), ge(planner__core__integration.t.b, 10))), or(gt(planner__core__integration.t.c, 100), lt(planner__core__integration.t.c, 1)))
-      └─TableRowIDScan_13	8882.21	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_16	7119.80	root		type: union
+    ├─TableRangeScan_9(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─Selection_15(Probe)	7119.80	cop[tikv]		or(or(lt(planner__core__integration.t.a, 2), and(ge(planner__core__integration.t.a, 10), ge(planner__core__integration.t.b, 10))), or(gt(planner__core__integration.t.c, 100), lt(planner__core__integration.t.c, 1)))
+      └─TableRowIDScan_14	8882.21	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a, b;
 a	b
 1	1
@@ -722,16 +722,16 @@ explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and 
 id	estRows	task	access object	operator info
 Sort_5	8235.60	root		planner__core__integration.t.a, planner__core__integration.t.b
 └─Projection_7	8235.60	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_17	7315.03	root		type: union
-    ├─TableRangeScan_8(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─TableRangeScan_9	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
-    ├─Selection_12(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
-    │ └─TableRangeScan_11	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_13(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─Selection_16(Probe)	7315.03	cop[tikv]		or(or(lt(planner__core__integration.t.a, 2), and(ge(planner__core__integration.t.a, 10), ge(planner__core__integration.t.b, 10))), or(and(ge(planner__core__integration.t.a, 20), lt(planner__core__integration.t.b, 10)), or(gt(planner__core__integration.t.c, 100), lt(planner__core__integration.t.c, 1))))
-      └─TableRowIDScan_15	8882.21	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_18	7315.03	root		type: union
+    ├─TableRangeScan_9(Build)	3323.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─TableRangeScan_10	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
+    ├─Selection_13(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
+    │ └─TableRangeScan_12	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_14(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─Selection_17(Probe)	7315.03	cop[tikv]		or(or(lt(planner__core__integration.t.a, 2), and(ge(planner__core__integration.t.a, 10), ge(planner__core__integration.t.b, 10))), or(and(ge(planner__core__integration.t.a, 20), lt(planner__core__integration.t.b, 10)), or(gt(planner__core__integration.t.c, 100), lt(planner__core__integration.t.c, 1))))
+      └─TableRowIDScan_16	8882.21	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a, b;
 a	b
 1	1
@@ -924,10 +924,10 @@ explain select /*+ use_index_merge(t) */ a from t where c < 10 or a < 2 order by
 id	estRows	task	access object	operator info
 Sort_5	5542.21	root		planner__core__integration.t.a
 └─Projection_7	5542.21	root		planner__core__integration.t.a
-  └─IndexMerge_11	5542.21	root		type: union
-    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:a(a, b)	range:[-inf,2), keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	5542.21	root		type: union
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3323.33	cop[tikv]	table:t, index:a(a, b)	range:[-inf,2), keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	5542.21	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a from t where c < 10 or a < 2 order by a;
 a
 1
@@ -935,10 +935,10 @@ explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or c > 1
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a
-  └─IndexMerge_11	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or c > 10000 order by a;
 a
 1
@@ -946,11 +946,11 @@ explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or _tidb
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a
-  └─IndexMerge_12	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 a
 1
@@ -960,13 +960,13 @@ explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >=
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a
-  └─IndexMerge_14	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_13(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_15	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_14(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 a
 1
@@ -976,15 +976,15 @@ explain select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >=
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a
-  └─IndexMerge_16	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─Selection_12(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_11	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_13(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_15(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_17	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─Selection_13(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_12	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_14(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_16(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 a
 1
@@ -1134,10 +1134,10 @@ explain select /*+ use_index_merge(t) */ a,b from t where c < 10 or a < 2 order 
 id	estRows	task	access object	operator info
 Sort_5	5542.21	root		planner__core__integration.t.a
 └─Projection_7	5542.21	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_11	5542.21	root		type: union
-    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:a(a, b)	range:[-inf,2), keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	5542.21	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	5542.21	root		type: union
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3323.33	cop[tikv]	table:t, index:a(a, b)	range:[-inf,2), keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	5542.21	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where c < 10 or a < 2 order by a;
 a	b
 1	1
@@ -1145,10 +1145,10 @@ explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or c >
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_11	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or c > 10000 order by a;
 a	b
 1	1
@@ -1156,11 +1156,11 @@ explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or _ti
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_12	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 a	b
 1	1
@@ -1170,13 +1170,13 @@ explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a 
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_14	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_13(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_15	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_14(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 a	b
 1	1
@@ -1186,15 +1186,15 @@ explain select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a 
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_16	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─Selection_12(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_11	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_13(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_15(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_17	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─Selection_13(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_12	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_14(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_16(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 a	b
 1	1
@@ -1285,10 +1285,10 @@ explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or c >
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.c, planner__core__integration.t.a
-  └─IndexMerge_11	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or c > 10000 order by a;
 c	a
 1	1
@@ -1296,11 +1296,11 @@ explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or _ti
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.c, planner__core__integration.t.a
-  └─IndexMerge_12	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 c	a
 1	1
@@ -1310,13 +1310,13 @@ explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a 
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.c, planner__core__integration.t.a
-  └─IndexMerge_14	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_13(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_15	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_14(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 c	a
 1	1
@@ -1326,15 +1326,15 @@ explain select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a 
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.c, planner__core__integration.t.a
-  └─IndexMerge_16	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─Selection_12(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_11	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_13(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_15(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_17	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─Selection_13(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_12	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_14(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_16(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ c,a from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 c	a
 1	1
@@ -1355,10 +1355,10 @@ explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or c
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.b, planner__core__integration.t.a, planner__core__integration.t.c
-  └─IndexMerge_11	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or c > 10000 order by a;
 b	a	c
 1	1	1
@@ -1366,11 +1366,11 @@ explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or _
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.b, planner__core__integration.t.a, planner__core__integration.t.c
-  └─IndexMerge_12	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(11,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or _tidb_rowid < 10 or c > 11 order by a;
 b	a	c
 1	1	1
@@ -1380,13 +1380,13 @@ explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.b, planner__core__integration.t.a, planner__core__integration.t.c
-  └─IndexMerge_14	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_13(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_15	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_14(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1 order by a;
 b	a	c
 1	1	1
@@ -1396,15 +1396,15 @@ explain select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (
 id	estRows	task	access object	operator info
 Sort_5	8000.00	root		planner__core__integration.t.a
 └─Projection_7	8000.00	root		planner__core__integration.t.b, planner__core__integration.t.a, planner__core__integration.t.c
-  └─IndexMerge_16	8000.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─Selection_10(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_9	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─Selection_12(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
-    │ └─IndexRangeScan_11	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_13(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_15(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_17	8000.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─Selection_11(Build)	1111.11	cop[tikv]		ge(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_10	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─Selection_13(Build)	1107.78	cop[tikv]		lt(planner__core__integration.t.b, 10)
+    │ └─IndexRangeScan_12	3333.33	cop[tikv]	table:t, index:a(a, b)	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_14(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_16(Probe)	8000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,a,c from t where _tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1 order by a;
 b	a	c
 1	1	1
@@ -1486,11 +1486,11 @@ explain select /*+ use_index_merge(t) */ b from t where b < 10 or c < 11 or c > 
 id	estRows	task	access object	operator info
 Sort_5	7767.77	root		planner__core__integration.t.b
 └─Projection_7	7767.77	root		planner__core__integration.t.b
-  └─IndexMerge_12	7767.77	root		type: union
-    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,11), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(50,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	7767.77	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	7767.77	root		type: union
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,11), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(50,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	7767.77	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b from t where b < 10 or c < 11 or c > 50 order by b;
 b
 1
@@ -1500,10 +1500,10 @@ explain select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order
 id	estRows	task	access object	operator info
 Sort_5	3334.67	root		planner__core__integration.t.b
 └─Projection_7	3334.67	root		planner__core__integration.t.b
-  └─IndexMerge_11	3334.67	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	3334.67	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	3334.67	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	3334.67	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b from t where a < 2 or c > 10000 order by b;
 b
 1
@@ -1511,11 +1511,11 @@ explain select /*+ use_index_merge(t) */ b from t where a < 2 or a < 10 or b > 1
 id	estRows	task	access object	operator info
 Sort_5	3340.00	root		planner__core__integration.t.b
 └─Projection_7	3340.00	root		planner__core__integration.t.b
-  └─IndexMerge_12	3340.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:(11,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	3340.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	3340.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:(11,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	3340.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b from t where a < 2 or a < 10 or b > 11 order by b;
 b
 1
@@ -1524,12 +1524,12 @@ explain select /*+ use_index_merge(t) */ b from t where a < 2 or b >= 10 or c > 
 id	estRows	task	access object	operator info
 Sort_5	7771.56	root		planner__core__integration.t.b
 └─Projection_7	7771.56	root		planner__core__integration.t.b
-  └─IndexMerge_13	7771.56	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_12(Probe)	7771.56	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_14	7771.56	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_13(Probe)	7771.56	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 b
 1
@@ -1539,13 +1539,13 @@ explain select /*+ use_index_merge(t) */ b from t where a < 2 or a >= 10 or a >=
 id	estRows	task	access object	operator info
 Sort_5	7033.48	root		planner__core__integration.t.b
 └─Projection_7	7033.48	root		planner__core__integration.t.b
-  └─IndexMerge_14	7033.48	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
-    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_13(Probe)	7033.48	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_15	7033.48	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
+    ├─TableRangeScan_11(Build)	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_14(Probe)	7033.48	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 b
 1
@@ -1624,11 +1624,11 @@ explain select /*+ use_index_merge(t) */ a,b from t where b < 10 or c < 11 or c 
 id	estRows	task	access object	operator info
 Sort_5	7767.77	root		planner__core__integration.t.b
 └─Projection_7	7767.77	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_12	7767.77	root		type: union
-    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,11), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(50,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	7767.77	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	7767.77	root		type: union
+    ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,11), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(50,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	7767.77	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where b < 10 or c < 11 or c > 50 order by b;
 a	b
 1	1
@@ -1638,10 +1638,10 @@ explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 ord
 id	estRows	task	access object	operator info
 Sort_5	3334.67	root		planner__core__integration.t.b
 └─Projection_7	3334.67	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_11	3334.67	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	3334.67	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	3334.67	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	3334.67	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or c > 10000 order by b;
 a	b
 1	1
@@ -1661,12 +1661,12 @@ explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or b >= 10 or c 
 id	estRows	task	access object	operator info
 Sort_5	7771.56	root		planner__core__integration.t.b
 └─Projection_7	7771.56	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_13	7771.56	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_12(Probe)	7771.56	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_14	7771.56	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_13(Probe)	7771.56	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 a	b
 1	1
@@ -1676,13 +1676,13 @@ explain select /*+ use_index_merge(t) */ a,b from t where a < 2 or a >= 10 or a 
 id	estRows	task	access object	operator info
 Sort_5	7033.48	root		planner__core__integration.t.b
 └─Projection_7	7033.48	root		planner__core__integration.t.a, planner__core__integration.t.b
-  └─IndexMerge_14	7033.48	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
-    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_13(Probe)	7033.48	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_15	7033.48	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
+    ├─TableRangeScan_11(Build)	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_14(Probe)	7033.48	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ a,b from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 a	b
 1	1
@@ -1705,10 +1705,10 @@ explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 ord
 id	estRows	task	access object	operator info
 Sort_5	3334.67	root		planner__core__integration.t.b
 └─Projection_7	3334.67	root		planner__core__integration.t.b, planner__core__integration.t.c
-  └─IndexMerge_11	3334.67	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_10(Probe)	3334.67	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_12	3334.67	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(10000,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_11(Probe)	3334.67	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or c > 10000 order by b;
 b	c
 1	1
@@ -1716,11 +1716,11 @@ explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a < 10 or b >
 id	estRows	task	access object	operator info
 Sort_5	3340.00	root		planner__core__integration.t.b
 └─Projection_7	3340.00	root		planner__core__integration.t.b, planner__core__integration.t.c
-  └─IndexMerge_12	3340.00	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:(11,+inf], keep order:false, stats:pseudo
-    └─TableRowIDScan_11(Probe)	3340.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_13	3340.00	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:(11,+inf], keep order:false, stats:pseudo
+    └─TableRowIDScan_12(Probe)	3340.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or a < 10 or b > 11 order by b;
 b	c
 1	1
@@ -1729,12 +1729,12 @@ explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or b >= 10 or c 
 id	estRows	task	access object	operator info
 Sort_5	7771.56	root		planner__core__integration.t.b
 └─Projection_7	7771.56	root		planner__core__integration.t.b, planner__core__integration.t.c
-  └─IndexMerge_13	7771.56	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─IndexRangeScan_9(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:[10,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_12(Probe)	7771.56	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_14	7771.56	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─IndexRangeScan_10(Build)	3333.33	cop[tikv]	table:t, index:b(b)	range:[10,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:idx_c(c)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_13(Probe)	7771.56	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or b >= 10 or c > 100 or c < 1 order by b;
 b	c
 1	1
@@ -1744,13 +1744,13 @@ explain select /*+ use_index_merge(t) */ b,c from t where a < 2 or a >= 10 or a 
 id	estRows	task	access object	operator info
 Sort_5	7033.48	root		planner__core__integration.t.b
 └─Projection_7	7033.48	root		planner__core__integration.t.b, planner__core__integration.t.c
-  └─IndexMerge_14	7033.48	root		type: union
-    ├─TableRangeScan_8(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
-    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
-    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_11(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
-    ├─IndexRangeScan_12(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false, stats:pseudo
-    └─TableRowIDScan_13(Probe)	7033.48	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexMerge_15	7033.48	root		type: union
+    ├─TableRangeScan_9(Build)	3333.33	cop[tikv]	table:t	range:[-inf,2), keep order:false, stats:pseudo
+    ├─TableRangeScan_10(Build)	3333.33	cop[tikv]	table:t	range:[10,+inf], keep order:false, stats:pseudo
+    ├─TableRangeScan_11(Build)	3333.33	cop[tikv]	table:t	range:[20,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_12(Build)	3333.33	cop[tikv]	table:t, index:idx_c(c)	range:(100,+inf], keep order:false, stats:pseudo
+    ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false, stats:pseudo
+    └─TableRowIDScan_14(Probe)	7033.48	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t) */ b,c from t where a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1 order by b;
 b	c
 1	1
@@ -2090,7 +2090,7 @@ b	b1	2	22
 c	c1	3	33
 drop database cluster_idx_unique_double_read;
 set @@tidb_enable_clustered_index = DEFAULT;
-use planner__core__integration
+use planner__core__integration;
 drop table if exists t, t2;
 set @@tidb_enable_clustered_index = 'ON';
 create table t(a int, b int, c int, primary key(a, b));
@@ -2099,15 +2099,15 @@ insert into t values(1,1,1), (2,2,2), (3,3,3);
 insert into t2 values(1,2,3,4), (2,4,3,5), (1,3,1,1);
 select /*+ INL_MERGE_JOIN(t) */ * from t right outer join t2 on t.a=t2.c;
 a	b	c	a	b	c	d
-1	1	1	1	3	1	1
 3	3	3	1	2	3	4
+1	1	1	1	3	1	1
 3	3	3	2	4	3	5
 select /*+ INL_MERGE_JOIN(t2) */ * from t left outer join t2 on t.a=t2.c;
 a	b	c	a	b	c	d
-1	1	1	1	3	1	1
-2	2	2	NULL	NULL	NULL	NULL
 3	3	3	1	2	3	4
+1	1	1	1	3	1	1
 3	3	3	2	4	3	5
+2	2	2	NULL	NULL	NULL	NULL
 set @@tidb_enable_clustered_index = DEFAULT;
 drop table if exists t;
 create table t (a int not null, b int not null, c int not null, primary key (a,c)) partition by range (c) (partition p0 values less than (5), partition p1 values less than (10));
@@ -2288,7 +2288,7 @@ TableDual	0.00	root		rows:0
 drop table t;
 explain select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 id	estRows	task	access object	operator info
-HashJoin_8	1.00	root		CARTESIAN left outer join
+HashJoin_8	1.00	root		CARTESIAN left outer join, left side:Projection_10
 ├─Projection_12(Build)	1.00	root		2->Column#2
 │ └─TableDual_13	1.00	root		rows:1
 └─Projection_10(Probe)	1.00	root		1->Column#1
@@ -2902,7 +2902,7 @@ create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b));
 insert into t2 values (null, 1);
 explain select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 id	estRows	task	access object	operator info
-IndexJoin_12	8000.00	root		anti semi join, inner:IndexLookUp_11, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
+IndexJoin_12	8000.00	root		anti semi join, inner:IndexLookUp_11, left side:TableReader_22, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
 ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
 │ └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexLookUp_11(Probe)	12500.00	root		
@@ -3161,7 +3161,7 @@ Warning	1105	The parameter of nth_plan() is out of range
 drop table if exists t;
 create table t (a int);
 insert into t values (1);
-analyze table t;
+analyze table t all columns;
 set tidb_opt_limit_push_down_threshold=0;
 explain format=brief select a from t order by a desc limit 10;
 id	estRows	task	access object	operator info
@@ -3393,10 +3393,12 @@ drop table if exists t;
 create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a));
 explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_11	33.33	65346.12	root		
-├─IndexRangeScan_8(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
-└─Selection_10(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
-  └─TableRowIDScan_9	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_8	33.33	65346.12	root		
+├─IndexRangeScan_5(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
+└─Selection_7(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
+  └─TableRowIDScan_6	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+Level	Code	Message
+Note	1105	[idx1,idx2] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 drop table if exists t30094;
 create table t30094(a varchar(10));
 explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);
@@ -3464,7 +3466,7 @@ INSERT INTO t2 VALUES (1,2), (2,2);
 explain format=brief SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));
 id	estRows	task	access object	operator info
 Selection	8000.00	root		not(plus(0, and(eq(planner__core__integration.t1.a, 30), eq(planner__core__integration.t2.b, 1))))
-└─MergeJoin	10000.00	root		left outer join, left key:planner__core__integration.t1.a, right key:planner__core__integration.t2.a
+└─MergeJoin	10000.00	root		left outer join, left side:TableReader, left key:planner__core__integration.t1.a, right key:planner__core__integration.t2.a
   ├─TableReader(Build)	8000.00	root		data:Selection
   │ └─Selection	8000.00	cop[tikv]		not(istrue_with_null(plus(0, and(eq(planner__core__integration.t2.a, 30), eq(planner__core__integration.t2.b, 1)))))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -3493,7 +3495,7 @@ insert into t1 select * from t1;
 insert into t1 select * from t1;
 insert into t1 select * from t1;
 insert into t1 value(1,1,1);
-analyze table t1;
+analyze table t1 all columns;
 explain format = 'brief' select * from t1 where a=1 or b=1;
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
@@ -3502,33 +3504,31 @@ TableReader	1.99	root		data:Selection
 explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(0, or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1)))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where null or a=1 or b=1;
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(0, or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1)))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where a=1 or false or b=1;
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), or(0, eq(planner__core__integration.t1.b, 1)))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where a=1 or b=1 or "false";
 id	estRows	task	access object	operator info
 TableReader	1.99	root		data:Selection
-└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), or(eq(planner__core__integration.t1.b, 1), 0))
+└─Selection	1.99	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1))
   └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;
 id	estRows	task	access object	operator info
-TableReader	129.00	root		data:Selection
-└─Selection	129.00	cop[tikv]		or(1, or(eq(planner__core__integration.t1.a, 1), eq(planner__core__integration.t1.b, 1)))
-  └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
+TableReader	129.00	root		data:TableFullScan
+└─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 explain format = 'brief' select * from t1 where a=1 or b=1 or 1=1;
 id	estRows	task	access object	operator info
-TableReader	129.00	root		data:Selection
-└─Selection	129.00	cop[tikv]		or(eq(planner__core__integration.t1.a, 1), or(eq(planner__core__integration.t1.b, 1), 1))
-  └─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
+TableReader	129.00	root		data:TableFullScan
+└─TableFullScan	129.00	cop[tikv]	table:t1	keep order:false
 drop table if exists t1;
 create database natural_join_update;
 use natural_join_update;
@@ -3570,7 +3570,7 @@ create table t2(id int primary key, col1 int);
 explain format='brief' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;
 id	estRows	task	access object	operator info
 Sort	12500.00	root		planner__core__integration.t2.id
-└─MergeJoin	12500.00	root		left outer join, left key:planner__core__integration.t1.col1, right key:planner__core__integration.t2.id
+└─MergeJoin	12500.00	root		left outer join, left side:Sort, left key:planner__core__integration.t1.col1, right key:planner__core__integration.t2.id
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─Sort(Probe)	10000.00	root		planner__core__integration.t1.col1
@@ -3586,7 +3586,7 @@ explain select one.a from t1 one order by (select two.d from t2 two where two.c 
 id	estRows	task	access object	operator info
 Projection_16	10000.00	root		planner__core__integration.t1.a
 └─Sort_17	10000.00	root		planner__core__integration.t2.d
-  └─Apply_20	10000.00	root		CARTESIAN left outer join
+  └─Apply_20	10000.00	root		CARTESIAN left outer join, left side:TableReader_22
     ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
     │ └─TableFullScan_21	10000.00	cop[tikv]	table:one	keep order:false, stats:pseudo
     └─MaxOneRow_23(Probe)	10000.00	root		
@@ -3617,7 +3617,7 @@ a
 explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
 id	estRows	task	access object	operator info
 Selection	8000.00	root		eq(json_extract(planner__core__integration.t.a, "$.id"), cast("ish", json BINARY))
-└─HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__integration.t.a, planner__core__integration.t.a)]
+└─HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(planner__core__integration.t.a, planner__core__integration.t.a)]
   ├─TableReader(Build)	8000.00	root		data:Selection
   │ └─Selection	8000.00	cop[tikv]		not(isnull(cast(planner__core__integration.t.a, var_string(4294967295))))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -3627,7 +3627,7 @@ drop table if exists t, t2;
 set @@tidb_partition_prune_mode='static';
 CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11));
 insert into t values (1),(2),(3),(4),(7),(8),(9),(10);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t;
 id	estRows	task	access object	operator info
 PartitionUnion	8.00	root		
@@ -3895,7 +3895,7 @@ set @@tidb_enable_pipelined_window_function=DEFAULT;
 drop table if exists t;
 create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));
 insert into t values ('20000201'), ('19000101');
-analyze table t;
+analyze table t all columns;
 desc format='brief' select * from t where a < '2000-01-01';
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:Selection
@@ -3917,19 +3917,19 @@ create table t(a int primary key, b varchar(20));
 insert into t values (1,1);
 explain analyze select * from t where a=1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Point_Get_1	1.00	1	root	table:t	time:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
+Point_Get_1	1.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
 explain analyze select * from t where a in (1,2,3);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Batch_Point_Get_1	3.00	1	root	table:t	time:<num>, loops:<num>, RU:<num>, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
+Batch_Point_Get_1	3.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
 drop table if exists t;
 create table t (a int, b int, unique index (a));
 insert into t values (1,1);
 explain analyze select * from t where a=1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Point_Get_1	1.00	1	root	table:t, index:a(a)	time:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	NULL	N/A	N/A
+Point_Get_1	1.00	1	root	table:t, index:a(a)	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	NULL	N/A	N/A
 explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Insert_1	N/A	0	root	NULL	time:<num>, loops:<num>, prepare:<num>, check_insert: {total_time:<num>, mem_insert_time:<num>, prefetch:<num>, fk_check:<num>, rpc:{BatchGet:{num_rpc:<num>, total_time:<num>}}}, RU:<num>	N/A	<num> Bytes	N/A
+Insert_1	N/A	0	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, prepare:<num>, check_insert: {total_time:<num>, mem_insert_time:<num>, prefetch:<num>, fk_check:<num>, rpc:{BatchGet:{num_rpc:<num>, total_time:<num>}}}, RU:<num>	N/A	<num> Bytes	N/A
 drop table if exists t;
 create table t (a int, b int);
 insert into t values (1, 2);
@@ -4266,22 +4266,6 @@ pad char(60) NOT NULL DEFAULT '',
 PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
 KEY k (k)
 );
-set @@tidb_opt_fix_control = '46177:off';
-explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
-id	estRows	task	access object	operator info
-Projection	10.00	root		Column#6->Column#7
-└─Window	10.00	root		row_number()->Column#6 over(order by planner__core__integration.sbtest.k rows between current row and current row)
-  └─IndexReader	10.00	root		index:Selection
-    └─Selection	10.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 10)
-      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
-explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(Column#6)->Column#5
-└─IndexReader	1.00	root		index:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		group by:planner__core__integration.sbtest.k, funcs:count(1)->Column#6
-    └─Selection	1.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 1)
-      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
-set @@tidb_opt_fix_control = '46177:on';
 explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 id	estRows	task	access object	operator info
 Projection	10.00	root		Column#6->Column#7
@@ -4295,7 +4279,6 @@ StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(1
 └─Sort	1.00	root		planner__core__integration.sbtest.k
   └─TableReader	1.00	root		data:TableRangeScan
     └─TableRangeScan	1.00	cop[tikv]	table:sbtest	range:[0,1), keep order:false, stats:pseudo
-set @@tidb_opt_fix_control = default;
 create table sys.t (id int);
 insert into sys.t values (1),(2);
 set tidb_isolation_read_engines='tiflash';

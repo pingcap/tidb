@@ -172,7 +172,7 @@ create table t (a int, b int, c int);
 alter table t add index t(a), add index t(b);
 Error 8200 (HY000): Unsupported operate same index 't'
 show index from t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop table if exists t;
 create table t (a int, b int, c int);
 alter table t add index t(a), drop column a;
@@ -180,14 +180,14 @@ Error 8200 (HY000): Unsupported operate same column 'a'
 alter table t add index t(a, b), drop column a;
 Error 8200 (HY000): Unsupported operate same column 'a'
 show index from t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop table if exists t;
 create table t (a int, b int, c int);
 insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);
 alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);
 Error 1062 (23000): Duplicate entry '1' for key 't.i3'
 show index from t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 alter table t add index i1(a), add index i2(a, b), add index i3(c);
 drop table if exists t;
 create table t (a int, b int, c int, index t(a));
@@ -432,7 +432,27 @@ alter table t add index i(a), add primary key (a);
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   KEY `i` (`a`),
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists child, parent;
+create table parent (ref int, key(ref));
+create table child (ref int, constraint fk1 foreign key (ref) references parent(ref), constraint fk2 foreign key (ref) references parent(ref));
+alter table child drop foreign key fk1, drop foreign key fk3;
+Error 1091 (42000): Can't DROP 'fk3'; check that column/key exists
+show create table child;
+Table	Create Table
+child	CREATE TABLE `child` (
+  `ref` int DEFAULT NULL,
+  KEY `fk1` (`ref`),
+  CONSTRAINT `fk1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`),
+  CONSTRAINT `fk2` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table child drop foreign key fk1, drop foreign key fk2;
+show create table child;
+Table	Create Table
+child	CREATE TABLE `child` (
+  `ref` int DEFAULT NULL,
+  KEY `fk1` (`ref`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

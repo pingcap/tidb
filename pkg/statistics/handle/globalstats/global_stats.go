@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -103,6 +103,10 @@ func MergePartitionStats2GlobalStats(
 	histIDs []int64,
 ) (globalStats *GlobalStats, err error) {
 	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
+		statslogutil.StatsSampleLogger().Info("use async merge global stats",
+			zap.Int64("tableID", globalTableInfo.ID),
+			zap.String("table", globalTableInfo.Name.L),
+		)
 		worker, err := NewAsyncMergePartitionStats2GlobalStats(statsHandle, globalTableInfo, histIDs, is)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -113,6 +117,10 @@ func MergePartitionStats2GlobalStats(
 		}
 		return worker.Result(), nil
 	}
+	statslogutil.StatsSampleLogger().Info("use blocking merge global stats",
+		zap.Int64("tableID", globalTableInfo.ID),
+		zap.String("table", globalTableInfo.Name.L),
+	)
 	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
 }
 
@@ -346,7 +354,7 @@ func blockingMergePartitionStats2GlobalStats(
 
 		// Merge histogram.
 		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
 		if err != nil {
 			return
 		}
@@ -371,7 +379,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			continue
 		}
 		// fms for global stats doesn't need to dump to kv.
-		err = statsHandle.SaveStatsToStorage(gid,
+		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
 			globalStats.Count,
 			globalStats.ModifyCount,
 			info.IsIndex,
@@ -379,7 +387,6 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			cms,
 			topN,
 			info.StatsVersion,
-			1,
 			true,
 			util.StatsMetaHistorySourceAnalyze,
 		)

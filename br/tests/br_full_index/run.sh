@@ -41,7 +41,7 @@ echo "backup start..."
 # Do not log to terminal
 unset BR_LOG_TO_TERM
 # do not backup stats to test whether we can restore without stats.
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --ignore-stats=true --log-file $LOG || cat $LOG
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --ignore-stats=true --log-file $LOG --checksum=true || cat $LOG
 BR_LOG_TO_TERM=1
 
 checksum_count=$(cat $LOG | grep "checksum success" | wc -l | xargs)

@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -229,4 +229,12 @@ func TestGetKVGroupBlockSize(t *testing.T) {
 	require.Equal(t, 32*units.MiB, getKVGroupBlockSize(dataKVGroup))
 	require.Equal(t, 16*units.MiB, getKVGroupBlockSize(""))
 	require.Equal(t, 16*units.MiB, getKVGroupBlockSize("1"))
+}
+
+func TestGetAdjustedIndexBlockSize(t *testing.T) {
+	require.EqualValues(t, 1*units.MiB, getAdjustedIndexBlockSize(1*units.MiB))
+	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(15*units.MiB))
+	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(16*units.MiB))
+	require.EqualValues(t, 17*units.MiB, getAdjustedIndexBlockSize(17*units.MiB))
+	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(166*units.MiB))
 }

@@ -72,7 +72,6 @@ func NewCluster() (*Cluster, error) {
 	}
 	cluster.Storage = storage
 
-	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
@@ -93,7 +92,7 @@ func (mock *Cluster) Start() error {
 	cfg := config.NewConfig()
 	// let tidb random select a port
 	cfg.Port = 0
-	cfg.Store = "tikv"
+	cfg.Store = config.StoreTypeTiKV
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())

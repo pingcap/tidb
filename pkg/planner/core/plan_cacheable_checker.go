@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
@@ -519,7 +519,7 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 	if tbl == nil {
 		return 0, false
 	}
-	tb, err := schema.TableByName(tbl.Schema, tbl.Name)
+	tb, err := schema.TableByName(context.Background(), tbl.Schema, tbl.Name)
 	if err != nil {
 		return 0, false
 	}
@@ -636,7 +636,7 @@ func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema info
 		tableSchema.O = sctx.GetSessionVars().CurrentDB
 		tableSchema.L = strings.ToLower(tableSchema.O)
 	}
-	tb, err := schema.TableByName(tableSchema, node.Name)
+	tb, err := schema.TableByName(context.Background(), tableSchema, node.Name)
 	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760{}) != nil {
 		err = errors.New("mock error")
 	}

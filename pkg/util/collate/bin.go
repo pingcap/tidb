@@ -44,6 +44,11 @@ func (*binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
 }
 
+// Clone implements Collator interface.
+func (*binCollator) Clone() Collator {
+	return new(binCollator)
+}
+
 type derivedBinCollator struct {
 	binCollator
 }
@@ -73,6 +78,11 @@ func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 // Notice that trailing spaces are significant.
 func (*binPaddingCollator) Pattern() WildcardPattern {
 	return &derivedBinPattern{}
+}
+
+// Clone implements Collator interface.
+func (*binPaddingCollator) Clone() Collator {
+	return new(binPaddingCollator)
 }
 
 type derivedBinPattern struct {

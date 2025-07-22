@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -58,7 +58,7 @@ func BenchmarkInfoschemaOverhead(b *testing.B) {
 	}()
 
 	if *version == 2 {
-		variable.SchemaCacheSize.Store(1000000)
+		vardef.SchemaCacheSize.Store(1000000)
 	}
 
 	tc := &infoschemaTestContext{

@@ -127,12 +127,12 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 			if expr.GetType(ctx.EvalCtx()).GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
-			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType(ctx.EvalCtx()).GetType()) + "'.")
+			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType(ctx.EvalCtx()).GetType()) + "'.")
 			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType(ctx.EvalCtx()).IsDecimalValid() {
-				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetFlen()) + "','" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetDecimal()) + "').")
+				warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(ctx.EvalCtx(), errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetFlen()) + "','" + strconv.Itoa(expr.GetType(ctx.EvalCtx()).GetDecimal()) + "').")
 				ctx.AppendWarning(warnErr)
 				return false
 			}
@@ -198,18 +198,21 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
 		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
 
+		// vector functions.
+		ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText,
+
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
 		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
 		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
-		ast.DateFormat,
+		ast.DateFormat, ast.DateAdd, ast.AddDate, ast.DateSub, ast.SubDate,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
-		ast.FromDays,                  /* ast.ToDays */
-		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.FromDays, /* ast.ToDays */
+		ast.PeriodAdd, ast.PeriodDiff, ast.TimestampDiff, ast.FromUnixTime,
 		/* ast.LastDay */
-		ast.Sysdate,
+		ast.Sysdate, /* ast.StrToDate, */
 
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
@@ -221,6 +224,11 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
 		ast.UUID:
 
+		return true
+	case ast.UnixTimestamp:
+		if sf.Function.PbCode() == tipb.ScalarFuncSig_UnixTimestampCurrent {
+			return false
+		}
 		return true
 	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 	// open the following switchers if we implement them in coprocessor via `cmath`
@@ -288,7 +296,15 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			tipb.ScalarFuncSig_CoalesceDuration,
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
-			tipb.ScalarFuncSig_CaseWhenDuration:
+			tipb.ScalarFuncSig_CaseWhenDuration,
+			tipb.ScalarFuncSig_LTJson,
+			tipb.ScalarFuncSig_LEJson,
+			tipb.ScalarFuncSig_GTJson,
+			tipb.ScalarFuncSig_GEJson,
+			tipb.ScalarFuncSig_EQJson,
+			tipb.ScalarFuncSig_NEJson,
+			tipb.ScalarFuncSig_JsonIsNull,
+			tipb.ScalarFuncSig_InJson:
 			return false
 		}
 		return true
@@ -335,6 +351,9 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			return function.GetArgs()[0].GetType(ctx).GetType() != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastTimeAsDuration:
 			return retType.GetType() == mysql.TypeDuration
+		case tipb.ScalarFuncSig_CastVectorFloat32AsString,
+			tipb.ScalarFuncSig_CastVectorFloat32AsVectorFloat32:
+			return true
 		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
 			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
 			return true
@@ -358,6 +377,12 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec,
 			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
+			return true
+		}
+	case ast.Truncate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_TruncateUint, tipb.ScalarFuncSig_TruncateInt,
+			tipb.ScalarFuncSig_TruncateReal, tipb.ScalarFuncSig_TruncateDecimal:
 			return true
 		}
 	case ast.Extract:
@@ -396,6 +421,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 	case ast.GetFormat:
 		return true
 	case ast.IsIPv4, ast.IsIPv6:
+		return true
+	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
@@ -496,6 +523,11 @@ func (ctx PushDownContext) AppendWarning(err error) {
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
 func PushDownExprsWithExtraInfo(ctx PushDownContext, exprs []Expression, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+	if len(exprs) == 0 {
+		return nil, nil
+	}
+	pushed = make([]Expression, 0, len(exprs))
+	remained = make([]Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if canExprPushDown(ctx, expr, storeType, canEnumPush) {
 			pushed = append(pushed, expr)

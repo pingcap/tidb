@@ -24,13 +24,16 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	tbctx "github.com/pingcap/tidb/pkg/table/context"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -117,30 +120,186 @@ var (
 // RecordIterFunc is used for low-level record iteration.
 type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more bool, err error)
 
+// commonMutateOpt is the common options for mutating a table.
+type commonMutateOpt struct {
+	ctx                        context.Context
+	dupKeyCheck                DupKeyCheckMode
+	pessimisticLazyDupKeyCheck PessimisticLazyDupKeyCheckMode
+}
+
+// Ctx returns the go context in the option
+func (opt *commonMutateOpt) Ctx() context.Context {
+	return opt.ctx
+}
+
+// DupKeyCheck returns the DupKeyCheckMode in the option
+func (opt *commonMutateOpt) DupKeyCheck() DupKeyCheckMode {
+	return opt.dupKeyCheck
+}
+
+// PessimisticLazyDupKeyCheck returns the PessimisticLazyDupKeyCheckMode in the option
+func (opt *commonMutateOpt) PessimisticLazyDupKeyCheck() PessimisticLazyDupKeyCheckMode {
+	return opt.pessimisticLazyDupKeyCheck
+}
+
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
-	CreateIdxOpt
-	IsUpdate      bool
-	ReserveAutoID int
+	commonMutateOpt
+	isUpdate      bool
+	reserveAutoID int
+}
+
+// NewAddRecordOpt creates a new AddRecordOpt with options.
+func NewAddRecordOpt(opts ...AddRecordOption) *AddRecordOpt {
+	opt := &AddRecordOpt{}
+	for _, o := range opts {
+		o.applyAddRecordOpt(opt)
+	}
+	return opt
+}
+
+// IsUpdate indicates whether the `AddRecord` operation is in an update statement.
+func (opt *AddRecordOpt) IsUpdate() bool {
+	return opt.isUpdate
+}
+
+// ReserveAutoID indicates the auto id count that should be reserved.
+func (opt *AddRecordOpt) ReserveAutoID() int {
+	return opt.reserveAutoID
+}
+
+// GetCreateIdxOpt creates a CreateIdxOpt.
+func (opt *AddRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
+	return &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
 }
 
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
 type AddRecordOption interface {
-	ApplyOn(*AddRecordOpt)
+	applyAddRecordOpt(*AddRecordOpt)
+}
+
+// UpdateRecordOpt contains the options will be used when updating a record.
+type UpdateRecordOpt struct {
+	commonMutateOpt
+	// skipWriteUntouchedIndices is an option to skip write untouched indices when updating a record.
+	skipWriteUntouchedIndices bool
+}
+
+// NewUpdateRecordOpt creates a new UpdateRecordOpt with options.
+func NewUpdateRecordOpt(opts ...UpdateRecordOption) *UpdateRecordOpt {
+	opt := &UpdateRecordOpt{}
+	for _, o := range opts {
+		o.applyUpdateRecordOpt(opt)
+	}
+	return opt
+}
+
+// SkipWriteUntouchedIndices indicates whether to skip write untouched indices when updating a record.
+func (opt *UpdateRecordOpt) SkipWriteUntouchedIndices() bool {
+	return opt.skipWriteUntouchedIndices
+}
+
+// GetAddRecordOpt creates a AddRecordOpt.
+func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true}
+}
+
+// GetCreateIdxOpt creates a CreateIdxOpt.
+func (opt *UpdateRecordOpt) GetCreateIdxOpt() *CreateIdxOpt {
+	return &CreateIdxOpt{commonMutateOpt: opt.commonMutateOpt}
+}
+
+// UpdateRecordOption is defined for the UpdateRecord() method of the Table interface.
+type UpdateRecordOption interface {
+	applyUpdateRecordOpt(*UpdateRecordOpt)
+}
+
+// RemoveRecordOpt contains the options will be used when removing a record.
+type RemoveRecordOpt struct {
+	indexesLayoutOffset IndexesLayout
+}
+
+// HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
+func (opt *RemoveRecordOpt) HasIndexesLayout() bool {
+	return opt.indexesLayoutOffset != nil
+}
+
+// GetIndexesLayout returns the IndexesLayout of the RemoveRecordOpt.
+func (opt *RemoveRecordOpt) GetIndexesLayout() IndexesLayout {
+	return opt.indexesLayoutOffset
+}
+
+// GetIndexLayout returns the IndexRowLayoutOption for the specified index.
+func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
+	return opt.indexesLayoutOffset[indexID]
+}
+
+// NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
+func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
+	opt := &RemoveRecordOpt{}
+	for _, o := range opts {
+		o.applyRemoveRecordOpt(opt)
+	}
+	return opt
+}
+
+// RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
+type RemoveRecordOption interface {
+	applyRemoveRecordOpt(*RemoveRecordOpt)
+}
+
+// IndexRowLayoutOption is the option for index row layout.
+// It is used to specify the order of the index columns in the row.
+type IndexRowLayoutOption []int
+
+// IndexesLayout is used to specify the layout of the indexes.
+// It's mapping from index ID to the layout of the index.
+type IndexesLayout map[int64]IndexRowLayoutOption
+
+// GetIndexLayout returns the layout of the specified index.
+func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
+	if idx == nil {
+		return nil
+	}
+	return idx[idxID]
+}
+
+func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = idx
+}
+
+// CommonMutateOptFunc is a function to provide common options for mutating a table.
+type CommonMutateOptFunc func(*commonMutateOpt)
+
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (f CommonMutateOptFunc) applyAddRecordOpt(opt *AddRecordOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// ApplyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (f CommonMutateOptFunc) applyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (f CommonMutateOptFunc) applyCreateIdxOpt(opt *CreateIdxOpt) {
+	f(&opt.commonMutateOpt)
+}
+
+// WithCtx returns a CommonMutateOptFunc.
+// This option is used to pass context.Context.
+func WithCtx(ctx context.Context) CommonMutateOptFunc {
+	return func(opt *commonMutateOpt) {
+		opt.ctx = ctx
+	}
 }
 
 // WithReserveAutoIDHint tells the AddRecord operation to reserve a batch of auto ID in the stmtctx.
 type WithReserveAutoIDHint int
 
-// ApplyOn implements the AddRecordOption interface.
-func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
-	opt.ReserveAutoID = int(n)
-}
-
-// ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
-// can be passed as the optional argument to the table.AddRecord method.
-func (f CreateIdxOptFunc) ApplyOn(opt *AddRecordOpt) {
-	f(&opt.CreateIdxOpt)
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (n WithReserveAutoIDHint) applyAddRecordOpt(opt *AddRecordOpt) {
+	opt.reserveAutoID = int(n)
 }
 
 // IsUpdate is a defined value for AddRecordOptFunc.
@@ -148,8 +307,83 @@ var IsUpdate AddRecordOption = isUpdate{}
 
 type isUpdate struct{}
 
-func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
-	opt.IsUpdate = true
+func (i isUpdate) applyAddRecordOpt(opt *AddRecordOpt) {
+	opt.isUpdate = true
+}
+
+// skipWriteUntouchedIndices implements UpdateRecordOption.
+type skipWriteUntouchedIndices struct{}
+
+func (skipWriteUntouchedIndices) applyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.skipWriteUntouchedIndices = true
+}
+
+// SkipWriteUntouchedIndices is an option to skip write untouched options when updating a record.
+// If there are no later queries in the transaction that need to read the untouched indices,
+// you can use this option to improve performance.
+// However, it is not safe to use it in an explicit txn or the updated table has some foreign key constraints.
+// Because the following read operations in the same txn may not get the correct data with the current implementation.
+// See:
+// - https://github.com/pingcap/tidb/pull/12609
+// - https://github.com/pingcap/tidb/issues/39419
+var SkipWriteUntouchedIndices UpdateRecordOption = skipWriteUntouchedIndices{}
+
+// DupKeyCheckMode indicates how to check the duplicated key when adding/updating a record/index.
+type DupKeyCheckMode uint8
+
+const (
+	// DupKeyCheckInPlace indicates to check the duplicated key in place, both in the memory buffer and storage.
+	DupKeyCheckInPlace DupKeyCheckMode = iota
+	// DupKeyCheckLazy indicates to check the duplicated key lazily.
+	// It means only checking the duplicated key in the memory buffer and checking keys in storage will be postponed
+	// to the subsequence stage such as lock or commit phase.
+	DupKeyCheckLazy
+	// DupKeyCheckSkip indicates skipping the duplicated key check.
+	DupKeyCheckSkip
+)
+
+// ApplyAddRecordOpt implements the AddRecordOption interface.
+func (m DupKeyCheckMode) applyAddRecordOpt(opt *AddRecordOpt) {
+	opt.dupKeyCheck = m
+}
+
+// ApplyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (m DupKeyCheckMode) applyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.dupKeyCheck = m
+}
+
+// ApplyCreateIdxOpt implements the CreateIdxOption interface.
+func (m DupKeyCheckMode) applyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.dupKeyCheck = m
+}
+
+// PessimisticLazyDupKeyCheckMode only takes effect for pessimistic transaction
+// when `DupKeyCheckMode` is set to `DupKeyCheckLazy`.
+// It indicates how to check the duplicated key in store.
+type PessimisticLazyDupKeyCheckMode uint8
+
+const (
+	// DupKeyCheckInAcquireLock indicates to check the duplicated key when acquiring the pessimistic lock.
+	DupKeyCheckInAcquireLock PessimisticLazyDupKeyCheckMode = iota
+	// DupKeyCheckInPrewrite indicates to check the duplicated key in the prewrite step when committing.
+	// Please notice that if it is used, the duplicated key error may not be returned immediately after each statement,
+	// because the duplicated key is not checked when acquiring the pessimistic lock.
+	DupKeyCheckInPrewrite
+)
+
+// applyAddRecordOpt implements the AddRecordOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyAddRecordOpt(opt *AddRecordOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
+}
+
+// applyUpdateRecordOpt implements the UpdateRecordOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyUpdateRecordOpt(opt *UpdateRecordOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
+}
+
+// applyCreateIdxOpt implements the CreateIdxOption interface.
+func (m PessimisticLazyDupKeyCheckMode) applyCreateIdxOpt(opt *CreateIdxOpt) {
+	opt.pessimisticLazyDupKeyCheck = m
 }
 
 type columnAPI interface {
@@ -175,10 +409,10 @@ type columnAPI interface {
 }
 
 // MutateContext is used to when mutating a table.
-type MutateContext = tbctx.MutateContext
+type MutateContext = tblctx.MutateContext
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
-type AllocatorContext = tbctx.AllocatorContext
+type AllocatorContext = tblctx.AllocatorContext
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
@@ -187,6 +421,10 @@ type Table interface {
 	// Indices returns the indices of the table.
 	// The caller must be aware of that not all the returned indices are public.
 	Indices() []Index
+	DeletableIndices() []Index
+
+	// WritableConstraint returns constraints of the table in writable states.
+	WritableConstraint() []*Constraint
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
@@ -194,13 +432,13 @@ type Table interface {
 	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx MutateContext, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
+	AddRecord(ctx MutateContext, txn kv.Transaction, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(gctx context.Context, ctx MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, currData, newData []types.Datum, touched []bool, opts ...UpdateRecordOption) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...RemoveRecordOption) error
 
 	// Allocators returns all allocators.
 	Allocators(ctx AllocatorContext) autoid.Allocators
@@ -233,11 +471,11 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	defer r.End()
 	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
+	_, maxv, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
-	return max, err
+	return maxv, err
 }
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
@@ -245,13 +483,13 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
 	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
 	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
-	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
+	minv, maxv, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
 	if err != nil {
-		return min, max, err
+		return minv, maxv, err
 	}
 	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
-	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment1), uint64(offset)))
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(minv), uint64(increment1), uint64(offset)))
 	return nr, int64(increment1), nil
 }
 
@@ -272,7 +510,7 @@ type PartitionedTable interface {
 	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
-	GetPartitionColumnNames() []model.CIStr
+	GetPartitionColumnNames() []ast.CIStr
 	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
@@ -302,4 +540,27 @@ type CachedTable interface {
 	// 'exit' is a channel to tell the keep alive goroutine to exit.
 	// The result is sent to the 'wg' channel.
 	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
+}
+
+// CheckRowConstraint verify row check constraints.
+func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+	for _, constraint := range constraints {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		if err != nil {
+			return err
+		}
+		if ok == 0 && !isNull {
+			return ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
+		}
+	}
+	return nil
+}
+
+// CheckRowConstraintWithDatum verify row check constraints.
+// It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
+func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+	if len(constraints) == 0 {
+		return nil
+	}
+	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
 }

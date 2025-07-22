@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -29,7 +29,7 @@ import (
 const pseudoColSize = 8.0
 
 // GetIndexAvgRowSize computes average row size for a index scan.
-func GetIndexAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isUnique bool) (size float64) {
+func GetIndexAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isUnique bool) (size float64) {
 	size = GetAvgRowSize(ctx, coll, cols, true, true)
 	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
 	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
@@ -42,7 +42,7 @@ func GetIndexAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols
 }
 
 // GetTableAvgRowSize computes average row size for a table scan, exclude the index key-value pairs.
-func GetTableAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
+func GetTableAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
 	size = GetAvgRowSize(ctx, coll, cols, false, true)
 	switch storeType {
 	case kv.TiKV:
@@ -54,20 +54,22 @@ func GetTableAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols
 			size += 8 /* row_id length */
 		}
 	}
+	// Avoid errors related to size less than zero
+	size = max(0, size)
 	return
 }
 
 // GetAvgRowSize computes average row size for given columns.
-func GetAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
+func GetAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
 	sessionVars := ctx.GetSessionVars()
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
+	if coll.Pseudo || coll.ColNum() == 0 || coll.RealtimeCount == 0 {
 		size = pseudoColSize * float64(len(cols))
 	} else {
 		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
+			colHist := coll.GetCol(col.UniqueID)
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
+			if colHist == nil || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
 				size += pseudoColSize
 				continue
 			}
@@ -80,6 +82,8 @@ func GetAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*e
 			}
 		}
 	}
+	// Avoid errors related to size less than zero
+	size = max(0, size)
 	if sessionVars.EnableChunkRPC && !isForScan {
 		// Add 1/8 byte for each column's nullBitMap byte.
 		return size + float64(len(cols))/8
@@ -90,16 +94,16 @@ func GetAvgRowSize(ctx context.PlanContext, coll *statistics.HistColl, cols []*e
 
 // GetAvgRowSizeDataInDiskByRows computes average row size for given columns.
 func GetAvgRowSizeDataInDiskByRows(coll *statistics.HistColl, cols []*expression.Column) (size float64) {
-	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
+	if coll.Pseudo || coll.ColNum() == 0 || coll.RealtimeCount == 0 {
 		for _, col := range cols {
 			size += float64(chunk.EstimateTypeWidth(col.GetStaticType()))
 		}
 	} else {
 		for _, col := range cols {
-			colHist, ok := coll.Columns[col.UniqueID]
+			colHist := coll.GetCol(col.UniqueID)
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
-			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
+			if colHist == nil || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.RealtimeCount)) {
 				size += float64(chunk.EstimateTypeWidth(col.GetStaticType()))
 				continue
 			}
@@ -107,7 +111,7 @@ func GetAvgRowSizeDataInDiskByRows(coll *statistics.HistColl, cols []*expression
 		}
 	}
 	// Add 8 byte for each column's size record. See `DataInDiskByRows` for details.
-	return size + float64(8*len(cols))
+	return max(0, size+float64(8*len(cols)))
 }
 
 // AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
@@ -126,7 +130,7 @@ func AvgColSize(c *statistics.Column, count int64, isKey bool) float64 {
 	histCount := c.TotalRowCount()
 	notNullRatio := 1.0
 	if histCount > 0 {
-		notNullRatio = 1.0 - float64(c.NullCount)/histCount
+		notNullRatio = max(0, 1.0-float64(c.NullCount)/histCount)
 	}
 	switch c.Histogram.Tp.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -137,7 +141,7 @@ func AvgColSize(c *statistics.Column, count int64, isKey bool) float64 {
 		}
 	}
 	// Keep two decimal place.
-	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
+	return max(0, math.Round(float64(c.TotColSize)/float64(count)*100)/100)
 }
 
 // AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
@@ -147,7 +151,7 @@ func AvgColSizeChunkFormat(c *statistics.Column, count int64) float64 {
 		return 0
 	}
 	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
-	if fixedLen != -1 {
+	if fixedLen >= 0 {
 		return float64(fixedLen)
 	}
 	// Keep two decimal place.
@@ -155,9 +159,9 @@ func AvgColSizeChunkFormat(c *statistics.Column, count int64) float64 {
 	// Minus Log2(avgSize) for unfixed-len type LEN.
 	avgSize := float64(c.TotColSize) / float64(count)
 	if avgSize < 1 {
-		return math.Round(avgSize*100)/100 + 8
+		return max(0, math.Round(avgSize*100)/100) + 8
 	}
-	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
+	return max(0, math.Round((avgSize-math.Log2(avgSize))*100)/100) + 8
 }
 
 // AvgColSizeDataInDiskByRows is the average column size of the histogram. These sizes are derived
@@ -172,14 +176,14 @@ func AvgColSizeDataInDiskByRows(c *statistics.Column, count int64) float64 {
 		notNullRatio = 1.0 - float64(c.NullCount)/histCount
 	}
 	size := chunk.GetFixedLen(c.Histogram.Tp)
-	if size != -1 {
+	if size >= 0 {
 		return float64(size) * notNullRatio
 	}
 	// Keep two decimal place.
 	// Minus Log2(avgSize) for unfixed-len type LEN.
 	avgSize := float64(c.TotColSize) / float64(count)
 	if avgSize < 1 {
-		return math.Round((avgSize)*100) / 100
+		return max(0, math.Round((avgSize)*100)/100)
 	}
 	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
 }

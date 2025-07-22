@@ -183,8 +183,9 @@ select * from information_schema.`METRICS_TABLES` where table_name='tidb_qps';
 # TestTableConstraintsTable
 select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';
 
-# TestTableSessionVar
-select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';
+# Test for tables that have moved from information_schema to performance_schema
+# https://github.com/pingcap/tidb/issues/9154
+SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='information_schema' AND TABLE_NAME IN ('GLOBAL_VARIABLES','SESSION_VARIABLES','GLOBAL_STATUS','SESSION_STATUS');
 
 # TestSequences
 drop sequence if exists seq, seq2;
@@ -264,3 +265,72 @@ insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
 analyze table t;
 select sleep(1);
 select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
+
+
+# Cover reading from tables: Indexes, Views, KeyColumnUsage, TableConstraints
+drop table if exists test.t;
+select * from information_schema.tidb_indexes where table_name = 't';
+--sorted_result
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader';
+--sorted_result
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 't';
+--sorted_result
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' or table_name = 't';
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and column_name = 'c';
+select * from information_schema.tidb_indexes where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
+
+select * from information_schema.views where table_name = 'v1';
+select * from information_schema.views where table_name = 'non_exist';
+--sorted_result
+select * from information_schema.views where table_schema = 'executor__infoschema_reader';
+select * from information_schema.views where table_schema = 'non_exist';
+select * from information_schema.views where table_schema = 'executor__infoschema_reader' and table_name = 'v1';
+--sorted_result
+select * from information_schema.views where table_schema = 'executor__infoschema_reader' or table_name = 'v1';
+
+select * from information_schema.key_column_usage where table_name = 't';
+--sorted_result
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader';
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and table_name = 't';
+--sorted_result
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' or table_name = 't';
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'c';
+select * from information_schema.key_column_usage where table_schema = 'executor__infoschema_reader' and column_name = 'non_exist';
+
+CREATE TABLE tc(a INT CHECK(a > 10) NOT ENFORCED, b INT, c INT, CONSTRAINT c1 CHECK (b > c));
+--sorted_result
+select * from information_schema.table_constraints where table_name = 'tc';
+--sorted_result
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader';
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'tc';
+--sorted_result
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' or table_name = 'tc';
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and table_name = 'non_exist';
+--sorted_result
+select * from information_schema.table_constraints where table_schema = 'executor__infoschema_reader' and CONSTRAINT_NAME = 'c1';
+
+# TestTables
+select TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,ENGINE,VERSION from information_schema.tables where table_name = 't';
+select table_name, table_schema from information_schema.tables where table_name = 't';
+select table_name from information_schema.tables where table_name = 't';
+explain format='brief' select table_name, table_schema from information_schema.tables;
+select count(*) from information_schema.tables where table_name = 't';
+select count(table_name) from information_schema.tables where table_name = 't';
+
+drop table if exists t;
+create table t (c text);
+alter table t add index idx_t (c(16));
+select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
+
+# Query should return nothing when WHERE clauses are always false.
+# https://github.com/pingcap/tidb/issues/57345
+select table_name from information_schema.columns where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.columns where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.tables where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.tables where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.partitions where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.partitions where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.statistics where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.statistics where table_schema = 'a' and table_schema = 'b';
+select table_name from information_schema.referential_constraints where table_name = 'a' and table_name = 'b';
+select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';

@@ -20,6 +20,8 @@ go_test(
     flaky = True,
     deps = [
         ":constructor",
+        "//pkg/util/linter/constructor",
+        "@com_github_stretchr_testify//require",
         "@org_golang_x_tools//go/analysis/analysistest",
     ],
 )

@@ -53,6 +53,7 @@ jobs:
           - 8.0.22
           - 8.0.26
           - 8.0.37
+          - 8.4.3
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:

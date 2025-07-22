@@ -16,6 +16,7 @@ package planner
 
 import (
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 )
 
@@ -46,6 +47,8 @@ func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 		planCtx.TaskType,
 		planCtx.ThreadCnt,
 		config.GetGlobalConfig().Instance.TiDBServiceScope,
+		planCtx.MaxNodeCnt,
+		proto.ExtraParams{},
 		taskMeta,
 	)
 }

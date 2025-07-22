@@ -1024,8 +1024,12 @@ func (b *builtinLpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 		strLength := len(str)
 		padStr := padBuf.GetString(i)
 		padLength := len(padStr)
-		if targetLength < 0 || targetLength > b.tp.GetFlen() || (strLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength > b.tp.GetFlen() {
 			result.AppendNull()
+			continue
+		}
+		if strLength < targetLength && padLength == 0 {
+			result.AppendString("")
 			continue
 		}
 		if tailLen := targetLength - strLength; tailLen > 0 {
@@ -1095,8 +1099,12 @@ func (b *builtinLpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 			result.AppendNull()
+			continue
+		}
+		if runeLength < targetLength && padLength == 0 {
+			result.AppendString("")
 			continue
 		}
 		if tailLen := targetLength - runeLength; tailLen > 0 {
@@ -1485,8 +1493,12 @@ func (b *builtinRpadSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 		strLength := len(str)
 		padStr := padBuf.GetString(i)
 		padLength := len(padStr)
-		if targetLength < 0 || targetLength > b.tp.GetFlen() || (strLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength > b.tp.GetFlen() {
 			result.AppendNull()
+			continue
+		}
+		if strLength < targetLength && padLength == 0 {
+			result.AppendString("")
 			continue
 		}
 		if tailLen := targetLength - strLength; tailLen > 0 {
@@ -2619,8 +2631,12 @@ func (b *builtinRpadUTF8Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 			result.AppendNull()
+			continue
+		}
+		if runeLength < targetLength && padLength == 0 {
+			result.AppendString("")
 			continue
 		}
 		if tailLen := targetLength - runeLength; tailLen > 0 {
@@ -2978,7 +2994,11 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
 			tc := typeCtx(ctx)
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
+
+			// force copy of the string
+			// https://github.com/pingcap/tidb/issues/56193
+			locale := strings.Clone(localeBuf.GetString(i))
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
@@ -3020,7 +3040,11 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
 			tc := typeCtx(ctx)
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
+
+			// force copy of the string
+			// https://github.com/pingcap/tidb/issues/56193
+			locale := strings.Clone(localeBuf.GetString(i))
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))

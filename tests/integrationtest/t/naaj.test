@@ -209,5 +209,6 @@ select * from naaj_A where (a+1,b*2) not in (select a, b from naaj_B);
 
 # assert 3: NA-EQ and EQ can't co-exist at the same time.
 explain select (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a) from naaj_A;
-explain select * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+explain select /*+ set_var(tidb_hash_join_version=legacy) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
+explain select /*+ set_var(tidb_hash_join_version=optimized) */ * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
 set @@session.tidb_enable_null_aware_anti_join=0;

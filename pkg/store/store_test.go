@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
@@ -738,8 +739,8 @@ func TestIsolationMultiInc(t *testing.T) {
 
 func TestRetryOpenStore(t *testing.T) {
 	begin := time.Now()
-	require.NoError(t, Register("dummy", &brokenStore{}))
-	store, err := newStoreWithRetry("dummy://dummy-store", 3)
+	require.NoError(t, Register(config.StoreTypeMockTiKV, &brokenStore{}))
+	store, err := newStoreWithRetry("mocktikv://dummy-store", 3)
 	if store != nil {
 		defer func() {
 			require.NoError(t, store.Close())
@@ -750,22 +751,13 @@ func TestRetryOpenStore(t *testing.T) {
 	require.GreaterOrEqual(t, uint64(elapse), uint64(3*time.Second))
 }
 
-func TestOpenStore(t *testing.T) {
-	require.NoError(t, Register("open", &brokenStore{}))
-	store, err := newStoreWithRetry(":", 3)
-	if store != nil {
-		defer func() {
-			require.NoError(t, store.Close())
-		}()
-	}
-	require.Error(t, err)
-}
-
 func TestRegister(t *testing.T) {
 	err := Register("retry", &brokenStore{})
+	require.ErrorContains(t, err, "invalid storage")
+	err = Register(config.StoreTypeMockTiKV, &brokenStore{})
 	require.NoError(t, err)
-	err = Register("retry", &brokenStore{})
-	require.Error(t, err)
+	err = Register(config.StoreTypeMockTiKV, &brokenStore{})
+	require.ErrorContains(t, err, "already registered")
 }
 
 func TestSetAssertion(t *testing.T) {

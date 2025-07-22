@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -555,7 +555,6 @@ func (i *intReader) close() error {
 func buildOpener(in [][]int, refCnt *atomic.Int64) []readerOpenerFn[myInt, *intReader] {
 	ret := make([]readerOpenerFn[myInt, *intReader], 0, len(in))
 	for _, ints := range in {
-		ints := ints
 		ret = append(ret, func() (**intReader, error) {
 			refCnt.Inc()
 			r := &intReader{ints, refCnt}

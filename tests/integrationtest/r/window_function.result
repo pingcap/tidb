@@ -111,7 +111,7 @@ Projection	10000.00	root		Column#6->Column#7
 drop table if exists t1;
 create table t1(a int primary key, b int);
 insert into t1 values(1, 1), (2, 1);
-analyze table t1;
+analyze table t1 all columns;
 explain format = 'brief' select sum(a) over(partition by b) from t1;
 id	estRows	task	access object	operator info
 Projection	2.00	root		Column#4->Column#5
@@ -120,7 +120,7 @@ Projection	2.00	root		Column#4->Column#5
     └─TableReader	2.00	root		data:TableFullScan
       └─TableFullScan	2.00	cop[tikv]	table:t1	keep order:false
 insert into t1 values(3, 3);
-analyze table t1;
+analyze table t1 all columns;
 explain format = 'brief' select sum(a) over(partition by b) from t1;
 id	estRows	task	access object	operator info
 Projection	3.00	root		Column#4->Column#5

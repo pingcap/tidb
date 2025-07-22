@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 const (
@@ -48,40 +48,22 @@ var DefaultImportVariablesTiDB = map[string]string{
 	"tidb_row_format_version": "1",
 }
 
-// AllocGlobalAutoID allocs N consecutive autoIDs from TiDB.
-func AllocGlobalAutoID(ctx context.Context, n int64, r autoid.Requirement, dbID int64,
-	tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
+// GetMaxAutoIDBase returns the max auto ID base for a table.
+func GetMaxAutoIDBase(r autoid.Requirement, dbID int64, tblInfo *model.TableInfo) (int64, error) {
 	allocators, err := GetGlobalAutoIDAlloc(r, dbID, tblInfo)
 	if err != nil {
-		return 0, 0, err
+		return 0, errors.Trace(err)
 	}
-	// there might be 2 allocators when tblInfo.SepAutoInc is true, and in this case
-	// RowIDAllocType will be the last one.
-	// we return the value of last Alloc as autoIDBase and autoIDMax, i.e. the value
-	// either comes from RowIDAllocType or AutoRandomType.
+	// all next auto id starts from 1.
+	maxNextID := int64(1)
 	for _, alloc := range allocators {
-		autoIDBase, autoIDMax, err = alloc.Alloc(ctx, uint64(n), 1, 1)
+		nextID, err := alloc.NextGlobalAutoID()
 		if err != nil {
-			return 0, 0, err
+			return 0, errors.Trace(err)
 		}
+		maxNextID = max(maxNextID, nextID)
 	}
-	return
-}
-
-// RebaseGlobalAutoID rebase the autoID base to newBase.
-func RebaseGlobalAutoID(ctx context.Context, newBase int64, r autoid.Requirement, dbID int64,
-	tblInfo *model.TableInfo) error {
-	allocators, err := GetGlobalAutoIDAlloc(r, dbID, tblInfo)
-	if err != nil {
-		return err
-	}
-	for _, alloc := range allocators {
-		err = alloc.Rebase(ctx, newBase, false)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return maxNextID - 1, nil
 }
 
 // RebaseTableAllocators rebase the allocators of a table.
@@ -143,8 +125,10 @@ func GetGlobalAutoIDAlloc(r autoid.Requirement, dbID int64, tblInfo *model.Table
 	case hasRowID || hasAutoIncID:
 		allocators := make([]autoid.Allocator, 0, 2)
 		if tblInfo.SepAutoInc() && hasAutoIncID {
+			// we must pass CustomAutoIncCacheOption(1) so NewAllocator can create
+			// correct single point allocator.
 			allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),
-				autoid.AutoIncrementType, noCache, tblVer))
+				autoid.AutoIncrementType, autoid.CustomAutoIncCacheOption(1), tblVer))
 		}
 		// this allocator is NOT used when SepAutoInc=true and auto increment column is clustered.
 		allocators = append(allocators, autoid.NewAllocator(r, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(),

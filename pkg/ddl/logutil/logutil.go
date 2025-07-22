@@ -15,9 +15,13 @@
 package logutil
 
 import (
+	"time"
+
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+var sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 3, zap.String(logutil.LogFieldCategory, "ddl"))
 
 // DDLLogger with category "ddl" is used to log DDL related messages. Do not use
 // it to log the message that is not related to DDL.
@@ -37,4 +41,9 @@ func DDLUpgradingLogger() *zap.Logger {
 // related to DDL.
 func DDLIngestLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "ddl-ingest"))
+}
+
+// SampleLogger returns a logger that samples logs to avoid too many logs.
+func SampleLogger() *zap.Logger {
+	return sampleLoggerFactory()
 }

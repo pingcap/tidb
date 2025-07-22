@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
@@ -120,11 +121,11 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 			InfoSchema:  is,
 			CreateTime:  time.Now(),
 			StartTS:     txn.StartTS(),
-			ShardStep:   int(sessVars.ShardAllocateStep),
 			IsStaleness: true,
 			TxnScope:    txnScope,
 		},
 	}
+	sessVars.GetRowIDShardGenerator().SetShardStep(int(sessVars.ShardAllocateStep))
 	sessVars.TxnCtxMu.Unlock()
 
 	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, is); interceptor != nil {
@@ -132,7 +133,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	}
 
 	p.is = is
-	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")
+	err = p.sctx.GetSessionVars().SetSystemVar(vardef.TiDBSnapshot, "")
 
 	return err
 }

@@ -18,7 +18,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 var _ AutoIDAccessor = &autoIDAccessor{}
@@ -28,11 +28,12 @@ type AutoIDAccessor interface {
 	Get() (int64, error)
 	Put(val int64) error
 	Inc(step int64) (int64, error)
+	CopyTo(databaseID, tableID int64) error
 	Del() error
 }
 
 type autoIDAccessor struct {
-	m          *Meta
+	m          *Mutator
 	databaseID int64
 	tableID    int64
 
@@ -79,10 +80,21 @@ func (a *autoIDAccessor) Del() error {
 
 var _ AutoIDAccessors = &autoIDAccessors{}
 
+// CopyTo implements the interface AutoIDAccessor.
+// It's used to copy the current meta to another table after rename table
+func (a *autoIDAccessor) CopyTo(databaseID, tableID int64) error {
+	curr, err := a.Get()
+	if err != nil {
+		return err
+	}
+	m := a.m
+	return m.txn.HSet(m.dbKey(databaseID), a.idEncodeFn(tableID), []byte(strconv.FormatInt(curr, 10)))
+}
+
 // AutoIDAccessors represents all the auto IDs of a table.
 type AutoIDAccessors interface {
-	Get() (AutoIDGroup, error)
-	Put(autoIDs AutoIDGroup) error
+	Get() (model.AutoIDGroup, error)
+	Put(autoIDs model.AutoIDGroup) error
 	Del() error
 
 	AccessorPicker
@@ -105,7 +117,7 @@ type autoIDAccessors struct {
 const sepAutoIncVer = model.TableInfoVersion5
 
 // Get implements the interface AutoIDAccessors.
-func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
+func (a *autoIDAccessors) Get() (autoIDs model.AutoIDGroup, err error) {
 	if autoIDs.RowID, err = a.RowID().Get(); err != nil {
 		return autoIDs, err
 	}
@@ -119,7 +131,7 @@ func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
 }
 
 // Put implements the interface AutoIDAccessors.
-func (a *autoIDAccessors) Put(autoIDs AutoIDGroup) error {
+func (a *autoIDAccessors) Put(autoIDs model.AutoIDGroup) error {
 	if err := a.RowID().Put(autoIDs.RowID); err != nil {
 		return err
 	}
@@ -176,7 +188,7 @@ func (a *autoIDAccessors) SequenceCycle() AutoIDAccessor {
 }
 
 // NewAutoIDAccessors creates a new AutoIDAccessors.
-func NewAutoIDAccessors(m *Meta, databaseID, tableID int64) AutoIDAccessors {
+func NewAutoIDAccessors(m *Mutator, databaseID, tableID int64) AutoIDAccessors {
 	return &autoIDAccessors{
 		autoIDAccessor{
 			m:          m,
@@ -184,11 +196,4 @@ func NewAutoIDAccessors(m *Meta, databaseID, tableID int64) AutoIDAccessors {
 			tableID:    tableID,
 		},
 	}
-}
-
-// AutoIDGroup represents a group of auto IDs of a specific table.
-type AutoIDGroup struct {
-	RowID       int64
-	IncrementID int64
-	RandomID    int64
 }

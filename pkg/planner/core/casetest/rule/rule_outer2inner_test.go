@@ -45,7 +45,36 @@ func TestOuter2Inner(t *testing.T) {
 		Plan []string
 	}
 	suiteData := GetOuter2InnerSuiteData()
-	suiteData.LoadTestCases(t, &input, &output)
+	suiteData.LoadTestCasesByName("TestOuter2Inner", t, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+// can not add this test case to TestOuter2Inner because the collation_connection is different
+func TestOuter2InnerIssue55886(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null)")
+	tk.MustExec("create table t2(c_g7eofzlxn int)")
+	tk.MustExec("set collation_connection = 'latin1_bin'")
+
+	var input Input
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	suiteData := GetOuter2InnerSuiteData()
+	suiteData.LoadTestCasesByName("TestOuter2InnerIssue55886", t, &input, &output)
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
 		testdata.OnRecord(func() {

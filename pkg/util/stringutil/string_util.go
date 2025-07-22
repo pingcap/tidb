@@ -260,7 +260,7 @@ func matchRune(a, b rune) bool {
 func CompileLike2Regexp(str string) string {
 	patChars, patTypes := CompilePattern(str, '\\')
 	var result []rune
-	for i := 0; i < len(patChars); i++ {
+	for i := range patChars {
 		switch patTypes[i] {
 		case PatMatch:
 			result = append(result, patChars[i])
@@ -360,10 +360,18 @@ func (l StringerFunc) String() string {
 	return l()
 }
 
-// MemoizeStr returns memoized version of stringFunc.
+// MemoizeStr returns memoized version of stringFunc. When the result of l is not
+// "", it will be cached and returned directly next time.
+//
+// MemoizeStr is not concurrency safe.
 func MemoizeStr(l func() string) fmt.Stringer {
+	var result string
 	return StringerFunc(func() string {
-		return l()
+		if result != "" {
+			return result
+		}
+		result = l()
+		return result
 	})
 }
 
@@ -488,7 +496,7 @@ func IsLowerASCII(c byte) bool {
 // LowerOneString lowers the ascii characters in a string
 func LowerOneString(str []byte) {
 	strLen := len(str)
-	for i := 0; i < strLen; i++ {
+	for i := range strLen {
 		if IsUpperASCII(str[i]) {
 			str[i] = toLowerIfAlphaASCII(str[i])
 		}

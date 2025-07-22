@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -46,10 +46,10 @@ func (ki KeyInfo) String() string {
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column
-	Keys    []KeyInfo
-	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
-	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
-	UniqueKeys []KeyInfo
+	PKOrUK  []KeyInfo // this fields stores the primary key or unique key.
+	// NullableUK stores those unique indexes that allow null values, but PKOrUK does not allow null values.
+	// Since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
+	NullableUK []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -58,25 +58,41 @@ func (s *Schema) String() string {
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
 	}
-	ukStrs := make([]string, 0, len(s.Keys))
-	for _, key := range s.Keys {
+	strs := make([]string, 0, len(s.PKOrUK))
+	for _, key := range s.PKOrUK {
+		strs = append(strs, key.String())
+	}
+	ukStrs := make([]string, 0, len(s.PKOrUK))
+	for _, key := range s.NullableUK {
 		ukStrs = append(ukStrs, key.String())
 	}
-	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
+	return "Column: [" + strings.Join(colStrs, ",") +
+		"] PKOrUK: [" + strings.Join(strs, ",") +
+		"] NullableUK: [" + strings.Join(ukStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
 func (s *Schema) Clone() *Schema {
+	if s == nil {
+		return nil
+	}
 	cols := make([]*Column, 0, s.Len())
-	keys := make([]KeyInfo, 0, len(s.Keys))
+	keys := make([]KeyInfo, 0, len(s.PKOrUK))
 	for _, col := range s.Columns {
 		cols = append(cols, col.Clone().(*Column))
 	}
-	for _, key := range s.Keys {
+	for _, key := range s.PKOrUK {
 		keys = append(keys, key.Clone())
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
+	if s.NullableUK != nil {
+		uniqueKeys := make([]KeyInfo, 0, len(s.NullableUK))
+		for _, key := range s.NullableUK {
+			uniqueKeys = append(uniqueKeys, key.Clone())
+		}
+		schema.SetUniqueKeys(uniqueKeys)
+	}
 	return schema
 }
 
@@ -125,22 +141,34 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 	return nil
 }
 
-// IsUniqueKey checks if this column is a unique key.
-func (s *Schema) IsUniqueKey(col *Column) bool {
-	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
-		}
+// IsUnique checks if the column is unique key.
+// Pass strong=true to check strong contraint: unique && notnull.
+// Pass strong=false to check weak contraint: unique && nullable.
+func (s *Schema) IsUnique(strong bool, cols ...*Column) bool {
+	slicesToBeIterated := s.NullableUK
+	if strong {
+		slicesToBeIterated = s.PKOrUK
 	}
-	return false
-}
-
-// IsUnique checks if this column is a unique key which may contain duplicate nulls .
-func (s *Schema) IsUnique(col *Column) bool {
-	for _, key := range s.UniqueKeys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
+	for _, key := range slicesToBeIterated {
+		if len(key) > len(cols) {
+			continue
 		}
+		allFound := true
+	nextKeyCol:
+
+		for _, keyCols := range key {
+			for _, col := range cols {
+				if keyCols.EqualColumn(col) {
+					continue nextKeyCol
+				}
+			}
+			allFound = false
+			break
+		}
+		if !allFound {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -180,9 +208,14 @@ func (s *Schema) Append(col ...*Column) {
 	s.Columns = append(s.Columns, col...)
 }
 
-// SetUniqueKeys will set the value of Schema.Keys.
+// SetKeys will set the value of Schema.Keys.
+func (s *Schema) SetKeys(keys []KeyInfo) {
+	s.PKOrUK = keys
+}
+
+// SetUniqueKeys will set the value of Schema.UniqueKeys.
 func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
-	s.Keys = keys
+	s.NullableUK = keys
 }
 
 // ColumnsIndices will return a slice which contains the position of each column in schema.
@@ -236,18 +269,18 @@ func (s *Schema) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.Keys)+cap(s.UniqueKeys))*size.SizeOfSlice
+	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.PKOrUK)+cap(s.NullableUK))*size.SizeOfSlice
 
 	for _, col := range s.Columns {
 		sum += col.MemoryUsage()
 	}
-	for _, cols := range s.Keys {
+	for _, cols := range s.PKOrUK {
 		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()
 		}
 	}
-	for _, cols := range s.UniqueKeys {
+	for _, cols := range s.NullableUK {
 		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()

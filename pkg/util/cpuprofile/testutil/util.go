@@ -34,6 +34,20 @@ func MockCPULoad(ctx context.Context, labels ...string) {
 	go mockCPULoadByGoroutineWithLabel(ctx, lvs...)
 }
 
+// MockCPULoadV2 exports for testing of label "sql_global_uid"
+func MockCPULoadV2(ctx context.Context, labelValues ...string) {
+	lvs := []string{}
+	label := "sql_global_uid"
+	for _, labelValue := range labelValues {
+		lvs = append(lvs, label)
+		lvs = append(lvs, labelValue)
+		// start goroutine with only 1 label.
+		go mockCPULoadByGoroutineWithLabel(ctx, label, labelValue)
+	}
+	// start goroutine with all labels.
+	go mockCPULoadByGoroutineWithLabel(ctx, lvs...)
+}
+
 func mockCPULoadByGoroutineWithLabel(ctx context.Context, labels ...string) {
 	ctx = pprof.WithLabels(ctx, pprof.Labels(labels...))
 	pprof.SetGoroutineLabels(ctx)
@@ -44,7 +58,7 @@ func mockCPULoadByGoroutineWithLabel(ctx context.Context, labels ...string) {
 		default:
 		}
 		sum := 0
-		for i := 0; i < 1000000; i++ {
+		for i := range 1000000 {
 			sum = sum + i*2
 		}
 	}

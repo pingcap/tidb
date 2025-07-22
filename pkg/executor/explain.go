@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -138,7 +137,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 		ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
 		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
 			ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{ruDetails})
+			coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{RUDetails: ruDetails})
 		}
 	}
 	return err
@@ -317,39 +316,4 @@ func getHeapProfile() (fileName string, err error) {
 		return "", err
 	}
 	return fileName, nil
-}
-
-// ruRuntimeStats is a wrapper of clientutil.RUDetails,
-// which implements the RuntimeStats interface.
-type ruRuntimeStats struct {
-	*clientutil.RUDetails
-}
-
-// String implements the RuntimeStats interface.
-func (e *ruRuntimeStats) String() string {
-	if e.RUDetails != nil {
-		return fmt.Sprintf("RU:%f", e.RRU()+e.WRU())
-	}
-	return ""
-}
-
-// Clone implements the RuntimeStats interface.
-func (e *ruRuntimeStats) Clone() execdetails.RuntimeStats {
-	return &ruRuntimeStats{RUDetails: e.RUDetails.Clone()}
-}
-
-// Merge implements the RuntimeStats interface.
-func (e *ruRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	if tmp, ok := other.(*ruRuntimeStats); ok {
-		if e.RUDetails != nil {
-			e.RUDetails.Merge(tmp.RUDetails)
-		} else {
-			e.RUDetails = tmp.RUDetails.Clone()
-		}
-	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (*ruRuntimeStats) Tp() int {
-	return execdetails.TpRURuntimeStats
 }

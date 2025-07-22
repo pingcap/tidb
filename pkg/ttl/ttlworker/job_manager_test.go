@@ -21,16 +21,20 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
@@ -143,14 +147,14 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 type TTLJob = ttlJob
 
 // GetSessionForTest is used for test
-func GetSessionForTest(pool sessionPool) (session.Session, error) {
+func GetSessionForTest(pool util.SessionPool) (session.Session, error) {
 	return getSession(pool)
 }
 
 // LockJob is an exported version of lockNewJob for test
 func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, createJobID string, checkInterval bool) (*TTLJob, error) {
 	if createJobID == "" {
-		return m.lockHBTimeoutJob(ctx, se, table, now)
+		return m.lockHBTimeoutJob(ctx, se, table.ID, table.TableInfo.ID, now)
 	}
 	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval)
 }
@@ -192,8 +196,22 @@ func (m *JobManager) TaskManager() *taskManager {
 }
 
 // UpdateHeartBeat is an exported version of updateHeartBeat for test
-func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
-	return m.updateHeartBeat(ctx, se, now)
+func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
+	m.updateHeartBeat(ctx, se, now)
+}
+
+func (m *JobManager) UpdateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
+	return m.updateHeartBeatForJob(ctx, se, now, job)
+}
+
+// SetLastReportDelayMetricsTime sets the lastReportDelayMetricsTime for test
+func (m *JobManager) SetLastReportDelayMetricsTime(t time.Time) {
+	m.lastReportDelayMetricsTime = t
+}
+
+// GetLastReportDelayMetricsTime returns the lastReportDelayMetricsTime for test
+func (m *JobManager) GetLastReportDelayMetricsTime() time.Time {
+	return m.lastReportDelayMetricsTime
 }
 
 // ReportMetrics is an exported version of reportMetrics
@@ -201,16 +219,27 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
 }
 
-func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) {
-	j.finish(se, now, summary)
+// ID returns the id of JobManager
+func (m *JobManager) ID() string {
+	return m.id
+}
+
+// CheckNotOwnJob is an exported version of checkNotOwnJob
+func (m *JobManager) CheckNotOwnJob() {
+	m.checkNotOwnJob()
+}
+
+// CheckFinishedJob is an exported version of checkFinishedJob
+func (m *JobManager) CheckFinishedJob(se session.Session) {
+	m.checkFinishedJob(se)
+}
+
+func (j *ttlJob) Finish(se session.Session, now time.Time, summary *TTLSummary) error {
+	return j.finish(se, now, summary)
 }
 
 func (j *ttlJob) ID() string {
 	return j.id
-}
-
-func newMockTTLJob(tbl *cache.PhysicalTable, status cache.JobStatus) *ttlJob {
-	return &ttlJob{tbl: tbl, status: status}
 }
 
 func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
@@ -260,8 +289,8 @@ func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
 			tables := m.readyForLockHBTimeoutJobTables(se.Now())
 			if c.shouldSchedule {
 				assert.Len(t, tables, 1)
-				assert.Equal(t, tbl.ID, tables[0].ID)
-				assert.Equal(t, tbl.ID, tables[0].TableInfo.ID)
+				assert.Equal(t, tbl.ID, tables[0].TableID)
+				assert.Equal(t, tbl.ID, tables[0].ParentTableID)
 			} else {
 				assert.Len(t, tables, 0)
 			}
@@ -291,6 +320,7 @@ func TestOnTimerTick(t *testing.T) {
 
 	now := time.UnixMilli(3600 * 24)
 	syncer := NewTTLTimerSyncer(m.sessPool, timerapi.NewDefaultTimerClient(timerStore))
+	defer m.sessPool.(*mockSessionPool).AssertNoSessionInUse()
 	syncer.nowFunc = func() time.Time {
 		return now
 	}
@@ -315,7 +345,7 @@ func TestOnTimerTick(t *testing.T) {
 	require.Equal(t, now, syncTime)
 
 	// resume after a very short duration
-	now = now.Add(time.Second)
+	now = now.Add(time.Microsecond * 999)
 	se.sessionInfoSchema = newMockInfoSchemaWithVer(101, tbl.TableInfo)
 	m.onTimerTick(se, rt, syncer, now)
 	require.Same(t, innerRT, rt.rt)
@@ -323,10 +353,10 @@ func TestOnTimerTick(t *testing.T) {
 	require.Equal(t, 1, len(syncer.key2Timers))
 	syncTime, syncVer = syncer.GetLastSyncInfo()
 	require.Equal(t, int64(100), syncVer)
-	require.Equal(t, now.Add(-time.Second), syncTime)
+	require.Equal(t, now.Add(-999*time.Microsecond), syncTime)
 
 	// resume after a middle duration
-	now = now.Add(6 * time.Second)
+	now = now.Add(2 * time.Millisecond)
 	m.onTimerTick(se, rt, syncer, now)
 	require.Same(t, innerRT, rt.rt)
 	require.True(t, innerRT.Running())
@@ -372,7 +402,7 @@ func TestLockTable(t *testing.T) {
 	oldJobExpireTime := now.Add(-time.Hour)
 	oldJobStartTime := now.Add(-30 * time.Minute)
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: model.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: model.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: ast.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: ast.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
@@ -612,7 +642,7 @@ func TestLockTable(t *testing.T) {
 			if c.isCreate {
 				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval)
 			} else {
-				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table, now)
+				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table.ID, c.table.TableInfo.ID, now)
 			}
 			require.Equal(t, len(c.sqls), sqlCounter)
 			if c.hasError {
@@ -623,8 +653,8 @@ func TestLockTable(t *testing.T) {
 				assert.NotNil(t, job)
 				assert.Equal(t, "test-id", job.ownerID)
 				assert.Equal(t, cache.JobStatusRunning, job.status)
-				assert.NotNil(t, job.tbl)
-				assert.Same(t, c.table, job.tbl)
+				assert.NotEmpty(t, job.tableID)
+				assert.Equal(t, c.table.ID, job.tableID)
 				if c.isCreate {
 					assert.Equal(t, "new-job-id", job.id)
 					assert.Equal(t, now, job.createTime)
@@ -649,7 +679,7 @@ func TestLocalJobs(t *testing.T) {
 	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
-	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1"}, {tbl: tbl2, id: "2"}}
+	m.runningJobs = []*ttlJob{{tableID: tbl1.ID, id: "1"}, {tableID: tbl2.ID, id: "2"}}
 	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
 		tbl1.ID: {
 			CurrentJobOwnerID: m.id,
@@ -660,4 +690,34 @@ func TestLocalJobs(t *testing.T) {
 	}
 	assert.Len(t, m.localJobs(), 1)
 	assert.Equal(t, m.localJobs()[0].id, "1")
+}
+
+func TestSplitCnt(t *testing.T) {
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	require.Equal(t, 64, getScanSplitCnt(nil))
+	require.Equal(t, 64, getScanSplitCnt(&mockKVStore{}))
+
+	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
+	for i := uint64(1); i <= 128; i++ {
+		s.GetRegionCache().SetRegionCacheStore(i, "", "", tikvrpc.TiKV, 1, nil)
+		if i <= 64 {
+			require.Equal(t, 64, getScanSplitCnt(s))
+		} else {
+			require.Equal(t, int(i), getScanSplitCnt(s))
+		}
+	}
+}
+
+// SetTimeFormat sets the time format used by the test.
+// Some tests require a greater precision than the default time format. We don't change it globally to avoid potential compatibility issues.
+// Therefore, the format for most tests are also not changed, to make sure the tests can represent the real-world scenarios.
+func SetTimeFormat(format string) {
+	timeFormat = format
 }

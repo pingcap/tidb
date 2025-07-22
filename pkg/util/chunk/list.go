@@ -45,16 +45,21 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
-// NewList creates a new List with field types, init chunk size and max chunk size.
-func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
+// NewListWithMemTracker creates a new List with field types, init chunk size, max chunk size and memory tracker.
+func NewListWithMemTracker(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int, tracker *memory.Tracker) *List {
 	l := &List{
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker(memory.LabelForChunkList, -1),
+		memTracker:    tracker,
 		consumedIdx:   -1,
 	}
 	return l
+}
+
+// NewList creates a new List with field types, init chunk size and max chunk size.
+func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
+	return NewListWithMemTracker(fieldTypes, initChunkSize, maxChunkSize, memory.NewTracker(memory.LabelForChunkList, -1))
 }
 
 // GetMemTracker returns the memory tracker of this List.
@@ -171,9 +176,9 @@ type ListWalkFunc = func(row Row) error
 
 // Walk iterate the list and call walkFunc for each row.
 func (l *List) Walk(walkFunc ListWalkFunc) error {
-	for i := 0; i < len(l.chunks); i++ {
+	for i := range l.chunks {
 		chk := l.chunks[i]
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			err := walkFunc(chk.GetRow(j))
 			if err != nil {
 				return errors.Trace(err)

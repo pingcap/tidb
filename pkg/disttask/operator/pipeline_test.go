@@ -25,60 +25,72 @@ import (
 
 func TestPipelineAsyncMultiOperators(t *testing.T) {
 	words := `Bob hiT a ball, the hIt BALL flew far after it was hit.`
-	var mostCommonWord string
+	var mostCommonWord stringTask
 	splitter := makeSplitter(words)
 	lower := makeLower()
 	trimmer := makeTrimmer()
 	counter := makeCounter()
 	collector := makeCollector(&mostCommonWord)
 
-	Compose[string](splitter, lower)
-	Compose[string](lower, trimmer)
-	Compose[string](trimmer, counter)
+	Compose[stringTask](splitter, lower)
+	Compose[stringTask](lower, trimmer)
+	Compose[stringTask](trimmer, counter)
 	Compose[strCnt](counter, collector)
 
 	pipeline := NewAsyncPipeline(splitter, lower, trimmer, counter, collector)
-	require.Equal(t, pipeline.String(), "AsyncPipeline[simpleSource -> simpleOperator(AsyncOp[string, string]) -> simpleOperator(AsyncOp[string, string]) -> simpleOperator(AsyncOp[string, operator.strCnt]) -> simpleSink]")
+	require.Equal(
+		t,
+		"AsyncPipeline[simpleSource -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.stringTask]) -> simpleOperator(AsyncOp[operator.stringTask, operator.strCnt]) -> simpleSink]",
+		pipeline.String(),
+	)
 	err := pipeline.Execute()
 	require.NoError(t, err)
 	err = pipeline.Close()
 	require.NoError(t, err)
-	require.Equal(t, mostCommonWord, "hit")
+	require.EqualValues(t, mostCommonWord, "hit")
 }
 
 type strCnt struct {
-	str string
+	str stringTask
 	cnt int
 }
 
-func makeSplitter(s string) *simpleSource[string] {
+func makeSplitter(s string) *simpleSource[stringTask] {
 	ss := strings.Split(s, " ")
-	src := newSimpleSource(func() string {
+	src := newSimpleSource(func() stringTask {
 		if len(ss) == 0 {
 			return ""
 		}
 		ret := ss[0]
 		ss = ss[1:]
-		return ret
+		return stringTask(ret)
 	})
 	return src
 }
 
-func makeLower() *simpleOperator[string, string] {
-	return newSimpleOperator(strings.ToLower, 3)
+type stringTask string
+
+func (stringTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "", "", nil, false
 }
 
-func makeTrimmer() *simpleOperator[string, string] {
-	var nonAlphaRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
-	return newSimpleOperator(func(s string) string {
-		return nonAlphaRegex.ReplaceAllString(s, "")
+func makeLower() *simpleOperator[stringTask, stringTask] {
+	return newSimpleOperator(func(task stringTask) stringTask {
+		return stringTask(strings.ToLower(string(task)))
 	}, 3)
 }
 
-func makeCounter() *simpleOperator[string, strCnt] {
-	strCntMap := make(map[string]int)
+func makeTrimmer() *simpleOperator[stringTask, stringTask] {
+	var nonAlphaRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+	return newSimpleOperator(func(s stringTask) stringTask {
+		return stringTask(nonAlphaRegex.ReplaceAllString(string(s), ""))
+	}, 3)
+}
+
+func makeCounter() *simpleOperator[stringTask, strCnt] {
+	strCntMap := make(map[stringTask]int)
 	strCntMapMu := sync.Mutex{}
-	return newSimpleOperator(func(s string) strCnt {
+	return newSimpleOperator(func(s stringTask) strCnt {
 		strCntMapMu.Lock()
 		old := strCntMap[s]
 		strCntMap[s] = old + 1
@@ -87,7 +99,7 @@ func makeCounter() *simpleOperator[string, strCnt] {
 	}, 3)
 }
 
-func makeCollector(v *string) *simpleSink[strCnt] {
+func makeCollector(v *stringTask) *simpleSink[strCnt] {
 	maxCnt := 0
 	maxMu := sync.Mutex{}
 	return newSimpleSink(func(sc strCnt) {

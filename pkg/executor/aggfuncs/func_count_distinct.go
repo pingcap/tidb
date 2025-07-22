@@ -401,6 +401,13 @@ func evalAndEncode(
 			break
 		}
 		encodedBytes = val.HashValue(encodedBytes)
+	case types.ETVectorFloat32:
+		var val types.VectorFloat32
+		val, isNull, err = arg.EvalVectorFloat32(sctx, row)
+		if err != nil || isNull {
+			break
+		}
+		encodedBytes = val.SerializeTo(encodedBytes)
 	case types.ETString:
 		var val string
 		val, isNull, err = arg.EvalString(sctx, row)

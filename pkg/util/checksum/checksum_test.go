@@ -196,7 +196,7 @@ func testReadEmptyFile(t *testing.T, encrypt bool) {
 		}
 	}
 
-	for i := 0; i <= 10; i++ {
+	for i := range 11 {
 		var underlying io.ReaderAt = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -416,7 +416,7 @@ func TestChecksumWriterAutoFlush(t *testing.T) {
 func newTestBuff(str string, n int) *bytes.Buffer {
 	buf := bytes.NewBuffer(nil)
 	testData := str
-	for i := 0; i < n; i++ {
+	for range n {
 		buf.WriteString(testData)
 	}
 	return buf

@@ -33,6 +33,7 @@ go_test(
     race = "on",
     shard_count = 5,
     deps = [
+        "//pkg/util/intest",
         "//pkg/util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

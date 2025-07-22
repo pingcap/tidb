@@ -245,4 +245,4 @@ HashAgg	18000.00	root		group by:Column#32, funcs:sum(Column#31)->Column#30
     │ └─TableFullScan	2000.00	cop[tikv]	table:tbl_008	keep order:false
     └─TableReader	2000.00	root		data:TableFullScan
       └─TableFullScan	2000.00	cop[tikv]	table:tbl_009	keep order:false
-set @@sql_mode=default
+set @@sql_mode=default;

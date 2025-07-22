@@ -2,3 +2,4 @@
 backend = "tidb"
 on-duplicate = "ignore"
 logical-import-batch-rows = 1
+logical-import-prep-stmt = true

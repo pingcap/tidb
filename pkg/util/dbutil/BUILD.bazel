@@ -17,10 +17,10 @@ go_library(
     deps = [
         "//pkg/errno",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/types/parser_driver",
@@ -48,8 +48,8 @@ go_test(
     deps = [
         "//pkg/errno",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/util/dbutil/dbutiltest",

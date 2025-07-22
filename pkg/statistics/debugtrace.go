@@ -17,10 +17,9 @@ package statistics
 import (
 	"slices"
 
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/types"
-	"golang.org/x/exp/maps"
 )
 
 /*
@@ -135,8 +134,8 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 		return nil
 	}
 	// Collect table level information
-	colNum := len(statsTbl.Columns)
-	idxNum := len(statsTbl.Indices)
+	colNum := statsTbl.ColNum()
+	idxNum := statsTbl.IdxNum()
 	traceInfo := &StatsTblTraceInfo{
 		PhysicalID:  statsTbl.PhysicalID,
 		Version:     statsTbl.Version,
@@ -148,23 +147,31 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 
 	// Collect information for each Column
 	colTraces := make([]statsTblColOrIdxInfo, colNum)
-	colIDs := maps.Keys(statsTbl.Columns)
+	colIDs := make([]int64, 0, colNum)
+	statsTbl.ForEachColumnImmutable(func(id int64, _ *Column) bool {
+		colIDs = append(colIDs, id)
+		return false
+	})
 	slices.Sort(colIDs)
 	for i, id := range colIDs {
 		colStatsTrace := &colTraces[i]
 		traceInfo.Columns[i] = colStatsTrace
-		colStats := statsTbl.Columns[id]
+		colStats := statsTbl.GetCol(id)
 		traceColStats(colStats, id, colStatsTrace)
 	}
 
 	// Collect information for each Index
 	idxTraces := make([]statsTblColOrIdxInfo, idxNum)
-	idxIDs := maps.Keys(statsTbl.Indices)
+	idxIDs := make([]int64, 0, idxNum)
+	statsTbl.ForEachIndexImmutable(func(id int64, _ *Index) bool {
+		idxIDs = append(idxIDs, id)
+		return false
+	})
 	slices.Sort(idxIDs)
 	for i, id := range idxIDs {
 		idxStatsTrace := &idxTraces[i]
 		traceInfo.Indexes[i] = idxStatsTrace
-		idxStats := statsTbl.Indices[id]
+		idxStats := statsTbl.GetIdx(id)
 		traceIdxStats(idxStats, id, idxStatsTrace)
 	}
 	return traceInfo
@@ -183,7 +190,7 @@ type locateBucketInfo struct {
 }
 
 func debugTraceLocateBucket(
-	s context.PlanContext,
+	s planctx.PlanContext,
 	value *types.Datum,
 	exceed bool,
 	bucketIdx int,
@@ -212,7 +219,7 @@ type bucketInfo struct {
 }
 
 // DebugTraceBuckets is used to trace the buckets used in the histogram.
-func DebugTraceBuckets(s context.PlanContext, hg *Histogram, bucketIdxs []int) {
+func DebugTraceBuckets(s planctx.PlanContext, hg *Histogram, bucketIdxs []int) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	buckets := make([]bucketInfo, len(bucketIdxs))
 	for i := range buckets {
@@ -242,7 +249,7 @@ type topNRangeInfo struct {
 	LastIdx      int
 }
 
-func debugTraceTopNRange(s context.PlanContext, t *TopN, startIdx, endIdx int) {
+func debugTraceTopNRange(s planctx.PlanContext, t *TopN, startIdx, endIdx int) {
 	if endIdx <= startIdx {
 		return
 	}

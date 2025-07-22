@@ -38,13 +38,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -85,7 +86,7 @@ func main() {
 		log.Panic("get table id failed", zap.Error(err))
 	}
 
-	pdclient, err := pd.NewClient([]string{*pdAddr}, pd.SecurityOption{
+	pdclient, err := pd.NewClient(caller.TestComponent, []string{*pdAddr}, pd.SecurityOption{
 		CAPath:   *ca,
 		CertPath: *cert,
 		KeyPath:  *key,

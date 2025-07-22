@@ -123,7 +123,7 @@ func isSingleRetryableError(err error) bool {
 	case *mysql.MySQLError:
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflict, tmysql.ErrWriteConflictInTiDB,
+		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrLockWaitTimeout, tmysql.ErrWriteConflict, tmysql.ErrWriteConflictInTiDB,
 			tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout,
 			tmysql.ErrRegionUnavailable, tmysql.ErrInfoSchemaExpired, tmysql.ErrInfoSchemaChanged, tmysql.ErrTxnRetryable:
 			return true
@@ -148,6 +148,9 @@ func isSingleRetryableError(err error) bool {
 		case codes.Unknown:
 			errMsg := rpcStatus.Message()
 			if strings.Contains(errMsg, "DiskSpaceNotEnough") {
+				return false
+			}
+			if strings.Contains(errMsg, "Keys must be added in strict ascending order") {
 				return false
 			}
 			// cases we have met during import:

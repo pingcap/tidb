@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/types"
@@ -224,6 +225,27 @@ func (s *ScalarSubQueryExpr) ExplainNormalizedInfo() string {
 	return s.String()
 }
 
+// Hash64 implements the HashEquals.<0th> interface.
+func (s *ScalarSubQueryExpr) Hash64(h base2.Hasher) {
+	h.HashByte(expression.ScalarSubQFlag)
+	h.HashInt64(s.scalarSubqueryColID)
+}
+
+// Equals implements the HashEquals.<1st> interface.
+func (s *ScalarSubQueryExpr) Equals(other any) bool {
+	s2, ok := other.(*ScalarSubQueryExpr)
+	if !ok {
+		return false
+	}
+	if s == nil {
+		return s2 == nil
+	}
+	if s2 == nil {
+		return false
+	}
+	return s.scalarSubqueryColID == s2.scalarSubqueryColID
+}
+
 // HashCode implements the Expression interface.
 func (s *ScalarSubQueryExpr) HashCode() []byte {
 	if len(s.hashcode) != 0 {
@@ -254,21 +276,6 @@ func (s *ScalarSubQueryExpr) String() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "ScalarQueryCol#%d", s.scalarSubqueryColID)
 	return builder.String()
-}
-
-// MarshalJSON implements the goJSON.Marshaler interface.
-func (s *ScalarSubQueryExpr) MarshalJSON() ([]byte, error) {
-	if s.evalErr != nil {
-		return nil, s.evalErr
-	}
-	if s.evaled {
-		return s.Constant.MarshalJSON()
-	}
-	err := s.selfEvaluate()
-	if err != nil {
-		return nil, err
-	}
-	return s.Constant.MarshalJSON()
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.

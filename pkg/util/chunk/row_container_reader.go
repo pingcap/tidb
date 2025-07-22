@@ -122,7 +122,7 @@ func (reader *rowContainerReader) startWorker() {
 		defer close(reader.rowCh)
 		defer reader.wg.Done()
 
-		for chkIdx := 0; chkIdx < reader.rc.NumChunks(); chkIdx++ {
+		for chkIdx := range reader.rc.NumChunks() {
 			chk, err := reader.rc.GetChunk(chkIdx)
 			failpoint.Inject("get-chunk-error", func(val failpoint.Value) {
 				if val.(bool) {
@@ -134,7 +134,7 @@ func (reader *rowContainerReader) startWorker() {
 				return
 			}
 
-			for i := 0; i < chk.NumRows(); i++ {
+			for i := range chk.NumRows() {
 				select {
 				case reader.rowCh <- chk.GetRow(i):
 				case <-reader.ctx.Done():

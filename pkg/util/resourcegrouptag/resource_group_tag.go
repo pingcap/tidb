@@ -125,6 +125,12 @@ func GetFirstKeyFromRequest(req *tikvrpc.Request) (firstKey []byte) {
 				}
 			}
 		}
+	case *kvrpcpb.PessimisticLockRequest:
+		r := req.Req.(*kvrpcpb.PessimisticLockRequest)
+		if len(r.Mutations) == 0 {
+			return nil
+		}
+		return r.Mutations[0].Key
 	}
 	return
 }

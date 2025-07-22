@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -41,7 +41,7 @@ func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
-func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
+func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {
@@ -57,8 +57,8 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 		switch fun.FuncName.L {
 		case ast.EQ, ast.NullEQ, ast.In:
 			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
-			col, ok := coll.Columns[colID]
-			if !ok {
+			col := coll.GetCol(colID)
+			if col == nil {
 				continue
 			}
 			colExists[col.Info.Name.L] = true
@@ -74,7 +74,8 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 		return minFactor
 	}
 	// use the unique key info
-	for _, idx := range coll.Indices {
+	hasUniqueKey := false
+	coll.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		unique := true
 		firstMatch := false
 		for _, col := range idx.Info.Columns {
@@ -85,11 +86,17 @@ func pseudoSelectivity(sctx context.PlanContext, coll *statistics.HistColl, expr
 			firstMatch = true
 		}
 		if firstMatch {
+			// This might trigger the statistics load.
 			statistics.IndexStatsIsInvalid(sctx, (*statistics.Index)(nil), coll, idx.ID)
 		}
 		if idx.Info.Unique && unique {
-			return 1.0 / float64(coll.RealtimeCount)
+			hasUniqueKey = true
+			return true
 		}
+		return false
+	})
+	if hasUniqueKey {
+		return 1.0 / float64(coll.RealtimeCount)
 	}
 	return minFactor
 }

@@ -34,8 +34,6 @@ var (
 	GetBootstrapVersion = getBootstrapVersion
 	// CurrentBootstrapVersion is used in test
 	CurrentBootstrapVersion = currentBootstrapVersion
-	// UnsetStoreBootstrapped is used in test
-	UnsetStoreBootstrapped = unsetStoreBootstrapped
 )
 
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.

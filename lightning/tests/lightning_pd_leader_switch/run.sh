@@ -20,6 +20,7 @@ set -eu
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 . $UTILS_DIR/run_services
 
+echo "will start pd2"
 pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}2" \
   --peer-urls "https://${PD_PEER_ADDR}2" \
@@ -29,8 +30,9 @@ pd-server --join "https://$PD_ADDR" \
   --config $PD_CONFIG &
 
 # strange that new PD can't join too quickly
-sleep 10
+sleep 20
 
+echo "will start pd3"
 pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}3" \
   --peer-urls "https://${PD_PEER_ADDR}3" \

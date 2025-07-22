@@ -135,13 +135,13 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/cznic/strutil"
-	"golang.org/x/exp/slices"
 	parser "modernc.org/parser/yacc"
 	"modernc.org/y"
 )
@@ -361,7 +361,7 @@ func main1(in string) (err error) {
 			if k == 'r' {
 				arg = -arg
 			}
-			minArg, maxArg = mathutil.Min(minArg, arg), mathutil.Max(maxArg, arg)
+			minArg, maxArg = min(minArg, arg), max(maxArg, arg)
 		}
 	}
 	su := make(symsUsed, 0, len(msu))
@@ -389,7 +389,7 @@ type %[1]sXError struct {
 	for sym := range msu {
 		nm := sym.Name
 		if nm == "$default" || nm == "$end" || sym.IsTerminal && nm[0] != '\'' && sym.Value > 0 {
-			maxTokName = mathutil.Max(maxTokName, len(nm))
+			maxTokName = max(maxTokName, len(nm))
 			a = append(a, nm)
 		}
 		nsyms[nm] = sym
@@ -468,7 +468,7 @@ type %[1]sXError struct {
 	var tabRow sortutil.Uint64Slice
 	for si, state := range p.Table {
 		tabRow = tabRow[:0]
-		max := 0
+		maxv := 0
 		for _, act := range state {
 			sym := act.Sym
 			xsym, ok := xlat[sym.Value]
@@ -476,7 +476,7 @@ type %[1]sXError struct {
 				panic("internal error 001")
 			}
 
-			max = mathutil.Max(max, xsym)
+			maxv = max(maxv, xsym)
 			kind, arg := act.Kind()
 			switch kind {
 			case 'a':
@@ -486,7 +486,7 @@ type %[1]sXError struct {
 			}
 			tabRow = append(tabRow, uint64(xsym)<<32|uint64(arg-minArg))
 		}
-		nCells += max
+		nCells += maxv
 		tabRow.Sort()
 		col := -1
 		if si%5 == 0 {
@@ -757,9 +757,9 @@ yynewstate:
 
 		components := rule.Components
 		typ := rule.Sym.Type
-		max := len(components)
+		maxv := len(components)
 		if p1 := rule.Parent; p1 != nil {
-			max = rule.MaxParentDlr
+			maxv = rule.MaxParentDlr
 			components = p1.Components
 		}
 		mustFormat(f, "case %d: ", r)
@@ -778,11 +778,11 @@ yynewstate:
 				if typ == "" {
 					panic("internal error 003")
 				}
-				mustFormat(f, "yyS[yypt-%d].%s", max-num, typ)
+				mustFormat(f, "yyS[yypt-%d].%s", maxv-num, typ)
 			case parser.ActionValueDlrTagDlr:
 				mustFormat(f, "parser.yyVAL.%s", part.Tag)
 			case parser.ActionValueDlrTagNum:
-				mustFormat(f, "yyS[yypt-%d].%s", max-num, part.Tag)
+				mustFormat(f, "yyS[yypt-%d].%s", maxv-num, part.Tag)
 			}
 		}
 		mustFormat(f, "\n")

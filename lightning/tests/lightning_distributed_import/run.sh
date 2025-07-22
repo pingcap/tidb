@@ -22,11 +22,14 @@ LOG_FILE1="$TEST_DIR/lightning-distributed-import1.log"
 LOG_FILE2="$TEST_DIR/lightning-distributed-import2.log"
 
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
-export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/SlowDownImport=sleep(250)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/SlowDownImport=sleep(2500)"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_distributed_import.sorted1" \
   -d "$CUR/data1" --log-file "$LOG_FILE1" --config "$CUR/config.toml" &
 pid1="$!"
+
+# sleep 1 second to avoid both lightning starting at the same time and have same ID.
+sleep 1
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_distributed_import.sorted2" \
   -d "$CUR/data2" --log-file "$LOG_FILE2" --config "$CUR/config.toml" &

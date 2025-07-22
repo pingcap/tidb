@@ -353,6 +353,12 @@ func (ls *MemStore) replace(key, v []byte, hint *Hint, old *node) {
 	ls.getArena().free(old.addr)
 }
 
+// MaxEntrySize will return the maximum entry size for the MemStore
+// Any entry larger than this will likely result in failure.
+func (ls *MemStore) MaxEntrySize() int {
+	return ls.getArena().blockSize - nodeHeaderSize - ls.getHeight()*8
+}
+
 func (ls *MemStore) newNode(arena *arena, key []byte, v []byte, height int) *node {
 	// The base level is already allocated in the node struct.
 	nodeSize := nodeHeaderSize + height*8 + len(key) + len(v)

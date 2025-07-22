@@ -62,6 +62,11 @@ func (*generalCICollator) Pattern() WildcardPattern {
 	return &ciPattern{}
 }
 
+// Clone implements Collator interface.
+func (*generalCICollator) Clone() Collator {
+	return new(generalCICollator)
+}
+
 type ciPattern struct {
 	patChars []rune
 	patTypes []byte

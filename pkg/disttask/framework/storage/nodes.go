@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/cpu"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -67,6 +68,9 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 	if len(nodes) == 0 {
 		return nil
 	}
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		deleteSQL := new(strings.Builder)
 		if err := sqlescape.FormatSQL(deleteSQL, "delete from mysql.dist_framework_meta where host in("); err != nil {
@@ -87,6 +91,9 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 // GetAllNodes gets nodes in dist_framework_meta.
 func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error) {
 	var nodes []proto.ManagedNode
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nodes, err
+	}
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
 		nodes, err2 = mgr.getAllNodesWithSession(ctx, se)
@@ -116,6 +123,9 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 
 // GetUsedSlotsOnNodes implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	// concurrency of subtasks of some step is the same, we use max(concurrency)
 	// to make group by works.
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `

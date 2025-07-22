@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -39,12 +37,12 @@ import (
 // SubmitStandaloneTask submits a task to the distribute framework that only runs on the current node.
 // when import from server-disk, pass engine checkpoints too, as scheduler might run on another
 // node where we can't access the data files.
-func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, ecp map[int32]*checkpoints.EngineCheckpoint) (int64, *proto.TaskBase, error) {
+func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return 0, nil, err
 	}
-	return doSubmitTask(ctx, plan, stmt, serverInfo, toChunkMap(ecp))
+	return doSubmitTask(ctx, plan, stmt, serverInfo, chunkMap)
 }
 
 // SubmitTask submits a task to the distribute framework that runs on all managed nodes.
@@ -52,7 +50,7 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
-func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *infosync.ServerInfo, chunkMap map[int32][]Chunk) (int64, *proto.TaskBase, error) {
+func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *infosync.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	var instances []*infosync.ServerInfo
 	if instance != nil {
 		instances = append(instances, instance)
@@ -89,6 +87,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			TaskKey:    TaskKey(jobID),
 			TaskType:   proto.ImportInto,
 			ThreadCnt:  plan.ThreadCnt,
+			MaxNodeCnt: plan.MaxNodeCnt,
 		}
 		p := planner.NewPlanner()
 		taskID, err2 = p.Run(planCtx, logicalPlan)
@@ -104,8 +103,6 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	if err != nil {
 		return 0, nil, err
 	}
-
-	metrics.UpdateMetricsForAddTask(task)
 
 	logutil.BgLogger().Info("job submitted to task queue",
 		zap.Int64("job-id", jobID),

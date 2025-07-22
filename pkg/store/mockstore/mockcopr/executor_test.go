@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
@@ -52,13 +52,12 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	tikvStore, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	require.NoError(t, err)
 
-	store, err := mockstorage.NewMockStorage(tikvStore)
+	store, err := mockstorage.NewMockStorage(tikvStore, nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
 
-	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
@@ -69,7 +68,7 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, val int)")
 	dom = domain.GetDomain(tk.Session())
 	schema := dom.InfoSchema()
-	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := schema.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values (1, 1)")

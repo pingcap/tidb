@@ -12,6 +12,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/funcdep",
         "//pkg/statistics",
         "//pkg/util/codec",
         "//pkg/util/collate",

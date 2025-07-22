@@ -41,7 +41,6 @@ type AfFinalResult struct {
 type HashAggFinalWorker struct {
 	baseHashAggWorker
 
-	mutableRow          chunk.MutRow
 	partialResultMap    aggfuncs.AggPartialResultMapper
 	BInMap              int
 	inputCh             chan *aggfuncs.AggPartialResultMapper

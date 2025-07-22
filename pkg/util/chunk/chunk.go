@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
@@ -46,6 +47,10 @@ type Chunk struct {
 
 	// requiredRows indicates how many rows the parent executor want.
 	requiredRows int
+
+	// inCompleteChunk means some of the columns in the chunk is not filled, used in
+	// join probe, the value will always be false unless set it explicitly
+	inCompleteChunk bool
 }
 
 // Capacity constants.
@@ -101,13 +106,14 @@ func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 // created Chunk has the same data schema with the old Chunk.
 func renewWithCapacity(chk *Chunk, capacity, requiredRows int) *Chunk {
 	if chk.columns == nil {
-		return &Chunk{}
+		return &Chunk{inCompleteChunk: chk.inCompleteChunk}
 	}
 	return &Chunk{
-		columns:        renewColumns(chk.columns, capacity),
-		numVirtualRows: 0,
-		capacity:       capacity,
-		requiredRows:   requiredRows,
+		columns:         renewColumns(chk.columns, capacity),
+		numVirtualRows:  0,
+		capacity:        capacity,
+		requiredRows:    requiredRows,
+		inCompleteChunk: chk.inCompleteChunk,
 	}
 }
 
@@ -136,10 +142,11 @@ func renewColumns(oldCol []*Column, capacity int) []*Column {
 // but keep columns empty.
 func renewEmpty(chk *Chunk) *Chunk {
 	newChk := &Chunk{
-		columns:        nil,
-		numVirtualRows: chk.numVirtualRows,
-		capacity:       chk.capacity,
-		requiredRows:   chk.requiredRows,
+		columns:         nil,
+		numVirtualRows:  chk.numVirtualRows,
+		capacity:        chk.capacity,
+		requiredRows:    chk.requiredRows,
+		inCompleteChunk: chk.inCompleteChunk,
 	}
 	if chk.sel != nil {
 		newChk.sel = make([]int, len(chk.sel))
@@ -149,12 +156,27 @@ func renewEmpty(chk *Chunk) *Chunk {
 }
 
 func (c *Chunk) resetForReuse() {
-	for i := 0; i < len(c.columns); i++ {
+	for i := range len(c.columns) {
 		c.columns[i] = nil
 	}
 	columns := c.columns[:0]
 	// Keep only the empty columns array space, reset other fields.
 	*c = Chunk{columns: columns}
+}
+
+// SetInCompleteChunk will set c.inCompleteChunk, used in join
+func (c *Chunk) SetInCompleteChunk(isInCompleteChunk bool) {
+	c.inCompleteChunk = isInCompleteChunk
+}
+
+// IsInCompleteChunk returns true if this chunk is inCompleteChunk, used only in test
+func (c *Chunk) IsInCompleteChunk() bool {
+	return c.inCompleteChunk
+}
+
+// GetNumVirtualRows return c.numVirtualRows, used only in test
+func (c *Chunk) GetNumVirtualRows() int {
+	return c.numVirtualRows
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in bytes.
@@ -165,8 +187,7 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		return 0
 	}
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
-		sum += curColMemUsage
+		sum += int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 	}
 	return
 }
@@ -215,21 +236,23 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 	return nil
 }
 
-// SwapColumn swaps Column "c.columns[colIdx]" with Column
+// swapColumn swaps Column "c.columns[colIdx]" with Column
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
-func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
+// this function should not be used directly, if you wants to swap columns between two chunks,
+// use ColumnSwapHelper.SwapColumns instead.
+func (c *Chunk) swapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	if c.sel != nil || other.sel != nil {
 		return errors.New(msgErrSelNotNil)
 	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
-	for i := 0; i < colIdx; i++ {
+	for i := range colIdx {
 		if c.columns[i] == c.columns[colIdx] {
 			colIdx = i
 		}
 	}
-	for i := 0; i < otherIdx; i++ {
+	for i := range otherIdx {
 		if other.columns[i] == other.columns[otherIdx] {
 			otherIdx = i
 		}
@@ -362,7 +385,7 @@ func (c *Chunk) NumRows() int {
 	if c.sel != nil {
 		return len(c.sel)
 	}
-	if c.NumCols() == 0 {
+	if c.inCompleteChunk || c.NumCols() == 0 {
 		return c.numVirtualRows
 	}
 	return c.columns[0].length
@@ -396,6 +419,30 @@ func (c *Chunk) AppendPartialRow(colOff int, row Row) {
 		chkCol := c.columns[colOff+i]
 		appendCellByCell(chkCol, rowCol, row.idx)
 	}
+}
+
+// AppendRowsByColIdxs appends multiple rows by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (c *Chunk) AppendRowsByColIdxs(rows []Row, colIdxs []int) (wide int) {
+	if colIdxs == nil {
+		if len(rows) == 0 {
+			wide = 0
+			return
+		}
+		c.AppendRows(rows)
+		wide = rows[0].Len() * len(rows)
+		return
+	}
+	for _, srcRow := range rows {
+		c.appendSel(0)
+		for i, colIdx := range colIdxs {
+			appendCellByCell(c.columns[i], srcRow.c.columns[colIdx], srcRow.idx)
+		}
+	}
+	c.numVirtualRows += len(rows)
+	wide = len(colIdxs) * len(rows)
+	return
 }
 
 // AppendRowByColIdxs appends a row to the chunk, using the row's columns specified by colIdxs.
@@ -439,6 +486,24 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
 	}
 	dst.length++
+}
+
+// AppendCellFromRawData appends the cell from raw data
+func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset int) int {
+	if dst.isFixed() {
+		elemLen := len(dst.elemBuf)
+		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset), elemLen)...)
+		currentOffset += elemLen
+	} else {
+		elemLen := *(*uint32)(unsafe.Add(rowData, currentOffset))
+		if elemLen > 0 {
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+sizeUint32), int(elemLen))...)
+		}
+		dst.offsets = append(dst.offsets, int64(len(dst.data)))
+		currentOffset += int(elemLen + uint32(sizeUint32))
+	}
+	dst.length++
+	return currentOffset
 }
 
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
@@ -572,6 +637,12 @@ func (c *Chunk) AppendJSON(colIdx int, j types.BinaryJSON) {
 	c.columns[colIdx].AppendJSON(j)
 }
 
+// AppendVectorFloat32 appends a VectorFloat32 value to the chunk.
+func (c *Chunk) AppendVectorFloat32(colIdx int, v types.VectorFloat32) {
+	c.appendSel(colIdx)
+	c.columns[colIdx].AppendVectorFloat32(v)
+}
+
 func (c *Chunk) appendSel(colIdx int) {
 	if colIdx == 0 && c.sel != nil { // use column 0 as standard
 		c.sel = append(c.sel, c.columns[0].length)
@@ -605,6 +676,8 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 		c.AppendTime(colIdx, d.GetMysqlTime())
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
+	case types.KindVectorFloat32:
+		c.AppendVectorFloat32(colIdx, d.GetVectorFloat32())
 	}
 }
 
@@ -633,6 +706,11 @@ func (c *Chunk) SetSel(sel []int) {
 	c.sel = sel
 }
 
+// CloneEmpty returns an empty chunk that has the same schema with current chunk
+func (c *Chunk) CloneEmpty(maxCapacity int) *Chunk {
+	return renewWithCapacity(c, maxCapacity, maxCapacity)
+}
+
 // Reconstruct removes all filtered rows in this Chunk.
 func (c *Chunk) Reconstruct() {
 	if c.sel == nil {
@@ -647,8 +725,8 @@ func (c *Chunk) Reconstruct() {
 
 // ToString returns all the values in a chunk.
 func (c *Chunk) ToString(ft []*types.FieldType) string {
-	var buf []byte
-	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+	buf := make([]byte, 0, c.NumRows()*2)
+	for rowIdx := range c.NumRows() {
 		row := c.GetRow(rowIdx)
 		buf = append(buf, row.ToString(ft)...)
 		buf = append(buf, '\n')

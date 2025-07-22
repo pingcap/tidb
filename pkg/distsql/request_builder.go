@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -47,6 +47,9 @@ type RequestBuilder struct {
 	kv.Request
 	is  infoschema.MetaOnlyInfoSchema
 	err error
+
+	// When SetDAGRequest is called, builder will also this field.
+	dag *tipb.DAGRequest
 }
 
 // Build builds a "kv.Request".
@@ -75,6 +78,29 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.Request.KeyRanges == nil {
 		builder.Request.KeyRanges = kv.NewNonPartitionedKeyRanges(nil)
 	}
+
+	if dag := builder.dag; dag != nil {
+		if execCnt := len(dag.Executors); execCnt == 1 {
+			oldConcurrency := builder.Request.Concurrency
+			// select * from t order by id
+			if builder.Request.KeepOrder {
+				// When the DAG is just simple scan and keep order, set concurrency to 2.
+				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
+				// If very few data are returned to client, the speed is not optimal but good enough.
+				switch dag.Executors[0].Tp {
+				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
+					builder.Request.Concurrency = 2
+					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+						if val.(bool) {
+							// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
+							builder.Request.Concurrency = oldConcurrency
+						}
+					})
+				}
+			}
+		}
+	}
+
 	return &builder.Request, builder.err
 }
 
@@ -154,17 +180,18 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
-	}
-	if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
-		limit := dag.Executors[execCnt-1].GetLimit()
-		builder.Request.LimitSize = limit.GetLimit()
-		// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-		if execCnt == 2 {
-			if limit.Limit < estimatedRegionRowCount {
-				if kr := builder.Request.KeyRanges; kr != nil {
-					builder.Request.Concurrency = kr.PartitionNum()
-				} else {
-					builder.Request.Concurrency = 1
+		builder.dag = dag
+		if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+			limit := dag.Executors[execCnt-1].GetLimit()
+			builder.Request.LimitSize = limit.GetLimit()
+			// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
+			if execCnt == 2 {
+				if limit.Limit < estimatedRegionRowCount {
+					if kr := builder.Request.KeyRanges; kr != nil {
+						builder.Request.Concurrency = kr.PartitionNum()
+					} else {
+						builder.Request.Concurrency = 1
+					}
 				}
 			}
 		}
@@ -314,6 +341,7 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 	builder.Request.StoreBusyThreshold = dctx.LoadBasedReplicaReadThreshold
 	builder.Request.RunawayChecker = dctx.RunawayChecker
 	builder.Request.TiKVClientReadTimeout = dctx.TiKVClientReadTimeout
+	builder.Request.MaxExecutionTime = dctx.MaxExecutionTime
 	return builder
 }
 
@@ -347,7 +375,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.MetaOnlyInfoSchem
 }
 
 // SetResourceGroupTagger sets the request resource group tagger.
-func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGroupTagger) *RequestBuilder {
+func (builder *RequestBuilder) SetResourceGroupTagger(tagger *kv.ResourceGroupTagBuilder) *RequestBuilder {
 	builder.Request.ResourceGroupTagger = tagger
 	return builder
 }
@@ -723,6 +751,9 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 		krs[i] = make([]kv.KeyRange, 0, len(ranges))
 	}
 
+	if memTracker != nil {
+		memTracker.Consume(int64(unsafe.Sizeof(kv.KeyRange{})) * int64(len(ranges)))
+	}
 	const checkSignalStep = 8
 	var estimatedMemUsage int64
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
@@ -750,6 +781,9 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 			}
 			if interruptSignal != nil && interruptSignal.Load().(bool) {
 				return kv.NewPartitionedKeyRanges(nil), nil
+			}
+			if memTracker != nil {
+				memTracker.HandleKillSignal()
 			}
 		}
 	}
@@ -795,6 +829,18 @@ func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
 	}
 
 	ranges := make([]kv.KeyRange, 0, len(pis.Definitions)*(len(tbl.Indices)+1)+1)
+	// Handle global index ranges
+	for _, idx := range tbl.Indices {
+		if idx.State != model.StatePublic || !idx.Global {
+			continue
+		}
+		idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange())
+		if err != nil {
+			return nil, err
+		}
+		ranges = idxRanges.AppendSelfTo(ranges)
+	}
+
 	for _, def := range pis.Definitions {
 		rgs, err := appendRanges(tbl, def.ID)
 		if err != nil {
@@ -821,7 +867,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 	retRanges = kvRanges.AppendSelfTo(retRanges)
 
 	for _, index := range tbl.Indices {
-		if index.State != model.StatePublic {
+		if index.State != model.StatePublic || index.Global {
 			continue
 		}
 		ranges = ranger.FullRange()

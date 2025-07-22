@@ -37,3 +37,8 @@ func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 func (*zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")
 }
+
+// Clone is not implemented.
+func (*zhPinyinTiDBASCSCollator) Clone() Collator {
+	panic("implement me")
+}

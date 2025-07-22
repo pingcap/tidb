@@ -3,6 +3,8 @@
 package iter
 
 import (
+	"context"
+
 	"golang.org/x/exp/constraints"
 )
 
@@ -25,4 +27,9 @@ func OfRange[T constraints.Integer](begin, end T) TryNextor[T] {
 // Fail creates an iterator always fail.
 func Fail[T any](err error) TryNextor[T] {
 	return failure[T]{error: err}
+}
+
+// Func generates results by a function.
+func Func[T any](g func(ctx context.Context) IterResult[T]) TryNextor[T] {
+	return ofFunc[T](g)
 }

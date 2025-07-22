@@ -32,6 +32,9 @@ import (
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
 const TrackMemWhenExceeds = 104857600 // 100MB
 
+// DefMemQuotaQuery is default memory quota for query.
+const DefMemQuotaQuery = 1073741824 // 1GB
+
 // Process global variables for memory limit.
 var (
 	ServerMemoryLimitOriginText  = atomicutil.NewString("0")
@@ -119,6 +122,16 @@ type bytesLimits struct {
 	bytesSoftLimit int64 // bytesSoftLimit <= 0 means no limit, used for actionMuForSoftLimit.
 }
 
+var unlimitedBytesLimit = bytesLimits{
+	bytesHardLimit: -1,
+	bytesSoftLimit: -1,
+}
+
+var defaultQueryQuota = bytesLimits{
+	bytesHardLimit: DefMemQuotaQuery,
+	bytesSoftLimit: DefMemQuotaQuery * 8 / 10,
+}
+
 // MemUsageTop1Tracker record the use memory top1 session's tracker for kill.
 var MemUsageTop1Tracker atomic.Pointer[Tracker]
 
@@ -134,10 +147,16 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	t.parMu.parent = nil
 
 	t.label = label
-	t.bytesLimit.Store(&bytesLimits{
-		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
-	})
+	if bytesLimit <= 0 {
+		t.bytesLimit.Store(&unlimitedBytesLimit)
+	} else if bytesLimit == DefMemQuotaQuery {
+		t.bytesLimit.Store(&defaultQueryQuota)
+	} else {
+		t.bytesLimit.Store(&bytesLimits{
+			bytesHardLimit: bytesLimit,
+			bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		})
+	}
 	t.maxConsumed.Store(0)
 	t.isGlobal = false
 }
@@ -183,10 +202,16 @@ func (t *Tracker) CheckBytesLimit(val int64) bool {
 // SetBytesLimit sets the bytes limit for this tracker.
 // "bytesHardLimit <= 0" means no limit.
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
-	t.bytesLimit.Store(&bytesLimits{
-		bytesHardLimit: bytesLimit,
-		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
-	})
+	if bytesLimit <= 0 {
+		t.bytesLimit.Store(&unlimitedBytesLimit)
+	} else if bytesLimit == DefMemQuotaQuery {
+		t.bytesLimit.Store(&defaultQueryQuota)
+	} else {
+		t.bytesLimit.Store(&bytesLimits{
+			bytesHardLimit: bytesLimit,
+			bytesSoftLimit: int64(float64(bytesLimit) * softScale),
+		})
+	}
 }
 
 // GetBytesLimit gets the bytes limit for this tracker.
@@ -242,7 +267,30 @@ func (t *Tracker) UnbindActions() {
 
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
-	t.actionMuForHardLimit.actionOnExceed = &LogOnExceed{}
+	// Currently this method is only called by ResetContextOfStmt, which then always calls SetActionOnExceed to set
+	// actionForHardLimit.actionOnExceed properly, thus it's safe to set it nil here.
+	t.actionMuForHardLimit.actionOnExceed = nil
+}
+
+// UnbindActionFromHardLimit unbinds action from hardLimit.
+func (t *Tracker) UnbindActionFromHardLimit(actionToUnbind ActionOnExceed) {
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+
+	var prev ActionOnExceed
+	for current := t.actionMuForHardLimit.actionOnExceed; current != nil; current = current.GetFallback() {
+		if current == actionToUnbind {
+			if prev == nil {
+				// actionToUnbind is the first element
+				t.actionMuForHardLimit.actionOnExceed = current.GetFallback()
+			} else {
+				// actionToUnbind is not the first element
+				prev.SetFallback(current.GetFallback())
+			}
+			break
+		}
+		prev = current
+	}
 }
 
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
@@ -859,7 +907,9 @@ const (
 	// LabelForChunkDataInDiskByChunks represents the label of the chunk list in disk
 	LabelForChunkDataInDiskByChunks int = -30
 	// LabelForSortPartition represents the label of the sort partition
-	LabelForSortPartition = -31
+	LabelForSortPartition int = -31
+	// LabelForHashTableInHashJoinV2 represents the label of the hash join v2's hash table
+	LabelForHashTableInHashJoinV2 int = -32
 )
 
 // MetricsTypes is used to get label for metrics

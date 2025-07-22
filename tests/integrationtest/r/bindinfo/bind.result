@@ -131,7 +131,7 @@ create table t1(id int);
 create table t2(id int);
 explain format='brief' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
 id	estRows	task	access object	operator info
-HashJoin	7992.00	root		semi join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+HashJoin	7992.00	root		semi join, left side:TableReader, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -203,7 +203,7 @@ create table t1(a int, b int);
 create table t2(a int, b int);
 explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer semi join, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.a)]
+HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -211,7 +211,7 @@ HashJoin	10000.00	root		left outer semi join, equal:[eq(bindinfo__bind.t1.b, bin
 explain format='brief' select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#10
-└─Apply	10000.00	root		CARTESIAN left outer semi join
+└─Apply	10000.00	root		CARTESIAN left outer semi join, left side:TableReader
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Limit(Probe)	20000.00	root		offset:0, count:2
@@ -226,7 +226,7 @@ select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b lim
 explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#10
-└─Apply	10000.00	root		CARTESIAN left outer semi join
+└─Apply	10000.00	root		CARTESIAN left outer semi join, left side:TableReader
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Limit(Probe)	20000.00	root		offset:0, count:2

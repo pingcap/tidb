@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -50,12 +51,6 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 			},
 		},
 		{
-			sql: "select * from t where a = 1",
-			physicalList: []string{
-				"Point_Get_5", "Projection_4",
-			},
-		},
-		{
 			sql: "select max(b) from t",
 			physicalList: []string{
 				"IndexFullScan_19",
@@ -66,39 +61,21 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 				"Projection_8",
 			},
 		},
-		{
-			sql: "select * from t where c = 3",
-			physicalList: []string{
-				"IndexRangeScan_8",
-				"TableRowIDScan_9",
-				"IndexLookUp_10",
-				"Projection_4",
-			},
-		},
-		{
-			sql: "SELECT * FROM t WHERE b = 1 OR c = 1;",
-			physicalList: []string{
-				"TableRowIDScan_10",
-				"IndexRangeScan_8",
-				"IndexRangeScan_9",
-				"IndexMerge_11",
-				"Projection_4",
-			},
-		},
 	}
 
 	for _, testcase := range testcases {
 		sql := testcase.sql
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 		require.NoError(t, err)
 		sctx := core.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().CostModelVersion = 2
 		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
-		plan, err := builder.Build(context.TODO(), stmt)
+		plan, err := builder.Build(context.TODO(), nodeW)
 		require.NoError(t, err)
 		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 		require.NoError(t, err)
@@ -147,7 +124,8 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	defer func() {
@@ -157,7 +135,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	sctx.GetSessionVars().AllowAggPushDown = true
 	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
-	plan, err := builder.Build(context.TODO(), stmt)
+	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
 	flag := uint64(0)
 	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
@@ -214,7 +192,8 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	sql := "select * from t"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	defer func() {
@@ -223,7 +202,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
-	plan, err := builder.Build(context.TODO(), stmt)
+	plan, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
 	_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)

@@ -19,9 +19,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/statistics"
 )
@@ -64,11 +65,11 @@ type TableReaderImpl struct {
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *plannercore.DataSource) *TableReaderImpl {
+func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *logicalop.DataSource) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
-		tblInfo:     source.TableInfo(),
+		tblInfo:     source.TableInfo,
 		tblColHists: source.TblColHists,
 	}
 	return impl
@@ -164,10 +165,10 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *logicalop.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
-		tblInfo:     source.TableInfo(),
+		tblInfo:     source.TableInfo,
 		tblColHists: source.TblColHists,
 	}
 }

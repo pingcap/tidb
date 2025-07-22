@@ -79,19 +79,19 @@ func TestListAllTables(t *testing.T) {
 		AppendViews("db3", "t6", "t7", "t8")
 
 	dbNames := make([]databaseName, 0, len(data))
-	rows := sqlmock.NewRows([]string{"TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"})
 	for dbName, tableInfos := range data {
 		dbNames = append(dbNames, dbName)
 
+		query := "SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=\\? AND \\(TABLE_TYPE='BASE TABLE'\\)"
+		rows := sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"})
 		for _, tbInfo := range tableInfos {
 			if tbInfo.Type == TableTypeView {
 				continue
 			}
-			rows.AddRow(dbName, tbInfo.Name, tbInfo.Type.String(), tbInfo.AvgRowLength)
+			rows.AddRow(tbInfo.Name, tbInfo.Type.String(), tbInfo.AvgRowLength)
 		}
+		mock.ExpectQuery(query).WithArgs(dbName).WillReturnRows(rows)
 	}
-	query := "SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'"
-	mock.ExpectQuery(query).WillReturnRows(rows)
 
 	tables, err := ListAllDatabasesTables(tctx, conn, dbNames, listTableByInfoSchema, TableTypeBase)
 	require.NoError(t, err)
@@ -108,9 +108,9 @@ func TestListAllTables(t *testing.T) {
 	data = NewDatabaseTables().
 		AppendTables("db", []string{"t1"}, []uint64{1}).
 		AppendViews("db", "t2")
-	query = "SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW'"
-	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"}).
-		AddRow("db", "t1", TableTypeBaseStr, 1).AddRow("db", "t2", TableTypeViewStr, nil))
+	query := "SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=\\? AND \\(TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW'\\)"
+	mock.ExpectQuery(query).WithArgs("db").WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"}).
+		AddRow("t1", TableTypeBaseStr, 1).AddRow("t2", TableTypeViewStr, nil))
 	tables, err = ListAllDatabasesTables(tctx, conn, []string{"db"}, listTableByInfoSchema, TableTypeBase, TableTypeView)
 	require.NoError(t, err)
 	require.Len(t, tables, 1)

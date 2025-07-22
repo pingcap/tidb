@@ -20,9 +20,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
@@ -47,8 +49,11 @@ type parallelSortWorker struct {
 	localSortedRows    []*chunk.Iterator4Slice
 	sortedRowsIter     *chunk.Iterator4Slice
 	maxSortedRowsLimit int
-	batchRows          []chunk.Row
+	chunkIters         []*chunk.Iterator4Chunk
+	rowNumInChunkIters int
 	merger             *multiWayMerger
+
+	sqlKiller *sqlkiller.SQLKiller
 }
 
 func newParallelSortWorker(
@@ -61,8 +66,9 @@ func newParallelSortWorker(
 	memTracker *memory.Tracker,
 	sortedRowsIter *chunk.Iterator4Slice,
 	maxChunkSize int,
-	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
-	maxSortedRowsLimit := maxChunkSize * 30
+	spillHelper *parallelSortSpillHelper,
+	sqlKiller *sqlkiller.SQLKiller,
+) *parallelSortWorker {
 	return &parallelSortWorker{
 		workerIDForTest:        workerIDForTest,
 		lessRowFunc:            lessRowFunc,
@@ -73,14 +79,13 @@ func newParallelSortWorker(
 		timesOfRowCompare:      0,
 		memTracker:             memTracker,
 		sortedRowsIter:         sortedRowsIter,
-		maxSortedRowsLimit:     maxSortedRowsLimit,
+		maxSortedRowsLimit:     maxChunkSize * 30,
 		spillHelper:            spillHelper,
-		batchRows:              make([]chunk.Row, 0, maxSortedRowsLimit),
+		sqlKiller:              sqlKiller,
 	}
 }
 
 func (p *parallelSortWorker) reset() {
-	p.batchRows = nil
 	p.localSortedRows = nil
 	p.sortedRowsIter = nil
 	p.merger = nil
@@ -114,7 +119,32 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() ([]chunk.Row, error)
 		return nil, err
 	}
 
+	loopCnt := uint64(0)
+
 	for {
+		var err error
+		failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+			if val.(bool) {
+				randNum := rand.Int31n(10000)
+				if randNum < 2 {
+					err = errors.NewNoStackErrorf("failpoint error")
+				}
+			}
+		})
+
+		if err != nil {
+			return nil, err
+		}
+
+		if loopCnt%100 == 0 && p.sqlKiller != nil {
+			err := p.sqlKiller.HandleSignal()
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		loopCnt++
+
 		// It's impossible to return error here as rows are in memory
 		row, _ := p.merger.next()
 		if row.IsEmpty() {
@@ -126,28 +156,39 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() ([]chunk.Row, error)
 	return resultSortedRows, nil
 }
 
+func (p *parallelSortWorker) convertChunksToRows() []chunk.Row {
+	rows := make([]chunk.Row, 0, p.rowNumInChunkIters)
+	for _, iter := range p.chunkIters {
+		row := iter.Begin()
+		for !row.IsEmpty() {
+			rows = append(rows, row)
+			row = iter.Next()
+		}
+	}
+	p.chunkIters = p.chunkIters[:0]
+	p.rowNumInChunkIters = 0
+	return rows
+}
+
 func (p *parallelSortWorker) sortBatchRows() {
-	slices.SortFunc(p.batchRows, p.keyColumnsLess)
-	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(p.batchRows))
-	p.batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
+	rows := p.convertChunksToRows()
+	slices.SortFunc(rows, p.keyColumnsLess)
+	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(rows))
 }
 
 func (p *parallelSortWorker) sortLocalRows() ([]chunk.Row, error) {
 	// Handle Remaining batchRows whose row number is not over the `maxSortedRowsLimit`
-	if len(p.batchRows) > 0 {
+	if p.rowNumInChunkIters > 0 {
 		p.sortBatchRows()
 	}
 
 	return p.multiWayMergeLocalSortedRows()
 }
 
-func (p *parallelSortWorker) addChunkToBatchRows(chk *chunk.Chunk) {
+func (p *parallelSortWorker) saveChunk(chk *chunk.Chunk) {
 	chkIter := chunk.NewIterator4Chunk(chk)
-	row := chkIter.Begin()
-	for !row.IsEmpty() {
-		p.batchRows = append(p.batchRows, row)
-		row = chkIter.Next()
-	}
+	p.chunkIters = append(p.chunkIters, chkIter)
+	p.rowNumInChunkIters += chkIter.Len()
 }
 
 // Fetching a bunch of chunks from chunkChannel and sort them.
@@ -182,9 +223,9 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 		p.totalMemoryUsage += chk.MemoryUsage
 	}
 
-	p.addChunkToBatchRows(chk.Chk)
+	p.saveChunk(chk.Chk)
 
-	if len(p.batchRows) >= p.maxSortedRowsLimit {
+	if p.rowNumInChunkIters >= p.maxSortedRowsLimit {
 		p.sortBatchRows()
 	}
 
@@ -193,9 +234,12 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 }
 
 func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
-	if p.timesOfRowCompare >= SignalCheckpointForSort {
-		// Trigger Consume for checking the NeedKill signal
-		p.memTracker.Consume(1)
+	if p.timesOfRowCompare >= SignalCheckpointForSort && p.sqlKiller != nil {
+		err := p.sqlKiller.HandleSignal()
+		if err != nil {
+			panic(err)
+		}
+
 		p.timesOfRowCompare = 0
 	}
 

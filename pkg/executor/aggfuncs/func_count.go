@@ -58,8 +58,8 @@ func (e *baseCount) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult,
 
 func (e *baseCount) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
 	pr, memDelta := e.AllocPartialResult()
-	result := *(*partialResult4Count)(pr)
-	success := helper.deserializePartialResult4Count(&result)
+	result := (*partialResult4Count)(pr)
+	success := helper.deserializePartialResult4Count(result)
 	if !success {
 		return nil, 0
 	}
@@ -349,6 +349,55 @@ func (e *countOriginal4JSON) Slide(sctx AggFuncUpdateContext, getRow func(uint64
 	}
 	for i := uint64(0); i < shiftEnd; i++ {
 		_, isNull, err := e.args[0].EvalJSON(sctx, getRow(lastEnd+i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p++
+	}
+	return nil
+}
+
+type countOriginal4VectorFloat32 struct {
+	baseCount
+}
+
+func (e *countOriginal4VectorFloat32) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4Count)(pr)
+
+	for _, row := range rowsInGroup {
+		_, isNull, err := e.args[0].EvalVectorFloat32(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+
+		*p++
+	}
+
+	return 0, nil
+}
+
+var _ SlidingWindowAggFunc = &countOriginal4VectorFloat32{}
+
+func (e *countOriginal4VectorFloat32) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+	p := (*partialResult4Count)(pr)
+	for i := uint64(0); i < shiftStart; i++ {
+		_, isNull, err := e.args[0].EvalVectorFloat32(sctx, getRow(lastStart+i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			continue
+		}
+		*p--
+	}
+	for i := uint64(0); i < shiftEnd; i++ {
+		_, isNull, err := e.args[0].EvalVectorFloat32(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
 		}

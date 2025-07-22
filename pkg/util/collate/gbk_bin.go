@@ -17,6 +17,7 @@ package collate
 import (
 	"bytes"
 
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/text/encoding"
 )
@@ -24,6 +25,11 @@ import (
 // gbkBinCollator is collator for gbk_bin.
 type gbkBinCollator struct {
 	e *encoding.Encoder
+}
+
+// Clone implements Collator interface.
+func (*gbkBinCollator) Clone() Collator {
+	return &gbkBinCollator{charset.NewCustomGBKEncoder()}
 }
 
 // Compare implement Collator interface.

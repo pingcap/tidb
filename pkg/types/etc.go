@@ -37,6 +37,9 @@ var IsTypeBlob = ast.IsTypeBlob
 // whether the tp is the char type like a string type or a varchar type.
 var IsTypeChar = ast.IsTypeChar
 
+// IsTypeVector returns whether tp is a vector type.
+var IsTypeVector = ast.IsTypeVector
+
 // IsTypeVarchar returns a boolean indicating
 // whether the tp is the varchar type like a varstring type or a varchar type.
 func IsTypeVarchar(tp byte) bool {
@@ -159,6 +162,7 @@ var kind2Str = map[byte]string{
 	KindMaxValue:      "max_value",
 	KindRaw:           "raw",
 	KindMysqlJSON:     "json",
+	KindVectorFloat32: "vector",
 }
 
 // TypeStr converts tp to a string.

@@ -9,9 +9,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -21,11 +23,14 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -38,6 +43,10 @@ const (
 	azblobSASToken         = "azblob.sas-token"
 	azblobEncryptionScope  = "azblob.encryption-scope"
 	azblobEncryptionKey    = "azblob.encryption-key"
+
+	azblobPremisedCopySpeedPerSecond      = 100 * units.MiB
+	azblobPremisedCopySpeedPerMilliSecond = azblobPremisedCopySpeedPerSecond / 1000
+	azblobCopyPollPendingMinimalDuration  = 2 * time.Second
 )
 
 const azblobRetryTimes int32 = 5
@@ -150,6 +159,39 @@ type ClientBuilder interface {
 	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
 	GetServiceClient() (*azblob.Client, error)
 	GetAccountName() string
+	GetServiceURL() string
+}
+
+func urlOfObjectByEndpoint(endpoint, container, object string) (string, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", errors.Annotatef(err, "%s isn't a valid url", endpoint)
+	}
+	u.Path = path.Join(u.Path, container, object)
+	return u.String(), nil
+}
+
+type defaultClientBuilder struct {
+	defaultCred *azidentity.DefaultAzureCredential
+
+	accountName string
+	serviceURL  string
+	clientOpts  *azblob.ClientOptions
+}
+
+// GetAccountName implements ClientBuilder.
+func (d *defaultClientBuilder) GetAccountName() string {
+	return d.accountName
+}
+
+// GetServiceClient implements ClientBuilder.
+func (d *defaultClientBuilder) GetServiceClient() (*azblob.Client, error) {
+	return azblob.NewClient(d.serviceURL, d.defaultCred, d.clientOpts)
+}
+
+// GetServiceURL implements ClientBuilder.
+func (d *defaultClientBuilder) GetServiceURL() string {
+	return d.serviceURL
 }
 
 // use shared key to access azure blob storage
@@ -159,6 +201,11 @@ type sharedKeyClientBuilder struct {
 	serviceURL  string
 
 	clientOptions *azblob.ClientOptions
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *sharedKeyClientBuilder) GetServiceURL() string {
+	return b.serviceURL
 }
 
 func (b *sharedKeyClientBuilder) GetServiceClient() (*azblob.Client, error) {
@@ -178,6 +225,11 @@ type sasClientBuilder struct {
 	clientOptions *azblob.ClientOptions
 }
 
+// GetServiceURL implements ClientBuilder.
+func (b *sasClientBuilder) GetServiceURL() string {
+	return b.serviceURL
+}
+
 func (b *sasClientBuilder) GetServiceClient() (*azblob.Client, error) {
 	return azblob.NewClientWithNoCredential(b.serviceURL, b.clientOptions)
 }
@@ -193,6 +245,11 @@ type tokenClientBuilder struct {
 	serviceURL  string
 
 	clientOptions *azblob.ClientOptions
+}
+
+// GetServiceURL implements ClientBuilder.
+func (b *tokenClientBuilder) GetServiceURL() string {
+	return b.serviceURL
 }
 
 func (b *tokenClientBuilder) GetServiceClient() (*azblob.Client, error) {
@@ -289,28 +346,38 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 
 	var sharedKey string
 	val := os.Getenv("AZURE_STORAGE_KEY")
-	if len(val) <= 0 {
-		return nil, errors.New("cannot find any credential info to access azure blob storage")
-	}
-	log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
-	sharedKey = val
+	if len(val) > 0 {
+		log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
+		sharedKey = val
 
-	cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)
+		cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)
+		if err != nil {
+			return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+		}
+		// if BR can only get credential info from environment variable `sharedKey`,
+		// BR will send it to TiKV so that there is no need to set environment variable for TiKV.
+		if opts != nil && opts.SendCredentials {
+			options.AccountName = accountName
+			options.SharedKey = sharedKey
+		}
+		return &sharedKeyClientBuilder{
+			cred,
+			accountName,
+			serviceURL,
+
+			clientOptions,
+		}, nil
+	}
+
+	defaultCred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		return nil, errors.Annotate(err, "Failed to get azure sharedKey credential")
+		return nil, err
 	}
-	// if BR can only get credential info from environment variable `sharedKey`,
-	// BR will send it to TiKV so that there is no need to set environment variable for TiKV.
-	if opts != nil && opts.SendCredentials {
-		options.AccountName = accountName
-		options.SharedKey = sharedKey
-	}
-	return &sharedKeyClientBuilder{
-		cred,
-		accountName,
-		serviceURL,
-
-		clientOptions,
+	return &defaultClientBuilder{
+		defaultCred: defaultCred,
+		accountName: accountName,
+		serviceURL:  serviceURL,
+		clientOpts:  clientOptions,
 	}, nil
 }
 
@@ -324,6 +391,91 @@ type AzureBlobStorage struct {
 
 	cpkScope *blob.CPKScopeInfo
 	cpkInfo  *blob.CPKInfo
+
+	// resolvedAccountName is the final account name we are going to use.
+	resolvedAccountName     string
+	resolvedServiceEndpoint string
+}
+
+// CopyFrom implements Copier.
+func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	es, ok := e.(*AzureBlobStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig,
+			"AzureBlobStorage.CopyFrom supports *AzureBlobStorage only, got %T", e)
+	}
+
+	url, err := urlOfObjectByEndpoint(es.resolvedServiceEndpoint, es.options.Bucket, es.withPrefix(spec.From))
+	if err != nil {
+		return errors.Annotatef(err, "failed to get url of object %s", spec.From)
+	}
+	dstBlob := s.containerClient.NewBlobClient(s.withPrefix(spec.To))
+
+	// NOTE: `CopyFromURL` supports files up to 256 MiB, which might not be enough for huger regions.
+	// Hence we use the asynchronous version and wait for finish.
+	// But this might not as effect as the syncrhonous version for small files.
+	// It is possible to use syncrhonous version for small files if necessary.
+	// REF: https://learn.microsoft.com/en-us/rest/api/storageservices/copy-blob-from-url
+	resp, err := dstBlob.StartCopyFromURL(ctx, url, &blob.StartCopyFromURLOptions{})
+	if err != nil {
+		return errors.Annotatef(err, "failed to copy blob from %s to %s", url, spec.To)
+	}
+	copyID := resp.CopyID
+	deref := aws.StringValue
+
+	for {
+		prop, err := dstBlob.GetProperties(ctx, &blob.GetPropertiesOptions{})
+		if err != nil {
+			return errors.Annotate(err, "failed to check asynchronous copy status")
+		}
+		if prop.CopyID == nil || deref(prop.CopyID) != deref(copyID) {
+			return errors.Annotatef(berrors.ErrStorageUnknown,
+				"failed to check copy status: copy ID not match; copy id = %v; resp.copyID = %v;", deref(copyID), deref(prop.CopyID))
+		}
+		cStat := deref((*string)(prop.CopyStatus))
+		// REF: https://learn.microsoft.com/en-us/rest/api/storageservices/get-blob-properties?tabs=microsoft-entra-id#response-headers
+		switch cStat {
+		case "success":
+			return nil
+		case "failed", "aborted":
+			return errors.Annotatef(berrors.ErrStorageUnknown, "asynchronous copy failed or aborted: %s", deref(prop.CopyStatusDescription))
+		case "pending":
+			finished, total, err := progress(deref(prop.CopyProgress))
+			if err != nil {
+				return errors.Annotate(err, "failed to parse progress")
+			}
+			rem := total - finished
+			toSleep := time.Duration(rem/azblobPremisedCopySpeedPerMilliSecond) * time.Millisecond
+			// In practice, most copies finish when the initial request returns.
+			// To avoid a busy loop of requesting, we need a minimal sleep duration.
+			if toSleep < azblobCopyPollPendingMinimalDuration {
+				toSleep = azblobCopyPollPendingMinimalDuration
+			}
+			logutil.CL(ctx).Info("AzureBlobStorage: asynchronous copy triggered",
+				zap.Int("finished", finished), zap.Int("total", total),
+				zap.Stringp("copy-id", prop.CopyID), zap.Duration("to-sleep", toSleep),
+				zap.Stringp("copy-desc", prop.CopyStatusDescription),
+			)
+			time.Sleep(toSleep)
+			continue
+		default:
+			return errors.Annotatef(berrors.ErrStorageUnknown, "unknown copy status: %v", cStat)
+		}
+	}
+}
+
+// progress parses the format "bytes copied/bytes total".
+// REF: https://learn.microsoft.com/en-us/rest/api/storageservices/get-blob-properties?tabs=microsoft-entra-id#response-headers
+func progress(s string) (finished, total int, err error) {
+	n, err := fmt.Sscanf(s, "%d/%d", &finished, &total)
+	if n != 2 {
+		err = errors.Errorf("failed to parse progress %s", s)
+	}
+	return
+}
+
+func (*AzureBlobStorage) MarkStrongConsistency() {
+	// See https://github.com/MicrosoftDocs/azure-docs/issues/105331#issuecomment-1450252384
 }
 
 func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
@@ -392,6 +544,8 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 		accessTier,
 		cpkScope,
 		cpkInfo,
+		clientBuilder.GetAccountName(),
+		clientBuilder.GetServiceURL(),
 	}, nil
 }
 
@@ -593,6 +747,8 @@ type azblobObjectReader struct {
 	ctx context.Context
 
 	cpkInfo *blob.CPKInfo
+	// opened lazily
+	reader io.ReadCloser
 }
 
 // Read implement the io.Reader interface.
@@ -604,30 +760,27 @@ func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 	if maxCnt == 0 {
 		return 0, io.EOF
 	}
-	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
-		Range: blob.HTTPRange{
-			Offset: r.pos,
-			Count:  maxCnt,
-		},
-
-		CPKInfo: r.cpkInfo,
-	})
-	if err != nil {
-		return 0, errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d', count='%d'", r.pos, maxCnt)
+	if r.reader == nil {
+		if err2 := r.reopenReader(); err2 != nil {
+			return 0, err2
+		}
 	}
-	body := resp.NewRetryReader(r.ctx, &blob.RetryReaderOptions{
-		MaxRetries: azblobRetryTimes,
-	})
-	n, err = body.Read(p)
+	buf := p[:maxCnt]
+	n, err = r.reader.Read(buf)
 	if err != nil && err != io.EOF {
 		return 0, errors.Annotatef(err, "Failed to read data from azure blob response, data info: pos='%d', count='%d'", r.pos, maxCnt)
 	}
 	r.pos += int64(n)
-	return n, body.Close()
+	return n, nil
 }
 
 // Close implement the io.Closer interface.
-func (*azblobObjectReader) Close() error {
+func (r *azblobObjectReader) Close() error {
+	if r.reader != nil {
+		err := errors.Trace(r.reader.Close())
+		r.reader = nil
+		return err
+	}
 	return nil
 }
 
@@ -653,11 +806,42 @@ func (r *azblobObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
 
-	if realOffset < 0 {
+	if realOffset < 0 || realOffset > r.totalSize {
 		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "Seek: offset is %d, but length of content is only %d", realOffset, r.totalSize)
 	}
+	if realOffset == r.pos {
+		return r.pos, nil
+	}
 	r.pos = realOffset
+	// azblob reader can only read forward, so we need to reopen the reader
+	if err := r.reopenReader(); err != nil {
+		return 0, err
+	}
 	return r.pos, nil
+}
+
+func (r *azblobObjectReader) reopenReader() error {
+	if r.reader != nil {
+		err := errors.Trace(r.reader.Close())
+		if err != nil {
+			log.Warn("failed to close azblob reader", zap.Error(err))
+		}
+	}
+
+	resp, err := r.blobClient.DownloadStream(r.ctx, &blob.DownloadStreamOptions{
+		Range: blob.HTTPRange{
+			Offset: r.pos,
+		},
+		CPKInfo: r.cpkInfo,
+	})
+	if err != nil {
+		return errors.Annotatef(err, "Failed to read data from azure blob, data info: pos='%d'", r.pos)
+	}
+	body := resp.NewRetryReader(r.ctx, &blob.RetryReaderOptions{
+		MaxRetries: azblobRetryTimes,
+	})
+	r.reader = body
+	return nil
 }
 
 func (r *azblobObjectReader) GetFileSize() (int64, error) {

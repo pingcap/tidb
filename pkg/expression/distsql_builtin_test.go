@@ -907,6 +907,12 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Val = make([]byte, 0, 1024)
 		expr.Val, err = codec.EncodeValue(time.UTC, expr.Val, d)
 		require.NoError(t, err)
+	case types.KindVectorFloat32:
+		expr.Tp = tipb.ExprType_TiDBVectorFloat32
+		var err error
+		expr.Val = make([]byte, 0, 1024)
+		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
+		require.NoError(t, err)
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime
 		var err error

@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,6 +42,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -82,17 +83,19 @@ func TestInfo(t *testing.T) {
 	dom.etcdClient = client
 	// Mock new DDL and init the schema syncer with etcd client.
 	goCtx := context.Background()
-	dom.ddl = ddl.NewDDL(
+	dom.ddl, dom.ddlExecutor = ddl.NewDDL(
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
+		ddl.WithSchemaLoader(dom),
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop", `return(true)`))
-	require.NoError(t, dom.Init(ddlLease, sysMockFactory, nil))
+	require.NoError(t, dom.Init(sysMockFactory, nil))
+	require.NoError(t, dom.Start(ddl.Bootstrap))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL"))
 
@@ -119,9 +122,9 @@ func TestInfo(t *testing.T) {
 	require.Equalf(t, info.ID, infos[ddlID].ID, "server one info %v, info %v", infos[ddlID], info)
 
 	// Test the scene where syncer.Done() gets the information.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncer/ErrorMockSessionDone", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone", `return(true)`))
 	<-dom.ddl.SchemaSyncer().Done()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncer/ErrorMockSessionDone"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone"))
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for i := 0; i < 1000; i++ {
@@ -134,7 +137,7 @@ func TestInfo(t *testing.T) {
 	require.True(t, syncerStarted)
 
 	stmt := &ast.CreateDatabaseStmt{
-		Name: model.NewCIStr("aaa"),
+		Name: ast.NewCIStr("aaa"),
 		// Make sure loading schema is normal.
 		Options: []*ast.DatabaseOption{
 			{
@@ -148,7 +151,7 @@ func TestInfo(t *testing.T) {
 		},
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, stmt))
+	require.NoError(t, dom.ddlExecutor.CreateSchema(ctx, stmt))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
@@ -179,8 +182,8 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(mock.NewContext(), nil)
-	dom.autoAnalyzeWorker(nil)
+	dom.gcStatsWorker()
+	dom.autoAnalyzeWorker()
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
 	err = counter.Write(pb)
@@ -259,7 +262,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}()
 	dom.sysVarCache.Lock()
 	dom.sysVarCache.global = map[string]string{
-		variable.TiDBReplicaRead: "closest-adaptive",
+		vardef.TiDBReplicaRead: "closest-adaptive",
 	}
 	dom.sysVarCache.Unlock()
 
@@ -271,15 +274,23 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
-			ID: "s1",
-			Labels: map[string]string{
-				"zone": "zone1",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s1",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
 			},
 		},
 		"s2": {
-			ID: "s2",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s2",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 	}
@@ -345,33 +356,53 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	// partial matches
 	mockedAllServerInfos = map[string]*infosync.ServerInfo{
 		"s1": {
-			ID: "s1",
-			Labels: map[string]string{
-				"zone": "zone1",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s1",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
 			},
 		},
 		"s2": {
-			ID: "s2",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s2",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 		"s22": {
-			ID: "s22",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s22",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 		"s3": {
-			ID: "s3",
-			Labels: map[string]string{
-				"zone": "zone3",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s3",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone3",
+				},
 			},
 		},
 		"s4": {
-			ID: "s4",
-			Labels: map[string]string{
-				"zone": "zone4",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s4",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone4",
+				},
 			},
 		},
 	}
@@ -421,7 +452,7 @@ type mockInfoPdClient struct {
 	err    error
 }
 
-func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockInfoPdClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
 }
 
@@ -466,4 +497,21 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
 	}
+}
+
+func TestDeferFn(t *testing.T) {
+	var df deferFn
+	var a, b, c, d bool
+	df.add(func() { a = true }, time.Now().Add(50*time.Millisecond))
+	df.add(func() { b = true }, time.Now().Add(100*time.Millisecond))
+	df.add(func() { c = true }, time.Now().Add(10*time.Minute))
+	df.add(func() { d = true }, time.Now().Add(150*time.Millisecond))
+	time.Sleep(300 * time.Millisecond)
+	df.check()
+
+	require.True(t, a)
+	require.True(t, b)
+	require.False(t, c)
+	require.True(t, d)
+	require.Len(t, df.data, 1)
 }

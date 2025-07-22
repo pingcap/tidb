@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func assertUnblocksBetween(t *testing.T, wg *sync.WaitGroup, min, max time.Duration) {
+func assertUnblocksBetween(t *testing.T, wg *sync.WaitGroup, minv, maxv time.Duration) {
 	ch := make(chan time.Duration)
 	start := time.Now()
 	go func() {
@@ -34,10 +34,10 @@ func assertUnblocksBetween(t *testing.T, wg *sync.WaitGroup, min, max time.Durat
 	}()
 	select {
 	case dur := <-ch:
-		if dur < min {
+		if dur < minv {
 			t.Fatal("WaitGroup unblocked before minimum duration, it was " + dur.String())
 		}
-	case <-time.After(max):
+	case <-time.After(maxv):
 		select {
 		case dur := <-ch:
 			t.Fatal("WaitGroup did not unblock after maximum duration, it was " + dur.String())

@@ -25,12 +25,13 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/httputil",
         "//br/pkg/logutil",
-        "//br/pkg/membuf",
         "//pkg/errno",
         "//pkg/lightning/log",
+        "//pkg/lightning/membuf",
         "//pkg/meta/autoid",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/driver/error",
         "//pkg/table/tables",
@@ -85,7 +86,13 @@ go_library(
         "@io_bazel_rules_go//go/platform:openbsd": [
             "@org_golang_x_sys//unix",
         ],
+        "@io_bazel_rules_go//go/platform:osx": [
+            "@org_golang_x_sys//unix",
+        ],
         "@io_bazel_rules_go//go/platform:plan9": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:qnx": [
             "@org_golang_x_sys//unix",
         ],
         "@io_bazel_rules_go//go/platform:solaris": [
@@ -115,15 +122,16 @@ go_test(
     shard_count = 29,
     deps = [
         "//br/pkg/errors",
+        "//pkg/autoid_service",
         "//pkg/ddl",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/lightning/log",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/store/driver/error",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",

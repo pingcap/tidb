@@ -22,10 +22,10 @@ import (
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -79,6 +79,8 @@ func MergeOverlappingFilesV2(
 		math.MaxInt64,
 		int64(4*size.GB),
 		math.MaxInt64,
+		math.MaxInt64,
+		math.MaxInt64,
 	)
 	if err != nil {
 		return err
@@ -114,7 +116,7 @@ func MergeOverlappingFilesV2(
 	var curEnd kv.Key
 
 	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err1 := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, _, err1 := splitter.SplitOneRangesGroup()
 		if err1 != nil {
 			logutil.Logger(ctx).Warn("split one ranges group failed", zap.Error(err1))
 			return

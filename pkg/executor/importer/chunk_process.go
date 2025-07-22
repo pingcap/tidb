@@ -33,10 +33,10 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 // constants, make it a variable for test
@@ -337,7 +337,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 		}
 	}()
 
-	group, gCtx := errgroup.WithContext(ctx)
+	group, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	group.Go(func() error {
 		return p.deliver.deliverLoop(gCtx)
 	})

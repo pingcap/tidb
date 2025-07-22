@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -207,6 +208,11 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			// 2: c and d are equivalent.
 			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)}",
 		},
+		{
+			sql:  "select (select t1.a from t2) from t1",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Projection->MaxOneRow}->Projection",
+			fd:   "{(1)-->(2,3,10), (2,3)~~>(1), (10)~~>(1)} >>> {}",
+		},
 	}
 
 	ctx := context.TODO()
@@ -220,12 +226,13 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		// extract FD to every OP
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err)
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err)
@@ -236,7 +243,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	}
 }
 
-func TestFDSet_ExtractFDForApply(t *testing.T) {
+func TestFDSet_ExtractFDForApplyAndUnion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -247,6 +254,8 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
 	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+	tk.MustExec("create table t1 (a int not null, b int, c int)")
+	tk.MustExec("create table t2 (e int not null, f int, g int)")
 
 	tests := []struct {
 		sql  string
@@ -306,6 +315,16 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 			// p=1 is semi join's right condition which should **NOT** be conserved.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
 		},
+		{
+			sql:  "select * from t1 union all select * from t2",
+			best: "UnionAll{DataScan(t1)->Projection->DataScan(t2)->Projection}",
+			fd:   "{}",
+		},
+		{
+			sql:  "select * from t1 where a=b union all select * from t2 where e=f",
+			best: "UnionAll{DataScan(t1)->Projection->DataScan(t2)->Projection}",
+			fd:   "{(9,10)==(9,10)}",
+		},
 	}
 
 	ctx := context.TODO()
@@ -319,12 +338,13 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		// extract FD to every OP
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
@@ -367,12 +387,13 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID.Store(0)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		// extract FD to every OP
-		p, err := builder.Build(ctx, stmt)
+		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, comment)

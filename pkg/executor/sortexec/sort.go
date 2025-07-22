@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -34,6 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
+
+// ResultChannelCapacity shows the capacity of `resultChannel`
+const ResultChannelCapacity = 10
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -86,14 +90,17 @@ type SortExec struct {
 
 		resultChannel chan rowWithError
 
-		// Ensure that workers and fetcher have exited
-		closeSync chan struct{}
-
 		spillHelper *parallelSortSpillHelper
 		spillAction *parallelSortSpillAction
 	}
 
 	enableTmpStorageOnOOM bool
+}
+
+// When fetcher and workers are not created, we need to initiatively close these channels
+func (e *SortExec) closeChannels() {
+	close(e.Parallel.resultChannel)
+	close(e.Parallel.chunkChannel)
 }
 
 // Close implements the Executor Close interface.
@@ -112,13 +119,11 @@ func (e *SortExec) Close() error {
 		}
 	} else if e.finishCh != nil {
 		if e.fetched.CompareAndSwap(false, true) {
-			close(e.Parallel.resultChannel)
-			close(e.Parallel.chunkChannel)
+			e.closeChannels()
 		} else {
 			for range e.Parallel.chunkChannel {
 				e.Parallel.fetcherAndWorkerSyncer.Done()
 			}
-			<-e.Parallel.closeSync
 		}
 
 		// Ensure that `generateResult()` has exited,
@@ -148,7 +153,7 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
-	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
+	e.enableTmpStorageOnOOM = vardef.EnableTmpStorageOnOOM.Load()
 	e.finishCh = make(chan struct{}, 1)
 
 	// To avoid duplicated initialization for TopNExec.
@@ -169,8 +174,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
-		e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
-		e.Parallel.closeSync = make(chan struct{})
+		e.Parallel.resultChannel = make(chan rowWithError, ResultChannelCapacity)
 		e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
@@ -260,10 +264,15 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
 		err := e.initCompareFuncs(e.Ctx().GetExprCtx().GetEvalCtx())
 		if err != nil {
+			e.closeChannels()
 			return err
 		}
 
-		e.buildKeyColumns()
+		err = e.buildKeyColumns()
+		if err != nil {
+			e.closeChannels()
+			return err
+		}
 		err = e.fetchChunks(ctx)
 		if err != nil {
 			return err
@@ -340,7 +349,7 @@ func (e *SortExec) generateResultWithMultiWayMerge() error {
 func (e *SortExec) generateResultFromDisk() error {
 	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
-		panic("inDiskNum can't be 0 when we generate result with spill triggered")
+		return nil
 	}
 
 	// Spill is triggered only once
@@ -382,7 +391,7 @@ func (e *SortExec) generateResultFromMemory() (bool, error) {
 	}
 
 	maxChunkSize := e.MaxChunkSize()
-	resBuf := make([]rowWithError, 0, maxChunkSize)
+	resBuf := make([]rowWithError, 0, 3)
 	idx := int64(0)
 	var row chunk.Row
 	for {
@@ -420,7 +429,6 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 	for _, waitGroup := range waitGroups {
 		waitGroup.Wait()
 	}
-	close(e.Parallel.closeSync)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -655,7 +663,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	fetcherWaiter := util.WaitGroupWrapper{}
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.Parallel.resultChannel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.Parallel.resultChannel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper, &e.Ctx().GetSessionVars().SQLKiller)
 		worker := e.Parallel.workers[i]
 		workersWaiter.Run(func() {
 			worker.run()
@@ -752,6 +760,19 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 }
 
 func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
+	var err error
+	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+		if val.(bool) {
+			randNum := rand.Int31n(10000)
+			if randNum < 500 {
+				err = errors.NewNoStackError("return error by random failpoint")
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType(ctx)
@@ -763,12 +784,19 @@ func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 	return nil
 }
 
-func (e *SortExec) buildKeyColumns() {
+func (e *SortExec) buildKeyColumns() error {
 	e.keyColumns = make([]int, 0, len(e.ByItems))
 	for _, by := range e.ByItems {
-		col := by.Expr.(*expression.Column)
-		e.keyColumns = append(e.keyColumns, col.Index)
+		switch col := by.Expr.(type) {
+		case *expression.Column:
+			e.keyColumns = append(e.keyColumns, col.Index)
+		case *expression.Constant:
+			// Ignore constant as constant can not affect the sorted result
+		default:
+			return errors.NewNoStackError("Get unexpected expression")
+		}
 	}
+	return nil
 }
 
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {

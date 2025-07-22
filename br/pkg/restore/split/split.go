@@ -37,6 +37,120 @@ const (
 	ScanRegionPaginationLimit = 128
 )
 
+// RegionSplitter is a executor of region split by rules.
+type RegionSplitter struct {
+	client SplitClient
+}
+
+// NewRegionSplitter returns a new RegionSplitter.
+func NewRegionSplitter(client SplitClient) *RegionSplitter {
+	return &RegionSplitter{
+		client: client,
+	}
+}
+
+// ExecuteSortedKeysOnRegion expose the function `SplitWaitAndScatter` of split client.
+func (rs *RegionSplitter) ExecuteSortedKeysOnRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
+	return rs.client.SplitWaitAndScatter(ctx, region, keys)
+}
+
+// ExecuteSortedKeys executes regions split and make sure new splitted regions are balance.
+// It will split regions by the rewrite rules,
+// then it will split regions by the end key of each range.
+// tableRules includes the prefix of a table, since some ranges may have
+// a prefix with record sequence or index sequence.
+// note: all ranges and rewrite rules must have raw key.
+func (rs *RegionSplitter) ExecuteSortedKeys(
+	ctx context.Context,
+	sortedSplitKeys [][]byte,
+) error {
+	if len(sortedSplitKeys) == 0 {
+		log.Info("skip split regions, no split keys")
+		return nil
+	}
+
+	log.Info("execute split sorted keys", zap.Int("keys count", len(sortedSplitKeys)))
+	return rs.executeSplitByRanges(ctx, sortedSplitKeys)
+}
+
+func (rs *RegionSplitter) executeSplitByRanges(
+	ctx context.Context,
+	sortedKeys [][]byte,
+) error {
+	startTime := time.Now()
+	// Choose the rough region split keys,
+	// each splited region contains 128 regions to be splitted.
+	const regionIndexStep = 128
+
+	roughSortedSplitKeys := make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
+	for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
+		roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+	}
+	if len(roughSortedSplitKeys) > 0 {
+		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
+
+	// Then send split requests to each TiKV.
+	if err := rs.executeSplitByKeys(ctx, sortedKeys); err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Info("finish spliting and scattering regions", zap.Duration("take", time.Since(startTime)))
+	return nil
+}
+
+// executeSplitByKeys will split regions by **sorted** keys with following steps.
+// 1. locate regions with correspond keys.
+// 2. split these regions with correspond keys.
+// 3. make sure new split regions are balanced.
+func (rs *RegionSplitter) executeSplitByKeys(
+	ctx context.Context,
+	sortedKeys [][]byte,
+) error {
+	startTime := time.Now()
+	scatterRegions, err := rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(scatterRegions) > 0 {
+		log.Info("finish splitting and scattering regions. and starts to wait", zap.Int("regions", len(scatterRegions)),
+			zap.Duration("take", time.Since(startTime)))
+		rs.waitRegionsScattered(ctx, scatterRegions, ScatterWaitUpperInterval)
+	} else {
+		log.Info("finish splitting regions.", zap.Duration("take", time.Since(startTime)))
+	}
+	return nil
+}
+
+// waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.
+// this could timeout, but if many regions scatterd the restore could continue
+// so we don't wait long time here.
+func (rs *RegionSplitter) waitRegionsScattered(ctx context.Context, scatterRegions []*RegionInfo, timeout time.Duration) {
+	log.Info("start to wait for scattering regions", zap.Int("regions", len(scatterRegions)))
+	startTime := time.Now()
+	leftCnt := rs.WaitForScatterRegionsTimeout(ctx, scatterRegions, timeout)
+	if leftCnt == 0 {
+		log.Info("waiting for scattering regions done",
+			zap.Int("regions", len(scatterRegions)),
+			zap.Duration("take", time.Since(startTime)))
+	} else {
+		log.Warn("waiting for scattering regions timeout",
+			zap.Int("not scattered Count", leftCnt),
+			zap.Int("regions", len(scatterRegions)),
+			zap.Duration("take", time.Since(startTime)))
+	}
+}
+
+func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regionInfos []*RegionInfo, timeout time.Duration) int {
+	ctx2, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	leftRegions, _ := rs.client.WaitRegionsScattered(ctx2, regionInfos)
+	return leftRegions
+}
+
 func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
@@ -148,8 +262,8 @@ func PaginateScanRegion(
 	return lastRegions, err
 }
 
-// CheckPartRegionConsistency only checks the continuity of regions and the first region consistency.
-func CheckPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+// checkPartRegionConsistency only checks the continuity of regions and the first region consistency.
+func checkPartRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
@@ -199,7 +313,7 @@ func ScanRegionsWithRetry(
 			return err
 		}
 
-		if err = CheckPartRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = checkPartRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}
@@ -210,6 +324,7 @@ func ScanRegionsWithRetry(
 	return regions, err
 }
 
+// TODO: merge with backoff.go
 type WaitRegionOnlineBackoffer struct {
 	Stat utils.RetryState
 }
@@ -244,13 +359,14 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-// Attempt returns the remain attempt times
-func (b *WaitRegionOnlineBackoffer) Attempt() int {
-	return b.Stat.Attempt()
+// RemainingAttempts returns the remain attempt times
+func (b *WaitRegionOnlineBackoffer) RemainingAttempts() int {
+	return b.Stat.RemainingAttempts()
 }
 
 // BackoffMayNotCountBackoffer is a backoffer but it may not increase the retry
 // counter. It should be used with ErrBackoff or ErrBackoffAndDontCount.
+// TODO: merge with backoff.go
 type BackoffMayNotCountBackoffer struct {
 	state utils.RetryState
 }
@@ -274,7 +390,7 @@ func NewBackoffMayNotCountBackoffer() *BackoffMayNotCountBackoffer {
 	}
 }
 
-// NextBackoff implements utils.Backoffer. For BackoffMayNotCountBackoffer, only
+// NextBackoff implements utils.BackoffStrategy. For BackoffMayNotCountBackoffer, only
 // ErrBackoff and ErrBackoffAndDontCount is meaningful.
 func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 	if errors.ErrorEqual(err, ErrBackoff) {
@@ -289,9 +405,9 @@ func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-// Attempt implements utils.Backoffer.
-func (b *BackoffMayNotCountBackoffer) Attempt() int {
-	return b.state.Attempt()
+// RemainingAttempts implements utils.BackoffStrategy.
+func (b *BackoffMayNotCountBackoffer) RemainingAttempts() int {
+	return b.state.RemainingAttempts()
 }
 
 // getSplitKeysOfRegions checks every input key is necessary to split region on

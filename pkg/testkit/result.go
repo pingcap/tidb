@@ -156,32 +156,61 @@ func (res *Result) CheckContain(expected string) {
 			}
 		}
 	}
-	comment := fmt.Sprintf("the result doesn't contain the exepected %s\n%s", expected, result.String())
+	comment := fmt.Sprintf("the result doesn't contain the expected %s\n%s\n%s\n", expected, result.String(), res.comment)
 	res.require.Equal(true, false, comment)
+}
+
+func (res *Result) String() string {
+	var result strings.Builder
+	for i, row := range res.rows {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		for j, colValue := range row {
+			if j > 0 {
+				result.WriteString(" ")
+			}
+			result.WriteString(colValue)
+		}
+	}
+	return result.String()
 }
 
 // MultiCheckContain checks whether the result contains strings in `expecteds`
 func (res *Result) MultiCheckContain(expecteds []string) {
+	result := res.String()
 	for _, expected := range expecteds {
-		res.CheckContain(expected)
+		res.require.True(strings.Contains(result, expected), "the result doesn't contain the exepected %s\n%s", expected, result)
 	}
 }
 
 // CheckNotContain checks whether the result doesn't contain the expected string
 func (res *Result) CheckNotContain(unexpected string) {
-	for _, row := range res.rows {
+	found := false
+	var result string
+	for i, row := range res.rows {
+		if i > 0 {
+			result += "\n"
+		}
 		for _, colValue := range row {
 			if strings.Contains(colValue, unexpected) {
-				comment := fmt.Sprintf("the result contain the unexepected %s", unexpected)
-				res.require.Equal(true, false, comment)
+				found = true
+			}
+			if result == "" {
+				result = colValue
+			} else {
+				result = result + " " + colValue
 			}
 		}
 	}
+	comment := fmt.Sprintf("%s\nthe result contain the unexepected '%s':\n%s", res.comment, unexpected, result)
+	res.require.Equal(false, found, comment)
 }
 
 // MultiCheckNotContain checks whether the result doesn't contain the strings in `expected`
 func (res *Result) MultiCheckNotContain(unexpecteds []string) {
+	result := res.String()
 	for _, unexpected := range unexpecteds {
-		res.CheckNotContain(unexpected)
+		res.require.False(strings.Contains(result, unexpected), "the result contain the unexepected %s\n%s", unexpected, result)
 	}
 }

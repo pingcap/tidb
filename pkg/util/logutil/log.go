@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/trace"
+	"sync"
 	"time"
 
 	gzap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
@@ -27,7 +28,7 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -58,6 +59,8 @@ const (
 	LogFieldConn = "conn"
 	// LogFieldSessionAlias is the field name for session_alias in log
 	LogFieldSessionAlias = "session_alias"
+	// jsonLogFormat is the json format of the log.
+	jsonLogFormat = "json"
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -121,6 +124,9 @@ var SlowQueryLogger = log.L()
 // GeneralLogger is used to log general log, InitLogger will modify it according to config file.
 var GeneralLogger = log.L()
 
+// this logger will always output error verbose regardless of the log config.
+var errVerboseLogger = log.L()
+
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
@@ -129,6 +135,18 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		return errors.Trace(err)
 	}
 	log.ReplaceGlobals(gl, props)
+	// pingcap/log doesn't support DisableErrorVerbose for json format log.
+	if cfg.Config.Format == jsonLogFormat || !cfg.Config.DisableErrorVerbose {
+		errVerboseLogger = gl
+	} else {
+		newLogCfg := cfg.Config
+		newLogCfg.DisableErrorVerbose = false
+		logger, _, err := log.InitLoggerWithWriteSyncer(&newLogCfg, props.Syncer, props.ErrSyncer, opts...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		errVerboseLogger = logger
+	}
 
 	// init dedicated logger for slow query log
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
@@ -227,11 +245,21 @@ func Logger(ctx context.Context) *zap.Logger {
 // main function. Don't use it in `init` or equivalent functions otherwise it
 // will print to stdout.
 func BgLogger() *zap.Logger {
-	return log.L()
+	return log.L().With()
+}
+
+// ErrVerboseLogger returns a logger that always output error verbose regardless
+// of the log config.
+// error verbose is disabled on default, but without stack it's harder to investigate
+// some issues, such as in DXF the error mostly happen in business logic, the
+// error stack is very deep, we want to log the stack to help us investigate.
+// Note: if stack is not that needed to investigate, use normal logger instead.
+func ErrVerboseLogger() *zap.Logger {
+	return errVerboseLogger
 }
 
 // LoggerWithTraceInfo attaches fields from trace info to logger
-func LoggerWithTraceInfo(logger *zap.Logger, info *model.TraceInfo) *zap.Logger {
+func LoggerWithTraceInfo(logger *zap.Logger, info *tracing.TraceInfo) *zap.Logger {
 	if logger == nil {
 		logger = log.L()
 	}
@@ -259,7 +287,7 @@ func WithCategory(ctx context.Context, category string) context.Context {
 }
 
 // WithTraceFields attaches trace fields to context
-func WithTraceFields(ctx context.Context, info *model.TraceInfo) context.Context {
+func WithTraceFields(ctx context.Context, info *tracing.TraceInfo) context.Context {
 	if info == nil {
 		return WithFields(ctx)
 	}
@@ -269,7 +297,7 @@ func WithTraceFields(ctx context.Context, info *model.TraceInfo) context.Context
 	)
 }
 
-func fieldsFromTraceInfo(info *model.TraceInfo) []zap.Field {
+func fieldsFromTraceInfo(info *tracing.TraceInfo) []zap.Field {
 	if info == nil {
 		return nil
 	}
@@ -287,7 +315,7 @@ func fieldsFromTraceInfo(info *model.TraceInfo) []zap.Field {
 }
 
 // WithTraceLogger attaches trace identifier to context
-func WithTraceLogger(ctx context.Context, info *model.TraceInfo) context.Context {
+func WithTraceLogger(ctx context.Context, info *tracing.TraceInfo) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(CtxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
@@ -297,7 +325,7 @@ func WithTraceLogger(ctx context.Context, info *model.TraceInfo) context.Context
 	return context.WithValue(ctx, CtxLogKey, wrapTraceLogger(ctx, info, logger))
 }
 
-func wrapTraceLogger(ctx context.Context, info *model.TraceInfo, logger *zap.Logger) *zap.Logger {
+func wrapTraceLogger(ctx context.Context, info *tracing.TraceInfo, logger *zap.Logger) *zap.Logger {
 	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		tl := &traceLog{ctx: ctx}
 		// cfg.Format == "", never return error
@@ -394,4 +422,45 @@ func proxyFields() []zap.Field {
 		fields = append(fields, zap.String("no_proxy", proxyCfg.NoProxy))
 	}
 	return fields
+}
+
+// SampleLoggerFactory returns a factory function that creates a sample logger.
+// the logger is used to sample the log to avoid too many logs, it will only log
+// the first 'first' log entries with the same level and message in 'tick' time.
+// NOTE: Because we need to record the log count with the same level and message
+// in this specific logger, the returned factory function will only create one logger.
+// this logger support at most 4096 types of logs with the same level and message.
+func SampleLoggerFactory(tick time.Duration, first int, fields ...zap.Field) func() *zap.Logger {
+	var (
+		once   sync.Once
+		logger *zap.Logger
+	)
+	return func() *zap.Logger {
+		once.Do(func() {
+			sampleCore := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
+			})
+			logger = BgLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
+		})
+		return logger
+	}
+}
+
+// SampleErrVerboseLoggerFactory returns a factory function that creates a sample logger with error verbose logging.
+// It works similarly to SampleLoggerFactory but ensures that error details are always logged,
+// regardless of the logging configuration.
+func SampleErrVerboseLoggerFactory(tick time.Duration, first int, fields ...zap.Field) func() *zap.Logger {
+	var (
+		once   sync.Once
+		logger *zap.Logger
+	)
+	return func() *zap.Logger {
+		once.Do(func() {
+			sampleCore := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+				return zapcore.NewSamplerWithOptions(core, tick, first, 0)
+			})
+			logger = ErrVerboseLogger().With(fields...).With(zap.String("sampled", "")).WithOptions(sampleCore)
+		})
+		return logger
+	}
 }

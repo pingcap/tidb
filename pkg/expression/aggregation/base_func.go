@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -45,6 +45,45 @@ func newBaseFuncDesc(ctx expression.BuildContext, name string, args []expression
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
 	err := b.TypeInfer(ctx)
 	return b, err
+}
+
+// Hash64 implements the base.Hasher interface.
+func (a *baseFuncDesc) Hash64(h base.Hasher) {
+	h.HashString(a.Name)
+	h.HashInt(len(a.Args))
+	for _, arg := range a.Args {
+		arg.Hash64(h)
+	}
+	if a.RetTp != nil {
+		h.HashByte(base.NotNilFlag)
+		a.RetTp.Hash64(h)
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+}
+
+// Equals implements the base.Equals interface.
+func (a *baseFuncDesc) Equals(other any) bool {
+	a2, ok := other.(*baseFuncDesc)
+	if !ok {
+		return false
+	}
+	if a == nil {
+		return a2 == nil
+	}
+	if a2 == nil {
+		return false
+	}
+	ok = a.Name == a2.Name && len(a.Args) == len(a2.Args) && ((a.RetTp == nil && a2.RetTp == nil) || (a.RetTp != nil && a2.RetTp != nil && a.RetTp.Equals(a2.RetTp)))
+	if !ok {
+		return false
+	}
+	for i, arg := range a.Args {
+		if !arg.Equals(a2.Args[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *baseFuncDesc) equal(ctx expression.EvalContext, other *baseFuncDesc) bool {
@@ -70,12 +109,12 @@ func (a *baseFuncDesc) clone() *baseFuncDesc {
 	return &clone
 }
 
-// String implements the fmt.Stringer interface.
-func (a *baseFuncDesc) String() string {
+// StringWithCtx returns the string within given context.
+func (a *baseFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	for i, arg := range a.Args {
-		buffer.WriteString(arg.String())
+		buffer.WriteString(arg.StringWithCtx(ctx, redact))
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -149,7 +188,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) er
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
-		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String())
+		return fmt.Errorf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {
@@ -207,10 +246,22 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 
 // TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
 // compatible with mysql.
-func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
-	if avgRetType.GetType() == mysql.TypeNewDecimal {
-		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+func (a *baseFuncDesc) TypeInfer4AvgSum(ctx expression.EvalContext, avgRetType *types.FieldType) error {
+	if a.Name != ast.AggFuncSum {
+		return errors.Errorf("expect sum func, but got %s", a.Name)
 	}
+	// Handling column and scalar function differently to avoid breaking a MySQL compatible issue.
+	// Check: https://github.com/pingcap/tidb/blob/67edd7d8f73de399bd72490d449d1dede1ee637b/pkg/executor/test/tiflashtest/tiflash_test.go#L887
+	// For avg(div(col1, col2)), the scale of div result should be same as the scale of avg, which has been increased by 4, to make sure the result is compatible with MySQL.
+	// But for avg(col1), there is no need to increase the result scale of partial sum, because there is no complex scale upgrade for a simple column.
+	if _, ok := a.Args[0].(*expression.Column); ok {
+		a.typeInfer4Sum(ctx)
+	} else {
+		if avgRetType.GetType() == mysql.TypeNewDecimal {
+			a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+		}
+	}
+	return nil
 }
 
 // TypeInfer4FinalCount infers the type of sum agg which is rewritten from final count agg run on MPP mode.
@@ -293,7 +344,7 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx expression.BuildContext) {
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0], nil)
 }
 
 func (a *baseFuncDesc) typeInfer4JsonArrayAgg() {
@@ -408,7 +459,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 	var castFunc func(ctx expression.BuildContext, expr expression.Expression) expression.Expression
 	switch retTp := a.RetTp; retTp.EvalType() {
 	case types.ETInt:
-		castFunc = expression.WrapWithCastAsInt
+		castFunc = func(ctx expression.BuildContext, expr expression.Expression) expression.Expression {
+			return expression.WrapWithCastAsInt(ctx, expr, retTp)
+		}
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
 	case types.ETString:
@@ -423,8 +476,10 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 		castFunc = expression.WrapWithCastAsDuration
 	case types.ETJson:
 		castFunc = expression.WrapWithCastAsJSON
+	case types.ETVectorFloat32:
+		castFunc = expression.WrapWithCastAsVectorFloat32
 	default:
-		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
+		panic(fmt.Sprintf("unsupported type %s during evaluation", retTp.EvalType()))
 	}
 	for i := range a.Args {
 		// Do not cast the second args of these functions, as they are simply non-negative numbers.

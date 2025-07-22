@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -193,6 +194,18 @@ func (svr *Server) KvScan(ctx context.Context, req *kvrpcpb.ScanRequest) (*kvrpc
 
 // KvPessimisticLock implements the tikvpb.TikvServer interface.
 func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
+	failpoint.Inject("pessimisticLockReturnWriteConflict", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(time.Millisecond * 100)
+			err := &kverrors.ErrConflict{
+				StartTS:          req.GetForUpdateTs(),
+				ConflictTS:       req.GetForUpdateTs() + 1,
+				ConflictCommitTS: req.GetForUpdateTs() + 2,
+			}
+			failpoint.Return(&kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil)
+		}
+	})
+
 	reqCtx, err := newRequestCtx(svr, req.Context, "PessimisticLock")
 	if err != nil {
 		return &kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil

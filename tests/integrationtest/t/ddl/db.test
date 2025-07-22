@@ -69,21 +69,20 @@ alter table test_add_index_after_add_col add unique index cc(c);
 # TestIssue9100
 drop table if exists employ, issue9100t1, issue9100t2;
 create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));
--- error 1503
+-- error 8264
 alter table employ add unique index p_a (a);
--- error 1503
+-- error 8264
 alter table employ add primary key p_a (a);
 create table issue9100t1 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col2)) partition by range( col1 ) (partition p1 values less than (11));
 alter table issue9100t1 add unique index p_col1 (col1);
 alter table issue9100t1 add primary key p_col1 (col1);
 create table issue9100t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11));
--- error 1503
+-- error 8264
 alter table issue9100t2 add unique index p_col1 (col1);
--- error 1503
+-- error 8264
 alter table issue9100t2 add primary key p_col1 (col1);
 
 # TestIssue22207
-set @@session.tidb_enable_list_partition = ON;
 set @@session.tidb_enable_exchange_partition = 1;
 drop table if exists t1;
 drop table if exists t2;
@@ -104,7 +103,6 @@ ALTER TABLE t1 EXCHANGE PARTITION p0 WITH TABLE t2;
 select * from t2;
 select * from t1;
 set @@session.tidb_enable_exchange_partition = default;
-set @@session.tidb_enable_list_partition = default;
 
 # TestAlterOrderBy
 drop table if exists ob;

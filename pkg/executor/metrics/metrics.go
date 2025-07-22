@@ -129,6 +129,15 @@ var (
 	MppCoordinatorStatsReportNotReceived     prometheus.Gauge
 
 	MppCoordinatorLatencyRcvReport prometheus.Observer
+
+	ExecutorNetworkTransmissionSentTiKVTotal            prometheus.Counter
+	ExecutorNetworkTransmissionSentTiKVCrossZone        prometheus.Counter
+	ExecutorNetworkTransmissionReceivedTiKVTotal        prometheus.Counter
+	ExecutorNetworkTransmissionReceivedTiKVCrossZone    prometheus.Counter
+	ExecutorNetworkTransmissionSentTiFlashTotal         prometheus.Counter
+	ExecutorNetworkTransmissionSentTiFlashCrossZone     prometheus.Counter
+	ExecutorNetworkTransmissionReceivedTiFlashTotal     prometheus.Counter
+	ExecutorNetworkTransmissionReceivedTiFlashCrossZone prometheus.Counter
 )
 
 func init() {
@@ -216,6 +225,15 @@ func InitMetricsVars() {
 	MppCoordinatorStatsReportNotReceived = metrics.MppCoordinatorStats.WithLabelValues("reportNotRcv")
 
 	MppCoordinatorLatencyRcvReport = metrics.MppCoordinatorLatency.WithLabelValues("rcvReports")
+
+	ExecutorNetworkTransmissionSentTiKVTotal = metrics.NetworkTransmissionStats.WithLabelValues("sent_tikv_total")
+	ExecutorNetworkTransmissionSentTiKVCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("sent_tikv_cross_zone")
+	ExecutorNetworkTransmissionReceivedTiKVTotal = metrics.NetworkTransmissionStats.WithLabelValues("received_tikv_total")
+	ExecutorNetworkTransmissionReceivedTiKVCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("received_tikv_cross_zone")
+	ExecutorNetworkTransmissionSentTiFlashTotal = metrics.NetworkTransmissionStats.WithLabelValues("sent_tiflash_total")
+	ExecutorNetworkTransmissionSentTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("sent_tiflash_cross_zone")
+	ExecutorNetworkTransmissionReceivedTiFlashTotal = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_total")
+	ExecutorNetworkTransmissionReceivedTiFlashCrossZone = metrics.NetworkTransmissionStats.WithLabelValues("received_tiflash_cross_zone")
 }
 
 // InitPhaseDurationObserverMap init observer map

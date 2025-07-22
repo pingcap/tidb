@@ -164,7 +164,7 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		// This is for alignment.
 		pd.buf.WriteByte(separator)
 		pd.buf.WriteString(string(pd.indents[i]))
-		for j := 0; j < len(p.fields); j++ {
+		for j := range p.fields {
 			if j > 0 {
 				pd.buf.WriteByte(separator)
 			}
@@ -198,13 +198,13 @@ func (pd *planDecoder) addPlanHeader() {
 
 func (pd *planDecoder) initPlanTreeIndents() {
 	pd.indents = pd.indents[:0]
-	for i := 0; i < len(pd.depths); i++ {
+	for i := range pd.depths {
 		indent := make([]rune, 2*pd.depths[i])
 		pd.indents = append(pd.indents, indent)
 		if len(indent) == 0 {
 			continue
 		}
-		for i := 0; i < len(indent)-2; i++ {
+		for i := range len(indent) - 2 {
 			indent[i] = ' '
 		}
 		indent[len(indent)-2] = texttree.TreeLastNode
@@ -263,7 +263,7 @@ func (pd *planDecoder) alignFields() {
 	// Last field no need to align.
 	fieldsLen--
 	var buf []byte
-	for colIdx := 0; colIdx < fieldsLen; colIdx++ {
+	for colIdx := range fieldsLen {
 		maxFieldLen := pd.getMaxFieldLength(colIdx)
 		for rowIdx, p := range pd.planInfos {
 			fillLen := maxFieldLen - pd.getPlanFieldLen(rowIdx, colIdx, p)

@@ -10,6 +10,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 
@@ -22,7 +23,7 @@ go_test(
     ],
     embed = [":vecgroupchecker"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         "//pkg/config",
         "//pkg/expression",

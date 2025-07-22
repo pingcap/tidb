@@ -230,8 +230,8 @@ insert into t select 0, b + 1 from t;
 insert into t select 0, b + 1 from t;
 insert into t select 0, b + 1 from t;
 insert into s select a, b - 1 from t;
-analyze table t;
-analyze table s;
+analyze table t all columns;
+analyze table s all columns;
 desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6
@@ -252,13 +252,13 @@ count(*)
 desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6
-└─IndexMergeJoin	64.00	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
-  ├─TableReader(Build)	64.00	root		data:Selection
-  │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
-  │   └─TableFullScan	64.00	cop[tikv]	table:t	keep order:false
-  └─IndexReader(Probe)	64.00	root		index:Selection
-    └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.a)), not(isnull(executor__jointest__hash_join.s.b))
-      └─IndexRangeScan	64.00	cop[tikv]	table:s, index:idx(a, b)	range: decided by [eq(executor__jointest__hash_join.s.a, executor__jointest__hash_join.t.a) lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)], keep order:true
+└─MergeJoin	64.00	root		inner join, left key:executor__jointest__hash_join.t.a, right key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+  ├─IndexReader(Build)	64.00	root		index:Selection
+  │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.b))
+  │   └─IndexFullScan	64.00	cop[tikv]	table:s, index:idx(a, b)	keep order:true
+  └─TableReader(Probe)	64.00	root		data:Selection
+    └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
+      └─TableFullScan	64.00	cop[tikv]	table:t	keep order:true
 select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 count(*)
 64
@@ -331,3 +331,56 @@ col_14
 1984-06-10 00:00:00
 1984-07-31 00:00:00
 2017-06-07 00:00:00
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (col0 int, col1 int);
+create table t2 (col0 int, col1 int);
+insert into t1 values (null, 3), (null, 5), (null, null), (1, 1), (1, 2), (1, null), (2, 1), (2, 2), (2, null), (3, 1), (3, 2), (3, 4), (3, null);
+insert into t2 values (null, 3), (null, 4), (null, null), (1, 1), (3, 1), (3, 3), (3, null), (4, null), (4, 1), (4, 2), (4, 10);
+select * from t1 where col1 not in (select col1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
+col0	col1
+NULL	NULL
+NULL	3
+NULL	5
+1	2
+2	NULL
+2	1
+2	2
+select * from t1 where col1 in (select col1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
+col0	col1
+1	1
+3	1
+select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
+col0	col1
+1	NULL
+1	1
+1	2
+3	NULL
+3	1
+3	2
+3	4
+select * from t1 where not exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
+col0	col1
+NULL	NULL
+NULL	3
+NULL	5
+2	NULL
+2	1
+2	2
+select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0 and t1.col1 > t2.col1) order by t1.col0, t1.col1;
+col0	col1
+1	2
+3	2
+3	4
+select * from t1 where not exists (select 1 from t2 where t1.col0 = t2.col0 and t1.col1 > t2.col1) order by t1.col0, t1.col1;
+col0	col1
+NULL	NULL
+NULL	3
+NULL	5
+1	NULL
+1	1
+2	NULL
+2	1
+2	2
+3	NULL
+3	1

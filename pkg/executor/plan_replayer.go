@@ -32,9 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -386,7 +387,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
-				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
+				sVal, err := sysVar.Validate(vars, value, vardef.ScopeSession)
 				if err != nil {
 					unLoadVars = append(unLoadVars, name)
 					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
@@ -482,17 +483,9 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	}
 
 	// build schema and table first
-	for _, zipFile := range z.File {
-		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
-			continue
-		}
-		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
-			err = createSchemaAndItems(e.Ctx, zipFile)
-			if err != nil {
-				return err
-			}
-		}
+	err = e.createTable(z)
+	if err != nil {
+		return err
 	}
 
 	// set tiflash replica if exists
@@ -527,6 +520,32 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
+	}
+	return nil
+}
+
+func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
+	originForeignKeyChecks := e.Ctx.GetSessionVars().ForeignKeyChecks
+	originPlacementMode := e.Ctx.GetSessionVars().PlacementMode
+	// We need to disable foreign key check when we create schema and tables.
+	// because the order of creating schema and tables is not guaranteed.
+	e.Ctx.GetSessionVars().ForeignKeyChecks = false
+	e.Ctx.GetSessionVars().PlacementMode = vardef.PlacementModeIgnore
+	defer func() {
+		e.Ctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
+		e.Ctx.GetSessionVars().PlacementMode = originPlacementMode
+	}()
+	for _, zipFile := range z.File {
+		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
+			continue
+		}
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
+			err := createSchemaAndItems(e.Ctx, zipFile)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

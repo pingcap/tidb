@@ -9,7 +9,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/resourcegroup",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/model",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
     ],

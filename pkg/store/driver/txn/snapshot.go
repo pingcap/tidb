@@ -118,7 +118,12 @@ func (s *tikvSnapshot) SetOption(opt int, val any) {
 	case kv.ResourceGroupTag:
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
 	case kv.ResourceGroupTagger:
-		s.KVSnapshot.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
+		switch tagger := val.(type) {
+		case tikvrpc.ResourceGroupTagger:
+			s.KVSnapshot.SetResourceGroupTagger(tagger)
+		case *kv.ResourceGroupTagBuilder:
+			s.KVSnapshot.SetResourceGroupTagger(tagger.BuildProtoTagger())
+		}
 	case kv.ReadReplicaScope:
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:

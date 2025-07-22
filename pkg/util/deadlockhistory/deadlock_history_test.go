@@ -20,8 +20,9 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
@@ -123,7 +124,7 @@ func TestDeadlockHistoryCollection(t *testing.T) {
 	expectedItems := []*DeadlockRecord{rec1, rec2, rec3}
 	expectedIDs := []uint64{1, 2, 3}
 	expectedDequeHead := 0
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		newRec := &DeadlockRecord{
 			OccurTime: time.Now(),
 		}
@@ -196,15 +197,15 @@ func TestGetDatum(t *testing.T) {
 	})
 
 	dummyColumnInfo := []*model.ColumnInfo{
-		{Name: model.NewCIStr(ColDeadlockIDStr)},
-		{Name: model.NewCIStr(ColOccurTimeStr)},
-		{Name: model.NewCIStr(ColRetryableStr)},
-		{Name: model.NewCIStr(ColTryLockTrxIDStr)},
-		{Name: model.NewCIStr(ColCurrentSQLDigestStr)},
-		{Name: model.NewCIStr(ColCurrentSQLDigestTextStr)},
-		{Name: model.NewCIStr(ColKeyStr)},
-		{Name: model.NewCIStr(ColKeyInfoStr)},
-		{Name: model.NewCIStr(ColTrxHoldingLockStr)},
+		{Name: ast.NewCIStr(ColDeadlockIDStr)},
+		{Name: ast.NewCIStr(ColOccurTimeStr)},
+		{Name: ast.NewCIStr(ColRetryableStr)},
+		{Name: ast.NewCIStr(ColTryLockTrxIDStr)},
+		{Name: ast.NewCIStr(ColCurrentSQLDigestStr)},
+		{Name: ast.NewCIStr(ColCurrentSQLDigestTextStr)},
+		{Name: ast.NewCIStr(ColKeyStr)},
+		{Name: ast.NewCIStr(ColKeyInfoStr)},
+		{Name: ast.NewCIStr(ColTrxHoldingLockStr)},
 	}
 	res := getAllDatum(h, dummyColumnInfo)
 

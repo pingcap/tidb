@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -91,6 +91,22 @@ func (*MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	default:
 		return false
 	}
+}
+
+// Open implements the Executor Open interface.
+func (e *MemTableReaderExec) Open(ctx context.Context) error {
+	err := e.BaseExecutor.Open(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Activate the transaction, otherwise SELECT .. FROM INFORMATION_SCHEMA.XX .. does not block GC worker.
+	// And if the query last too long (10min), it causes error "GC life time is shorter than transaction duration"
+	if txn, err1 := e.Ctx().Txn(false); err1 == nil && txn != nil && txn.Valid() {
+		// Call e.Ctx().Txn(true) may panic, it's too difficult to debug all the callers.
+		_, err = e.Ctx().Txn(true)
+	}
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -791,10 +807,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	}
 	tz := sctx.GetSessionVars().Location()
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	allSchemaNames := is.AllSchemaNames()
-	schemas := ensureSchemaTables(is, allSchemaNames)
-	schemas = tikvHelper.FilterMemDBs(schemas)
-	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
+	tables := tikvHelper.GetTablesInfoWithKeyRange(is, tikvHelper.FilterMemDBs)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)
 		rows, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, tables, tz)

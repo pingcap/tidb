@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -54,17 +55,15 @@ func TestCalibrateResource(t *testing.T) {
 	defer func() {
 		do.SetResourceGroupsController(oldResourceCtl)
 	}()
-
+	// changed in 7.5 (ref https://github.com/tikv/pd/pull/6538), but for test pass, use the old config
+	oldCfg := rmclient.DefaultConfig()
+	oldCfg.RequestUnit.ReadBaseCost = 0.25
+	oldCfg.RequestUnit.ReadCostPerByte = 0.0000152587890625
+	oldCfg.RequestUnit.WriteBaseCost = 1.0
+	oldCfg.RequestUnit.WriteCostPerByte = 0.0009765625
+	oldCfg.RequestUnit.CPUMsCost = 0.3333333333333333
 	mockPrivider := &mockResourceGroupProvider{
-		cfg: rmclient.Config{
-			RequestUnit: rmclient.RequestUnitConfig{
-				ReadBaseCost:     0.25,
-				ReadCostPerByte:  0.0000152587890625,
-				WriteBaseCost:    1.0,
-				WriteCostPerByte: 0.0009765625,
-				CPUMsCost:        0.3333333333333333,
-			},
-		},
+		cfg: *oldCfg,
 	}
 	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
 	require.NoError(t, err)
@@ -783,7 +782,7 @@ type mockResourceGroupProvider struct {
 	cfg rmclient.Config
 }
 
-func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
 	if !bytes.Equal(pd.ControllerConfigPathPrefixBytes, key) {
 		return nil, errors.New("unsupported configPath")
 	}

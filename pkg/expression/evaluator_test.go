@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -106,6 +107,7 @@ func TestSleep(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
@@ -126,6 +128,7 @@ func TestSleep(t *testing.T) {
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
@@ -605,4 +608,54 @@ func TestMod(t *testing.T) {
 	r, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(1.5), r)
+}
+
+func TestOptionalProp(t *testing.T) {
+	ctx := createContext(t)
+
+	fc := funcs[ast.Plus]
+	arg1fc := funcs[ast.CurrentUser]
+	arg1f, err := arg1fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	arg1 := &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.CurrentUser),
+		Function: arg1f,
+		RetType:  arg1f.getRetTp(),
+	}
+	arg2fc := funcs[ast.TiDBIsDDLOwner]
+	arg2f, err := arg2fc.getFunction(ctx, nil)
+	require.NoError(t, err)
+	arg2 := &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.TiDBIsDDLOwner),
+		Function: arg2f,
+		RetType:  arg2f.getRetTp(),
+	}
+
+	f, err := fc.getFunction(ctx, []Expression{arg1, arg2})
+	require.NoError(t, err)
+	fe := &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.Plus),
+		Function: f,
+		RetType:  f.getRetTp(),
+	}
+
+	fc2 := funcs[ast.GetLock]
+	f2, err := fc2.getFunction(ctx, datumsToConstants(types.MakeDatums("tidb_distsql_scan_concurrency", 10)))
+	require.NoError(t, err)
+	fe2 := &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.GetLock),
+		Function: f2,
+		RetType:  f2.getRetTp(),
+	}
+
+	require.Equal(t, exprctx.OptionalEvalPropKeySet(0), f.RequiredOptionalEvalProps())
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet(),
+		GetOptionalEvalPropsForExpr(fe))
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet()|
+		exprctx.OptPropAdvisoryLock.AsPropKeySet(),
+		GetOptionalEvalPropsForExpr(fe)|GetOptionalEvalPropsForExpr(fe2))
+
+	evalSuit := NewEvaluatorSuite([]Expression{fe, fe2}, false)
+	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet()|
+		exprctx.OptPropAdvisoryLock.AsPropKeySet(), evalSuit.RequiredOptionalEvalProps())
 }

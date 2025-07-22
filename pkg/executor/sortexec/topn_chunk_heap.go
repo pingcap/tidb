@@ -16,11 +16,16 @@ package sortexec
 
 import (
 	"container/heap"
+	"context"
+	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/stretchr/testify/require"
 )
 
 // topNChunkHeap implements heap.Interface.
@@ -47,7 +52,12 @@ type topNChunkHeap struct {
 func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool, fieldTypes []*types.FieldType) {
 	h.memTracker = memTracker
 
-	h.rowChunks = chunk.NewList(exec.RetTypes(topnExec), topnExec.InitCap(), topnExec.MaxChunkSize())
+	// The schema of TopN keep same with its children without inline projection. After inline projection, TopN will have its own schema,
+	// so TopN can not be used to construct chunks, but children information needs to be used instead.
+	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
+	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
+	ch := topnExec.Children(0)
+	h.rowChunks = chunk.NewList(exec.RetTypes(ch), ch.InitCap(), ch.MaxChunkSize())
 	h.rowChunks.GetMemTracker().AttachTo(h.memTracker)
 	h.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 
@@ -107,7 +117,12 @@ func (h *topNChunkHeap) processChk(chk *chunk.Chunk) {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (h *topNChunkHeap) doCompaction(topnExec *TopNExec) error {
-	newRowChunks := chunk.NewList(exec.RetTypes(topnExec), topnExec.InitCap(), topnExec.MaxChunkSize())
+	// The schema of TopN keep same with its children without inline projection. After inline projection, TopN will have its own schema,
+	// so TopN can not be used to construct chunks, but children information needs to be used instead.
+	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
+	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
+	ch := topnExec.Children(0)
+	newRowChunks := chunk.NewList(exec.RetTypes(ch), ch.InitCap(), ch.MaxChunkSize())
 	newRowPtrs := make([]chunk.RowPtr, 0, h.rowChunks.Len())
 	for _, rowPtr := range h.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(h.rowChunks.GetRow(rowPtr))
@@ -152,4 +167,23 @@ func (h *topNChunkHeap) Pop() any {
 
 func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
+}
+
+// TestKillSignalInTopN is for test
+func TestKillSignalInTopN(t *testing.T, topnExec *TopNExec) {
+	ctx := context.Background()
+	err := topnExec.Open(ctx)
+	require.NoError(t, err)
+
+	chkHeap := &topNChunkHeap{}
+	// Offset of heap in worker should be 0, as we need to spill all data
+	chkHeap.init(topnExec, topnExec.memTracker, topnExec.Limit.Offset+topnExec.Limit.Count, 0, topnExec.greaterRow, topnExec.RetFieldTypes())
+	srcChk := exec.TryNewCacheChunk(topnExec.Children(0))
+	err = exec.Next(ctx, topnExec.Children(0), srcChk)
+	require.NoError(t, err)
+	chkHeap.rowChunks.Add(srcChk)
+
+	topnExec.Ctx().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	err = topnExec.spillHelper.spillHeap(chkHeap)
+	require.ErrorIs(t, err, exeerrors.ErrQueryInterrupted)
 }

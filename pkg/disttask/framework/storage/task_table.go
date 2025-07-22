@@ -16,32 +16,35 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
+	goerrors "errors"
 	"strconv"
 	"strings"
 	"sync/atomic"
 
 	"github.com/docker/go-units"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/tikv/client-go/v2/util"
+	clitutil "github.com/tikv/client-go/v2/util"
 )
 
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope`
+	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope, t.max_node_count, t.extra_params`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
-	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error`
+	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error, t.modify_params`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope`
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope, max_node_count, extra_params`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
 	SubtaskColumns = basicSubtaskColumns + `, state_update_time, meta, summary`
@@ -55,27 +58,43 @@ var (
 	// ErrUnstableSubtasks is the error when we detected that the subtasks are
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
-	ErrUnstableSubtasks = errors.New("unstable subtasks")
+	ErrUnstableSubtasks = goerrors.New("unstable subtasks")
 
 	// ErrTaskNotFound is the error when we can't found task.
 	// i.e. TransferTasks2History move task from tidb_global_task to tidb_global_task_history.
-	ErrTaskNotFound = errors.New("task not found")
+	ErrTaskNotFound = goerrors.New("task not found")
 
 	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
 	// i.e. SubmitTask in handle may submit a task twice.
-	ErrTaskAlreadyExists = errors.New("task already exists")
+	ErrTaskAlreadyExists = goerrors.New("task already exists")
+
+	// ErrTaskStateNotAllow is the error when the task state is not allowed to do the operation.
+	ErrTaskStateNotAllow = goerrors.New("task state not allow to do the operation")
+
+	// ErrTaskChanged is the error when task changed by other operation.
+	ErrTaskChanged = goerrors.New("task changed by other operation")
 
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
-	ErrSubtaskNotFound = errors.New("subtask not found")
+	ErrSubtaskNotFound = goerrors.New("subtask not found")
 )
+
+// Manager is the interface for task manager.
+// those methods are used by application side, we expose them through interface
+// to make tests easier.
+type Manager interface {
+	GetCPUCountOfNode(ctx context.Context) (int, error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error
+}
 
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
 	*proto.TaskBase
 	// SubtaskConcurrency is the concurrency of subtask in current task step.
 	// TODO: will be used when support subtask have smaller concurrency than task,
-	// TODO: such as post-process of import-into.
+	// TODO: such as post-process of import-into. Also remember the 'modifying' state
+	// also update subtask concurrency.
 	// TODO: we might need create one task executor for each step in this case, to alloc
 	// TODO: minimal resource
 	SubtaskConcurrency int
@@ -99,12 +118,7 @@ type TaskHandle interface {
 
 // TaskManager is the manager of task and subtask.
 type TaskManager struct {
-	sePool sessionPool
-}
-
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(resource pools.Resource)
+	sePool util.SessionPool
 }
 
 var _ SessionExecutor = &TaskManager{}
@@ -117,7 +131,7 @@ var (
 )
 
 // NewTaskManager creates a new task manager.
-func NewTaskManager(sePool sessionPool) *TaskManager {
+func NewTaskManager(sePool util.SessionPool) *TaskManager {
 	return &TaskManager{
 		sePool: sePool,
 	}
@@ -139,17 +153,25 @@ func SetTaskManager(is *TaskManager) {
 
 // WithNewSession executes the function with a new session.
 func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) error {
-	se, err := mgr.sePool.Get()
+	v, err := mgr.sePool.Get()
 	if err != nil {
 		return err
 	}
-	defer mgr.sePool.Put(se)
-	return fn(se.(sessionctx.Context))
+	// when using global sort, the subtask meta might quite large as it include
+	// filenames of all the generated kv/stat files.
+	se := v.(sessionctx.Context)
+	limitBak := se.GetSessionVars().TxnEntrySizeLimit
+	defer func() {
+		se.GetSessionVars().TxnEntrySizeLimit = limitBak
+		mgr.sePool.Put(v)
+	}()
+	se.GetSessionVars().TxnEntrySizeLimit = vardef.TxnEntrySizeLimit.Load()
+	return fn(se)
 }
 
 // WithNewTxn executes the fn in a new transaction.
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
@@ -192,10 +214,19 @@ func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string
 }
 
 // CreateTask adds a new task to task table.
-func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.TaskType, concurrency int, targetScope string, meta []byte) (taskID int64, err error) {
+func (mgr *TaskManager) CreateTask(
+	ctx context.Context,
+	key string,
+	tp proto.TaskType,
+	concurrency int,
+	targetScope string,
+	maxNodeCnt int,
+	extraParams proto.ExtraParams,
+	meta []byte,
+) (taskID int64, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, meta)
+		taskID, err2 = mgr.CreateTaskWithSession(ctx, se, key, tp, concurrency, targetScope, maxNodeCnt, extraParams, meta)
 		return err2
 	})
 	return
@@ -209,6 +240,8 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	tp proto.TaskType,
 	concurrency int,
 	targetScope string,
+	maxNodeCount int,
+	extraParams proto.ExtraParams,
 	meta []byte,
 ) (taskID int64, err error) {
 	cpuCount, err := mgr.getCPUCountOfNode(ctx, se)
@@ -218,10 +251,15 @@ func (mgr *TaskManager) CreateTaskWithSession(
 	if concurrency > cpuCount {
 		return 0, errors.Errorf("task concurrency(%d) larger than cpu count(%d) of managed node", concurrency, cpuCount)
 	}
+	extraParamBytes, err := json.Marshal(extraParams)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
-			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?)`,
-		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency, proto.StepInit, meta, targetScope)
+			values (%?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), %?, %?, %?)`,
+		key, tp, proto.TaskStatePending, proto.NormalPriority, concurrency,
+		proto.StepInit, meta, targetScope, maxNodeCount, json.RawMessage(extraParamBytes))
 	if err != nil {
 		return 0, err
 	}
@@ -239,9 +277,12 @@ func (mgr *TaskManager) CreateTaskWithSession(
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task t
-		where state in (%?, %?, %?, %?, %?, %?)
+		where state in (%?, %?, %?, %?, %?, %?, %?)
 		order by priority asc, create_time asc, id asc
 		limit %?`,
 		proto.TaskStatePending,
@@ -250,6 +291,7 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 		proto.TaskStateCancelling,
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
+		proto.TaskStateModifying,
 		proto.MaxConcurrentTask*2,
 	)
 	if err != nil {
@@ -265,27 +307,55 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+`, max(st.concurrency)
-			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
-				on t.id = st.task_key and t.step = st.step
-			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
-			group by t.id
+	var res []*TaskExecInfo
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		// as the task will not go into next step when there are subtasks in those
+		// states, so their steps will be current step of their corresponding task,
+		// so we don't need to query by step here.
+		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select st.task_key, max(st.concurrency) from mysql.tidb_background_subtask st
+			where st.exec_id = %? and st.state in (%?, %?)
+			group by st.task_key`,
+			execID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
+		if err != nil {
+			return err
+		}
+		if len(rs) == 0 {
+			return nil
+		}
+		maxSubtaskCon := make(map[int64]int, len(rs))
+		var taskIDsBuf strings.Builder
+		for i, r := range rs {
+			taskIDStr := r.GetString(0)
+			taskID, err2 := strconv.ParseInt(taskIDStr, 10, 0)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+			maxSubtaskCon[taskID] = int(r.GetInt64(1))
+			if i > 0 {
+				taskIDsBuf.WriteString(",")
+			}
+			taskIDsBuf.WriteString(taskIDStr)
+		}
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select `+basicTaskColumns+` from mysql.tidb_global_task t
+			where t.id in (`+taskIDsBuf.String()+`) and t.state in (%?, %?, %?)
 			order by priority asc, create_time asc, id asc`,
-		proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing,
-		proto.SubtaskStatePending, proto.SubtaskStateRunning, execID)
-	if err != nil {
-		return nil, err
-	}
-
-	res := make([]*TaskExecInfo, 0, len(rs))
-	for _, r := range rs {
-		res = append(res, &TaskExecInfo{
-			TaskBase:           row2TaskBasic(r),
-			SubtaskConcurrency: int(r.GetInt64(9)),
-		})
-	}
-	return res, nil
+			proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing)
+		if err != nil {
+			return err
+		}
+		res = make([]*TaskExecInfo, 0, len(rs))
+		for _, r := range rs {
+			taskBase := row2TaskBasic(r)
+			res = append(res, &TaskExecInfo{
+				TaskBase:           taskBase,
+				SubtaskConcurrency: maxSubtaskCon[taskBase.ID],
+			})
+		}
+		return nil
+	})
+	return res, err
 }
 
 // GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
@@ -294,6 +364,9 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 		return task, nil
 	}
 
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
@@ -323,7 +396,19 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 
 // GetTaskBaseByID implements the TaskManager.GetTaskBaseByID interface.
 func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	err = mgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		task, err2 = mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+		return err2
+	})
+	return
+}
+
+func (*TaskManager) getTaskBaseByID(ctx context.Context, exec sqlexec.SQLExecutor, taskID int64) (task *proto.TaskBase, err error) {
+	rs, err := sqlexec.ExecSQL(ctx, exec, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -444,6 +529,9 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 
 // GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
 func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
@@ -460,6 +548,9 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 
 // GetAllSubtasksByStepAndState gets the subtask by step and state.
 func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
 		taskID, state, step)
@@ -480,8 +571,12 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
     	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
-		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
-		taskID, step)
+		from (
+			select summary from mysql.tidb_background_subtask where task_key = %? and step = %?
+			union all
+			select summary from mysql.tidb_background_subtask_history where task_key = %? and step = %?
+		) as combined`,
+		taskID, step, taskID, step)
 	if err != nil {
 		return 0, err
 	}
@@ -502,6 +597,9 @@ func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int
 
 // GetSubtaskCntGroupByStates gets the subtask count by states.
 func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select state, count(*)
 		from mysql.tidb_background_subtask
@@ -523,6 +621,9 @@ func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID i
 
 // GetSubtaskErrors gets subtasks' errors.
 func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select error from mysql.tidb_background_subtask
              where task_key = %? AND state in (%?, %?)`, taskID, proto.SubtaskStateFailed, proto.SubtaskStateCanceled)
@@ -551,27 +652,14 @@ func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]e
 	return subTaskErrors, nil
 }
 
-// HasSubtasksInStates checks if there are subtasks in the states.
-func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error) {
-	args := []any{tidbID, taskID, step}
-	for _, state := range states {
-		args = append(args, state)
-	}
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select 1 from mysql.tidb_background_subtask
-		where exec_id = %? and task_key = %? and step = %?
-			and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
-	if err != nil {
-		return false, err
-	}
-
-	return len(rs) > 0, nil
-}
-
 // UpdateSubtasksExecIDs update subtasks' execID.
 func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
+	}
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
 	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
@@ -597,16 +685,19 @@ func (mgr *TaskManager) SwitchTaskStep(
 	nextStep proto.Step,
 	subtasks []*proto.Subtask,
 ) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
-		if vars.MemQuotaQuery < variable.DefTiDBMemQuotaQuery {
+		if vars.MemQuotaQuery < vardef.DefTiDBMemQuotaQuery {
 			bak := vars.MemQuotaQuery
-			if err := vars.SetSystemVar(variable.TiDBMemQuotaQuery,
-				strconv.Itoa(variable.DefTiDBMemQuotaQuery)); err != nil {
+			if err := vars.SetSystemVar(vardef.TiDBMemQuotaQuery,
+				strconv.Itoa(vardef.DefTiDBMemQuotaQuery)); err != nil {
 				return err
 			}
 			defer func() {
-				_ = vars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.Itoa(int(bak)))
+				_ = vars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.Itoa(int(bak)))
 			}()
 		}
 		err := mgr.updateTaskStateStep(ctx, se, task, nextState, nextStep)
@@ -678,6 +769,9 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	nextStep proto.Step,
 	subtasks []*proto.Subtask,
 ) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		// some subtasks may be inserted by other schedulers, we can skip them.
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
@@ -781,8 +875,27 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	return subtasks, nil
 }
 
+// GetAllTasks gets all tasks with basic columns.
+func (mgr *TaskManager) GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicTaskColumns+` from mysql.tidb_global_task t`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	tasks := make([]*proto.TaskBase, 0, len(rs))
+	for _, r := range rs {
+		tasks = append(tasks, row2TaskBasic(r))
+	}
+	return tasks, nil
+}
+
 // GetAllSubtasks gets all subtasks with basic columns.
 func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicSubtaskColumns+` from mysql.tidb_background_subtask`)
 	if err != nil {
 		return nil, err

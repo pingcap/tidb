@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/ngaut/pools"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDDLWorkerPool(t *testing.T) {
@@ -28,6 +29,9 @@ func TestDDLWorkerPool(t *testing.T) {
 		}
 	}
 	pool := newDDLWorkerPool(pools.NewResourcePool(f(), 1, 2, 0), jobTypeReorg)
+	require.Equal(t, 1, pool.available())
 	pool.close()
+	require.Zero(t, pool.available())
 	pool.put(nil)
+	require.Zero(t, pool.available())
 }
