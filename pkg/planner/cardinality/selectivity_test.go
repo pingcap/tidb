@@ -485,6 +485,7 @@ func TestSelectivity(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(t, err)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.3")
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
@@ -506,18 +507,18 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.018175582990397805,
+			selectivity:              0.018017832647462276,
 			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
-			selectivity:              0.008230452674897118,
-			selectivityAfterIncrease: 0.006378600823045267,
+			selectivity:              0.006358024691358024,
+			selectivityAfterIncrease: 0.01117283950617284,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
-			selectivity:              0.014403292181069957,
-			selectivityAfterIncrease: 0.012551440329218106,
+			selectivity:              0.012530864197530862,
+			selectivityAfterIncrease: 0.01734567901234568,
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -526,13 +527,13 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "b > 1",
-			selectivity:              0.9814814814814815,
+			selectivity:              0.9729629629629629,
 			selectivityAfterIncrease: 1,
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              0.005497552879811682,
-			selectivityAfterIncrease: 0.002911522633744856,
+			selectivity:              0.001851851851851852,
+			selectivityAfterIncrease: 0.125425,
 		},
 		{
 			exprs:                    longExpr,
@@ -1041,12 +1042,12 @@ func TestIssue39593(t *testing.T) {
 	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes
-	require.Equal(t, float64(540), count)
+	require.Equal(t, float64(462.59999999999957), count)
 	statsTbl.RealtimeCount *= 10
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
-	require.Equal(t, float64(4740), count)
+	require.Equal(t, float64(3702.6000000000017), count)
 }
 
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {

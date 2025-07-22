@@ -890,7 +890,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 			Check(testkit.Rows("1", "2", "3", "15"))
-		expectedRows := "5.00"
+		expectedRows := "4.06"
 		if i != 0 {
 			expectedRows = "4.00"
 		}

@@ -49,6 +49,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	outOfRangeBetweenRate float64 = 100
+)
+
 // Histogram represents statistics for a column or index.
 type Histogram struct {
 	Tp *types.FieldType
@@ -965,7 +969,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// oneValue assumes "one value qualifes", and is used as either an Upper & lower bound.
 	oneValue := float64(0)
 	if histNDV > 0 {
-		oneValue = hg.NotNullCount() / float64(histNDV)
+		oneValue = hg.NotNullCount() / max(float64(histNDV), outOfRangeBetweenRate) // avoid inaccurate selectivity caused by small NDV
 	}
 
 	// We may have missed the true lowest/highest values due to sampling - and we are out of

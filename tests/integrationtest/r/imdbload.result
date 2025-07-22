@@ -304,12 +304,12 @@ CE_trace
 
 explain select * from movie_companies where company_type_id > 2;
 id	estRows	task	access object	operator info
-TableReader_8	2479148.00	root		data:Selection_7
-└─Selection_7	2479148.00	cop[tikv]		gt(imdbload.movie_companies.company_type_id, 2)
-  └─TableFullScan_6	4958296.00	cop[tikv]	table:movie_companies	keep order:false
+IndexLookUp_11	49582.96	root		
+├─IndexRangeScan_9(Build)	49582.96	cop[tikv]	table:movie_companies, index:movie_companies_idx_ctypeid(company_type_id)	range:(2,+inf], keep order:false
+└─TableRowIDScan_10(Probe)	49582.96	cop[tikv]	table:movie_companies	keep order:false
 trace plan target = 'estimation' select * from movie_companies where company_type_id > 2;
 CE_trace
-[{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((company_type_id > 2 and true))","row_count":2479148},{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4958296},{"table_name":"movie_companies","type":"Index Stats-Range","expr":"((company_type_id > 2 and true))","row_count":2479148},{"table_name":"movie_companies","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.movie_companies.company_type_id, 2)","row_count":2479148}]
+[{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((company_type_id > 2 and true))","row_count":49582},{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4958296},{"table_name":"movie_companies","type":"Index Stats-Range","expr":"((company_type_id > 2 and true))","row_count":49582},{"table_name":"movie_companies","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.movie_companies.company_type_id, 2)","row_count":49582}]
 
 explain select * from char_name where imdb_index > 'I' and imdb_index < 'II';
 id	estRows	task	access object	operator info
@@ -341,12 +341,12 @@ TableReader_8	34260.33	root		data:Selection_7
   └─TableFullScan_6	528337.00	cop[tikv]	table:aka_title	keep order:false
 explain select * from aka_title where kind_id > 7;
 id	estRows	task	access object	operator info
-TableReader_8	34260.33	root		data:Selection_7
-└─Selection_7	34260.33	cop[tikv]		gt(imdbload.aka_title.kind_id, 7)
-  └─TableFullScan_6	528337.00	cop[tikv]	table:aka_title	keep order:false
+IndexLookUp_11	1027.81	root		
+├─IndexRangeScan_9(Build)	1027.81	cop[tikv]	table:aka_title, index:aka_title_idx_kindid(kind_id)	range:(7,+inf], keep order:false
+└─TableRowIDScan_10(Probe)	1027.81	cop[tikv]	table:aka_title	keep order:false
 trace plan target = 'estimation' select * from aka_title where kind_id > 7;
 CE_trace
-[{"table_name":"aka_title","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":528337},{"table_name":"aka_title","type":"Column Stats-Range","expr":"((kind_id > 7 and true))","row_count":34260},{"table_name":"aka_title","type":"Index Stats-Range","expr":"((kind_id > 7 and true))","row_count":34260},{"table_name":"aka_title","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.aka_title.kind_id, 7)","row_count":34260}]
+[{"table_name":"aka_title","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":528337},{"table_name":"aka_title","type":"Column Stats-Range","expr":"((kind_id > 7 and true))","row_count":1027},{"table_name":"aka_title","type":"Index Stats-Range","expr":"((kind_id > 7 and true))","row_count":1027},{"table_name":"aka_title","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.aka_title.kind_id, 7)","row_count":1027}]
 
 explain select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
 id	estRows	task	access object	operator info
