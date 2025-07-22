@@ -372,13 +372,6 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency gcCon
 	return nil
 }
 
-func (w *GCWorker) isUnifiedGC() bool {
-	const cfgGCManagementType = "gc_management_type"
-	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
-	keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta()
-	return keyspaceMeta != nil && keyspaceMeta.Config[cfgGCManagementType] != cfgGCManagementTypeKeyspaceLevel
-}
-
 // leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
@@ -395,13 +388,13 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// Gc safe point is not separated by keyspace now. The whole cluster has only one global gc safe point.
-	// So at least one TiDB with `keyspace-name` not set is required in the whole cluster to calculate and update gc safe point.
-	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
-	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
-	// Therefore only one TiDB node in each key space will be responsible to do delete range.
-	// TODO: Use result of AdvanceTxnSafePoint instead, which makes it unnecessary to manually check the config.
-	if w.isUnifiedGC() {
+	// For different keyspace configurations, there are two different GC procedure for them:
+	// * Null keyspace (keyspace not used), or keyspaces with keyspace level GC enabled:
+	//   The keyspace should manage the procedure totally by itself.
+	// * Keyspaces with keyspace level GC disabled, or to say, using unified GC mode:
+	//   The GC procedure only includes polling the GC safe point from the null keyspace
+	keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta()
+	if keyspaceMeta != nil && !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) {
 		err = w.runKeyspaceGCJobInUnifiedGCMode(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -1383,13 +1376,13 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 }
 
 func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
-	var label string
-	if w.isUnifiedGC() {
-		label = "check_leader"
+	var metricLabel string
+	if !pd.IsKeyspaceUsingKeyspaceLevelGC(w.store.GetCodec().GetKeyspaceMeta()) {
+		metricLabel = "check_leader"
 	} else {
-		label = "check_leader_keyspace"
+		metricLabel = "check_leader_keyspace"
 	}
-	metrics.GCWorkerCounter.WithLabelValues(label).Inc()
+	metrics.GCWorkerCounter.WithLabelValues(metricLabel).Inc()
 	se := createSession(w.store)
 	defer se.Close()
 
