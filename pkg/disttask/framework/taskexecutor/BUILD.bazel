@@ -25,6 +25,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/gctuner",
+        "//pkg/util/injectfailpoint",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",

@@ -85,7 +85,7 @@ func TestTraceCE(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		nodeW := resolve.NewNodeW(stmt)
-		_, _, err = plannercore.OptimizeAstNode(context.Background(), sctx, nodeW, is)
+		_, _, err = plannercore.OptimizeAstNodeNoCache(context.Background(), sctx, nodeW, is)
 		require.NoError(t, err)
 
 		traceResult := sctx.GetSessionVars().StmtCtx.OptimizerCETrace
@@ -149,7 +149,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		sql := "insert into t values "
 		// 50 rows as a batch
 		values := make([]string, 0, 50)
-		for j := 0; j < 50; j++ {
+		for j := range 50 {
 			values = append(values, fmt.Sprintf("(%d,%d)", start+i+j, start+i+j+500))
 		}
 		sql = sql + strings.Join(values, ",")

@@ -8,6 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/url"
 	"os"
 	"path"
@@ -15,6 +16,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -110,8 +112,9 @@ type GCSStorage struct {
 	clientCnt int64
 	clientOps []option.ClientOption
 
-	handles []*storage.BucketHandle
-	clients []*storage.Client
+	handles      []*storage.BucketHandle
+	clients      []*storage.Client
+	clientCancel context.CancelFunc
 }
 
 // CopyFrom implements Copier.
@@ -170,10 +173,16 @@ func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // DeleteFiles delete the files in storage.
+// If the file does not exist, we will ignore it.
 func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
 		if err != nil {
+			// some real-TiKV test also delete objects, so we ignore the error if
+			// the object does not exist
+			if goerrors.Is(err, storage.ErrObjectNotExist) {
+				continue
+			}
 			return err
 		}
 	}
@@ -338,10 +347,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
-	partSize := int64(gcsMinimumChunkSize)
-	if wo.PartSize > partSize {
-		partSize = wo.PartSize
-	}
+	partSize := max(wo.PartSize, int64(gcsMinimumChunkSize))
 	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -366,6 +372,7 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 
 // Close implements ExternalStorage interface.
 func (s *GCSStorage) Close() {
+	s.clientCancel()
 	for _, client := range s.clients {
 		if err := client.Close(); err != nil {
 			log.Warn("failed to close gcs client", zap.Error(err))
@@ -447,37 +454,71 @@ skipHandleCred:
 	return ret, nil
 }
 
-// Reset resets the GCS storage.
+// Reset resets the GCS storage. Reset should not be used concurrently with
+// Close.
 func (s *GCSStorage) Reset(ctx context.Context) error {
 	logutil.Logger(ctx).Info("resetting gcs storage")
 
-	for _, client := range s.clients {
-		_ = client.Close()
-	}
+	s.cancelAndCloseGCSClients()
 
-	s.clients = make([]*storage.Client, gcsClientCnt)
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := range s.clients {
-		eg.Go(func() error {
-			client, err := storage.NewClient(egCtx, s.clientOps...)
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	s.clients = make([]*storage.Client, 0, gcsClientCnt)
+	wg := util.WaitGroupWrapper{}
+	cliCh := make(chan *storage.Client)
+	wg.RunWithLog(func() {
+		for range gcsClientCnt {
+			select {
+			case cli := <-cliCh:
+				s.clients = append(s.clients, cli)
+			case <-ctx.Done():
+				clientCancel()
+				return
+			case <-clientCtx.Done():
+				return
+			}
+		}
+	})
+	firstErr := atomic.NewError(nil)
+	for range gcsClientCnt {
+		wg.RunWithLog(func() {
+			client, err := storage.NewClient(clientCtx, s.clientOps...)
 			if err != nil {
-				return errors.Trace(err)
+				firstErr.CompareAndSwap(nil, err)
+				clientCancel()
+				return
 			}
 			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
-			s.clients[i] = client
-			return nil
+			select {
+			case cliCh <- client:
+			case <-clientCtx.Done():
+			}
 		})
 	}
-	err := eg.Wait()
-	if err != nil {
+	wg.Wait()
+	if err := firstErr.Load(); err != nil {
+		s.cancelAndCloseGCSClients()
 		return errors.Trace(err)
 	}
 
+	s.clientCancel = clientCancel
 	s.handles = make([]*storage.BucketHandle, gcsClientCnt)
 	for i := range s.handles {
 		s.handles[i] = s.clients[i].Bucket(s.gcs.Bucket)
 	}
 	return nil
+}
+
+func (s *GCSStorage) cancelAndCloseGCSClients() {
+	if s.clientCancel != nil {
+		s.clientCancel()
+		s.clientCancel = nil
+	}
+
+	for _, client := range s.clients {
+		if client != nil {
+			_ = client.Close()
+		}
+	}
 }
 
 func shouldRetry(err error) bool {
@@ -560,6 +601,12 @@ type gcsObjectReader struct {
 
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
+	failpoint.Inject("GCSReadUnexpectedEOF", func(n failpoint.Value) {
+		if r.prefetchSize > 0 && r.pos > 0 && rand.Intn(2) == 0 {
+			log.Info("ingest error in gcs reader read")
+			failpoint.Return(n.(int), io.ErrUnexpectedEOF)
+		}
+	})
 	if r.reader == nil {
 		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)

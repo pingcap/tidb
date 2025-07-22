@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -102,4 +103,47 @@ func TestLogicalApplyClone(t *testing.T) {
 	clonedApply.EqualConditions[1] = tmp
 	require.True(t, clonedApply.EqualConditions[0].FuncName.L == "f2")
 	require.True(t, apply.EqualConditions[0].FuncName.L == "f2")
+}
+
+func TestLogicalProjectionPushDownTopN(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE table_test (
+col16 json DEFAULT NULL,
+col17 json DEFAULT NULL
+);`)
+	sql := `explain format='brief' SELECT 
+       s.column16 AS column16,
+       s.column17 AS column17
+FROM
+  (SELECT 
+          col16 -> '$[].optUid' AS column16,
+          JSON_UNQUOTE(JSON_EXTRACT(col17, '$[0].value')) AS column17
+   FROM
+     (SELECT 
+             col16,
+             col17
+      FROM table_test) ta24e
+   ) AS s 
+ORDER BY CONVERT(column16 USING GBK) ASC,column17 ASC
+LIMIT 0,
+      20;`
+	tk.MustQuery(sql).Check(testkit.Rows(
+		"Projection 20.00 root  Column#4, Column#5",
+		"└─TopN 20.00 root  Column#6, Column#5, offset:0, count:20",
+		"  └─Projection 10000.00 root  Column#4, Column#5, convert(cast(Column#4, var_string(16777216)), gbk)->Column#6",
+		"    └─TableReader 10000.00 root  data:Projection",
+		"      └─Projection 10000.00 cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column#4, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#5",
+		"        └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
+	tk.MustExec(`INSERT INTO mysql.opt_rule_blacklist VALUES("topn_push_down");`)
+	tk.MustExec(`admin reload opt_rule_blacklist;`)
+	tk.MustQuery(sql).Check(testkit.Rows(
+		"Limit 20.00 root  offset:0, count:20",
+		"└─Projection 20.00 root  Column#4, Column#5",
+		"  └─Sort 20.00 root  Column#6, Column#5",
+		"    └─Projection 10000.00 root  Column#4, Column#5, convert(cast(Column#4, var_string(16777216)), gbk)->Column#6",
+		"      └─TableReader 10000.00 root  data:Projection",
+		"        └─Projection 10000.00 cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column#4, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#5",
+		"          └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
 }

@@ -152,7 +152,7 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	ResetGlobalBRIEQueueForTest()
-	builder := NewMockExecutorBuilderForTest(sctx, is)
+	builder := NewMockExecutorBuilderForTest(sctx, is, nil)
 	ctx := context.Background()
 	p := parser.New()
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
@@ -225,7 +225,7 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	e, ok = exec.(*BRIEExec)
 	require.True(t, ok)
 	require.Equal(t, uint(4), e.restoreCfg.ChecksumConcurrency)
-	require.True(t, e.restoreCfg.Checksum)
+	require.False(t, e.restoreCfg.Checksum)
 	require.True(t, e.restoreCfg.WaitTiflashReady)
 	require.True(t, e.restoreCfg.WithSysTable)
 	require.True(t, e.restoreCfg.LoadStats)

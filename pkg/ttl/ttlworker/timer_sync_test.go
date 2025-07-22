@@ -41,11 +41,11 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(tablestore.CreateTimerTableSQL("test", "test_timers"))
-	timerStore := tablestore.NewTableTimerStore(1, do.SysSessionPool(), "test", "test_timers", nil)
+	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), "test", "test_timers", nil)
 	defer timerStore.Close()
 	var zeroWatermark time.Time
 	cli := timerapi.NewDefaultTimerClient(timerStore)
-	pool := wrapPoolForTest(do.SysSessionPool())
+	pool := wrapPoolForTest(do.AdvancedSysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
 	sync := ttlworker.NewTTLTimerSyncer(pool, cli)
 
@@ -217,7 +217,7 @@ func TestTTLTimerSync(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(tablestore.CreateTimerTableSQL("test", "test_timers"))
-	timerStore := tablestore.NewTableTimerStore(1, do.SysSessionPool(), "test", "test_timers", nil)
+	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), "test", "test_timers", nil)
 	defer timerStore.Close()
 
 	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
@@ -239,7 +239,7 @@ func TestTTLTimerSync(t *testing.T) {
 	insertTTLTableStatusWatermark(t, do, tk, "test", "tp1", "p1", wm2, true)
 
 	cli := timerapi.NewDefaultTimerClient(timerStore)
-	pool := wrapPoolForTest(do.SysSessionPool())
+	pool := wrapPoolForTest(do.AdvancedSysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
 	sync := ttlworker.NewTTLTimerSyncer(pool, cli)
 

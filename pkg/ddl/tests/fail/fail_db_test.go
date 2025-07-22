@@ -202,7 +202,7 @@ func TestAddIndexFailed(t *testing.T) {
 	tk.MustExec("use test_add_index_failed")
 
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
 	}
 
@@ -236,34 +236,34 @@ func TestFailSchemaSyncer(t *testing.T) {
 	defer func() {
 		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
-	require.True(t, s.dom.SchemaValidator.IsStarted())
+	require.True(t, s.dom.GetSchemaValidator().IsStarted())
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*schemaver.MemSyncer)
 	require.True(t, ok)
 
 	// make reload failed.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
-	for i := 0; i < 50; i++ {
-		if !s.dom.SchemaValidator.IsStarted() {
+	for range 50 {
+		if !s.dom.GetSchemaValidator().IsStarted() {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	require.False(t, s.dom.SchemaValidator.IsStarted())
+	require.False(t, s.dom.GetSchemaValidator().IsStarted())
 	_, err := tk.Exec("insert into t values(1)")
 	require.Error(t, err)
 	require.EqualError(t, err, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
 	// wait the schemaValidator is started.
-	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() {
+	for range 50 {
+		if s.dom.GetSchemaValidator().IsStarted() {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	require.True(t, s.dom.SchemaValidator.IsStarted())
+	require.True(t, s.dom.GetSchemaValidator().IsStarted())
 	err = tk.ExecToErr("insert into t values(1)")
 	require.NoError(t, err)
 }
@@ -536,7 +536,7 @@ func TestModifyColumn(t *testing.T) {
 	base := defaultBatchSize * 20
 	for i := 1; i < batchCnt; i++ {
 		n := base + i*defaultBatchSize + i
-		for j := 0; j < rand.Intn(maxBatch); j++ {
+		for j := range rand.Intn(maxBatch) {
 			n += j
 			sql := fmt.Sprintf("insert into t3 values (%d, %d, %d)", n, n, n)
 			tk.MustExec(sql)

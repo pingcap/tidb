@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -51,7 +51,7 @@ func TestGetDDLJobs(t *testing.T) {
 	jobs := make([]*model.Job, cnt)
 	ctx := context.Background()
 	var currJobs2 []*model.Job
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		jobs[i] = &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
@@ -145,7 +145,7 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
+func enQueueDDLJobs(t *testing.T, sess sessionapi.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),
@@ -181,7 +181,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 		}
 	})
 	var eg errgroup.Group
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		eg.Go(func() error {
 			newTk := testkit.NewTestKit(t, store)
 			_, err := newTk.Exec("use test")

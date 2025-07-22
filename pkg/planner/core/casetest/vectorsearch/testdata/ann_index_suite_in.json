@@ -48,65 +48,59 @@
   {
     "name": "TestVectorSearchWithPKAuto",
     "cases": [
-      "explain select id from t1",
-
-      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
-      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-
-      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
-      "explain select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
-      "explain select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10"
+      "explain format = 'brief' select id from t1",
+      "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+      "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+      "explain format = 'brief' select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
+      "explain format = 'brief' select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10"
     ]
   },
   {
     "name": "TestVectorSearchWithPKForceTiKV",
     "cases": [
-      "explain select id from t1",
-
-      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
-      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-
-      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
-      "explain select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
-      "explain select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10"
+      "explain format = 'brief' select id from t1",
+      "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+      "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+      "explain format = 'brief' select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
+      "explain format = 'brief' select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10"
     ]
   },
   {
     "name": "TestVectorSearchHeavyFunction",
     "cases": [
-      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select id from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
-      "explain select id from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
-      "explain select id from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
-      "explain select id from t1 order by vec_dims(vec) limit 10",
-      "explain select id from t1 order by vec_l2_norm(vec) limit 10",
-      "explain select id from t1 order by MOD(a, 3) limit 10",
-
-      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_l1_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_l2_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_negative_inner_product(vec, '[1,1,1]') as d from t1 order by d limit 10",
-      "explain select id, vec_dims(vec) as d from t1 order by d limit 10",
-      "explain select id, vec_l2_norm(vec) as d from t1 order by d limit 10",
-      "explain select id, MOD(a, 3) as d from t1 order by d limit 10",
-
-      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
-      "explain select * from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
-      "explain select * from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
-      "explain select * from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
-      "explain select * from t1 order by vec_dims(vec) limit 10",
-      "explain select * from t1 order by vec_l2_norm(vec) limit 10",
-      "explain select * from t1 order by MOD(a, 3) limit 10"
+      "explain format = 'brief' select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select id from t1 order by vec_dims(vec) limit 10",
+      "explain format = 'brief' select id from t1 order by vec_l2_norm(vec) limit 10",
+      "explain format = 'brief' select id from t1 order by MOD(a, 3) limit 10",
+      "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_l1_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_l2_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_negative_inner_product(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_dims(vec) as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, vec_l2_norm(vec) as d from t1 order by d limit 10",
+      "explain format = 'brief' select id, MOD(a, 3) as d from t1 order by d limit 10",
+      "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select * from t1 order by vec_l1_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select * from t1 order by vec_l2_distance(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select * from t1 order by vec_negative_inner_product(vec, '[1,1,1]') limit 10",
+      "explain format = 'brief' select * from t1 order by vec_dims(vec) limit 10",
+      "explain format = 'brief' select * from t1 order by vec_l2_norm(vec) limit 10",
+      "explain format = 'brief' select * from t1 order by MOD(a, 3) limit 10"
     ]
   }
 ]

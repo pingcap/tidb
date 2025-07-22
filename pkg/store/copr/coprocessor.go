@@ -20,6 +20,7 @@ import (
 	"math"
 	"net"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -631,7 +632,7 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 }
 
 func reverseTasks(tasks []*copTask) {
-	for i := 0; i < len(tasks)/2; i++ {
+	for i := range len(tasks) / 2 {
 		j := len(tasks) - i - 1
 		tasks[i], tasks[j] = tasks[j], tasks[i]
 	}
@@ -893,7 +894,7 @@ func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint3
 		smallTaskCh = make(chan *copTask, 1)
 	}
 	// Start it.concurrency number of workers to handle cop requests.
-	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
+	for i := range it.concurrency + it.smallTaskConcurrency {
 		ch := taskCh
 		if i >= it.concurrency && smallTaskCh != nil {
 			ch = smallTaskCh
@@ -1920,8 +1921,8 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				}
 				// When paging protocol is used, the response key range is part of the cache data.
 				if r := resp.pbResp.GetRange(); r != nil {
-					newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
-					newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
+					newCacheValue.PageStart = slices.Clone(r.GetStart())
+					newCacheValue.PageEnd = slices.Clone(r.GetEnd())
 				}
 				worker.store.coprCache.Set(cacheKey, &newCacheValue)
 			}

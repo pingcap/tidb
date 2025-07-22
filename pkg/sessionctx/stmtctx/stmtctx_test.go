@@ -43,23 +43,21 @@ import (
 func TestCopTasksDetails(t *testing.T) {
 	ctx := stmtctx.NewStmtCtx()
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	for i := 0; i < 100; i++ {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(i+1),
-					WaitTime:    time.Millisecond * time.Duration(i+1),
-				},
+	for i := range 100 {
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(i+1),
+				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},
 		}
 		for _, backoff := range backoffs {
 			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(i+1)
 			d.BackoffTimes[backoff] = i + 1
 		}
-		ctx.MergeExecDetails(d, nil)
+		ctx.MergeCopExecDetails(d, 0)
 	}
 	d := ctx.CopTasksDetails()
 	require.Equal(t, 100, d.NumCopTasks)
@@ -224,17 +222,15 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	var n = rand.Intn(19000) + 1000
 	var valRange = rand.Int31n(10000) + 1000
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	details := []*execdetails.ExecDetails{}
-	for i := 0; i < n; i++ {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
-					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
-				},
+	details := []*execdetails.CopExecDetails{}
+	for i := range n {
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
+				WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
 			},
 		}
 		details = append(details, d)
@@ -245,15 +241,15 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	}
 
 	// Make CalleeAddress for each max value is deterministic.
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
 	for _, backoff := range backoffs {
 		details[rand.Intn(n)].BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(valRange)
 	}
 
 	ctx := stmtctx.NewStmtCtx()
-	for i := 0; i < n; i++ {
-		ctx.MergeExecDetails(details[i], nil)
+	for i := range n {
+		ctx.MergeCopExecDetails(details[i], 0)
 	}
 	d := ctx.CopTasksDetails()
 
@@ -309,7 +305,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 func TestStmtHintsClone(t *testing.T) {
 	hints := hint.StmtHints{}
 	value := reflect.ValueOf(&hints).Elem()
-	for i := 0; i < value.NumField(); i++ {
+	for i := range value.NumField() {
 		field := value.Field(i)
 		switch field.Kind() {
 		case reflect.Int, reflect.Int32, reflect.Int64:
@@ -442,11 +438,11 @@ func TestStmtCtxID(t *testing.T) {
 
 func TestIssue58600(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterAffectedRowsLocked", func(sc *stmtctx.StatementContext) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterFoundRowsLocked", func(sc *stmtctx.StatementContext) {
 		// no panic when call sc.Reset()
 		assert.False(t, sc.Reset())
 	})
-	sc.AffectedRows()
+	sc.FoundRows()
 }
 
 func TestErrCtx(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -57,7 +58,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != logicalop.InnerJoin && join.JoinType != logicalop.LeftOuterJoin && join.JoinType != logicalop.RightOuterJoin) ||
-		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) {
+		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) ||
+		// with NullEQ in the EQCond, the join order needs to consider the transitivity of null and avoid the wrong result.
+		// so we skip the join order when to meet the NullEQ in the EQCond
+		(slices.ContainsFunc(join.EqualConditions, func(e *expression.ScalarFunction) bool {
+			return e.FuncName.L == ast.NullEQ
+		})) {
 		if joinOrderHintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.HintInfo = nil
@@ -105,11 +111,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
 			affectedGroups := 0
 			for i := range lhsGroup {
-				for _, col := range extractedCols {
-					if lhsGroup[i].Schema().Contains(col) {
-						affectedGroups++
-						break
-					}
+				if slices.ContainsFunc(extractedCols, lhsGroup[i].Schema().Contains) {
+					affectedGroups++
 				}
 				if affectedGroups > 1 {
 					noExpand = true
@@ -128,9 +131,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		otherConds = append(otherConds, lhsOtherConds...)
 		joinTypes = append(joinTypes, lhsJoinTypes...)
 		joinOrderHintInfo = append(joinOrderHintInfo, lhsJoinOrderHintInfo...)
-		for ID, joinMethodHint := range lhsJoinMethodHintInfo {
-			joinMethodHintInfo[ID] = joinMethodHint
-		}
+		maps.Copy(joinMethodHintInfo, lhsJoinMethodHintInfo)
 		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
 	} else {
 		group = append(group, join.Children()[0])
@@ -149,11 +150,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
 			affectedGroups := 0
 			for i := range rhsGroup {
-				for _, col := range extractedCols {
-					if rhsGroup[i].Schema().Contains(col) {
-						affectedGroups++
-						break
-					}
+				if slices.ContainsFunc(extractedCols, rhsGroup[i].Schema().Contains) {
+					affectedGroups++
 				}
 				if affectedGroups > 1 {
 					noExpand = true
@@ -172,9 +170,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		otherConds = append(otherConds, rhsOtherConds...)
 		joinTypes = append(joinTypes, rhsJoinTypes...)
 		joinOrderHintInfo = append(joinOrderHintInfo, rhsJoinOrderHintInfo...)
-		for ID, joinMethodHint := range rhsJoinMethodHintInfo {
-			joinMethodHintInfo[ID] = joinMethodHint
-		}
+		maps.Copy(joinMethodHintInfo, rhsJoinMethodHintInfo)
 		hasOuterJoin = hasOuterJoin || rhsHasOuterJoin
 	} else {
 		group = append(group, join.Children()[1])
@@ -422,7 +418,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 			if (hintTbl.DBName.L == tableAlias.DBName.L || hintTbl.DBName.L == "*") && hintTbl.TblName.L == tableAlias.TblName.L && hintTbl.SelectOffset == tableAlias.SelectOffset {
 				match = true
 				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
-				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)
+				leftJoinGroup = slices.Delete(leftJoinGroup, i, i+1)
 				break
 			}
 		}
@@ -451,7 +447,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 		}
 		if groupIdx != -1 {
 			leadingJoinGroup = append(leadingJoinGroup, leftJoinGroup[groupIdx])
-			leftJoinGroup = append(leftJoinGroup[:groupIdx], leftJoinGroup[groupIdx+1:]...)
+			leftJoinGroup = slices.Delete(leftJoinGroup, groupIdx, groupIdx+1)
 		}
 	}
 	if len(leadingJoinGroup) != len(hintInfo.LeadingJoinOrder) || leadingJoinGroup == nil {
@@ -625,7 +621,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base
 				cols := expression.ExtractColumns(s.otherConds[i])
 				if newJoin.Schema().ColumnsIndices(cols) != nil {
 					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
-					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
+					s.otherConds = slices.Delete(s.otherConds, i, i+1)
 				}
 			}
 			resultJoinGroup = append(resultJoinGroup, newJoin)

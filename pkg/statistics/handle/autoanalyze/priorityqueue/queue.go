@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -214,7 +215,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			return err
 		}
 
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		// Get current timestamp from the session context.
 		currentTs, err := statsutil.GetStartTS(sctx)
 		if err != nil {
@@ -236,7 +237,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			func(info *model.TableInfo) error {
 				// Ignore the memory and system database.
 				db, ok := is.SchemaByID(info.DBID)
-				if !ok || util.IsMemOrSysDB(db.Name.L) {
+				if !ok || metadef.IsMemOrSysDB(db.Name.L) {
 					return nil
 				}
 				tbls = append(tbls, info)
@@ -252,7 +253,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			verifyTbls := make([]*model.TableInfo, 0, 512)
 			for _, db := range dbs {
 				// Ignore the memory and system database.
-				if util.IsMemOrSysDB(db.L) {
+				if metadef.IsMemOrSysDB(db.L) {
 					continue
 				}
 
@@ -394,7 +395,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 			if value.Version > lastFetchTimestamp {
 				err := pq.processTableStats(sctx, value, parameters, lockedTables)
 				if err != nil {
-					statslogutil.StatsLogger().Error(
+					statslogutil.StatsErrVerboseSampleLogger().Error(
 						"Failed to process table stats",
 						zap.Error(err),
 						zap.Int64("tableID", value.PhysicalID),
@@ -410,7 +411,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to process DML changes", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to process DML changes", zap.Error(err))
 	}
 }
 
@@ -433,7 +434,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
 	var job AnalysisJob
@@ -454,7 +455,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 			// Clean up the job if the table is locked.
 			err := pq.syncFields.inner.delete(job)
 			if err != nil {
-				statslogutil.StatsLogger().Error(
+				statslogutil.StatsErrVerboseSampleLogger().Error(
 					"Failed to delete job from priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
@@ -626,7 +627,7 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 			}
 		}()
 
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 		for tableID := range pq.syncFields.mustRetryJobs {
 			// Note: Delete the job first to ensure it can be added back to the queue
 			delete(pq.syncFields.mustRetryJobs, tableID)
@@ -637,13 +638,13 @@ func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 			}
 			err := pq.recreateAndPushJobForTable(sctx, tblInfo.Meta())
 			if err != nil {
-				statslogutil.StatsLogger().Error("Failed to recreate and push job for table", zap.Error(err), zap.Int64("tableID", tableID))
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to recreate and push job for table", zap.Error(err), zap.Int64("tableID", tableID))
 				continue
 			}
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to requeue must retry jobs", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to requeue must retry jobs", zap.Error(err))
 	}
 }
 
@@ -680,7 +681,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 				// DDL events should have already cleaned up jobs for dropped tables.
 				err := pq.syncFields.inner.delete(job)
 				if err != nil {
-					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
+					statslogutil.StatsErrVerboseSampleLogger().Error("Failed to delete job from priority queue",
 						zap.Error(err),
 						zap.String("job", job.String()),
 					)
@@ -691,7 +692,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 			job.SetIndicators(indicators)
 			job.SetWeight(pq.calculator.CalculateWeight(job))
 			if err := pq.syncFields.inner.update(job); err != nil {
-				statslogutil.StatsLogger().Error("Failed to add job to priority queue",
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to add job to priority queue",
 					zap.Error(err),
 					zap.String("job", job.String()),
 				)
@@ -699,7 +700,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to refresh last analysis duration", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to refresh last analysis duration", zap.Error(err))
 	}
 }
 

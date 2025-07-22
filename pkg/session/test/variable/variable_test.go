@@ -80,7 +80,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	tk.MustQuery("split table t6 INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
 	count := 10
-	for i := 0; i < count; i++ {
+	for i := range count {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
 		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
 	}
@@ -119,7 +119,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
-		for i := 0; i < count; i++ {
+		for i := range count {
 			expect = append(expect, fmt.Sprintf("%v", i))
 		}
 		tk.MustQuery(sql).Sort().Check(testkit.Rows(expect...))

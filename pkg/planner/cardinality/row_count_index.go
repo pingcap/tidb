@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -345,16 +346,23 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
-				c := coll.GetCol(idx.Histogram.ID)
-				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
+				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
+				// Retrieve column statistics for the 1st index column
+				c := coll.GetCol(colIDs[0])
+				// If this is single column predicate - use the column's information rather than index.
+				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && !isSingleColIdx && c != nil && c.Histogram.NDV > 0 {
+				if isSingleColRange && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
+					count += c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV)
 				} else {
+					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
+					count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 				}
+			} else {
+				count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 			}
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 		}
 
 		if debugTrace {
@@ -418,7 +426,16 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-	if histNDV <= 0 {
+	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
+	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
+	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
+	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
+	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
+		// branch 1: all NDV's are in TopN, and no histograms
+		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
+		if histNDV > 0 && modifyCount == 0 {
+			return max(float64(idx.TopN.MinCount()-1), 1)
+		}
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
 		// The histogram wont have a NotNullCount - so it needs to be derived.
 		notNullCount := idx.Histogram.NotNullCount()
@@ -428,8 +445,25 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	}
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return idx.Histogram.NotNullCount() / histNDV
+	// branch 2: some NDV's are in histograms
+	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
+	skewEstimate := float64(0)
+	// skewRatio determines how much of the potential skew should be considered
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	if skewRatio > 0 {
+		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+		skewEstimate = idx.Histogram.NotNullCount() - (histNDV - 1)
+		minTopN := idx.TopN.MinCount()
+		if minTopN > 0 {
+			// The skewEstimate should not be larger than the minimum TopN value.
+			skewEstimate = min(skewEstimate, float64(minTopN))
+		}
+		// Add a "ratio" of the skewEstimate to adjust the average row estimate.
+		return avgRowEstimate + max(0, (skewEstimate-avgRowEstimate)*skewRatio)
+	}
+	return avgRowEstimate
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
@@ -459,7 +493,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
 	//   3. The final selectivity would be sel_1 * sel_2^{1/2} * sel_3^{1/4} * sel_4^{1/8}.
 	// This calculation reduced the independence assumption and can work well better than it.
-	for i := 0; i < len(indexRange.LowVal); i++ {
+	for i := range indexRange.LowVal {
 		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 		tmpRan[0].HighVal[0] = indexRange.HighVal[i]
 		tmpRan[0].Collators[0] = indexRange.Collators[0]
@@ -566,7 +600,7 @@ func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
 }
 
 // betweenRowCountOnIndex estimates the row count for interval [l, r).
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+// The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
 func betweenRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, l, r types.Datum) float64 {
 	histBetweenCnt := idx.Histogram.BetweenRowCount(sctx, l, r)
 	if idx.StatsVer == statistics.Version1 {

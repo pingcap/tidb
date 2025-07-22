@@ -169,7 +169,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			// we should not fold the extension function, because it may have a side effect.
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, expr) {
 			return function(ctx, x)
 		}
 
@@ -178,7 +178,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		hasNullArg := false
 		allConstArg := true
 		isDeferredConst := false
-		for i := 0; i < len(args); i++ {
+		for i := range args {
 			switch x := args[i].(type) {
 			case *Constant:
 				isDeferredConst = isDeferredConst || x.DeferredExpr != nil || x.ParamMarker != nil

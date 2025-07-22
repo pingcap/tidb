@@ -42,3 +42,41 @@ CREATE TABLE t (
   KEY `aid_c2` (`aid`,`c2`)
 );
 desc select /*+ USE_INDEX_MERGE(t, aid_c1, aid_c2) */ * from t where (aid = 1 and c1='aaa') or (aid = 2 and c2='bbb');
+# test issue 61093
+use test;
+drop table if exists user_authorization_simple;
+CREATE TABLE `user_authorization_simple` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `deleted_at` datetime(3) DEFAULT NULL,
+  `auth_type` int NOT NULL DEFAULT '1',
+  `auth_value` varchar(255) COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `user_id` varchar(64) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */,
+  KEY `idx_user_authorization_user_id` (`user_id`),
+  KEY `idx_user_authorization_deleted_at` (`deleted_at`),
+  KEY `idx_user_authorization_auth_type` (`auth_type`),
+  KEY `idx_user_authorization_auth_value` (`auth_value`)
+);
+set @@tidb_opt_fix_control='52869:ON';
+load stats 's/issue_61093.json';
+explain format = 'brief'
+SELECT
+  *
+FROM
+  `user_authorization_simple`
+WHERE
+  `user_authorization_simple`.`deleted_at` IS NULL
+  AND (
+    `user_authorization_simple`.`auth_type` = 2
+    AND `user_authorization_simple`.`auth_value` = "310419663029329176"
+    OR (
+      `user_authorization_simple`.`auth_type` = 1
+      AND `user_authorization_simple`.`auth_value` = "just4test@gmail.com"
+    )
+    OR `user_authorization_simple`.`user_id` = "310419663029329176"
+  )
+  AND `user_authorization_simple`.`deleted_at` IS NULL
+ORDER BY
+  `user_authorization_simple`.`id`
+LIMIT
+  1;

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -65,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -237,6 +237,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlanCache(ctx, sctx, false)
 		case infoschema.ClusterTableTiDBPlanCache:
 			err = e.setDataFromPlanCache(ctx, sctx, true)
+		case infoschema.TableKeyspaceMeta:
+			err = e.setDataForKeyspaceMeta(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -508,7 +510,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
-		if !ex.HasIndex(index.Name.L) {
+		if !ex.HasIndex(index.Name.L) || index.State != model.StatePublic {
 			continue
 		}
 		nonUnique := "1"
@@ -622,14 +624,36 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
+func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls []*model.TableInfo) {
+	needUpdate := false
 	for _, col := range e.columns {
 		// only the following columns need stats cache.
 		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
-			return true
+			needUpdate = true
+			break
 		}
 	}
-	return false
+	if !needUpdate {
+		return
+	}
+
+	tableIDs := make([]int64, 0, len(tbls))
+	for _, tbl := range tbls {
+		if pi := tbl.GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				tableIDs = append(tableIDs, def.ID)
+			}
+		}
+		tableIDs = append(tableIDs, tbl.ID)
+	}
+	// Even for partitioned tables, we must update the stats cache for the main table itself.
+	// This is necessary because the global index length from the table also needs to be included.
+	// For further details, see: https://github.com/pingcap/tidb/issues/54173
+	err := cache.TableRowStatsCache.UpdateByID(sctx, tableIDs...)
+	if err != nil {
+		logutil.BgLogger().Warn("cannot update stats cache for tables", zap.Error(err))
+	}
+	intest.AssertNoError(err)
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
@@ -639,7 +663,6 @@ func (e *memtableRetriever) setDataFromOneTable(
 	schema ast.CIStr,
 	table *model.TableInfo,
 	rows [][]types.Datum,
-	useStatsCache bool,
 ) ([][]types.Datum, error) {
 	collation := table.Collate
 	if collation == "" {
@@ -665,7 +688,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			autoIncID = getAutoIncrementID(e.is, sctx, table)
 		}
 		tableType := "BASE TABLE"
-		if util.IsSystemView(schema.L) {
+		if metadef.IsMemDB(schema.L) {
 			tableType = "SYSTEM VIEW"
 		}
 		if table.IsSequence() {
@@ -680,26 +703,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			policyName = table.PlacementPolicyRef.Name.O
 		}
 
-		var rowCount, avgRowLength, dataLength, indexLength uint64
-		if useStatsCache {
-			// Even for partitioned tables, we must update the stats cache for the main table itself.
-			// This is necessary because the global index length from the table also needs to be included.
-			// For further details, see: https://github.com/pingcap/tidb/issues/54173
-			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-			if err != nil {
-				return rows, err
-			}
-			if table.GetPartitionInfo() != nil {
-				// needs to update all partitions for partition table.
-				for _, pi := range table.GetPartitionInfo().Definitions {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
-					if err != nil {
-						return rows, err
-					}
-				}
-			}
-			rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
-		}
+		rowCount, avgRowLength, dataLength, indexLength := cache.TableRowStatsCache.EstimateDataLength(table)
 
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
@@ -727,6 +731,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			table.Mode.String(),   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -757,6 +762,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			nil,                   // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+			nil,                   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -861,6 +867,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
+					nil,                   // TIDB_TABLE_MODE
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -876,13 +883,13 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	useStatsCache := e.updateStatsCacheIfNeed()
+	e.updateStatsCacheIfNeed(sctx, tables)
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
 	}
 	for i, table := range tables {
-		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1262,7 +1269,6 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context) error {
-	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
@@ -1278,6 +1284,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.updateStatsCacheIfNeed(sctx, tables)
 	for i, table := range tables {
 		schema := schemas[i]
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
@@ -1290,22 +1297,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 		}
 
 		var rowCount, dataLength, indexLength uint64
-		if useStatsCache {
-			if table.GetPartitionInfo() == nil {
-				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-				if err != nil {
-					return err
-				}
-			} else {
-				// needs to update needed partitions for partition table.
-				for _, pi := range table.GetPartitionInfo().Definitions {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
-					if err != nil {
-						return err
-					}
-				}
-			}
-		}
 		if table.GetPartitionInfo() == nil {
 			rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
 			dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)
@@ -2057,7 +2048,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	}
 	requestByTableRange := false
 	var allRegionsInfo *pd.RegionsInfo
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	if e.extractor != nil {
 		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
 		if ok && len(extractor.GetTablesID()) > 0 {
@@ -2096,6 +2087,10 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
 		for j, regionTable := range regionTableList {
+			// Exclude virtual schemas
+			if metadef.IsMemDB(regionTable.DB.Name.L) {
+				continue
+			}
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, regionTable.DB.Name.L, regionTable.Table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -2416,7 +2411,7 @@ func (e *tableStorageStatsRetriever) initialize(ctx context.Context, sctx sessio
 
 	// Filter the sys or memory schema.
 	for schema := range schemas {
-		if !util.IsMemDB(schema) {
+		if !metadef.IsMemDB(schema) {
 			databases = append(databases, schema)
 		}
 	}
@@ -2604,10 +2599,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var remainingDuration = time.Duration(0)
-	var percentage = 0.0
-	var totalCnt = float64(0)
+	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	remainingDuration := time.Duration(0)
 	if startTime != nil {
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {
@@ -3074,7 +3067,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		for i := start; i < end; i++ {
 			row := make([]types.Datum, 0, len(e.columns))
 			for _, c := range e.columns {
-				if c.Name.O == util.ClusterTableInstanceColumnName {
+				if c.Name.O == metadef.ClusterTableInstanceColumnName {
 					row = append(row, types.NewDatum(instanceAddr))
 				} else if c.Name.O == txninfo.CurrentSQLDigestTextStr {
 					if text, ok := sqlRetriever.SQLDigestsMap[e.txnInfo[i].CurrentSQLDigest]; ok && len(text) != 0 {
@@ -3400,7 +3393,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 			waitChainItem := deadlock.WaitChain[r.currentWaitChainIdx]
 
 			for _, c := range r.columns {
-				if c.Name.O == util.ClusterTableInstanceColumnName {
+				if c.Name.O == metadef.ClusterTableInstanceColumnName {
 					row = append(row, types.NewDatum(instanceAddr))
 				} else if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
 					if text, ok := sqlRetriever.SQLDigestsMap[waitChainItem.SQLDigest]; ok && len(text) > 0 {
@@ -3847,9 +3840,9 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 
 // used in resource_groups
 const (
-	burstableModeratedStr = "YES(MODERATED)"
-	burstableUnlimitedStr = "YES(UNLIMITED)"
-	burstdisableStr       = "NO"
+	burstableModeratedStr = "MODERATED"
+	burstableUnlimitedStr = "UNLIMITED"
+	burstdisableStr       = "OFF"
 	unlimitedFillRate     = "UNLIMITED"
 )
 
@@ -4090,6 +4083,43 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err error) {
+	meta := sctx.GetStore().GetCodec().GetKeyspaceMeta()
+	var (
+		keyspaceName string
+		keyspaceID   string
+		keyspaceCfg  []byte
+	)
+
+	if meta != nil {
+		keyspaceName = meta.Name
+		keyspaceID = fmt.Sprintf("%d", meta.Id)
+		if len(meta.Config) > 0 {
+			keyspaceCfg, err = json.Marshal(meta.Config)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	row := make([]types.Datum, 3)
+	// Keyspace name
+	row[0] = types.NewStringDatum(keyspaceName)
+	// Keyspace ID
+	row[1] = types.NewStringDatum(keyspaceID)
+	// Keyspace config
+	var bj types.BinaryJSON
+	if len(keyspaceCfg) > 0 {
+		err = bj.UnmarshalJSON(keyspaceCfg)
+		if err != nil {
+			return err
+		}
+	}
+	row[2] = types.NewJSONDatum(bj)
+	e.rows = [][]types.Datum{row}
+	return
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {

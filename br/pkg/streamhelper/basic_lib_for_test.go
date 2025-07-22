@@ -541,7 +541,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 		serviceGCSafePoint: 0,
 	}
 	stores := make([]*fakeStore, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		s := new(fakeStore)
 		s.id = c.idAlloc()
 		s.regions = map[uint64]*region{}
@@ -556,7 +556,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 			enabled: simEnabled,
 		},
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if i < len(stores) {
 			stores[i].regions[initialRegion.id] = initialRegion
 		}
@@ -677,7 +677,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -782,7 +782,7 @@ func (t *testEnv) putTask() {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -43,7 +44,6 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -298,7 +298,7 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 		analyzed = sa.handleAutoAnalyze(sctx)
 		return nil
 	}); err != nil {
-		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
+		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to handle auto analyze", zap.Error(err))
 	}
 	return
 }
@@ -381,7 +381,7 @@ func CheckAutoAnalyzeWindow(sctx sessionctx.Context) bool {
 	return ok
 }
 
-func checkAutoAnalyzeWindow(parameters map[string]string) (time.Time, time.Time, bool) {
+func checkAutoAnalyzeWindow(parameters map[string]string) (_, _ time.Time, _ bool) {
 	start, end, err := exec.ParseAutoAnalysisWindow(
 		parameters[vardef.TiDBAutoAnalyzeStartTime],
 		parameters[vardef.TiDBAutoAnalyzeEndTime],
@@ -413,7 +413,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
 ) bool {
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	dbs := infoschema.AllSchemaNames(is)
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
@@ -433,7 +433,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 
 	for _, db := range dbs {
 		// Ignore the memory and system database.
-		if util.IsMemOrSysDB(strings.ToLower(db)) {
+		if metadef.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
 		}
 
@@ -667,7 +667,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	getSQL := func(prefix, suffix string, numPartitions int) string {
 		var sqlBuilder strings.Builder
 		sqlBuilder.WriteString(prefix)
-		for i := 0; i < numPartitions; i++ {
+		for i := range numPartitions {
 			if i != 0 {
 				sqlBuilder.WriteString(",")
 			}
@@ -689,10 +689,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
-			end := start + analyzePartitionBatchSize
-			if end >= len(needAnalyzePartitionNames) {
-				end = len(needAnalyzePartitionNames)
-			}
+			end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 			// Do batch analyze for partitions.
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
@@ -738,10 +735,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 
 			for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 				start := i
-				end := start + analyzePartitionBatchSize
-				if end >= len(needAnalyzePartitionNames) {
-					end = len(needAnalyzePartitionNames)
-				}
+				end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
 				params := append([]any{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)

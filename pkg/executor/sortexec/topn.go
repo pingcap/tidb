@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -37,7 +37,7 @@ import (
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	Limit *plannercore.PhysicalLimit
+	Limit *physicalop.PhysicalLimit
 
 	// It's useful when spill is triggered and the fetcher could know when workers finish their works.
 	fetcherAndWorkerSyncer *sync.WaitGroup
@@ -238,7 +238,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	if !req.IsFull() {
 		numToAppend := req.RequiredRows() - req.NumRows()
-		for i := 0; i < numToAppend; i++ {
+		for range numToAppend {
 			row, ok := <-e.resultChannel
 			if !ok || row.err != nil {
 				return row.err
@@ -285,8 +285,9 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
-		// adjust required rows by total limit
-		srcChk.SetRequiredRows(int(e.chkHeap.totalLimit-uint64(e.chkHeap.rowChunks.Len())), e.MaxChunkSize())
+		// TopN requires its child to return all data, so don't need to set RequiredRows here according to the limit.
+		// Instead, setting RequiredRows here might lead smaller BatchSize in its child operator and cause more
+		// requests to TiKV. Please see #62135 for more info.
 		err := exec.Next(ctx, e.Children(0), srcChk)
 		if err != nil {
 			return err
@@ -536,7 +537,7 @@ func (e *TopNExec) GenerateTopNResultsWhenSpillOnlyOnce() error {
 	chunkNum := inDisk.NumChunks()
 	skippedRowNum := uint64(0)
 	offset := e.Limit.Offset
-	for i := 0; i < chunkNum; i++ {
+	for i := range chunkNum {
 		chk, err := inDisk.GetChunk(i)
 		if err != nil {
 			return err

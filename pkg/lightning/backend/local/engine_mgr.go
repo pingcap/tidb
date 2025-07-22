@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -62,7 +63,7 @@ type engineManager struct {
 	BackendConfig
 	StoreHelper
 	engines        sync.Map // sync version of map[uuid.UUID]*Engine
-	externalEngine map[uuid.UUID]common.Engine
+	externalEngine map[uuid.UUID]engineapi.Engine
 	bufferPool     *membuf.Pool
 	duplicateDB    *pebble.DB
 	keyAdapter     common.KeyAdapter
@@ -105,7 +106,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		BackendConfig:  config,
 		StoreHelper:    storeHelper,
 		engines:        sync.Map{},
-		externalEngine: map[uuid.UUID]common.Engine{},
+		externalEngine: map[uuid.UUID]engineapi.Engine{},
 		bufferPool:     membuf.NewPool(opts...),
 		duplicateDB:    duplicateDB,
 		keyAdapter:     keyAdapter,
@@ -262,7 +263,7 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 		dupDetectOpt:       em.DuplicateDetectOpt,
 		duplicateDB:        em.duplicateDB,
 		keyAdapter:         em.keyAdapter,
-		logger:             log.FromContext(ctx),
+		logger:             log.Wrap(logutil.Logger(ctx)),
 	})
 	engine := e.(*Engine)
 	engine.lock(importMutexStateOpen)
@@ -314,6 +315,7 @@ func (em *engineManager) closeEngine(
 			ts = oracle.ComposeTS(physical, logical)
 		}
 		externalEngine := external.NewExternalEngine(
+			ctx,
 			store,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,
@@ -321,16 +323,14 @@ func (em *engineManager) closeEngine(
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.keyAdapter,
-			em.DupeDetectEnabled,
-			em.duplicateDB,
-			em.DuplicateDetectOpt,
 			em.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
+			externalCfg.OnDup,
+			"",
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -353,7 +353,7 @@ func (em *engineManager) closeEngine(
 			duplicateDetection: em.DupeDetectEnabled,
 			dupDetectOpt:       em.DuplicateDetectOpt,
 			duplicateDB:        em.duplicateDB,
-			logger:             log.FromContext(ctx),
+			logger:             log.Wrap(logutil.Logger(ctx)),
 		}
 		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
@@ -423,7 +423,7 @@ func (em *engineManager) resetEngine(
 			return extEngine.Reset()
 		}
 
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()
@@ -476,7 +476,7 @@ func (em *engineManager) cleanupEngine(ctx context.Context, engineUUID uuid.UUID
 			delete(em.externalEngine, engineUUID)
 			return retErr
 		}
-		log.FromContext(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
+		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
 		return nil
 	}
 	defer localEngine.unlock()
@@ -526,7 +526,7 @@ func (em *engineManager) close() {
 	for _, e := range em.externalEngine {
 		_ = e.Close()
 	}
-	em.externalEngine = map[uuid.UUID]common.Engine{}
+	em.externalEngine = map[uuid.UUID]engineapi.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
 		_ = e.Close()
@@ -575,7 +575,7 @@ func (em *engineManager) close() {
 	}
 }
 
-func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common.Engine, bool) {
+func (em *engineManager) getExternalEngine(uuid uuid.UUID) (engineapi.Engine, bool) {
 	e, ok := em.externalEngine[uuid]
 	return e, ok
 }

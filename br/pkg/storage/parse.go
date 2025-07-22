@@ -154,7 +154,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 	ty := o.Type()
 	numFields := ty.NumField()
 	tagToField := make(map[string]field, numFields)
-	for i := 0; i < numFields; i++ {
+	for i := range numFields {
 		f := ty.Field(i)
 		tag := f.Tag.Get("json")
 		tagToField[tag] = field{index: i, kind: f.Type.Kind()}
@@ -225,4 +225,9 @@ func IsLocalPath(p string) (bool, error) {
 // IsLocal returns true if the URL is a local file path.
 func IsLocal(u *url.URL) bool {
 	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
+}
+
+// IsS3 returns true if the URL is an S3 URL.
+func IsS3(u *url.URL) bool {
+	return u.Scheme == "s3"
 }

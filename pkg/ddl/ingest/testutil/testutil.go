@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
@@ -59,6 +60,10 @@ func CheckIngestLeakageForTest(exitCode int) {
 		}
 		if len(leakObj) > 0 {
 			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
+			os.Exit(1)
+		}
+		if registeredJob := metrics.GetRegisteredJob(); len(registeredJob) > 0 {
+			fmt.Fprintf(os.Stderr, "add index metrics leakage: %v\n", registeredJob)
 			os.Exit(1)
 		}
 	}

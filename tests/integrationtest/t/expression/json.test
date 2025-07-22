@@ -576,3 +576,41 @@ select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 set tidb_enable_vectorized_expression = 'OFF';
 select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 set tidb_enable_vectorized_expression = default;
+
+# TestIssue60906
+--error 1582
+select json_memberof();
+
+# TestJSONSumCrc32
+# unsigned array
+drop table if exists unsignedTable;
+CREATE TABLE unsignedTable(i INT PRIMARY KEY, j JSON);
+insert into unsignedTable values(1, "[5, 7]"), (4, "[0, 8]");
+select json_sum_crc32(j AS UNSIGNED ARRAY) as sum_crc32 from unsignedTable;
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from unsignedTable;
+select json_sum_crc32(j AS DOUBLE ARRAY) as sum_crc32 from unsignedTable;
+
+# signed array
+drop table if exists signedTable;
+CREATE TABLE signedTable(i INT PRIMARY KEY, j JSON);
+insert into signedTable values(1, "[-1, -2]"), (4, "[3, 4]");
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from signedTable;
+select json_sum_crc32(j AS DOUBLE ARRAY) as sum_crc32 from signedTable;
+-- error 1690
+select json_sum_crc32(j AS UNSIGNED ARRAY) as sum_crc32 from signedTable;
+
+# double array
+drop table if exists doubleTable;
+CREATE TABLE doubleTable(i INT, j JSON);
+insert into doubleTable values (1, null), (2, "[2.1, 3.2]");
+select json_sum_crc32(j AS double ARRAY) as sum_crc32 from doubleTable;
+-- error 1105
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from doubleTable;
+
+# char array
+drop table if exists charTable;
+CREATE TABLE charTable(i INT, j JSON);
+insert into charTable values (2, '["a"]'), (4, null), (3, '["c"]');
+select json_sum_crc32(j AS char(10) ARRAY) from charTable;
+-- error 1105
+select json_sum_crc32(j AS double ARRAY) from charTable;

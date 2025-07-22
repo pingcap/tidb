@@ -60,6 +60,7 @@ type DistSQLContext struct {
 	TiFlashMaxBytesBeforeExternalSort    int64
 	TiFlashMaxQueryMemoryPerNode         int64
 	TiFlashQuerySpillRatio               float64
+	TiFlashHashJoinVersion               string
 
 	DistSQLConcurrency            int
 	ReplicaReadType               kv.ReplicaReadType
@@ -78,6 +79,7 @@ type DistSQLContext struct {
 	ResourceGroupName             string
 	LoadBasedReplicaReadThreshold time.Duration
 	RunawayChecker                resourcegroup.RunawayChecker
+	RUConsumptionReporter         resourcegroup.ConsumptionReporter
 	TiKVClientReadTimeout         uint64
 	MaxExecutionTime              uint64
 

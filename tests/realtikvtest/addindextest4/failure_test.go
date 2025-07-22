@@ -77,9 +77,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 				os.Exit(0)
 			}
 		})
-		realtikvtest.RetainOldData = true
-		store, dom = realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-		realtikvtest.RetainOldData = false
+		store, dom = realtikvtest.CreateMockStoreAndDomainAndSetup(t, realtikvtest.WithRetainData())
 		tk := testkit.NewTestKit(t, store)
 		tk.MustQuery("select 1;").Check(testkit.Rows("1"))
 		<-block // block forever until os.Exit(0).
@@ -93,9 +91,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Port += 2
 		})
-		realtikvtest.RetainOldData = true
-		store := realtikvtest.CreateMockStoreAndSetup(t)
-		realtikvtest.RetainOldData = false
+		store := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithRetainData())
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use addindexlit;")
 		<-block

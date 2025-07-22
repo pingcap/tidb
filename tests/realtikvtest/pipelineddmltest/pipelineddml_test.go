@@ -179,6 +179,8 @@ func TestPipelinedDMLPositive(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("set session tidb_dml_type = bulk")
 	for _, stmt := range stmts {
+		tk.MustExec("drop global binding for " + stmt)
+
 		// text protocol
 		err := panicToErr(func() error {
 			_, err := tk.Exec(stmt)
@@ -217,12 +219,18 @@ func TestPipelinedDMLPositive(t *testing.T) {
 
 	// enable by hint
 	// Hint works for DELETE and UPDATE, but not for INSERT if the hint is in its select clause.
-	tk.MustExec("set @@tidb_dml_type = standard")
-	dmls := [][2]string{
-		{"update t set b = b + 1", "update /*+ SET_VAR(tidb_dml_type=bulk) */ t set b = b + 1"},
-		{"insert into t select * from t", "insert /*+ SET_VAR(tidb_dml_type=bulk) */ into t select * from t"},
-		{"delete from t", "delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t"},
+	dmls := [][3]string{
+		{"update t set b = b + 1", "update /*+ SET_VAR(tidb_dml_type=bulk) */ t set b = b + 1", "true"},
+		{"insert into t select * from t", "insert /*+ SET_VAR(tidb_dml_type=bulk) */ into t select * from t", "false"},
+		{"delete from t", "delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t", "true"},
 	}
+
+	for _, dmlPair := range dmls {
+		tk.MustExec("drop global binding for " + dmlPair[0])
+	}
+
+	tk.MustExec("set @@tidb_dml_type = standard")
+	tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
 	for _, dmlPair := range dmls {
 		err := panicToErr(
 			func() error {
@@ -230,14 +238,16 @@ func TestPipelinedDMLPositive(t *testing.T) {
 				return err
 			},
 		)
-		require.Error(t, err)
+		require.Error(t, err, dmlPair[1])
 		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+		tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
 	}
 
 	// test global binding
 	for _, dmlPair := range dmls {
 		tk.MustExec("create global binding for " + dmlPair[0] + " using " + dmlPair[1])
 	}
+
 	for _, dmlPair := range dmls {
 		err := panicToErr(
 			func() error {
@@ -245,8 +255,18 @@ func TestPipelinedDMLPositive(t *testing.T) {
 				return err
 			},
 		)
-		require.Error(t, err, dmlPair[0])
-		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+
+		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+		// The hint in the insert statement binding does not work.
+		if dmlPair[2] == "true" {
+			require.Error(t, err, dmlPair[0])
+			require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+		} else {
+			require.NoError(t, err, dmlPair[0])
+		}
+
+		tk.MustQuery("select @@tidb_dml_type").Check(testkit.Rows("standard"))
 	}
 }
 
@@ -335,7 +355,7 @@ func prepareData(tk *testkit.TestKit) {
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("create table _t like t")
 	results := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 		results = append(results, fmt.Sprintf("%d %d", i, i))
 	}
@@ -541,7 +561,7 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
 	cnt := 2000
 	values := bytes.NewBuffer(make([]byte, 0, 10240))
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		if i > 0 {
 			values.WriteString(", ")
 		}
@@ -789,7 +809,7 @@ func TestConflictError(t *testing.T) {
 	tk.MustExec("create table _t1(a int primary key, b int)")
 	var insert strings.Builder
 	insert.WriteString("insert into t1 values")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i > 0 {
 			insert.WriteString(",")
 		}

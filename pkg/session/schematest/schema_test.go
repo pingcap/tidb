@@ -110,7 +110,7 @@ func TestTableReaderChunk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table chk (a int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
 	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("chk"))
@@ -137,7 +137,7 @@ func TestTableReaderChunk(t *testing.T) {
 		if numRows == 0 {
 			break
 		}
-		for i := 0; i < numRows; i++ {
+		for i := range numRows {
 			require.Equal(t, int64(count), req.GetRow(i).GetInt64(0))
 			count++
 		}
@@ -154,7 +154,7 @@ func TestInsertExecChunk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test1(a int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert test1 values (%d)", i))
 	}
 	tk.MustExec("create table test2(a int)")
@@ -174,7 +174,7 @@ func TestInsertExecChunk(t *testing.T) {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+		for rowIdx := range req.NumRows() {
 			row := req.GetRow(rowIdx)
 			require.Equal(t, int64(idx), row.GetInt64(0))
 			idx++
@@ -189,12 +189,12 @@ func TestUpdateExecChunk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table chk(a int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
 
 	tk.Session().GetSessionVars().SetDistSQLScanConcurrency(1)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("update chk set a = a + 100 where a = %d", i))
 	}
 
@@ -210,7 +210,7 @@ func TestUpdateExecChunk(t *testing.T) {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+		for rowIdx := range req.NumRows() {
 			row := req.GetRow(rowIdx)
 			require.Equal(t, int64(idx+100), row.GetInt64(0))
 			idx++
@@ -227,13 +227,13 @@ func TestDeleteExecChunk(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table chk(a int)")
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
 
 	tk.Session().GetSessionVars().SetDistSQLScanConcurrency(1)
 
-	for i := 0; i < 99; i++ {
+	for i := range 99 {
 		tk.MustExec(fmt.Sprintf("delete from chk where a = %d", i))
 	}
 
@@ -258,11 +258,11 @@ func TestDeleteMultiTableExecChunk(t *testing.T) {
 	tk.MustExec("create table chk1(a int)")
 	tk.MustExec("create table chk2(a int)")
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert chk1 values (%d)", i))
 	}
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		tk.MustExec(fmt.Sprintf("insert chk2 values (%d)", i))
 	}
 
@@ -283,7 +283,7 @@ func TestDeleteMultiTableExecChunk(t *testing.T) {
 			break
 		}
 
-		for i := 0; i < req.NumRows(); i++ {
+		for i := range req.NumRows() {
 			row := req.GetRow(i)
 			require.Equal(t, int64(idx+50), row.GetInt64(0))
 			idx++
@@ -315,7 +315,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists chk")
 	tk.MustExec("create table chk (k int unique, c int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d, %d)", i, i))
 	}
 	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("chk"))
@@ -335,7 +335,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 		if numRows == 0 {
 			break
 		}
-		for i := 0; i < numRows; i++ {
+		for i := range numRows {
 			require.Equal(t, int64(count), req.GetRow(i).GetInt64(0))
 			require.Equal(t, int64(count), req.GetRow(i).GetInt64(1))
 			count++
@@ -355,7 +355,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 		if numRows == 0 {
 			break
 		}
-		for i := 0; i < numRows; i++ {
+		for i := range numRows {
 			require.Equal(t, int64(count), req.GetRow(i).GetInt64(0))
 			count++
 		}

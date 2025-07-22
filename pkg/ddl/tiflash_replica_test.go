@@ -208,6 +208,9 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
 	defer rpcserver.Stop()
 	tk.MustExec("use test")
+	// previously, projection won't generate cop plan, because memTable can't be pushed to cop.
+	// so projection is always attached as root operator.
+	// tk.MustExec("set @@tidb_opt_projection_push_down = off")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
 	tk.MustExec("create temporary table temp2(id int)")
 	tk.MustGetErrCode("alter table temp set tiflash replica 1", errno.ErrOptOnTemporaryTable)
@@ -235,7 +238,7 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
-		for i := 0; i < len(rows); i++ {
+		for i := range rows {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
@@ -357,7 +360,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		tbl2 := external.GetTableByName(t, tk, "test", "t2")
 		require.Equal(t, len(tbl2.Cols()), len(tbl2.Meta().Columns))
 
-		for i := 0; i < len(tbl2.Meta().Indices); i++ {
+		for i := range tbl2.Meta().Indices {
 			require.Equal(t, model.StatePublic, tbl2.Meta().Indices[i].State)
 		}
 	}
@@ -429,7 +432,7 @@ func TestTruncateTable2(t *testing.T) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for i := 0; i < waitForCleanDataRound; i++ {
+	for range waitForCleanDataRound {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)

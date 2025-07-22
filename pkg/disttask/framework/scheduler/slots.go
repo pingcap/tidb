@@ -168,7 +168,7 @@ func (sm *SlotManager) unReserve(task *proto.TaskBase, execID string) {
 	if !ok {
 		return
 	}
-	sm.reservedStripes = append(sm.reservedStripes[:idx], sm.reservedStripes[idx+1:]...)
+	sm.reservedStripes = slices.Delete(sm.reservedStripes, idx, idx+1)
 	delete(sm.task2Index, task.ID)
 	for i, s := range sm.reservedStripes {
 		sm.task2Index[s.task.ID] = i

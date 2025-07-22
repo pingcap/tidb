@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -84,7 +85,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		return res
 	}
 	switch pp := p.(type) {
-	case *PhysicalLimit, *PhysicalTopN:
+	case *physicalop.PhysicalLimit, *physicalop.PhysicalTopN:
 		if storeType == kv.TiKV {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
@@ -494,7 +495,7 @@ func genHintTblForSingleJoinNode(
 	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 }
 
-func extractTableAsName(p base.PhysicalPlan) (*ast.CIStr, *ast.CIStr) {
+func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}
@@ -517,7 +518,7 @@ func extractTableAsName(p base.PhysicalPlan) (*ast.CIStr, *ast.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection,
+	case *physicalop.PhysicalSort, *physicalop.PhysicalSelection, *physicalop.PhysicalUnionScan, *PhysicalProjection,
 		*PhysicalHashAgg, *PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}

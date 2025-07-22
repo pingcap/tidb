@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -87,23 +89,6 @@ type engineMeta struct {
 	Length atomic.Int64 `json:"length"`
 	// TotalSize is the total pre-compressed KV byte size stored by engine.
 	TotalSize atomic.Int64 `json:"total_size"`
-}
-
-type syncedRanges struct {
-	sync.Mutex
-	ranges []common.Range
-}
-
-func (r *syncedRanges) add(g common.Range) {
-	r.Lock()
-	r.ranges = append(r.ranges, g)
-	r.Unlock()
-}
-
-func (r *syncedRanges) reset() {
-	r.Lock()
-	r.ranges = r.ranges[:0]
-	r.Unlock()
 }
 
 // Engine is a local engine.
@@ -158,7 +143,7 @@ type Engine struct {
 	logger log.Logger
 }
 
-var _ common.Engine = (*Engine)(nil)
+var _ engineapi.Engine = (*Engine)(nil)
 
 func (e *Engine) setError(err error) {
 	if err != nil {
@@ -330,7 +315,7 @@ func (e *Engine) getRegionSplitKeys(regionSplitSize, regionSplitKeyCnt int64) ([
 	}
 
 	ranges := splitRangeBySizeProps(
-		common.Range{Start: startKey, End: endKey},
+		engineapi.Range{Start: startKey, End: endKey},
 		sizeProps,
 		regionSplitSize,
 		regionSplitKeyCnt,
@@ -414,7 +399,7 @@ func (c *RangePropertiesCollector) keysInLastRange() uint64 {
 
 func (c *RangePropertiesCollector) insertNewPoint(key []byte) {
 	c.lastOffsets = c.currentOffsets
-	c.props = append(c.props, rangeProperty{Key: append([]byte{}, key...), rangeOffsets: c.currentOffsets})
+	c.props = append(c.props, rangeProperty{Key: slices.Clone(key), rangeOffsets: c.currentOffsets})
 }
 
 // Add implements `pebble.TablePropertyCollector`.
@@ -643,7 +628,7 @@ func (e *Engine) ingestSSTLoop() {
 		concurrency = 1
 	}
 	metaChan := make(chan metaAndSeq, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		e.wg.Add(1)
 		go func() {
 			defer func() {
@@ -1014,7 +999,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 		}
 		return &pebbleIter{Iterator: iter, buf: buf}
 	}
-	logger := log.FromContext(ctx).With(
+	logger := log.Wrap(tidblogutil.Logger(ctx)).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
@@ -1029,11 +1014,11 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 	)
 }
 
-var _ common.IngestData = (*Engine)(nil)
+var _ engineapi.IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
-func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) (firstKey, lastKey []byte, err error) {
 	if len(upperBound) == 0 {
 		// we use empty slice for unbounded upper bound, but it means max value in pebble
 		// so reset to nil
@@ -1058,12 +1043,12 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	if !hasKey {
 		return nil, nil, nil
 	}
-	firstKey := append([]byte{}, iter.Key()...)
+	firstKey = slices.Clone(iter.Key())
 	iter.Last()
 	if iter.Error() != nil {
 		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
 	}
-	lastKey := append([]byte{}, iter.Key()...)
+	lastKey = slices.Clone(iter.Key())
 	return firstKey, lastKey, nil
 }
 
@@ -1072,7 +1057,7 @@ func (e *Engine) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 	bufPool *membuf.Pool,
-) common.ForwardIter {
+) engineapi.ForwardIter {
 	return e.newKVIter(
 		ctx,
 		&pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound},
@@ -1101,7 +1086,7 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 // IngestData interface.
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	outCh chan<- common.DataAndRanges,
+	outCh chan<- engineapi.DataAndRanges,
 ) (err error) {
 	jobRangeKeys := e.regionSplitKeysCache
 	// when the region is large, we need to split to smaller job ranges to increase
@@ -1122,9 +1107,9 @@ func (e *Engine) LoadIngestData(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case outCh <- common.DataAndRanges{
+		case outCh <- engineapi.DataAndRanges{
 			Data:         e,
-			SortedRanges: []common.Range{{Start: prev, End: cur}},
+			SortedRanges: []engineapi.Range{{Start: prev, End: cur}},
 		}:
 		}
 		prev = cur
@@ -1183,7 +1168,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 
 	keyAdapter := w.engine.keyAdapter
 	totalKeySize := 0
-	for i := 0; i < len(kvs); i++ {
+	for i := range kvs {
 		keySize := keyAdapter.EncodedLen(kvs[i].Key, kvs[i].RowID)
 		w.batchSize.Add(int64(keySize + len(kvs[i].Val)))
 		totalKeySize += keySize
@@ -1197,7 +1182,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 		}
 		buf := w.sortedKeyBuf[:0]
 		newKvs := make([]common.KvPair, len(kvs))
-		for i := 0; i < len(kvs); i++ {
+		for i := range kvs {
 			buf = keyAdapter.Encode(buf, kvs[i].Key, kvs[i].RowID)
 			newKvs[i] = common.KvPair{Key: buf, Val: kvs[i].Val}
 			buf = buf[len(buf):]
@@ -1448,7 +1433,7 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 		return nil
 	}
 	if len(sw.minKey) == 0 {
-		sw.minKey = append([]byte{}, kvs[0].Key...)
+		sw.minKey = slices.Clone(kvs[0].Key)
 	}
 	if bytes.Compare(kvs[0].Key, sw.maxKey) <= 0 {
 		return errorUnorderedSSTInsertion
@@ -1536,7 +1521,7 @@ func (h *sstIterHeap) Pop() any {
 }
 
 // Next implements common.Iterator.
-func (h *sstIterHeap) Next() ([]byte, []byte, error) {
+func (h *sstIterHeap) Next() (key, val []byte, err error) {
 	for {
 		if len(h.iters) == 0 {
 			return nil, nil, nil

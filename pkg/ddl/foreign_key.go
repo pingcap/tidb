@@ -683,10 +683,7 @@ func checkForeignKeyConstrain(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	originValue := sctx.GetSessionVars().OptimizerEnableNAAJ
-	sctx.GetSessionVars().OptimizerEnableNAAJ = true
 	defer func() {
-		sctx.GetSessionVars().OptimizerEnableNAAJ = originValue
 		w.sessPool.Put(sctx)
 	}()
 

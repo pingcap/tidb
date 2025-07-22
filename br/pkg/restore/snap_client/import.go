@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -497,7 +498,7 @@ func getSSTMetaFromFile(
 	// https://github.com/tikv/tikv/blob/970a9bf2a9ea782a455ae579ad237aaf6cb1daec/
 	// components/sst_importer/src/sst_importer.rs#L221
 	suffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	rangeEnd := append(append([]byte{}, regionRule.GetNewKeyPrefix()...), suffix...)
+	rangeEnd := slices.Concat(regionRule.GetNewKeyPrefix(), suffix)
 	// rangeEnd = min(rangeEnd, region.EndKey)
 	if len(r.GetEndKey()) > 0 && bytes.Compare(rangeEnd, r.GetEndKey()) > 0 {
 		rangeEnd = r.GetEndKey()
@@ -585,10 +586,6 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 	regionInfo *split.RegionInfo,
 	cipher *backuppb.CipherInfo,
 ) (*import_sstpb.DownloadRequest, import_sstpb.SSTMeta, error) {
-	err := rewriteRules.SetTimeRangeFilter(file.Cf)
-	if err != nil {
-		return nil, import_sstpb.SSTMeta{}, err
-	}
 	// Get the rewrite rule for the file.
 	fileRule := restoreutils.FindMatchedRewriteRule(file, rewriteRules)
 	if fileRule == nil {
@@ -614,6 +611,11 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 
 	// for the keyspace rewrite mode
 	rule := *fileRule
+
+	err := restoreutils.SetTimeRangeFilter(rewriteRules, &rule, file.Cf)
+	if err != nil {
+		return nil, import_sstpb.SSTMeta{}, err
+	}
 	// for the legacy rewrite mode
 	if importer.rewriteMode == RewriteModeLegacy {
 		rule.OldKeyPrefix = restoreutils.EncodeKeyPrefix(fileRule.GetOldKeyPrefix())

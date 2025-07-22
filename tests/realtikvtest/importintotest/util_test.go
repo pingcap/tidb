@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/suite"
 )
@@ -62,7 +63,14 @@ func (s *mockGCSSuite) SetupSuite() {
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/domain/deltaUpdateDuration", `return`)
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
+	s.tk = testkit.NewTestKit(s.T(), s.store)
+}
+
+func (s *mockGCSSuite) BeforeTest(_, _ string) {
+	// some test will set session variable, and might not reset it, so we recreate
+	// the testkit on each test.
 	s.tk = testkit.NewTestKit(s.T(), s.store)
 }
 

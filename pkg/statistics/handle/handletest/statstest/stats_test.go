@@ -174,7 +174,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	recordCount := 1000
-	for i := 0; i < recordCount; i++ {
+	for i := range recordCount {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")
@@ -235,36 +235,24 @@ func testInitStatsMemTrace(t *testing.T) {
 func TestInitStatsMemTraceWithLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = false
-	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = false
-	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
-func TestInitStatsMemTraceWithConcurrrencyLite(t *testing.T) {
+func TestInitStatsMemTraceWithConcurrentLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = true
-	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
-func TestInitStatsMemTraceWithoutConcurrrencyLite(t *testing.T) {
+func TestInitStatsMemTraceWithoutConcurrentLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ConcurrentlyInitStats = true
-	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
@@ -359,25 +347,19 @@ func TestInitStats51358(t *testing.T) {
 
 func TestInitStatsVer2(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
-	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
 	initStatsVer2(t)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	concurrentlyInitStatsValue := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = concurrentlyInitStatsValue
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
-	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
 	initStatsVer2(t)
 }
 

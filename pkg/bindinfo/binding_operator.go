@@ -97,6 +97,13 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 			// overflow directly.
 
 			// Insert the Bindings to the storage.
+			var sqlDigest, planDigest any // null by default
+			if binding.SQLDigest != "" {
+				sqlDigest = binding.SQLDigest
+			}
+			if binding.PlanDigest != "" {
+				planDigest = binding.PlanDigest
+			}
 			_, err = exec(
 				sctx,
 				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
@@ -109,8 +116,8 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 				binding.Charset,
 				binding.Collation,
 				binding.Source,
-				binding.SQLDigest,
-				binding.PlanDigest,
+				sqlDigest,
+				planDigest,
 			)
 			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
 				n := val.(int)

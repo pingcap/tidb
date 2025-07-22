@@ -873,3 +873,52 @@ select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
 NULL
 set tidb_enable_vectorized_expression = default;
+select json_memberof();
+Error 1582 (42000): Incorrect parameter count in the call to native function 'json_memberof'
+drop table if exists unsignedTable;
+CREATE TABLE unsignedTable(i INT PRIMARY KEY, j JSON);
+insert into unsignedTable values(1, "[5, 7]"), (4, "[0, 8]");
+select json_sum_crc32(j AS UNSIGNED ARRAY) as sum_crc32 from unsignedTable;
+sum_crc32
+4017124912
+8302376500
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from unsignedTable;
+sum_crc32
+4017124912
+8302376500
+select json_sum_crc32(j AS DOUBLE ARRAY) as sum_crc32 from unsignedTable;
+sum_crc32
+4017124912
+8302376500
+drop table if exists signedTable;
+CREATE TABLE signedTable(i INT PRIMARY KEY, j JSON);
+insert into signedTable values(1, "[-1, -2]"), (4, "[3, 4]");
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from signedTable;
+sum_crc32
+3645989306
+5931313619
+select json_sum_crc32(j AS DOUBLE ARRAY) as sum_crc32 from signedTable;
+sum_crc32
+3645989306
+5931313619
+select json_sum_crc32(j AS UNSIGNED ARRAY) as sum_crc32 from signedTable;
+Error 1690 (22003): constant -1 overflows bigint
+drop table if exists doubleTable;
+CREATE TABLE doubleTable(i INT, j JSON);
+insert into doubleTable values (1, null), (2, "[2.1, 3.2]");
+select json_sum_crc32(j AS double ARRAY) as sum_crc32 from doubleTable;
+sum_crc32
+NULL
+2637479025
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from doubleTable;
+Error 1105 (HY000): Invalid JSON value for CAST to type bigint
+drop table if exists charTable;
+CREATE TABLE charTable(i INT, j JSON);
+insert into charTable values (2, '["a"]'), (4, null), (3, '["c"]');
+select json_sum_crc32(j AS char(10) ARRAY) from charTable;
+json_sum_crc32(j AS char(10) ARRAY)
+3904355907
+NULL
+112844655
+select json_sum_crc32(j AS double ARRAY) from charTable;
+Error 1105 (HY000): Invalid JSON value for CAST to type double

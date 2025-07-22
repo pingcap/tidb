@@ -54,7 +54,7 @@ func TestInternalKey(t *testing.T) {
 		encoded = append(encoded, output)
 	}
 
-	for i := 0; i < len(inputs); i++ {
+	for i := range inputs {
 		for j := i + 1; j < len(inputs); j++ {
 			require.Equalf(t,
 				compareInternalKey(inputs[i], inputs[j]),

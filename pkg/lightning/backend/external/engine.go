@@ -18,22 +18,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -44,8 +44,8 @@ import (
 // a 16c32G machine, each worker can use 2G memory.
 // And for the memory corresponding to each job worker, we divide into below and
 // total 6.5 shares:
-//   - one share used by HTTP and GRPC buf, such as loadBatchRegionData, write TiKV
-//   - one share used by loadBatchRegionData to store loaded data batch A
+//   - one share used by HTTP and GRPC buf, such as loadRangeBatchData, write TiKV
+//   - one share used by loadRangeBatchData to store loaded data batch A
 //   - one share used by generateAndSendJob for handle loaded data batch B
 //   - one share used by the active job on job worker
 //   - 2.5 share for others, and burst allocation to avoid OOM
@@ -64,6 +64,13 @@ import (
 //     trailing 1 is for RS divided by odd number.
 //   - else RangeS = floor(TempRangeS / RS) * RS.
 //
+// Note: below calculation only consider the memory taken by the KV pair itself,
+// golang takes 24*2 = 48B for each KV pair, so if the size of KV pair itself is
+// very small, the real memory taken by each KV pair might be doubled, so it's
+// only an estimation.
+// such as, for a simple table "create table t(id bigint primary key, v bigint, index(v))",
+// each index KV is 38B, golang need 86B memory to store it.
+//
 // RangeS for different region size and cpu:mem ratio, the number in parentheses
 // is the number of SST files per region:
 //
@@ -75,20 +82,9 @@ import (
 //	|  512M |       256M(2) |       512M(1) |
 const writeStepMemShareCount = 6.5
 
-// during test on ks3, we found that we can open about 8000 connections to ks3,
-// bigger than that, we might receive "connection reset by peer" error, and
-// the read speed will be very slow, still investigating the reason.
-// Also open too many connections will take many memory in kernel, and the
-// test is based on k8s pod, not sure how it will behave on EC2.
-// but, ks3 supporter says there's no such limit on connections.
-// And our target for global sort is AWS s3, this default value might not fit well.
-// TODO: adjust it according to cloud storage.
-const maxCloudStorageConnections = 1000
-
 type memKVsAndBuffers struct {
-	mu     sync.Mutex
-	keys   [][]byte
-	values [][]byte
+	mu  sync.Mutex
+	kvs []kvPair
 	// memKVBuffers contains two types of buffer, first half are used for small block
 	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
@@ -96,14 +92,13 @@ type memKVsAndBuffers struct {
 	droppedSize  int
 
 	// temporary fields to store KVs to reduce slice allocations.
-	keysPerFile        [][][]byte
-	valuesPerFile      [][][]byte
+	kvsPerFile         [][]kvPair
 	droppedSizePerFile []int
 }
 
 func (b *memKVsAndBuffers) build(ctx context.Context) {
 	sumKVCnt := 0
-	for _, keys := range b.keysPerFile {
+	for _, keys := range b.kvsPerFile {
 		sumKVCnt += len(keys)
 	}
 	b.droppedSize = 0
@@ -116,16 +111,12 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
-	b.keys = make([][]byte, 0, sumKVCnt)
-	b.values = make([][]byte, 0, sumKVCnt)
-	for i := range b.keysPerFile {
-		b.keys = append(b.keys, b.keysPerFile[i]...)
-		b.keysPerFile[i] = nil
-		b.values = append(b.values, b.valuesPerFile[i]...)
-		b.valuesPerFile[i] = nil
+	b.kvs = make([]kvPair, 0, sumKVCnt)
+	for i := range b.kvsPerFile {
+		b.kvs = append(b.kvs, b.kvsPerFile[i]...)
+		b.kvsPerFile[i] = nil
 	}
-	b.keysPerFile = nil
-	b.valuesPerFile = nil
+	b.kvsPerFile = nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -150,12 +141,8 @@ type Engine struct {
 	// 	more load routine + read each file using 1 reader (import-into uses this one)
 	checkHotspot bool
 
-	keyAdapter         common.KeyAdapter
-	duplicateDetection bool
-	duplicateDB        *pebble.DB
-	dupDetectOpt       common.DupDetectOpt
-	workerConcurrency  int
-	ts                 uint64
+	workerConcurrency int
+	ts                uint64
 
 	totalKVSize  int64
 	totalKVCount int64
@@ -163,9 +150,17 @@ type Engine struct {
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 	memLimit        int
+	onDup           engineapi.OnDuplicateKey
+	filePrefix      string
+	// below fields are only used when onDup is OnDuplicateKeyRecord.
+	recordedDupCnt  int
+	recordedDupSize int64
+	dupFile         string
+	dupWriter       storage.ExternalFileWriter
+	dupKVStore      *KeyValueStore
 }
 
-var _ common.Engine = (*Engine)(nil)
+var _ engineapi.Engine = (*Engine)(nil)
 
 const (
 	smallBlockSize = units.MiB
@@ -173,6 +168,7 @@ const (
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
+	ctx context.Context,
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
@@ -180,20 +176,18 @@ func NewExternalEngine(
 	endKey []byte,
 	jobKeys [][]byte,
 	splitKeys [][]byte,
-	keyAdapter common.KeyAdapter,
-	duplicateDetection bool,
-	duplicateDB *pebble.DB,
-	dupDetectOpt common.DupDetectOpt,
 	workerConcurrency int,
 	ts uint64,
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
 	memCapacity int64,
-) common.Engine {
+	onDup engineapi.OnDuplicateKey,
+	filePrefix string,
+) *Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
-	logutil.BgLogger().Info("create external engine",
+	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
@@ -214,18 +208,16 @@ func NewExternalEngine(
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
 		),
-		checkHotspot:       checkHotspot,
-		keyAdapter:         keyAdapter,
-		duplicateDetection: duplicateDetection,
-		duplicateDB:        duplicateDB,
-		dupDetectOpt:       dupDetectOpt,
-		workerConcurrency:  workerConcurrency,
-		ts:                 ts,
-		totalKVSize:        totalKVSize,
-		totalKVCount:       totalKVCount,
-		importedKVSize:     atomic.NewInt64(0),
-		importedKVCount:    atomic.NewInt64(0),
-		memLimit:           memLimit,
+		checkHotspot:      checkHotspot,
+		workerConcurrency: workerConcurrency,
+		ts:                ts,
+		totalKVSize:       totalKVSize,
+		totalKVCount:      totalKVCount,
+		importedKVSize:    atomic.NewInt64(0),
+		importedKVCount:   atomic.NewInt64(0),
+		memLimit:          memLimit,
+		onDup:             onDup,
+		filePrefix:        filePrefix,
 	}
 }
 
@@ -247,20 +239,6 @@ func split[T any](in []T, groupNum int) [][]T {
 		}
 	}
 	return ret
-}
-
-func (e *Engine) getAdjustedConcurrency() int {
-	if e.checkHotspot {
-		// estimate we will open at most 8000 files, so if e.dataFiles is small we can
-		// try to concurrently process ranges.
-		adjusted := maxCloudStorageConnections / len(e.dataFiles)
-		if adjusted == 0 {
-			return 1
-		}
-		return min(adjusted, 8)
-	}
-	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
-	return max(adjusted, 1)
 }
 
 func getFilesReadConcurrency(
@@ -302,12 +280,14 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	// Note: this is the file size of the range group, KV size is smaller, as we
+	// need additional 8*2 for each KV.
 	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
 
-func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- common.DataAndRanges) error {
+func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh chan<- engineapi.DataAndRanges) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -335,39 +315,47 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	}
 	e.memKVsAndBuffers.build(ctx)
 
-	readSecond := time.Since(readStart).Seconds()
+	readDur := time.Since(readStart)
+	readSecond := readDur.Seconds()
 	readDurHist.Observe(readSecond)
-	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(readStart)),
-		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize))
 
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
-	var dupKey atomic.Pointer[[]byte]
-	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
-		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
+	var dupKey, dupVal atomic.Pointer[[]byte]
+	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
+		cmp := bytes.Compare(e.memKVsAndBuffers.kvs[i].key, e.memKVsAndBuffers.kvs[k].key)
 		if cmp < 0 { // strict comparator like < or >
 			if r != s {
-				e.memKVsAndBuffers.keys[r], e.memKVsAndBuffers.keys[s] = e.memKVsAndBuffers.keys[s], e.memKVsAndBuffers.keys[r]
-				e.memKVsAndBuffers.values[r], e.memKVsAndBuffers.values[s] = e.memKVsAndBuffers.values[s], e.memKVsAndBuffers.values[r]
+				e.memKVsAndBuffers.kvs[r], e.memKVsAndBuffers.kvs[s] = e.memKVsAndBuffers.kvs[s], e.memKVsAndBuffers.kvs[r]
 			}
 			return true
 		}
 		if cmp == 0 && i != k {
-			cloned := append([]byte(nil), e.memKVsAndBuffers.keys[i]...)
-			dupKey.Store(&cloned)
+			if dupKey.Load() == nil {
+				key := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
+				dupKey.Store(&key)
+				value := slices.Clone(e.memKVsAndBuffers.kvs[i].value)
+				dupVal.Store(&value)
+			}
 		}
 		return false
 	})
 	sorty.MaxGor = oldSortyGor
-	sortSecond := time.Since(sortStart).Seconds()
+	sortDur := time.Since(sortStart)
+	sortSecond := sortDur.Seconds()
 	sortDurHist.Observe(sortSecond)
-	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(sortStart)))
 
-	if k := dupKey.Load(); k != nil {
-		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+	// we shouldn't handle duplicates for OnDuplicateKeyIgnore, it's the semantic
+	// of OnDuplicateKeyError, but to make keep compatible with the old code, we
+	// keep this behavior.
+	// TODO: remove this when we have have fully integrated the OnDuplicateKey.
+	if k, v := dupKey.Load(), dupVal.Load(); k != nil {
+		if e.onDup == engineapi.OnDuplicateKeyIgnore {
+			return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+		} else if e.onDup == engineapi.OnDuplicateKeyError {
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(*k, *v)
+		}
 	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
@@ -377,49 +365,76 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
+	var (
+		deduplicatedKVs, dups []kvPair
+		dupCount              int
+		deduplicateDur        time.Duration
+	)
+	deduplicatedKVs = e.memKVsAndBuffers.kvs
+	dupFound := dupKey.Load() != nil
+	if dupFound {
+		start := time.Now()
+		if e.onDup == engineapi.OnDuplicateKeyRecord {
+			if err = e.lazyInitDupWriter(ctx); err != nil {
+				return err
+			}
+			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, true)
+			e.recordedDupCnt += len(dups)
+			for _, p := range dups {
+				e.recordedDupSize += int64(len(p.key) + len(p.value))
+				if err = e.dupKVStore.addRawKV(p.key, p.value); err != nil {
+					return err
+				}
+			}
+		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
+			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, false)
+		}
+		deduplicateDur = time.Since(start)
+	}
+	logutil.Logger(ctx).Info("load range batch done",
+		zap.Duration("readDur", readDur),
+		zap.Duration("sortDur", sortDur),
+		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize),
+		zap.Int("loadedKVs", len(e.memKVsAndBuffers.kvs)),
+		zap.String("loadedSize", units.HumanSize(float64(e.memKVsAndBuffers.size))),
+		zap.Stringer("onDup", e.onDup),
+		zap.Int("dupCount", dupCount),
+		zap.Int("recordedDupCount", len(dups)),
+		zap.Int("totalRecordedDupCount", e.recordedDupCnt),
+		zap.String("totalRecordedDupSize", units.BytesSize(float64(e.recordedDupSize))),
+		zap.Duration("deduplicateDur", deduplicateDur),
+	)
+
 	data := e.buildIngestData(
-		e.memKVsAndBuffers.keys,
-		e.memKVsAndBuffers.values,
+		deduplicatedKVs,
 		e.memKVsAndBuffers.memKVBuffers,
 	)
 
 	// release the reference of e.memKVsAndBuffers
-	e.memKVsAndBuffers.keys = nil
-	e.memKVsAndBuffers.values = nil
+	e.memKVsAndBuffers.kvs = nil
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
 
-	ranges := make([]common.Range, 0, len(jobKeys)-1)
-	prev, err2 := e.keyAdapter.Decode(nil, jobKeys[0])
-	if err2 != nil {
-		return err
-	}
+	ranges := make([]engineapi.Range, 0, len(jobKeys)-1)
+	prev := slices.Clone(jobKeys[0])
 	for i := 1; i < len(jobKeys)-1; i++ {
-		cur, err3 := e.keyAdapter.Decode(nil, jobKeys[i])
-		if err3 != nil {
-			return err3
-		}
-		ranges = append(ranges, common.Range{
+		cur := slices.Clone(jobKeys[i])
+		ranges = append(ranges, engineapi.Range{
 			Start: prev,
 			End:   cur,
 		})
 		prev = cur
 	}
-	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
-	lastKey := jobKeys[len(jobKeys)-1]
-	cur, err4 := e.tryDecodeEndKey(lastKey)
-	if err4 != nil {
-		return err4
-	}
-	ranges = append(ranges, common.Range{
+	lastKey := slices.Clone(jobKeys[len(jobKeys)-1])
+	ranges = append(ranges, engineapi.Range{
 		Start: prev,
-		End:   cur,
+		End:   lastKey,
 	})
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case outCh <- common.DataAndRanges{
+	case outCh <- engineapi.DataAndRanges{
 		Data:         data,
 		SortedRanges: ranges,
 	}:
@@ -433,8 +448,16 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 // MemoryIngestData.DecRef().
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	outCh chan<- common.DataAndRanges,
-) error {
+	outCh chan<- engineapi.DataAndRanges,
+) (err error) {
+	if e.onDup == engineapi.OnDuplicateKeyRecord {
+		defer func() {
+			err1 := e.closeDupWriterAsNeeded(ctx)
+			if err == nil {
+				err = err1
+			}
+		}()
+	}
 	// try to make every worker busy for each batch
 	rangeBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
@@ -444,7 +467,7 @@ func (e *Engine) LoadIngestData(
 	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+rangeBatchSize, len(e.jobKeys))
-		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
+		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
 		}
@@ -452,19 +475,52 @@ func (e *Engine) LoadIngestData(
 	return nil
 }
 
-func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *MemoryIngestData {
+// lazyInitDupWriter lazily initializes the duplicate writer.
+// we need test on KS3 which will report InvalidArgument if the file is empty.
+// GCS is ok with empty file.
+func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
+	if e.dupWriter != nil {
+		return nil
+	}
+	dupFile := filepath.Join(e.filePrefix, "dup")
+	dupWriter, err := e.storage.Create(ctx, dupFile, &storage.WriterOption{
+		// TODO might need to tune concurrency.
+		// max 150GiB duplicates can be saved, it should be enough, as we split
+		// subtask into 100G each.
+		Concurrency: 1,
+		PartSize:    3 * MinUploadPartSize})
+	if err != nil {
+		logutil.Logger(ctx).Error("create dup writer failed", zap.Error(err))
+		return err
+	}
+	e.dupFile = dupFile
+	e.dupWriter = dupWriter
+	e.dupKVStore = NewKeyValueStore(ctx, e.dupWriter, nil)
+	return nil
+}
+
+func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
+	if e.dupWriter == nil {
+		return nil
+	}
+	kvStore, writer := e.dupKVStore, e.dupWriter
+	e.dupKVStore, e.dupWriter = nil, nil
+	kvStore.finish()
+	if err := writer.Close(ctx); err != nil {
+		logutil.Logger(ctx).Error("close dup writer failed", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryIngestData {
 	return &MemoryIngestData{
-		keyAdapter:         e.keyAdapter,
-		duplicateDetection: e.duplicateDetection,
-		duplicateDB:        e.duplicateDB,
-		dupDetectOpt:       e.dupDetectOpt,
-		keys:               keys,
-		values:             values,
-		ts:                 e.ts,
-		memBuf:             buf,
-		refCnt:             atomic.NewInt64(0),
-		importedKVSize:     e.importedKVSize,
-		importedKVCount:    e.importedKVCount,
+		kvs:             kvs,
+		ts:              e.ts,
+		memBuf:          buf,
+		refCnt:          atomic.NewInt64(0),
+		importedKVSize:  e.importedKVSize,
+		importedKVCount: e.importedKVCount,
 	}
 }
 
@@ -478,6 +534,17 @@ func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
+// ConflictInfo implements common.Engine.
+func (e *Engine) ConflictInfo() engineapi.ConflictInfo {
+	if e.recordedDupCnt == 0 {
+		return engineapi.ConflictInfo{}
+	}
+	return engineapi.ConflictInfo{
+		Count: uint64(e.recordedDupCnt),
+		Files: []string{e.dupFile},
+	}
+}
+
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return "external"
@@ -485,66 +552,16 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
-		return e.startKey, e.endKey, nil
-	}
-
-	startKey, err = e.keyAdapter.Decode(nil, e.startKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	endKey, err = e.tryDecodeEndKey(e.endKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	return startKey, endKey, nil
+	return e.startKey, e.endKey, nil
 }
 
 // GetRegionSplitKeys implements common.Engine.
 func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
-	splitKeys := make([][]byte, len(e.splitKeys))
-	var (
-		err      error
-		splitKey []byte
-	)
-	for i, k := range e.splitKeys {
-		if i < len(e.splitKeys)-1 {
-			splitKey, err = e.keyAdapter.Decode(nil, k)
-		} else {
-			splitKey, err = e.tryDecodeEndKey(k)
-		}
-		if err != nil {
-			return nil, err
-		}
-		splitKeys[i] = splitKey
+	splitKeys := make([][]byte, 0, len(e.splitKeys))
+	for _, k := range e.splitKeys {
+		splitKeys = append(splitKeys, slices.Clone(k))
 	}
 	return splitKeys, nil
-}
-
-// tryDecodeEndKey tries to decode the key from two sources.
-// When duplicate detection feature is enabled, the **end key** comes from
-// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
-// error.
-func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
-	decoded, err = e.keyAdapter.Decode(nil, key)
-	if err == nil {
-		return
-	}
-	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
-		// NoopKeyAdapter.Decode always return nil error
-		intest.Assert(false, "Unreachable code path")
-		return nil, err
-	}
-	// handle the case that end key is from Key.Next()
-	if key[len(key)-1] != 0 {
-		return nil, err
-	}
-	key = key[:len(key)-1]
-	decoded, err = e.keyAdapter.Decode(nil, key)
-	if err != nil {
-		return nil, err
-	}
-	return kv.Key(decoded).Next(), nil
 }
 
 // Close implements common.Engine.
@@ -585,14 +602,8 @@ func (e *Engine) Reset() error {
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
-	keyAdapter         common.KeyAdapter
-	duplicateDetection bool
-	duplicateDB        *pebble.DB
-	dupDetectOpt       common.DupDetectOpt
-
-	keys   [][]byte
-	values [][]byte
-	ts     uint64
+	kvs []kvPair
+	ts  uint64
 
 	memBuf          []*membuf.Buffer
 	refCnt          *atomic.Int64
@@ -600,32 +611,30 @@ type MemoryIngestData struct {
 	importedKVCount *atomic.Int64
 }
 
-var _ common.IngestData = (*MemoryIngestData)(nil)
+var _ engineapi.IngestData = (*MemoryIngestData)(nil)
 
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
-		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
-		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
-			return bytes.Compare(lowerBound, m.keys[i]) <= 0
+		firstKeyIdx = sort.Search(len(m.kvs), func(i int) bool {
+			return bytes.Compare(lowerBound, m.kvs[i].key) <= 0
 		})
-		if firstKeyIdx == len(m.keys) {
+		if firstKeyIdx == len(m.kvs) {
 			return -1, -1
 		}
 	}
 
-	lastKeyIdx := len(m.keys) - 1
+	lastKeyIdx := len(m.kvs) - 1
 	if len(upperBound) > 0 {
-		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
-		i := sort.Search(len(m.keys), func(i int) bool {
-			reverseIdx := len(m.keys) - 1 - i
-			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
+		i := sort.Search(len(m.kvs), func(i int) bool {
+			reverseIdx := len(m.kvs) - 1 - i
+			return bytes.Compare(upperBound, m.kvs[reverseIdx].key) > 0
 		})
-		if i == len(m.keys) {
+		if i == len(m.kvs) {
 			// should not happen
 			return -1, -1
 		}
-		lastKeyIdx = len(m.keys) - 1 - i
+		lastKeyIdx = len(m.kvs) - 1 - i
 	}
 	return firstKeyIdx, lastKeyIdx
 }
@@ -636,20 +645,13 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 	if firstKeyIdx < 0 || firstKeyIdx > lastKeyIdx {
 		return nil, nil, nil
 	}
-	firstKey, err := m.keyAdapter.Decode(nil, m.keys[firstKeyIdx])
-	if err != nil {
-		return nil, nil, err
-	}
-	lastKey, err := m.keyAdapter.Decode(nil, m.keys[lastKeyIdx])
-	if err != nil {
-		return nil, nil, err
-	}
+	firstKey := slices.Clone(m.kvs[firstKeyIdx].key)
+	lastKey := slices.Clone(m.kvs[lastKeyIdx].key)
 	return firstKey, lastKey, nil
 }
 
 type memoryDataIter struct {
-	keys   [][]byte
-	values [][]byte
+	kvs []kvPair
 
 	firstKeyIdx int
 	lastKeyIdx  int
@@ -678,12 +680,12 @@ func (m *memoryDataIter) Next() bool {
 
 // Key implements ForwardIter.
 func (m *memoryDataIter) Key() []byte {
-	return m.keys[m.curIdx]
+	return m.kvs[m.curIdx].key
 }
 
 // Value implements ForwardIter.
 func (m *memoryDataIter) Value() []byte {
-	return m.values[m.curIdx]
+	return m.kvs[m.curIdx].value
 }
 
 // Close implements ForwardIter.
@@ -699,94 +701,19 @@ func (m *memoryDataIter) Error() error {
 // ReleaseBuf implements ForwardIter.
 func (m *memoryDataIter) ReleaseBuf() {}
 
-type memoryDataDupDetectIter struct {
-	iter           *memoryDataIter
-	dupDetector    *common.DupDetector
-	err            error
-	curKey, curVal []byte
-	buf            *membuf.Buffer
-}
-
-// First implements ForwardIter.
-func (m *memoryDataDupDetectIter) First() bool {
-	if m.err != nil || !m.iter.First() {
-		return false
-	}
-	m.curKey, m.curVal, m.err = m.dupDetector.Init(m.iter)
-	return m.Valid()
-}
-
-// Valid implements ForwardIter.
-func (m *memoryDataDupDetectIter) Valid() bool {
-	return m.err == nil && m.iter.Valid()
-}
-
-// Next implements ForwardIter.
-func (m *memoryDataDupDetectIter) Next() bool {
-	if m.err != nil {
-		return false
-	}
-	key, val, ok, err := m.dupDetector.Next(m.iter)
-	if err != nil {
-		m.err = err
-		return false
-	}
-	if !ok {
-		return false
-	}
-	m.curKey, m.curVal = key, val
-	return true
-}
-
-// Key implements ForwardIter.
-func (m *memoryDataDupDetectIter) Key() []byte {
-	return m.buf.AddBytes(m.curKey)
-}
-
-// Value implements ForwardIter.
-func (m *memoryDataDupDetectIter) Value() []byte {
-	return m.buf.AddBytes(m.curVal)
-}
-
-// Close implements ForwardIter.
-func (m *memoryDataDupDetectIter) Close() error {
-	m.buf.Destroy()
-	return m.dupDetector.Close()
-}
-
-// Error implements ForwardIter.
-func (m *memoryDataDupDetectIter) Error() error {
-	return m.err
-}
-
-// ReleaseBuf implements ForwardIter.
-func (m *memoryDataDupDetectIter) ReleaseBuf() {
-	m.buf.Reset()
-}
-
 // NewIter implements IngestData.NewIter.
 func (m *MemoryIngestData) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 	bufPool *membuf.Pool,
-) common.ForwardIter {
+) engineapi.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
-		keys:        m.keys,
-		values:      m.values,
+		kvs:         m.kvs,
 		firstKeyIdx: firstKeyIdx,
 		lastKeyIdx:  lastKeyIdx,
 	}
-	if !m.duplicateDetection {
-		return iter
-	}
-	logger := log.FromContext(ctx)
-	detector := common.NewDupDetector(m.keyAdapter, m.duplicateDB.NewBatch(), logger, m.dupDetectOpt)
-	return &memoryDataDupDetectIter{
-		iter:        iter,
-		dupDetector: detector,
-		buf:         bufPool.NewBuffer(),
-	}
+	return iter
 }
 
 // GetTS implements IngestData.GetTS.
@@ -802,8 +729,7 @@ func (m *MemoryIngestData) IncRef() {
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
 	if m.refCnt.Dec() == 0 {
-		m.keys = nil
-		m.values = nil
+		m.kvs = nil
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}
@@ -814,5 +740,4 @@ func (m *MemoryIngestData) DecRef() {
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
-
 }

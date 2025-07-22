@@ -469,7 +469,7 @@ func TestVectorizedConstant(t *testing.T) {
 		{RetType: newIntFieldType(), Value: types.NewIntDatum(2333)},
 		{RetType: newIntFieldType(), DeferredExpr: &Constant{RetType: newIntFieldType(), Value: types.NewIntDatum(2333)}}} {
 		chk := chunk.New([]*types.FieldType{newIntFieldType()}, 1024, 1024)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			chk.AppendInt64(0, int64(i))
 		}
 		col := chunk.NewColumn(newIntFieldType(), 1024)
@@ -496,7 +496,7 @@ func TestVectorizedConstant(t *testing.T) {
 		{RetType: newStringFieldType(), Value: types.NewStringDatum("hello")},
 		{RetType: newStringFieldType(), DeferredExpr: &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}}} {
 		chk := chunk.New([]*types.FieldType{newIntFieldType()}, 1024, 1024)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			chk.AppendInt64(0, int64(i))
 		}
 		cst = &Constant{DeferredExpr: nil, RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}
@@ -504,7 +504,7 @@ func TestVectorizedConstant(t *testing.T) {
 		col := chunk.NewColumn(newStringFieldType(), 1024)
 		ctx := mock.NewContext()
 		require.Nil(t, cst.VecEvalString(ctx, chk, col))
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			require.Equal(t, "hello", col.GetString(i))
 		}
 

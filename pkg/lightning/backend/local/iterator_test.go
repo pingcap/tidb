@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -38,10 +39,10 @@ func randBytes(n int) []byte {
 }
 
 func TestDupDetectIterator(t *testing.T) {
-	var pairs []common.KvPair
+	pairs := make([]common.KvPair, 0, 20)
 	prevRowMax := int64(0)
 	// Unique pairs.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		pairs = append(pairs, common.KvPair{
 			Key:   randBytes(32),
 			Val:   randBytes(128),
@@ -165,8 +166,8 @@ func TestDupDetectIterator(t *testing.T) {
 	var detectedPairs []common.KvPair
 	for iter2.First(); iter2.Valid(); iter2.Next() {
 		detectedPairs = append(detectedPairs, common.KvPair{
-			Key: append([]byte{}, iter2.Key()...),
-			Val: append([]byte{}, iter2.Value()...),
+			Key: slices.Clone(iter2.Key()),
+			Val: slices.Clone(iter2.Value()),
 		})
 	}
 	require.NoError(t, iter2.Error())
@@ -182,7 +183,7 @@ func TestDupDetectIterator(t *testing.T) {
 		keyCmp := bytes.Compare(detectedPairs[i].Key, detectedPairs[j].Key)
 		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(detectedPairs[i].Val, detectedPairs[j].Val) < 0
 	})
-	for i := 0; i < len(detectedPairs); i++ {
+	for i := range detectedPairs {
 		require.Equal(t, dupPairs[i].Key, detectedPairs[i].Key)
 		require.Equal(t, dupPairs[i].Val, detectedPairs[i].Val)
 	}
@@ -207,7 +208,7 @@ func BenchmarkDupDetectIter(b *testing.B) {
 	db, _ := pebble.Open(filepath.Join(b.TempDir(), "kv"), &pebble.Options{})
 	wb := db.NewBatch()
 	val := []byte("value")
-	for i := 0; i < 100_000; i++ {
+	for i := range 100_000 {
 		keyNum := i
 		// mimic we have 20% duplication
 		if keyNum%5 == 0 {

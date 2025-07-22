@@ -128,11 +128,20 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta2)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas2)
+
+	planCtx = planner.PlanCtx{
+		NextTaskStep: proto.ImportStepImport,
+		GlobalSort:   true,
+	}
+	logicalPlan.Plan.CloudStorageURI = "unknown://bucket"
+	_, err = logicalPlan.ToPhysicalPlan(planCtx)
+	// error when build controller plan
+	require.ErrorContains(t, err, "provide a valid URI")
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 	stepMetaBytes := make([][]byte, 0, cnt)
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		prefix := fmt.Sprintf("d_%d_", i)
 		idxPrefix := fmt.Sprintf("i1_%d_", i)
 		meta := &ImportStepMeta{
@@ -245,7 +254,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 
 func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 	stepMetaBytes := make([][]byte, 0, cnt)
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		prefix := fmt.Sprintf("x_%d_", i)
 		meta := &MergeSortStepMeta{
 			KVGroup: "data",
@@ -318,8 +327,8 @@ func TestSplitForOneSubtask(t *testing.T) {
 	largeValue := make([]byte, 1024*1024)
 	keys := make([][]byte, 140)
 	values := make([][]byte, 140)
-	for i := 0; i < 140; i++ {
-		keys[i] = []byte(fmt.Sprintf("%05d", i))
+	for i := range 140 {
+		keys[i] = fmt.Appendf(nil, "%05d", i)
 		values[i] = largeValue
 	}
 
