@@ -177,8 +177,8 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 }
 
 // rollbackModifyColumnJob rollbacks the job when an error occurs.
-func rollbackModifyColumnJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job, newCol, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, _ error) {
-	var err error
+func rollbackModifyColumnJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
+	newCol, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, err error) {
 	if oldCol.ID == newCol.ID && modifyColumnTp == mysql.TypeNull {
 		// field NotNullFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.NotNullFlag)
@@ -209,9 +209,12 @@ func getModifyColumnInfo(
 	}
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
-	if oldCol == nil || oldCol.State != model.StatePublic {
+	if oldCol == nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, tblInfo.Name))
+	}
+	if removingCol := model.FindColumnInfo(tblInfo.Columns, genRemovingColumnName(oldColName.O)); removingCol != nil {
+		oldCol = removingCol
 	}
 
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
@@ -524,9 +527,18 @@ func (w *worker) doModifyColumnTypeWithData(
 		if !done {
 			return ver, err
 		}
-
-		rmIdxs := append(buildRelatedIndexIDs(tblInfo, oldCol.ID), args.RedundantIdxs...)
-
+		done = stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol)
+		if !done {
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StatePublic
+	case model.StatePublic:
+		done := stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol)
+		if !done {
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			return ver, errors.Trace(err)
+		}
 		err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
 		if err != nil {
 			job.State = model.JobStateRollingback
@@ -534,7 +546,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 
 		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != changingCol.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -547,6 +559,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
+		rmIdxs := append(buildRelatedIndexIDs(tblInfo, oldCol.ID), args.RedundantIdxs...)
 		args.IndexIDs = rmIdxs
 		args.PartitionIDs = getPartitionIDs(tblInfo)
 		job.FillFinishedArgs(args)
@@ -574,6 +587,9 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, jobCtx *jobContext, job *m
 
 func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
+	if job.ReorgMeta.Completed {
+		return true, ver, nil
+	}
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -604,9 +620,6 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
 			}, false)
-		// Use old column name to generate less confusing error messages.
-		changingColCpy := changingCol.Clone()
-		changingColCpy.Name = oldCol.Name
 		return w.updateCurrentElement(jobCtx, tbl, reorgInfo)
 	})
 	if err != nil {
@@ -629,7 +642,8 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 		job.State = model.JobStateRollingback
 		return false, ver, errors.Trace(err)
 	}
-	return true, ver, nil
+	job.ReorgMeta.Completed = true
+	return false, ver, nil
 }
 
 func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast.ColumnPosition,

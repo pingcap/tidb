@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -894,6 +895,70 @@ func (w *updateColumnWorker) BackfillData(_ context.Context, handleRange reorgBa
 	return
 }
 
+func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo) (done bool) {
+	oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+	chaningIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+	switch oldCol.State {
+	case model.StatePublic:
+		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
+		updateChangingObjState(changingCol, chaningIdxInfos, model.StatePublic)
+		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, chaningIdxInfos)
+		tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
+		return false
+	case model.StateWriteOnly:
+		updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
+		return false
+	case model.StateDeleteOnly:
+		// Swap back and remove the old column immediately.
+		// TODO(tangenta): this is hacky, try to refactor it.
+		prepareToRemoveObject(tblInfo, oldCol, changingCol, oldIdxInfos, chaningIdxInfos)
+		return true
+	}
+	intest.Assert(false)
+	panic("should not reach here")
+}
+
+func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo) {
+	publicName := oldCol.Name
+	removingName := ast.NewCIStr(genRemovingColumnName(oldCol.Name.O))
+
+	renameColumnTo(oldCol, oldIdxs, removingName)
+	renameColumnTo(changingCol, changingIdxs, publicName)
+	for i := range oldIdxs {
+		publicName := oldIdxs[i].Name
+		removingName := ast.NewCIStr(genRemovingIndexName(oldIdxs[i].Name.O))
+
+		changingIdxs[i].Name = publicName
+		oldIdxs[i].Name = removingName
+	}
+}
+
+func prepareToRemoveObject(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo) {
+	publicName := changingCol.Name
+	changingName := ast.NewCIStr(genChangingColumnUniqueName(tblInfo, changingCol))
+
+	renameColumnTo(oldCol, oldIdxs, publicName)
+	renameColumnTo(changingCol, changingIdxs, changingName)
+	for i := range oldIdxs {
+		publicName := changingIdxs[i].Name
+		changingName := ast.NewCIStr(genChangingIndexUniqueName(tblInfo, changingIdxs[i]))
+
+		oldIdxs[i].Name = publicName
+		changingIdxs[i].Name = changingName
+	}
+}
+
+func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName ast.CIStr) {
+	for _, idx := range idxInfos {
+		for _, idxCol := range idx.Columns {
+			if idxCol.Name.L == col.Name.L {
+				idxCol.Name = newName
+			}
+		}
+	}
+	col.Name = newName
+}
+
 func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
 	changingCol.State = schemaState
 	for _, idx := range changingIdxs {
@@ -1336,4 +1401,20 @@ func getExpressionIndexOriginName(originalName ast.CIStr) string {
 		return columnName
 	}
 	return columnName[:pos]
+}
+
+func genRemovingColumnName(colName string) string {
+	return fmt.Sprintf("%s%s", removingColumnPrefix, colName)
+}
+
+func genRemovingIndexName(idxName string) string {
+	return fmt.Sprintf("%s%s", removingIndexPrefix, idxName)
+}
+
+func getRemovingColumnOriginName(removingCol *model.ColumnInfo) string {
+	return strings.TrimPrefix(removingCol.Name.O, removingColumnPrefix)
+}
+
+func getRemovingIndexOriginName(removingIdx *model.IndexInfo) string {
+	return strings.TrimPrefix(removingIdx.Name.O, removingIndexPrefix)
 }

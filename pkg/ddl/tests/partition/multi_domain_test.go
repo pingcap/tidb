@@ -579,11 +579,39 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 
 // TestMultiSchemaModifyColumn to show behavior when changing a column
 func TestMultiSchemaModifyColumn(t *testing.T) {
-	createSQL := `create table t (a int primary key, b varchar(255), unique key uk_b (b))`
+	createSQL := `create table t (a int primary key, b varchar(255), key k_b (b))`
 	initFn := func(tkO *testkit.TestKit) {
-		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
+		tkO.MustExec(`insert into t values (1,1)`)
 	}
 	alterSQL := `alter table t modify column b int unsigned not null`
+	checkFn := func(tkO, tkNO *testkit.TestKit, id int, schemaState string) {
+		indexIdSQL := `select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't' and key_name = 'k_b'`
+		logutil.BgLogger().Info("check table", zap.Int("id", id), zap.String("schemaState", schemaState),
+			zap.String("owner table", tkO.MustQuery("select * from t use index()").Sort().String()),
+			zap.String("owner index", tkO.MustQuery("select * from t use index(k_b)").Sort().String()),
+			zap.String("owner index id", tkO.MustQuery(indexIdSQL).String()),
+			zap.Int64("owner txn schema version", sessiontxn.GetTxnManager(tkO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
+			zap.Int64("owner domain schema version", tkO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
+			zap.String("non-owner table", tkNO.MustQuery("select * from t use index()").Sort().String()),
+			zap.String("non-owner index", tkNO.MustQuery("select * from t use index(k_b)").Sort().String()),
+			zap.String("non-owner index id", tkNO.MustQuery(indexIdSQL).String()),
+			zap.Int64("non-owner txn schema version", sessiontxn.GetTxnManager(tkNO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
+			zap.Int64("non-owner domain schema version", tkNO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
+		)
+		tkO.MustExec("set @@sql_mode = default")
+		tkNO.MustExec("set @@sql_mode = default")
+
+		tkO.MustExec("set session tidb_enable_fast_table_check = off")
+		tkNO.MustExec("set session tidb_enable_fast_table_check = off")
+		defer func() {
+			tkO.MustExec("set session tidb_enable_fast_table_check = default")
+			tkNO.MustExec("set session tidb_enable_fast_table_check = default")
+		}()
+		err := tkO.ExecToErr(`admin check table t`)
+		require.NoError(t, err, "owner admin check table failed", fmt.Sprintf("id, %d, schemaState: %s", id, schemaState))
+		err = tkNO.ExecToErr(`admin check table t`)
+		require.NoError(t, err, "non-owner admin check table failed", fmt.Sprintf("id, %d, schemaState: %s", id, schemaState))
+	}
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
@@ -600,39 +628,38 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 				"  `a` int(11) NOT NULL,\n" +
 				"  `b` int(10) unsigned NOT NULL,\n" +
 				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				"  KEY `k_b` (`b`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
-				"  `b` varchar(255) DEFAULT NULL,\n" +
+				"  `b` int(10) unsigned NOT NULL,\n" +
 				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
-				"  UNIQUE KEY `uk_b` (`b`)\n" +
+				"  KEY `k_b` (`b`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+			checkFn(tkO, tkNO, 1, schemaState)
 
 			tkO.MustExec(`insert into t values (10, " 09.60 ")`)
+
+			checkFn(tkO, tkNO, 2, schemaState)
+
 			// No warning!? Same in MySQL...
 			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
-			tkNO.MustContainErrMsg(`insert into t values (11, "09.60")`, "[kv:1062]Duplicate entry '10' for key 't._Idx$_uk_b_0'")
+			tkNO.MustExec(`insert into t values (11, " 011.50 ")`)
 			tkO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
-			// <nil> ?!?
-			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 <nil>"))
+			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
 			// If the original b was defined as 'NOT NULL', then it would give an error:
 			// [table:1364]Field 'b' doesn't have a default value
 
-			tkNO.MustExec(`insert into t values (11, " 011.50 ")`)
+			// tkNO.MustExec(`insert into t values (11, " 011.50 ")`)
 			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
-			// Anomaly, the different sessions sees different data.
-			// So it should be acceptable for partitioning DDLs as well.
-			// It may be possible to check that writes from StateWriteOnly convert 1:1
-			// to the new type, and block writes otherwise. But then it would break the first tkO insert above...
 			tkO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11 12"))
-			tkNO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11  011.50 "))
+			tkNO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11 12"))
 			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
-			require.Greater(t, tblO.Columns[1].ID, tblNO.Columns[1].ID)
+			require.Equal(t, tblO.Columns[1].ID, tblNO.Columns[1].ID)
 			// This also means that old copies of the columns will be left in the row, until the row is updated or deleted.
 			// But I guess that is at least documented.
 		default:
@@ -836,6 +863,8 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if !domOwner.DDL().OwnerManager().IsOwner() {
 		domOwner, domNonOwner = domNonOwner, domOwner
 	}
+	require.True(t, domOwner.DDL().OwnerManager().IsOwner())
+	require.False(t, domNonOwner.DDL().OwnerManager().IsOwner())
 
 	seDDLOwner, err := session.CreateSessionWithDomain(store, domOwner)
 	require.NoError(t, err)
@@ -891,14 +920,13 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan *model.Job)
-	hookFunc := func(job *model.Job) {
+	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		hookChan <- job
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 		<-hookChan
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
-	}
-	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", hookFunc)
+	})
 	alterChan := make(chan error)
 	go func() {
 		if backfillDML != "" {
