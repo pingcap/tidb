@@ -261,9 +261,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 				break
 			}
 		}
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("wwz")
-		}
+
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
 			ctx:                ctx,
 			basicJoinGroupInfo: result.basicJoinGroupInfo,
@@ -658,9 +656,6 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 
 func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.LogicalPlan,
 	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
-	if !rChild.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
