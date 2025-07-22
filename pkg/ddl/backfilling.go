@@ -706,11 +706,6 @@ func sendTasks(
 	return nil
 }
 
-var (
-	// TestCheckReorgTimeout is used to mock timeout when reorg data.
-	TestCheckReorgTimeout = int32(0)
-)
-
 func makeupDecodeColMap(dbName ast.CIStr, t table.Table) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
