@@ -65,6 +65,10 @@ check-static: tools/bin/golangci-lint
 
 .PHONY: check-ddl
 check-ddl: tools/bin/golangci-lint
+	git branch --show-current
+	git status
+	git remote -v
+	git branch -a
 	@MERGE_BASE=$$(git branch --show-current); \
 	if [ "$$MERGE_BASE" != "master" ]; then \
 		echo "Skipping check-ddl: not on master branch $$MERGE_BASE"; \
