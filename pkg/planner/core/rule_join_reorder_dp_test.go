@@ -204,7 +204,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		baseSingleGroupJoinOrderSolver: baseGroupSolver,
 		newJoin:                        newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroups, nil)
+	result, err := solver.solve(joinGroups, &joinReorderTrace{cost: map[string]float64{}})
 	require.NoError(t, err)
 
 	expected := "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}"
