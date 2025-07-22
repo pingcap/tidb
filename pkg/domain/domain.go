@@ -2853,8 +2853,8 @@ const (
 )
 
 // PrivilegeEvent is the message definition for NotifyUpdatePrivilege(), encoded in json.
-// In this v8.5 branch we only use ServerID. For afterward compatibility, we introduct complete
-// structure in v9.0.0
+// In this v8.5 branch we only use ServerID. For afterward compatibility, we introduce
+// the complete structure in v9.0.0
 type PrivilegeEvent struct {
 	All      bool
 	ServerID uint64
