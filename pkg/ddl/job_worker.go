@@ -1053,7 +1053,7 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
-	job.IgnoreVersionUpdate = ver == 0 && err == nil
+	job.LastSchemaVersion = ver
 
 	// there are too many job types, instead let every job type output its own
 	// updateRawArgs, we try to use these rules as a generalization:

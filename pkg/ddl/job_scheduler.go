@@ -582,7 +582,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
-		} else if !job.IgnoreVersionUpdate {
+		} else if job.LastSchemaVersion > 0 {
 			err := waitVersionSyncedWithoutMDL(s.schCtx, jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
