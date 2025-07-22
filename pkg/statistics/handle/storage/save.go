@@ -138,7 +138,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	//
 	// Root Cause:
 	// The point get operation involves two separate lock phases: one to lock the index and another
-	// to lock the row. If another transaction locks both index and row in a single batch point get in a
+	// to lock the row. If another transaction locks both index and row in a single batch point(dump stats delta) get in a
 	// different order, it can lead to a deadlock that is not retryable because the lock keys are not within the same
 	// lockKeys call.
 	//
