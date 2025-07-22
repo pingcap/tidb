@@ -530,12 +530,13 @@ func getPlanCostVer24PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 
 	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
 	n := max(MinNumRows, float64(p.Count+p.Offset))
-	if n > 100 {
+	minTopNThreshold := float64(100) // set a minimum of 100 to avoid too low n
+	if n > minTopNThreshold {
 		// `rows` may be under-estimated. We need to adjust 'n' to ensure we keep a reasonable value.
 		if rows < float64(p.Offset) {
 			n = rows + float64(p.Offset)
 		} else {
-			n = max(min(n, rows), 100) // set a minimum of 100 to avoid too low n
+			n = max(min(n, rows), minTopNThreshold)
 		}
 	}
 	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
