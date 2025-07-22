@@ -232,7 +232,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 		},
 		newJoin: newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroup, nil)
+	result, err := solver.solve(joinGroup, &joinReorderTrace{cost: map[string]float64{}})
 	require.NoError(t, err)
 
 	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"
