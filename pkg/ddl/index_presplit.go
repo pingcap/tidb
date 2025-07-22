@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,11 +46,10 @@ func preSplitIndexRegions(
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	allIndexInfos []*model.IndexInfo,
-	job *model.Job,
+	reorgMeta *model.DDLReorgMeta,
 	args *model.ModifyIndexArgs,
 ) error {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
-	reorgMeta := job.ReorgMeta
 	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
 	if err != nil {
 		return errors.Trace(err)
@@ -77,7 +75,7 @@ func preSplitIndexRegions(
 			}
 		}
 		failpoint.InjectCall("beforePresplitIndex", splitKeys)
-		err = splitIndexRegionAndWait(ctx, store, job, tblInfo, idxInfo, splitKeys)
+		err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -251,8 +249,8 @@ func datumSliceToString(ds []types.Datum) string {
 
 func splitIndexRegionAndWait(
 	ctx context.Context,
+	sctx sessionctx.Context,
 	store kv.Storage,
-	job *model.Job,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	splitIdxKeys [][]byte,
@@ -262,12 +260,7 @@ func splitIndexRegionAndWait(
 		return nil
 	}
 	start := time.Now()
-	timeoutSecond := uint64(vardef.DefWaitSplitRegionTimeout)
-	if val, ok := model.GetSessionVarFromJob[uint64](job, vardef.TiDBWaitSplitRegionTimeout); ok {
-		timeoutSecond = val
-	}
-	timeout := time.Duration(timeoutSecond) * time.Second
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, timeout)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, sctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)
 	if err != nil {
@@ -280,7 +273,7 @@ func splitIndexRegionAndWait(
 	failpoint.Inject("mockSplitIndexRegionAndWaitErr", func(_ failpoint.Value) {
 		failpoint.Return(context.DeadlineExceeded)
 	})
-	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, start, timeout, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
+	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
 	logutil.DDLLogger().Info("split table index region finished",
 		zap.String("table", tblInfo.Name.L),
 		zap.String("index", idxInfo.Name.L),
@@ -395,8 +388,8 @@ func evalConstExprNodes(
 
 func waitScatterRegionFinish(
 	ctxWithTimeout context.Context,
+	sctx sessionctx.Context,
 	startTime time.Time,
-	timeout time.Duration,
 	store kv.SplittableStore,
 	regionIDs []uint64,
 	tableName, indexName string,
@@ -412,7 +405,7 @@ func waitScatterRegionFinish(
 			// In this case, we should return 2 Regions, instead of 0, have finished scattering.
 			remainMillisecond = 50
 		default:
-			remainMillisecond = int((timeout.Seconds() - time.Since(startTime).Seconds()) * 1000)
+			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
 		err := store.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)

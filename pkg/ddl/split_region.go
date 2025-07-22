@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -31,15 +31,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func splitPartitionTableRegion(
-	store kv.SplittableStore,
-	tbInfo *model.TableInfo,
-	parts []model.PartitionDefinition,
-	scatterScope string, timeout time.Duration,
-) {
+func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
 	var regionIDs []uint64
-	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), timeout)
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
@@ -61,12 +56,8 @@ func splitPartitionTableRegion(
 	}
 }
 
-func splitTableRegion(
-	store kv.SplittableStore,
-	tbInfo *model.TableInfo,
-	scatterScope string, timeout time.Duration,
-) {
-	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), timeout)
+func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatterScope string) {
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 	var regionIDs []uint64
