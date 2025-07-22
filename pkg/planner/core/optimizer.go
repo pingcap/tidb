@@ -1077,32 +1077,27 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	}
 	var err error
 	var againRuleList []base.LogicalOptRule
-	for i, rulee := range logicalRuleList {
+	for i, rule := range logicalRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
-		// apply i-th optimizing rulee.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rulee) {
+		// apply i-th optimizing rule.
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		if !logic.SCtx().GetSessionVars().InRestrictedSQL && 1<<uint(i) == rule.FlagJoinReOrder {
-			fmt.Println("wwz")
-		}
-		opt.AppendBeforeRuleOptimize(i, rulee.Name(), logic.BuildPlanTrace)
+		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rulee.Optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
 		// Compute interaction rules that should be optimized again
-		interactionRule, ok := optInteractionRuleList[rulee]
+		interactionRule, ok := optInteractionRuleList[rule]
 		if planChanged && ok && isLogicalRuleDisabled(interactionRule) {
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
-	// Trigger the interaction rulee
+
+	// Trigger the interaction rule
 	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		logic, _, err = rule.Optimize(ctx, logic, opt)
