@@ -585,16 +585,16 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 	}
 	alterSQL := `alter table t modify column b int unsigned not null`
 	checkFn := func(tkO, tkNO *testkit.TestKit, id int, schemaState string) {
-		indexIdSQL := `select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't' and key_name = 'k_b'`
+		indexIDSQL := `select index_id from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't' and key_name = 'k_b'`
 		logutil.BgLogger().Info("check table", zap.Int("id", id), zap.String("schemaState", schemaState),
 			zap.String("owner table", tkO.MustQuery("select * from t use index()").Sort().String()),
 			zap.String("owner index", tkO.MustQuery("select * from t use index(k_b)").Sort().String()),
-			zap.String("owner index id", tkO.MustQuery(indexIdSQL).String()),
+			zap.String("owner index id", tkO.MustQuery(indexIDSQL).String()),
 			zap.Int64("owner txn schema version", sessiontxn.GetTxnManager(tkO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
 			zap.Int64("owner domain schema version", tkO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
 			zap.String("non-owner table", tkNO.MustQuery("select * from t use index()").Sort().String()),
 			zap.String("non-owner index", tkNO.MustQuery("select * from t use index(k_b)").Sort().String()),
-			zap.String("non-owner index id", tkNO.MustQuery(indexIdSQL).String()),
+			zap.String("non-owner index id", tkNO.MustQuery(indexIDSQL).String()),
 			zap.Int64("non-owner txn schema version", sessiontxn.GetTxnManager(tkNO.Session()).GetTxnInfoSchema().SchemaMetaVersion()),
 			zap.Int64("non-owner domain schema version", tkNO.Session().GetLatestInfoSchema().SchemaMetaVersion()),
 		)
