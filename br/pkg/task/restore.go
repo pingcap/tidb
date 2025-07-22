@@ -881,7 +881,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	})
 
 	// TODO: remove version checker from `NewMgr`
-	mgr, err := NewMgr(c, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	mgr, err := NewMgr(c, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NoVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -945,14 +945,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	cfg.RestoreRegistry = restoreRegistry
 
 	if IsStreamRestore(cmdName) {
-		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
-			return errors.Trace(err)
-		}
 		restoreErr = RunStreamRestore(c, mgr, g, cfg)
 	} else {
-		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
-			return errors.Trace(err)
-		}
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig: cfg,
 		}
