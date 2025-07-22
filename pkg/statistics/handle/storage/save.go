@@ -137,8 +137,23 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
-	// Add a fake table ID to prevent the deadlock between the batch update and the point update.
-	// TODO: Add more details in the comment.
+	// Add a fake table ID to prevent the deadlock between the batch get and the point get.
+	//
+	// Deadlock Issue Explanation:
+	// We encountered a stable deadlock issue during the analyze process where the transaction
+	// ultimately failed and the error was propagated to the top layer. From the deadlock records
+	// in information_schema.deadlocks, it's confirmed that this is a non-retryable deadlock.
+	//
+	// Root Cause:
+	// The point get operation involves two separate lock phases: one to lock the index and another
+	// to lock the row. If another transaction locks both index and row in a single batch point get in a
+	// different order, it can lead to a deadlock that is not retryable because the lock keys are not within the same
+	// lockKeys call.
+	//
+	// Deadlock Sequence:
+	// txn1: lockKeys on point get (index lock)
+	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
+	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
 	tableIDStrs := []string{"-1988", fmt.Sprintf("%d", tableID)}
 	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
