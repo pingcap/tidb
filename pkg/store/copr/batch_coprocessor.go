@@ -1561,7 +1561,7 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 			if idx < 10 {
 				logutil.BgLogger().Info("invalid shard because tiflash detected stale shard", zap.Uint64("shard id", retry.ShardId))
 			} else if idx == 10 {
-				logutil.BgLogger().Info("stale regions are too many, so we only print the first 10 stale shards")
+				logutil.BgLogger().Info("stale shards are too many, so we only print the first 10 stale shards")
 			}
 			b.store.GetTiCIShardCache().InvalidateCachedShard(retry.ShardId)
 		}
