@@ -1557,13 +1557,9 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 
 	if len(response.RetryShards) > 0 {
 		logutil.BgLogger().Info("multiple shards are stale and need to be refreshed", zap.Int("shards size", len(response.RetryShards)))
-		for idx, retry := range response.RetryShards {
+		for _, retry := range response.RetryShards {
 			logutil.BgLogger().Info("invalid shard because tiflash detected stale shard", zap.Uint64("shard id", retry.ShardId))
 			b.store.GetTiCIShardCache().InvalidateCachedShard(retry.ShardId)
-			if idx >= 10 {
-				logutil.BgLogger().Info("stale shards are too many, so we omit the rest ones")
-				break
-			}
 		}
 		return
 	}

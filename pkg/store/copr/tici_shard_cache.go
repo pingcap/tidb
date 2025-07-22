@@ -61,7 +61,7 @@ func (s *Shard) ContainsByEnd(key []byte) bool {
 
 const (
 	expiredTTL    = -1
-	shardCacheTTL = 600 // 1min
+	shardCacheTTL = 600 // 10min
 )
 
 // ShardWithAddr represents a shard of data with local cache addresses.
