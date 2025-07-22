@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
@@ -3384,7 +3385,12 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
+		// bootstrap session set sessionctx.Initing = true, and uses None SQL mode,
+		// we also use it here.
+		evalCtx := exprstatic.NewEvalContext(exprstatic.WithSQLMode(mysql.ModeNone))
+		exprCtx := exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
+		mbCtx := metabuild.NewContext(metabuild.WithExprCtx(exprCtx))
+		tblInfo, err := ddl.BuildTableInfoFromAST(mbCtx, stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)
 		}

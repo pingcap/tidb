@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -241,4 +242,39 @@ func TestInformationSchemaCreateTime(t *testing.T) {
 	// Asia/Shanghai 2022-02-17 17:40:05 > Europe/Amsterdam 2022-02-17 10:40:05
 	r = typ2.Compare(typ3)
 	require.Equal(t, 1, r)
+}
+
+func TestNextgenBootstrap(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for nextgen kernel.")
+	}
+	ctx := context.Background()
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+
+	checkReservedIDFn := func(id int64, name string) {
+		t.Helper()
+		require.Greater(t, id, metadef.ReservedGlobalIDLowerBound, "the id of %s must be a reserved ID", name)
+		require.LessOrEqual(t, id, metadef.ReservedGlobalIDUpperBound, "the id of %s must be a reserved ID", name)
+	}
+
+	is := dom.InfoSchema()
+	var reservedSchemaCnt, reservedTableCnt int
+	for _, sch := range is.AllSchemas() {
+		if !metadef.IsSystemRelatedDB(sch.Name.L) {
+			continue
+		}
+		reservedSchemaCnt++
+		checkReservedIDFn(sch.ID, sch.Name.L)
+		tblInfos, err := is.SchemaTableInfos(ctx, sch.Name)
+		require.NoError(t, err)
+		for _, tblInfo := range tblInfos {
+			if !tblInfo.IsBaseTable() {
+				continue
+			}
+			reservedTableCnt++
+			checkReservedIDFn(tblInfo.ID, tblInfo.Name.L)
+		}
+	}
+	require.EqualValues(t, 2, reservedSchemaCnt)
+	require.EqualValues(t, 59, reservedTableCnt)
 }

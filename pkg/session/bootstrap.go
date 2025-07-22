@@ -113,12 +113,12 @@ const (
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
-	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
-		"Host CHAR(255) NOT NULL DEFAULT ''," +
-		"User CHAR(80) NOT NULL DEFAULT ''," +
-		"Priv LONGTEXT NOT NULL DEFAULT ''," +
-		"PRIMARY KEY (Host, User)," +
-		"KEY i_user (User))"
+	CreateGlobalPrivTable = `CREATE TABLE IF NOT EXISTS mysql.global_priv (
+		Host CHAR(255) NOT NULL DEFAULT '',
+		User CHAR(80) NOT NULL DEFAULT '',
+		Priv LONGTEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (Host, User),
+		KEY i_user (User))`
 
 	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
 	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
