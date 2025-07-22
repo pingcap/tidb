@@ -205,7 +205,6 @@ func TestTopNRules(t *testing.T) {
 }
 
 func TestProjectionElimination(t *testing.T) {
-	t.Skip("tmp")
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(TransformationRuleBatch{
 		pattern.OperandProjection: {
@@ -329,7 +328,6 @@ func TestTransformLimitToTableDual(t *testing.T) {
 }
 
 func TestPostTransformationRules(t *testing.T) {
-	t.Skip("tmp")
 	optimizer := NewOptimizer()
 	optimizer.ResetTransformationRules(TransformationRuleBatch{
 		pattern.OperandLimit: {
