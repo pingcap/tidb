@@ -150,7 +150,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// together but in the opposite order (row then index). This creates a circular wait condition where:
 	// 1. Transaction 1 holds index lock and waits for row lock
 	// 2. Transaction 2 holds row lock and waits for index lock
-	// Since the locks are acquired in separate lockKeys calls, TiDB cannot detect and prevent this deadlock.
+	// Since the locks are acquired in separate lockKeys calls, TiDB cannot detect and retry this deadlock.
 	//
 	// Deadlock Sequence:
 	// txn1: lockKeys on point get (index lock)
