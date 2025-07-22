@@ -71,7 +71,7 @@ const (
 	JobStepValidating = "validating"
 
 	baseQuerySQL = `SELECT
-					id, create_time, start_time, state_update_time, end_time,
+					id, create_time, start_time, update_time, end_time,
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
 					status, step, summary, error_message
 				FROM mysql.tidb_import_jobs`
