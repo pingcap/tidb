@@ -114,7 +114,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	}
 	s.tableImporter = tableImporter
 
-	taskManager, err := disttaskStorage.GetTaskManager()
+	taskManager, err := dxfstorage.GetTaskManager()
 	if err != nil {
 		return err
 	}
