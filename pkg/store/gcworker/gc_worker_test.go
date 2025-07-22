@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
@@ -50,6 +51,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/constants"
+	"go.uber.org/zap"
 )
 
 type mockGCWorkerLockResolver struct {
@@ -250,8 +252,32 @@ func (s *mockGCWorkerSuite) mustRemoveServiceGCSafePoint(t *testing.T, serviceID
 	require.Equal(t, expectedMinSafePoint, minSafePoint)
 }
 
+// setGCWorkerServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
+// service safePoint among all services.
+func setGCWorkerServiceSafePoint(ctx context.Context, w *GCWorker, safePoint uint64) (uint64, error) {
+	// Sets TTL to MAX to make it permanently valid.
+	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, math.MaxInt64, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("failed to update service safe point", zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		return 0, errors.Trace(err)
+	}
+	if minSafePoint < safePoint {
+		logutil.Logger(ctx).Info("there's another service in the cluster requires an earlier safe point. "+
+			"gc will continue with the earlier one",
+			zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("ourSafePoint", safePoint),
+			zap.Uint64("minSafePoint", minSafePoint),
+		)
+		safePoint = minSafePoint
+	}
+	return safePoint, nil
+}
+
 func (s *mockGCWorkerSuite) mustSetTiDBServiceSafePoint(t *testing.T, safePoint, expectedMinSafePoint uint64) {
-	minSafePoint, err := s.gcWorker.setGCWorkerServiceSafePoint(context.Background(), safePoint)
+	minSafePoint, err := setGCWorkerServiceSafePoint(context.Background(), s.gcWorker, safePoint)
 	require.NoError(t, err)
 	require.Equal(t, expectedMinSafePoint, minSafePoint)
 }

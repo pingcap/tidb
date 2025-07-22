@@ -39,6 +39,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	pderrs "github.com/tikv/pd/client/errs"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -509,12 +510,15 @@ func (m *gcTTLManager) removeOneJob(table string) {
 func (m *gcTTLManager) doUpdateGCTTL(ctx context.Context, ttl int64, ts uint64) error {
 	logutil.Logger(ctx).Debug("update PD safePoint limit with TTL",
 		zap.Uint64("currnet_ts", ts))
-	var err error
 	if ts > 0 {
 		m.lastSP.Store(ts)
-		_, err = m.pdClient.UpdateServiceGCSafePoint(ctx, m.serviceID, ttl, ts)
+		cli := m.pdClient.GetGCStatesClient(constants.NullKeyspaceID)
+		_, err := cli.SetGCBarrier(ctx, m.serviceID, ts, time.Duration(ttl)*time.Second)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return err
+	return nil
 }
 
 func (m *gcTTLManager) start(ctx context.Context) {

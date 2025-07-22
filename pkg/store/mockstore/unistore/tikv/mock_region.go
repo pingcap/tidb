@@ -1000,6 +1000,7 @@ func (m *gcStatesManagerSimulator) getGCState(keyspaceID uint32) *gcState {
 	return internalState
 }
 
+// UpdateServiceGCSafePoint is deprecated, used SetGCBarrier instead.
 func (m *gcStatesManagerSimulator) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttlSecs int64, safePoint uint64) (uint64, error) {
 	// Compatibility code. See: https://github.com/tikv/pd/blob/b486e2181603e0140be9647f1f05b25f3177634a/pkg/gc/gc_state_manager.go#L705
 	if serviceID == "gc_worker" {

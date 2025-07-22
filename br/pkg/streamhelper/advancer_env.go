@@ -4,7 +4,6 @@ package streamhelper
 
 import (
 	"context"
-	"math"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -16,6 +15,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
@@ -49,20 +49,20 @@ type PDRegionScanner struct {
 // Returns the minimal service GC safe point across all services.
 // If the arguments is `0`, this would remove the service safe point.
 func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
-	minimalSafePoint, err := c.UpdateServiceGCSafePoint(
-		ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
+	cli := c.GetGCStatesClient(constants.NullKeyspaceID)
+	_, err := cli.SetGCBarrier(ctx, logBackupServiceID, at, logBackupSafePointTTL)
 	if err != nil {
-		return 0, errors.Annotate(err, "failed to block gc until")
+		// When the error is ErrGCBarrierTSBehindTxnSafePoint, the error message itself
+		// now provoide more information about current txn safe point.
+		return 0, errors.Trace(err)
 	}
-	if minimalSafePoint > at {
-		return 0, errors.Errorf("minimal safe point %d is greater than the target %d", minimalSafePoint, at)
-	}
-	return at, nil
+	state, err := cli.GetGCState(ctx)
+	return state.TxnSafePoint, nil
 }
 
 func (c PDRegionScanner) UnblockGC(ctx context.Context) error {
-	// set ttl to 0, means remove the safe point.
-	_, err := c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, 0, math.MaxUint64)
+	cli := c.GetGCStatesClient(constants.NullKeyspaceID)
+	_, err := cli.DeleteGCBarrier(ctx, logBackupServiceID)
 	return err
 }
 

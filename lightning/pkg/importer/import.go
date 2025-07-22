@@ -70,6 +70,7 @@ import (
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
@@ -1199,27 +1200,31 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		if i > 0 {
 			time.Sleep(time.Second * 3)
 		}
-		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
+		cli := pdCli.GetGCStatesClient(constants.NullKeyspaceID)
+		state, err := cli.GetGCState(ctx)
 		if err != nil {
 			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
-		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
-		if err != nil {
-			pdCli.Close()
-			return nil, errors.Trace(err)
-		}
-		if newMinSafePoint <= minSafePoint {
-			safePoint = minSafePoint
+		barrier, err := cli.SetGCBarrier(ctx, serviceID, state.TxnSafePoint+1, pauseGCTTLForDupeRes)
+		if err == nil {
+			safePoint = barrier.BarrierTS
 			paused = true
 			break
 		}
-		logutil.Logger(ctx).Warn(
-			"Failed to register GC safe point because the current minimum safe point is newer"+
-				" than what we assume, will retry newMinSafePoint next time",
-			zap.Uint64("minSafePoint", minSafePoint),
-			zap.Uint64("newMinSafePoint", newMinSafePoint),
-		)
+
+		if strings.Contains(err.Error(), "ErrGCBarrierTSBehindTxnSafePoint") {
+			// Is there any way to check error code instead of error message?
+			logutil.Logger(ctx).Warn(
+				"Failed to register GC safe point because the current minimum safe point is newer"+
+					" than what we assume, will retry newMinSafePoint next time",
+				zap.Uint64("minSafePoint", state.TxnSafePoint),
+				zap.Uint64("newMinSafePoint", state.TxnSafePoint+1),
+			)
+		}
+
+		pdCli.Close()
+		return nil, errors.Trace(err)
 	}
 	if !paused {
 		pdCli.Close()
@@ -1232,25 +1237,18 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		defer close(exitCh)
 		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
 		defer ticker.Stop()
+		cli := pdCli.GetGCStatesClient(constants.NullKeyspaceID)
 		for {
 			select {
 			case <-ticker.C:
-				minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+				_, err := cli.SetGCBarrier(ctx, serviceID, safePoint, time.Duration(ttl)*time.Second)
 				if err != nil {
-					logutil.Logger(ctx).Warn("Failed to register GC safe point", zap.Error(err))
+					logutil.Logger(ctx).Warn("Failed to register txn safe point", zap.Error(err))
 					continue
-				}
-				if minSafePoint > safePoint {
-					logutil.Logger(ctx).Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
-						"risk of being GC and not detectable",
-						zap.Uint64("safePoint", safePoint),
-						zap.Uint64("minSafePoint", minSafePoint),
-					)
-					safePoint = minSafePoint
 				}
 			case <-ctx.Done():
 				stopCtx, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
-				if _, err := pdCli.UpdateServiceGCSafePoint(stopCtx, serviceID, 0, safePoint); err != nil {
+				if _, err := cli.DeleteGCBarrier(stopCtx, serviceID); err != nil {
 					logutil.Logger(ctx).Warn("Failed to reset safe point ttl to zero", zap.Error(err))
 				}
 				// just make compiler happy

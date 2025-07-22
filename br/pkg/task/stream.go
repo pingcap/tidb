@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -432,15 +433,16 @@ func (s *streamMgr) checkImportTaskRunning(ctx context.Context, etcdCLI *clientv
 	return nil
 }
 
-// setGCSafePoint sets the server safe point to PD.
-func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
-	if err != nil {
-		return errors.Annotatef(err,
-			"failed to check gc safePoint, ts %v", sp.BackupTS)
+// setGCBarrier sets the server safe point to PD.
+func (s *streamMgr) setGCBarrier(ctx context.Context, sp utils.BRServiceSafePoint) error {
+	var err error
+	cli := s.mgr.GetPDClient().GetGCStatesClient(constants.NullKeyspaceID)
+	// 0 means remove
+	if sp.TTL == 0 {
+		_, err = cli.DeleteGCBarrier(ctx, sp.ID)
+	} else {
+		_, err = cli.SetGCBarrier(ctx, sp.ID, sp.BackupTS, time.Duration(sp.TTL)*time.Second)
 	}
-
-	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -628,7 +630,7 @@ func RunStreamStart(
 		}
 
 		cfg.StartTS = logInfo.logMaxTS
-		if err = streamMgr.setGCSafePoint(
+		if err = streamMgr.setGCBarrier(
 			ctx,
 			utils.BRServiceSafePoint{
 				ID:       utils.MakeSafePointID(),
@@ -639,7 +641,7 @@ func RunStreamStart(
 			return errors.Trace(err)
 		}
 	} else {
-		if err = streamMgr.setGCSafePoint(
+		if err = streamMgr.setGCBarrier(
 			ctx,
 			utils.BRServiceSafePoint{
 				ID:       utils.MakeSafePointID(),
@@ -791,7 +793,7 @@ func RunStreamStop(
 		return errors.Trace(err)
 	}
 
-	if err := streamMgr.setGCSafePoint(ctx,
+	if err := streamMgr.setGCBarrier(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      0, // 0 means remove this service safe point.
@@ -852,7 +854,7 @@ func RunStreamPause(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.setGCSafePoint(
+	if err = streamMgr.setGCBarrier(
 		ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
@@ -943,7 +945,7 @@ func RunStreamResume(
 		return err
 	}
 
-	if err := streamMgr.setGCSafePoint(ctx,
+	if err := streamMgr.setGCBarrier(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      utils.DefaultStreamStartSafePointTTL,

@@ -70,6 +70,7 @@ import (
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -1814,9 +1815,11 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
-		// set the ttl to 0 to remove the gc-safe-point
+
+		cli := pdClient.GetGCStatesClient(constants.NullKeyspaceID)
 		sp.TTL = 0
-		if err := utils.UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+		_, err := cli.DeleteGCBarrier(ctx, sp.ID)
+		if err != nil {
 			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
