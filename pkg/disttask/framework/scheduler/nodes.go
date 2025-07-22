@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -155,8 +156,7 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 // return a copy of the nodes.
 func (nm *NodeManager) getNodes() []proto.ManagedNode {
 	nodes := *nm.nodes.Load()
-	res := make([]proto.ManagedNode, len(nodes))
-	copy(res, nodes)
+	res := slices.Clone(nodes)
 	return res
 }
 

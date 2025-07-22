@@ -355,7 +355,7 @@ func (isd *Data) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.Table
 		} else {
 			// If there are multiple references, create new array excluding this one
 			// clone existingRefs to avoid modifying the original slice
-			tmpRefs := append([]*model.ReferredFKInfo(nil), existingRefs...)
+			tmpRefs := slices.Clone(existingRefs)
 			newRefs := slices.DeleteFunc(tmpRefs, func(ref *model.ReferredFKInfo) bool {
 				return ref.ChildSchema.L == schema.L &&
 					ref.ChildTable.L == tbInfo.Name.L &&
