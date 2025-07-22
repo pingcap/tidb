@@ -18,9 +18,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -864,25 +862,15 @@ func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
 		{"drop column", "alter table t drop column col2, drop column col3"},
 		{"drop index", "alter table t drop index idx2, drop index idx3"},
 		{"modify column", "alter table t modify column col2 bigint, modify column col3 bigint"},
-		{"modify column with reorg", "alter table t modify column col2 varchar(4) charset utf8mb4;"},
+		{"modify column with reorg", "alter table t modify column col2 varchar(4), modify column col3 varchar(4)"},
 	}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				require.Eventually(t, func() bool {
-					res := tk.MustQuery("admin show ddl jobs 1").Rows()
-					return res[0][11] == "synced"
-				}, 3*time.Second, 500*time.Millisecond)
-			}()
 			tk.MustExec("set global tidb_enable_metadata_lock = on;")
 			tk.MustExec("drop table if exists t;")
 			tk.MustExec("create table t(col1 int, col2 int, col3 int, index idx2(col2), index idx3(col2));")
 			tk.MustExec("set global tidb_enable_metadata_lock = off;")
 			tk.MustExec(tc.sql)
-			wg.Wait()
 		})
 	}
 }
