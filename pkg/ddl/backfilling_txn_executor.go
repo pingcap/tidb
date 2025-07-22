@@ -175,6 +175,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 		TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
 		TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
 		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxBytesBeforeCTESpill:        vardef.DefTiFlashMaxBytesBeforeCTESpill,
 		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
 		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
 		TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
