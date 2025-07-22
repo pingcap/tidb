@@ -156,6 +156,9 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 // return a copy of the nodes.
 func (nm *NodeManager) getNodes() []proto.ManagedNode {
 	nodes := *nm.nodes.Load()
+	if nodes == nil {
+		return []proto.ManagedNode{}
+	}
 	res := slices.Clone(nodes)
 	return res
 }
