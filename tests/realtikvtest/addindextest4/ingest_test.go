@@ -702,3 +702,58 @@ func TestAddIndexInsertSameOriginIndexValue(t *testing.T) {
 	})
 	tk.MustExec("alter table t add unique index idx(b);")
 }
+
+func TestMergeTempIndexSplitConflictTxn(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = off;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use addindexlit;")
+
+	var runInsert bool
+	onJobUpdated := func(job *model.Job) {
+		if t.Failed() || runInsert {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			for i := 0; i < 4; i++ {
+				_, err := tk1.Exec("insert into t values (?, ?);", i, i)
+				assert.NoError(t, err)
+			}
+			runInsert = true
+		}
+	}
+	callback := &callback.TestDDLCallback{}
+	callback.OnJobUpdatedExported.Store(&onJobUpdated)
+	dom.DDL().SetHook(callback)
+
+	var runUpdate bool
+	ddl.MockDMLExecutionMerging = func() {
+		if t.Failed() || runUpdate {
+			return
+		}
+		for i := 0; i < 4; i++ {
+			_, err := tk1.Exec("update t set b = b+10 where a = ?;", i)
+			assert.NoError(t, err)
+		}
+		runUpdate = true
+	}
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn", "return(true)")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMergingInTxn"))
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0 10", "1 11", "2 12", "3 13"))
+}

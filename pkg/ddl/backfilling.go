@@ -145,12 +145,14 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	sessCtx       sessionctx.Context
-	schemaName    string
-	table         table.Table
-	batchCnt      int
-	jobContext    *JobContext
-	metricCounter prometheus.Counter
+	sessCtx    sessionctx.Context
+	schemaName string
+	table      table.Table
+	batchCnt   int
+	jobContext *JobContext
+
+	metricCounter   prometheus.Counter
+	conflictCounter prometheus.Counter
 }
 
 func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
@@ -158,21 +160,22 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
 	}
+	reorgLabel := metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())
 	return &backfillCtx{
-		id:         id,
-		ddlCtx:     ctx,
-		sessCtx:    sessCtx,
-		schemaName: schemaName,
-		table:      tbl,
-		batchCnt:   int(variable.GetDDLReorgBatchSize()),
-		jobContext: jobCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
+		id:              id,
+		ddlCtx:          ctx,
+		sessCtx:         sessCtx,
+		schemaName:      schemaName,
+		table:           tbl,
+		batchCnt:        int(variable.GetDDLReorgBatchSize()),
+		jobContext:      jobCtx,
+		metricCounter:   metrics.BackfillTotalCounter.WithLabelValues(reorgLabel),
+		conflictCounter: metrics.BackfillTotalCounter.WithLabelValues(fmt.Sprintf("%s-conflict", reorgLabel)),
 	}
 }
 
 type backfiller interface {
-	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
+	BackfillData(ctx context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
 	GetCtx() *backfillCtx
 	String() string
@@ -284,7 +287,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(handleRange)
+		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
