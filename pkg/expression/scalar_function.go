@@ -201,13 +201,6 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
 func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
-	defer func() {
-		if err == nil && ret != nil && checkOrInit != nil {
-			if sf, ok := ret.(*ScalarFunction); ok {
-				ret, err = checkOrInit(sf)
-			}
-		}
-	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
@@ -276,6 +269,13 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		RetType:  retType,
 		Function: f,
 	}
+	if checkOrInit != nil {
+		sf2, err := checkOrInit(sf)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sf = sf2
+	}
 	if fold == 1 {
 		return FoldConstant(ctx, sf), nil
 	} else if fold == -1 {
@@ -294,9 +294,9 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 }
 
 // ScalarFunctionCallBack is the definition of callback of calling a newFunction.
-type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
+type ScalarFunctionCallBack func(function *ScalarFunction) (*ScalarFunction, error)
 
-func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
+func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, error) {
 	// todo: more scalar function init actions can be added here, or setting up with customized init callback.
 	if function.FuncName.L == ast.Grouping {
 		if !function.Function.(*BuiltinGroupingImplSig).isMetaInited {

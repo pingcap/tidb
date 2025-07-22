@@ -172,7 +172,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Apply{" + strings.Join(children, "->") + "}"
 	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
-	case *logicalop.LogicalLimit, *PhysicalLimit:
+	case *logicalop.LogicalLimit, *physicalop.PhysicalLimit:
 		str = "Limit"
 	case *PhysicalLock, *logicalop.LogicalLock:
 		str = "Lock"
@@ -237,15 +237,15 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *logicalop.LogicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *logicalop.LogicalProjection, *PhysicalProjection:
 		str = "Projection"
 	case *logicalop.LogicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
-	case *PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
-	case *logicalop.LogicalTableDual, *PhysicalTableDual:
+	case *logicalop.LogicalTableDual, *physicalop.PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
 		str = "HashAgg"
@@ -275,7 +275,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str += ToString(paritalPlan)
 		}
 		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
-	case *PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalIndexJoin:
 		last := len(idxs) - 1

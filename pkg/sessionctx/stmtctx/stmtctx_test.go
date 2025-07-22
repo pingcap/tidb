@@ -44,22 +44,20 @@ func TestCopTasksDetails(t *testing.T) {
 	ctx := stmtctx.NewStmtCtx()
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := range 100 {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(i+1),
-					WaitTime:    time.Millisecond * time.Duration(i+1),
-				},
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(i+1),
+				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},
 		}
 		for _, backoff := range backoffs {
 			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(i+1)
 			d.BackoffTimes[backoff] = i + 1
 		}
-		ctx.MergeExecDetails(d, nil)
+		ctx.MergeCopExecDetails(d, 0)
 	}
 	d := ctx.CopTasksDetails()
 	require.Equal(t, 100, d.NumCopTasks)
@@ -224,17 +222,15 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	var n = rand.Intn(19000) + 1000
 	var valRange = rand.Int31n(10000) + 1000
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	details := []*execdetails.ExecDetails{}
+	details := []*execdetails.CopExecDetails{}
 	for i := range n {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
-					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
-				},
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
+				WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
 			},
 		}
 		details = append(details, d)
@@ -245,15 +241,15 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	}
 
 	// Make CalleeAddress for each max value is deterministic.
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
 	for _, backoff := range backoffs {
 		details[rand.Intn(n)].BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(valRange)
 	}
 
 	ctx := stmtctx.NewStmtCtx()
 	for i := range n {
-		ctx.MergeExecDetails(details[i], nil)
+		ctx.MergeCopExecDetails(details[i], 0)
 	}
 	d := ctx.CopTasksDetails()
 

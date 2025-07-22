@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -265,12 +266,22 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
+				// during some step of add-index, such as in write-reorg state, this
+				// key is THE temp index key.
+				err = txn.GetMemBuffer().Set(key, val)
+			} else if c.mayDDLMergingTempIndex() {
+				// Here may have the situation:
+				// DML: Writing the normal index key.
+				// DDL: Writing the same normal index key, but it does not lock primary record.
+				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
+			} else {
+				err = txn.GetMemBuffer().Set(key, val)
 			}
-			// during some step of add-index, such as in write-reorg state, this
-			// key is THE temp index key.
-			err = txn.GetMemBuffer().Set(key, val)
 			if err != nil {
 				return nil, err
+			}
+			if keyIsTempIdxKey {
+				metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, false)
 			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
@@ -279,6 +290,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if err != nil {
 					return nil, err
 				}
+				metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, true)
 			}
 			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
@@ -365,6 +377,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if err != nil {
 					return nil, err
 				}
+				if keyIsTempIdxKey {
+					metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, false)
+				}
 				if len(tempKey) > 0 {
 					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 					val = tempVal.Encode(value)
@@ -372,6 +387,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					if err != nil {
 						return nil, err
 					}
+					metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, true)
 				}
 			} else if lazyCheck {
 				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
@@ -422,6 +438,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
+		doubleWrite := tempKeyVer == tablecodec.TempIndexKeyTypeMerge
 		var originTempVal []byte
 		if len(tempKey) > 0 && c.idxInfo.Unique {
 			// Get the origin value of the unique temporary index key.
@@ -472,10 +489,19 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
+				metrics.DDLSetTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, 1, doubleWrite)
 			}
 		} else {
 			if len(key) > 0 {
-				err = txn.GetMemBuffer().Delete(key)
+				if c.mayDDLMergingTempIndex() {
+					// Here may have the situation:
+					// DML: Deleting the normal index key.
+					// DDL: Writing the same normal index key, but it does not lock primary record.
+					// In this case, we should lock the index key in DML to grantee the serialization.
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+				} else {
+					err = txn.GetMemBuffer().Delete(key)
+				}
 				if err != nil {
 					return err
 				}
@@ -486,6 +512,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
+				metrics.DDLSetTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, 1, doubleWrite)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {
@@ -497,6 +524,17 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 	}
 	return nil
+}
+
+// mayDDLMergingTempIndex checks whether the DDL worker may be merging the temporary index to the normal index.
+// In most times, if an index is not unique, its primary record is assumed to be mutated and locked.
+// The only exception is when the DDL worker is merging the temporary index in fast reorging,
+// the DDL txn will not lock the primary record to reduce unnecessary conflicts.
+// At this time, the index record should be locked in force
+// to make sure the serialization between the DDL and DML transactions.
+func (c *index) mayDDLMergingTempIndex() bool {
+	return c.idxInfo.BackfillState == model.BackfillStateReadyToMerge ||
+		c.idxInfo.BackfillState == model.BackfillStateMerging
 }
 
 func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum,

@@ -85,7 +85,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		return res
 	}
 	switch pp := p.(type) {
-	case *PhysicalLimit, *PhysicalTopN:
+	case *physicalop.PhysicalLimit, *physicalop.PhysicalTopN:
 		if storeType == kv.TiKV {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
@@ -518,7 +518,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *physicalop.PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection,
+	case *physicalop.PhysicalSort, *physicalop.PhysicalSelection, *physicalop.PhysicalUnionScan, *PhysicalProjection,
 		*PhysicalHashAgg, *PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}

@@ -19,17 +19,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -39,7 +44,7 @@ import (
 // MiniTaskExecutor is the interface for a minimal task executor.
 // exported for testing.
 type MiniTaskExecutor interface {
-	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error
+	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter, collector execute.Collector) error
 }
 
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
@@ -55,7 +60,11 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	}
 }
 
-func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
+func (e *importMinimalTaskExecutor) Run(
+	ctx context.Context,
+	dataWriter, indexWriter backend.EngineWriter,
+	collector execute.Collector,
+) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
 	failpoint.Inject("beforeSortChunk", func() {})
@@ -75,6 +84,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			sharedVars.IndexEngine,
 			logger,
 			checksum,
+			collector,
 		); err != nil {
 			return err
 		}
@@ -87,6 +97,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			indexWriter,
 			logger,
 			checksum,
+			collector,
 		); err != nil {
 			return err
 		}
@@ -107,7 +118,8 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if err = importer.RebaseAllocatorBases(ctx, p.store, subtaskMeta.MaxIDs, &p.taskMeta.Plan, logger); err != nil {
+	plan := &p.taskMeta.Plan
+	if err = importer.RebaseAllocatorBases(ctx, p.store, subtaskMeta.MaxIDs, plan, logger); err != nil {
 		return err
 	}
 
@@ -123,14 +135,34 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
 
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if kerneltype.IsNextGen() {
+		bfWeight := importer.GetBackoffWeight(plan)
+		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
+			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
+		defer mgr.Close()
+		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+			func() (*local.RemoteChecksum, error) {
+				ctxWithLogger := logutil.WithLogger(ctx, logger)
+				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
+					DB:   plan.DBName,
+					Name: plan.TableInfo.Name.L,
+					Core: plan.TableInfo,
+				})
+			},
+		)
+	}
+
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-
-	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		err = importer.VerifyChecksum(ctx, &p.taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		err = importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+			func() (*local.RemoteChecksum, error) {
+				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
+			},
+		)
 		if common.IsRetryableError(err) {
 			return err
 		}

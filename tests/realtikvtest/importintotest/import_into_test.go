@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -135,7 +136,7 @@ func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
 
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/*.csv?endpoint=%s'`, gcsEndpoint)
 	result := s.tk.MustQuery(importSQL).Rows()
-	require.Equal(s.T(), "finished", result[0][5].(string))
+	require.Equal(s.T(), "finished", result[0][fmap["Status"]].(string))
 
 	// After import success, the table stat should be updated
 	require.Eventually(s.T(), func() bool {
@@ -745,7 +746,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
 	result := s.tk.MustQuery(sql)
-	fileSize := result.Rows()[0][6].(string)
+	fileSize := result.Rows()[0][plannercore.ImportIntoFieldMap["SourceFileSize"]].(string)
 	s.Equal("7.598KiB", fileSize)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(

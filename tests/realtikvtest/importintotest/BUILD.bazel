@@ -34,6 +34,7 @@ go_test(
         "//pkg/lightning/common",
         "//pkg/parser/auth",
         "//pkg/parser/terror",
+        "//pkg/planner/core",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
