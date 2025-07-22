@@ -27,7 +27,7 @@ fi
 # set random store to read only
 random_store_id=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
 echo "random store id: $random_store_id"
-run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' 'read_only'
+run_pd_ctl -u https://$PD_ADDR store label $random_store_id 'mode' 'read_only'
 
 # set placement rule to add a learner replica for each region in the read only store
 run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle load --out=$TEST_DIR/default_rules.json
@@ -56,7 +56,7 @@ run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 
 # backup db
 echo "backup start..."
-run_br -u https://$PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label '$mode:read_only'
+run_br -u https://$PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB" --replica-read-label 'mode:read_only'
 
 run_sql "DROP DATABASE $DB;"
 
@@ -86,5 +86,5 @@ run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE
 run_curl https://$TIDB_STATUS_ADDR/ddl/history | grep -E '/\*from\(br\)\*/CREATE DATABASE'
 
 run_sql "DROP DATABASE $DB;"
-run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' ''
+run_pd_ctl -u https://$PD_ADDR store label $random_store_id 'mode' ''
 run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/default_rules.json

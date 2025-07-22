@@ -265,7 +265,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
-		onClose, memSizePerIndex, reorgMeta,
+		onClose, memSizePerIndex, reorgMeta, rowCntListener,
 	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, nil, rowCntListener)
 
@@ -652,6 +652,7 @@ func NewWriteExternalStoreOperator(
 	onClose external.OnCloseFunc,
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
+	rowCntListener RowCountListener,
 ) *WriteExternalStoreOperator {
 	onDuplicateKey := common.OnDuplicateKeyError
 	failpoint.Inject("ignoreReadIndexDupKey", func() {
@@ -691,6 +692,7 @@ func NewWriteExternalStoreOperator(
 					reorgMeta:    reorgMeta,
 					totalCount:   totalCount,
 				},
+				rowCntListener: rowCntListener,
 			}
 		})
 	return &WriteExternalStoreOperator{
@@ -780,6 +782,7 @@ func NewIndexIngestOperator(
 
 type indexIngestExternalWorker struct {
 	indexIngestBaseWorker
+	rowCntListener RowCountListener
 }
 
 func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
@@ -793,6 +796,7 @@ func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(In
 		w.ctx.onError(err)
 		return
 	}
+	w.rowCntListener.Written(rs.Added)
 	send(rs)
 }
 
