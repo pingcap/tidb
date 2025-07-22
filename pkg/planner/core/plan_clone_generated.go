@@ -17,6 +17,8 @@
 package core
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -34,8 +36,7 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
 	cloned.filterCondition = cloneExpressionsForPlanCache(op.filterCondition, nil)
 	cloned.LateMaterializationFilterCondition = cloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
-	cloned.HandleIdx = make([]int, len(op.HandleIdx))
-	copy(cloned.HandleIdx, op.HandleIdx)
+	cloned.HandleIdx = slices.Clone(op.HandleIdx)
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
 	}
@@ -44,8 +45,7 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.SampleInfo != nil {
 		return nil, false
 	}
-	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
-	copy(cloned.constColsByCond, op.constColsByCond)
+	cloned.constColsByCond = slices.Clone(op.constColsByCond)
 	if op.runtimeFilterList != nil {
 		return nil, false
 	}
@@ -66,8 +66,7 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
 	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
+	cloned.IdxColLens = slices.Clone(op.IdxColLens)
 	if op.GenExprs != nil {
 		return nil, false
 	}
@@ -79,8 +78,7 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 			cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
 		}
 	}
-	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
-	copy(cloned.constColsByCond, op.constColsByCond)
+	cloned.constColsByCond = slices.Clone(op.constColsByCond)
 	return cloned, true
 }
 
@@ -218,8 +216,7 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.IndexValues = util.CloneDatums(op.IndexValues)
 	cloned.IndexConstants = cloneConstantsForPlanCache(op.IndexConstants, nil)
 	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
+	cloned.IdxColLens = slices.Clone(op.IdxColLens)
 	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions, nil)
 	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
@@ -242,10 +239,8 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.IndexValueParams = cloneConstant2DForPlanCache(op.IndexValueParams)
 	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions, nil)
 	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
-	copy(cloned.PartitionIdxs, op.PartitionIdxs)
+	cloned.IdxColLens = slices.Clone(op.IdxColLens)
+	cloned.PartitionIdxs = slices.Clone(op.PartitionIdxs)
 	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
@@ -267,10 +262,8 @@ func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		cloned.innerPlan = innerPlan.(base.PhysicalPlan)
 	}
 	cloned.Ranges = op.Ranges.CloneForPlanCache()
-	cloned.KeyOff2IdxOff = make([]int, len(op.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, op.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
+	cloned.KeyOff2IdxOff = slices.Clone(op.KeyOff2IdxOff)
+	cloned.IdxColLens = slices.Clone(op.IdxColLens)
 	cloned.CompareFilters = op.CompareFilters.cloneForPlanCache()
 	cloned.OuterHashKeys = cloneColumnsForPlanCache(op.OuterHashKeys, nil)
 	cloned.InnerHashKeys = cloneColumnsForPlanCache(op.InnerHashKeys, nil)
