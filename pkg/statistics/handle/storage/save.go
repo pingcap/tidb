@@ -145,10 +145,12 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// in information_schema.deadlocks, it's confirmed that this is a non-retryable deadlock.
 	//
 	// Root Cause:
-	// The point get operation involves two separate lock phases: one to lock the index and another
-	// to lock the row. If another transaction locks both index and row in a single batch point(dump stats delta) get in a
-	// different order, it can lead to a deadlock that is not retryable because the lock keys are not within the same
-	// lockKeys call.
+	// The point get operation acquires locks in two separate phases: first the index lock, then the row lock.
+	// Meanwhile, another transaction doing a batch point get (e.g. during stats delta dump) acquires both locks
+	// together but in the opposite order (row then index). This creates a circular wait condition where:
+	// 1. Transaction 1 holds index lock and waits for row lock
+	// 2. Transaction 2 holds row lock and waits for index lock
+	// Since the locks are acquired in separate lockKeys calls, TiDB cannot detect and prevent this deadlock.
 	//
 	// Deadlock Sequence:
 	// txn1: lockKeys on point get (index lock)
