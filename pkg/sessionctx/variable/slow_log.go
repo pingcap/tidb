@@ -23,8 +23,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
@@ -199,6 +202,34 @@ type JSONSQLWarnForSlowLog struct {
 	IsExtra bool `json:",omitempty"`
 }
 
+func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
+	// Currently, this function is only used in collectWarningsForSlowLog.
+	// collectWarningsForSlowLog can make sure SQLWarn is not nil so no need to add a nil check here.
+	warn := errors.Cause(sqlWarn.Err)
+	if x, ok := warn.(*terror.Error); ok && x != nil {
+		sqlErr := terror.ToSQLError(x)
+		return sqlErr.Message
+	}
+	return warn.Error()
+}
+
+// CollectWarningsForSlowLog collects warnings from the statement context and formats them for slow log output.
+func CollectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []JSONSQLWarnForSlowLog {
+	warnings := stmtCtx.GetWarnings()
+	extraWarnings := stmtCtx.GetExtraWarnings()
+	res := make([]JSONSQLWarnForSlowLog, len(warnings)+len(extraWarnings))
+	for i := range warnings {
+		res[i].Level = warnings[i].Level
+		res[i].Message = extractMsgFromSQLWarn(&warnings[i])
+	}
+	for i := range extraWarnings {
+		res[len(warnings)+i].Level = extraWarnings[i].Level
+		res[len(warnings)+i].Message = extractMsgFromSQLWarn(&extraWarnings[i])
+		res[len(warnings)+i].IsExtra = true
+	}
+	return res
+}
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -213,34 +244,37 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *execdetails.CopTasksDetails
-	ExecDetail        execdetails.ExecDetails
-	MemMax            int64
-	DiskMax           int64
 	Succ              bool
+	IsExplicitTxn     bool
+	IsWriteCacheTable bool
+	IsSyncStatsFailed bool
 	Prepared          bool
-	PlanFromCache     bool
-	PlanFromBinding   bool
-	HasMoreResults    bool
-	PrevStmt          string
-	Plan              string
-	PlanDigest        string
-	BinaryPlan        string
+	// plan information
+	PlanFromCache   bool
+	PlanFromBinding bool
+	HasMoreResults  bool
+	PrevStmt        string
+	Plan            string
+	PlanDigest      string
+	BinaryPlan      string
+	// execution detail information
+	UsedStats         *stmtctx.UsedStatsInfo
+	CopTasks          *execdetails.CopTasksDetails
 	RewriteInfo       RewritePhaseInfo
-	KVExecDetail      *util.ExecDetails
 	WriteSQLRespTotal time.Duration
+	KVExecDetail      *util.ExecDetails
+	ExecDetail        execdetails.ExecDetails
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
 	ResultRows        int64
-	IsExplicitTxn     bool
-	IsWriteCacheTable bool
-	UsedStats         *stmtctx.UsedStatsInfo
-	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
+	// resource information
 	ResourceGroupName string
 	RRU               float64
 	WRU               float64
 	WaitRUDuration    time.Duration
+	MemMax            int64
+	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
 }
 
