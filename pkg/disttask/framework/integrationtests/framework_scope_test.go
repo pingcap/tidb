@@ -139,10 +139,10 @@ func generateScopeCase(nodeCnt int, scopeCnt int) targetScopeCase {
 	scope := fmt.Sprintf("scope-%d", rand.Intn(100))
 
 	nodeScopes := make([]string, nodeCnt)
-	for i := 0; i < nodeCnt-scopeCnt; i++ {
+	for i := range nodeCnt - scopeCnt {
 		nodeScopes[i] = fmt.Sprintf("scope-%d", rand.Intn(100))
 	}
-	for i := 0; i < scopeCnt; i++ {
+	for i := range scopeCnt {
 		nodeScopes[nodeCnt-scopeCnt+i] = scope
 	}
 
@@ -153,7 +153,7 @@ func generateScopeCase(nodeCnt int, scopeCnt int) targetScopeCase {
 }
 
 func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.TestKit, testCase targetScopeCase, idx int, nodeCnt int) {
-	for i := 0; i < len(testCase.nodeScopes); i++ {
+	for i := range testCase.nodeScopes {
 		tk.MustExec(fmt.Sprintf("update mysql.dist_framework_meta set role = \"%s\" where host = \"%s\"", testCase.nodeScopes[i], c.GetNodeIDByIdx(i)))
 	}
 	ch := make(chan struct{})
@@ -182,9 +182,25 @@ func TestTargetScope(t *testing.T) {
 	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 	caseNum := 10
-	for i := 0; i < caseNum; i++ {
+	for i := range caseNum {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
 			runTargetScopeCase(t, c, tk, generateScopeCase(nodeCnt, 5), i, nodeCnt)
 		})
 	}
+}
+
+func TestTiDBMaxDistTaskNodesSettings(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set global tidb_max_dist_task_nodes=-1`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("-1"))
+	tk.MustExec(`set global tidb_max_dist_task_nodes=1`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_max_dist_task_nodes=128`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("128"))
+
+	tk.MustGetErrMsg(`set global tidb_max_dist_task_nodes=0`, "max_dist_task_nodes should be -1 or [1, 128]")
+	tk.MustExec(`set global tidb_max_dist_task_nodes=129`)
+	tk.MustQuery("select @@global.tidb_max_dist_task_nodes").Check(testkit.Rows("128"))
 }

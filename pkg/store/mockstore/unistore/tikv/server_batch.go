@@ -116,7 +116,7 @@ func (h *batchRequestHandler) collectAndSendResponse() error {
 			resp.appendTo(batchResp)
 		}
 		chLen := len(h.respCh)
-		for i := 0; i < chLen; i++ {
+		for range chLen {
 			resp := <-h.respCh
 			resp.appendTo(batchResp)
 		}

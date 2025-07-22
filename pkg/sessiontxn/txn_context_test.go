@@ -591,7 +591,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("use test")
 	se := tk.Session()
 
-	is1 := se.GetDomainInfoSchema()
+	is1 := se.GetLatestInfoSchema()
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
@@ -660,7 +660,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 
 	// stale read should not use plan cache
-	is2 := se.GetDomainInfoSchema()
+	is2 := se.GetLatestInfoSchema()
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("set @@tx_read_ts=''")
 	tk.MustExec("do sleep(0.1)")

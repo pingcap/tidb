@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -68,7 +68,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPo
 	if isExtraHandle {
 		end--
 	}
-	handle, err := colInfo.HandleCols.BuildHandleByDatums(row)
+	handle, err := colInfo.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, row)
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDMLSize := e.Ctx().GetSessionVars().DMLBatchSize
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.Ctx().GetSessionVars().BatchDelete && !e.Ctx().GetSessionVars().InTxn() &&
-		variable.EnableBatchDML.Load() && batchDMLSize > 0
+		vardef.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := exec.RetTypes(e.Children(0))
 	datumRow := make([]types.Datum, 0, len(fields))
 	chk := exec.TryNewCacheChunk(e.Children(0))
@@ -181,7 +181,7 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[handleInfoPair]()
 		}
-		handle, err := info.HandleCols.BuildHandleByDatums(joinedRow)
+		handle, err := info.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, joinedRow)
 		if err != nil {
 			return err
 		}
@@ -274,7 +274,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 		return err
 	}
 
-	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.ExtraPartialRowOption)
+	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesRowLayout)
 	if err != nil {
 		return err
 	}

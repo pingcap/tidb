@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
@@ -197,15 +197,15 @@ func TestGetDatum(t *testing.T) {
 	})
 
 	dummyColumnInfo := []*model.ColumnInfo{
-		{Name: pmodel.NewCIStr(ColDeadlockIDStr)},
-		{Name: pmodel.NewCIStr(ColOccurTimeStr)},
-		{Name: pmodel.NewCIStr(ColRetryableStr)},
-		{Name: pmodel.NewCIStr(ColTryLockTrxIDStr)},
-		{Name: pmodel.NewCIStr(ColCurrentSQLDigestStr)},
-		{Name: pmodel.NewCIStr(ColCurrentSQLDigestTextStr)},
-		{Name: pmodel.NewCIStr(ColKeyStr)},
-		{Name: pmodel.NewCIStr(ColKeyInfoStr)},
-		{Name: pmodel.NewCIStr(ColTrxHoldingLockStr)},
+		{Name: ast.NewCIStr(ColDeadlockIDStr)},
+		{Name: ast.NewCIStr(ColOccurTimeStr)},
+		{Name: ast.NewCIStr(ColRetryableStr)},
+		{Name: ast.NewCIStr(ColTryLockTrxIDStr)},
+		{Name: ast.NewCIStr(ColCurrentSQLDigestStr)},
+		{Name: ast.NewCIStr(ColCurrentSQLDigestTextStr)},
+		{Name: ast.NewCIStr(ColKeyStr)},
+		{Name: ast.NewCIStr(ColKeyInfoStr)},
+		{Name: ast.NewCIStr(ColTrxHoldingLockStr)},
 	}
 	res := getAllDatum(h, dummyColumnInfo)
 

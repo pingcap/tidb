@@ -75,8 +75,8 @@ run_br --pd $PD_ADDR backup db -s "local://$TEST_DIR/$DB/inc" --db $DB --lastbac
 
 # when we doing incremental backup, we should close domain in one shot session.
 # so we can check the log count of `one shot domain closed` to be 2.
-# we will call UseOneShotSession twice
-# 1. to get the value global variable.
+# we will call UseOneShotSession two times
+# 1. to get the value global variable once.
 # 2. to get all ddl jobs with session.
 one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
 one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)

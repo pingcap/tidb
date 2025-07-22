@@ -40,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
@@ -53,10 +53,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client/http"
@@ -169,10 +167,10 @@ func TestTestDataLockWaits(t *testing.T) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
-		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
 		// Invalid digests
-		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).EncodeTagWithKey([]byte(""))},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
 	tk := s.newTestKitWithRoot(t)
@@ -419,18 +417,18 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		user := "user" + strconv.Itoa(i)
 		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
 	}
 	tk.MustExec("flush privileges")
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tk := s.newTestKitWithRoot(t)
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				user := "user" + strconv.Itoa(j)
 				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 					Username: user,
@@ -730,7 +728,7 @@ select * from t1;
 	for _, quota := range memQuotas {
 		checkFn(quota)
 	}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		quota := rand.Int()%8192 + 1
 		checkFn(quota)
 	}
@@ -1054,7 +1052,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select (select sum(b) from t3 where t2.b=t3.a) from t1 join t2 where t1.a = t2.a and t1.c = ?`,
-			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), no_order_index(@`sel_2` `test`.`t3` `k_a`), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), order_index(@`sel_2` `test`.`t3` `k_a`)",
 			nil,
 		},
 
@@ -1103,7 +1101,7 @@ func TestQuickBinding(t *testing.T) {
 		prepStmt = fmt.Sprintf("prepare st from '%v'", sql)
 		nParam := strings.Count(sql, "?")
 		var x, y []string
-		for i := 0; i < nParam; i++ {
+		for i := range nParam {
 			x = append(x, fmt.Sprintf("@a%d=%v", i, randValue()))
 			y = append(y, fmt.Sprintf("@a%d", i))
 		}
@@ -1124,7 +1122,7 @@ func TestQuickBinding(t *testing.T) {
 
 		// normal test
 		sqlWithoutHint := removeHint(tc.template)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			testSQL := fillValues(sqlWithoutHint)
 			tk.MustExec(testSQL)
@@ -1134,7 +1132,7 @@ func TestQuickBinding(t *testing.T) {
 		}
 
 		// test with prepared / execute protocol
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			prepStmt, setStmt, execStmt := genPrepSQL(tc.template)
 			tk.MustExec(prepStmt)
@@ -1165,7 +1163,7 @@ func TestQuickBinding(t *testing.T) {
 
 			// normal test
 			sqlWithoutHint := removeHint(temp)
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				stmtsummary.StmtSummaryByDigestMap.Clear()
 				testSQL := fillValues(sqlWithoutHint)
 				tk.MustExec(testSQL)
@@ -1770,7 +1768,7 @@ func testIndexUsageTable(t *testing.T, clusterTable bool) {
 	tk.MustExec("create table t1(id1 int unique, id2 int unique)")
 	tk.MustExec("create table t2(id1 int unique, id2 int unique)")
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		for j := 1; j <= 2; j++ {
 			tk.MustExec(fmt.Sprintf("insert into t%d values (?, ?)", j), i, i)
 		}
@@ -1866,7 +1864,7 @@ func TestUnusedIndexView(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id1 int unique, id2 int unique)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -1901,18 +1899,18 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
 	bigID := tbl.Meta().ID * 10
 	bigTableName := ""
 	// set a hard limitation on 10000 to avoid using too much resource
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
 
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(bigTableName))
 		require.NoError(t, err)
 
 		require.LessOrEqual(t, tbl.Meta().ID, bigID)

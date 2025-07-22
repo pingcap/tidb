@@ -1,4 +1,4 @@
-create table `pt_case_0` (a int, b int, unique index idx(a) global) partition by hash(b) partitions 5;
+create table `pt_case_0` (a int, b int, unique index idx(a) global, index idx1(a) global) partition by hash(b) partitions 5;
 insert into `pt_case_0` values
 (0, 10),
 (1, 9),

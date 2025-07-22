@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -114,6 +114,16 @@ type ReaderOption struct {
 	EndOffset *int64
 	// PrefetchSize will switch to NewPrefetchReader if value is positive.
 	PrefetchSize int
+}
+
+type Copier interface {
+	// CopyFrom copies a object to the current external storage by the specification.
+	CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error
+}
+
+type CopySpec struct {
+	From string
+	To   string
 }
 
 // ExternalStorage represents a kind of file system storage.
@@ -304,7 +314,7 @@ func ReadDataInRange(
 	defer func() {
 		err := rd.Close()
 		if err != nil {
-			log.FromContext(ctx).Warn("failed to close reader", zap.Error(err))
+			logutil.Logger(ctx).Warn("failed to close reader", zap.Error(err))
 		}
 	}()
 	return io.ReadFull(rd, p)

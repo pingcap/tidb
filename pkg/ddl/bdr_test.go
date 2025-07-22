@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -479,7 +478,7 @@ func TestDeniedByBDR(t *testing.T) {
 	indexArgs := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Global:                  false,
-			IndexName:               pmodel.NewCIStr("idx1"),
+			IndexName:               ast.NewCIStr("idx1"),
 			IndexPartSpecifications: []*ast.IndexPartSpecification{{Length: 2}},
 			IndexOption:             &ast.IndexOption{},
 			HiddenCols:              nil,

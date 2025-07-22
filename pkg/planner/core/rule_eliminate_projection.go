@@ -195,7 +195,7 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 		if child, ok := p.Children()[0].(*logicalop.LogicalProjection); ok && !expression.ExprsHasSideEffects(child.Exprs) {
 			ctx := p.SCtx()
 			for i := range proj.Exprs {
-				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
+				proj.Exprs[i] = ruleutil.ReplaceColumnOfExpr(proj.Exprs[i], child.Exprs, child.Schema())
 				foldedExpr := expression.FoldConstant(ctx.GetExprCtx(), proj.Exprs[i])
 				// the folded expr should have the same null flag with the original expr, especially for the projection under union, so forcing it here.
 				foldedExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).SetFlag((foldedExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag() & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType(ctx.GetExprCtx().GetEvalCtx()).GetFlag() & mysql.NotNullFlag))
@@ -215,22 +215,6 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	}
 	appendProjEliminateTraceStep(proj, opt)
 	return p.Children()[0]
-}
-
-// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
-func ReplaceColumnOfExpr(expr expression.Expression, proj *logicalop.LogicalProjection, schema *expression.Schema) expression.Expression {
-	switch v := expr.(type) {
-	case *expression.Column:
-		idx := schema.ColumnIndex(v)
-		if idx != -1 && idx < len(proj.Exprs) {
-			return proj.Exprs[idx]
-		}
-	case *expression.ScalarFunction:
-		for i := range v.GetArgs() {
-			v.GetArgs()[i] = ReplaceColumnOfExpr(v.GetArgs()[i], proj, schema)
-		}
-	}
-	return expr
 }
 
 // Name implements the logicalOptRule.<1st> interface.

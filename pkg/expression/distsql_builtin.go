@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1147,6 +1146,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
+	case tipb.ScalarFuncSig_FTSMatchWord:
+		f = &builtinFtsMatchWordSig{base}
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e
@@ -1160,11 +1161,24 @@ func newDistSQLFunctionBySig(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *t
 	if err != nil {
 		return nil, err
 	}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	funcName := tipb.ScalarFuncSig_name[int32(sigCode)]
+	argTps := make([]types.EvalType, 0, len(args))
+	for _, arg := range args {
+		argTps = append(argTps, arg.GetType(ctx.GetEvalCtx()).EvalType())
+	}
+	ec, err := deriveCollation(ctx, funcName, args, f.getRetTp().EvalType(), argTps...)
+	if err != nil {
+		return nil, err
+	}
+	funcF := &ScalarFunction{
+		FuncName: ast.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-	}, nil
+	}
+	funcF.SetCoercibility(ec.Coer)
+	return funcF, nil
 }
 
 // PBToExprs converts pb structures to expressions.

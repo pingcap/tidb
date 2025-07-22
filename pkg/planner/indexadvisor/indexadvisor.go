@@ -46,8 +46,8 @@ type Option struct {
 }
 
 // AdviseIndexes is the entry point for the index advisor.
-func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
-	userSQLs []string, userOptions []ast.RecommendIndexOption) ([]*Recommendation, error) {
+func AdviseIndexes(ctx context.Context, sctx sessionctx.Context, userSQLs []string,
+	userOptions []ast.RecommendIndexOption) (results []*Recommendation, err error) {
 	advisorLogger().Info("fill index advisor option")
 	option := &Option{SpecifiedSQLs: userSQLs}
 	if err := fillOption(sctx, option, userOptions); err != nil {
@@ -92,7 +92,7 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	advisorLogger().Info("indexable columns filled", zap.Int("indexable-cols", indexableColSet.Size()))
 
 	// start the advisor
-	indexes, err := adviseIndexes(querySet, indexableColSet, opt, option)
+	indexes, allCandidates, err := adviseIndexes(querySet, indexableColSet, opt, option)
 	if err != nil {
 		advisorLogger().Error("advise indexes failed", zap.Error(err))
 		return nil, err
@@ -104,6 +104,31 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	saveRecommendations(sctx, results)
+
+	if len(results) == 0 {
+		indexableColsTmp := make([]string, 0, 5)
+		for _, col := range indexableColSet.ToList() {
+			indexableColsTmp = append(indexableColsTmp, col.Key())
+			if len(indexableColsTmp) >= 5 {
+				indexableColsTmp = append(indexableColsTmp, "...")
+				break
+			}
+		}
+		indexCandidatesTmp := make([]string, 0, 5)
+		for _, candidate := range allCandidates.ToList() {
+			indexCandidatesTmp = append(indexCandidatesTmp, candidate.Key())
+			if len(indexCandidatesTmp) >= 5 {
+				indexCandidatesTmp = append(indexCandidatesTmp, "...")
+				break
+			}
+		}
+
+		emptyResultExplanation := fmt.Sprintf(" Considered %v indexable columns(%v), "+
+			"%v or more index candidates(%v), no sufficiently beneficial indexes were found.",
+			indexableColSet.Size(), strings.Join(indexableColsTmp, ", "),
+			allCandidates.Size(), strings.Join(indexCandidatesTmp, ", "))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(emptyResultExplanation))
+	}
 
 	return results, nil
 }
@@ -247,10 +272,7 @@ func prepareRecommendation(indexes s.Set[Index], queries s.Set[Query], optimizer
 			return impacts[i].Improvement > impacts[j].Improvement
 		})
 
-		topN := 3
-		if topN > len(impacts) {
-			topN = len(impacts)
-		}
+		topN := min(3, len(impacts))
 		indexResult.TopImpactedQueries = impacts[:topN]
 		if workloadCostBefore == 0 { // avoid NaN
 			workloadCostBefore += 0.1
@@ -290,7 +312,7 @@ func gracefulIndexName(opt Optimizer, schema, tableName string, cols []string) s
 	if ok, _ := opt.IndexNameExist(schema, tableName, strings.ToLower(indexName)); !ok {
 		return indexName
 	}
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		indexName = fmt.Sprintf("idx_%v_%v", cols[0], i)
 		if len(indexName) > 64 {
 			indexName = indexName[:64]

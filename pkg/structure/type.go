@@ -102,13 +102,8 @@ func (t *TxStructure) EncodeHashDataKey(key []byte, field []byte) kv.Key {
 	return t.encodeHashDataKey(key, field)
 }
 
-func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
-	var (
-		key   []byte
-		field []byte
-		err   error
-		tp    uint64
-	)
+func (t *TxStructure) decodeHashDataKey(ek kv.Key) (key, field []byte, err error) {
+	var tp uint64
 
 	if !bytes.HasPrefix(ek, t.prefix) {
 		return nil, nil, errors.New("invalid encoded hash data key prefix")

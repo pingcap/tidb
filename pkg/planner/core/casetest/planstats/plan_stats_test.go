@@ -27,10 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -87,7 +88,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // PartitionTable
 			sql: "select * from pt where a < 15 and c > 1",
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				pua, ok := p.(*plannercore.PhysicalUnionAll)
+				pua, ok := p.(*physicalop.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
 					require.Greater(t, countFullStats(child.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
@@ -203,7 +204,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err)
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		testCase.check(p, tableInfo)
@@ -296,7 +297,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
@@ -392,7 +393,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	tblName2TblID := make(map[string]int64)
 	tblID2Tbl := make(map[int64]*model.TableInfo)
 	for _, tblName := range tableNames {
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(tblName))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
 		tblID2Tbl[tbl.Meta().ID] = tbl.Meta()

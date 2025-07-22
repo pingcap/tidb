@@ -45,10 +45,15 @@ type PlanContext interface {
 	GetStore() kv.Storage
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestInfoSchema returns the latest information schema.
+	// except schema of physical schema objects, the information schema returned
+	// also includes the temporary table definitions stored in session.
+	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestISWithoutSessExt is same as GetLatestInfoSchema, except that it
+	// does NOT include the temporary table definitions stored in session.
+	GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema
+	// IsCrossKS checks whether the current plan context is cross keyspace.
+	IsCrossKS() bool
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
@@ -72,6 +77,15 @@ type PlanContext interface {
 	GetRangerCtx() *rangerctx.RangerContext
 	// GetBuildPBCtx returns the context used in `ToPB` method.
 	GetBuildPBCtx() *BuildPBContext
+	// SetReadonlyUserVarMap sets the readonly user variable map.
+	SetReadonlyUserVarMap(readonlyUserVars map[string]struct{})
+	// GetReadonlyUserVarMap gets the readonly user variable map.
+	GetReadonlyUserVarMap() map[string]struct{}
+	// Reset reset the local context.
+	Reset()
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
@@ -81,6 +95,15 @@ type EmptyPlanContextExtended struct{}
 
 // AdviseTxnWarmup advises the txn to warm up.
 func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }
+
+// SetReadonlyUserVarMap sets the readonly user variable map.
+func (EmptyPlanContextExtended) SetReadonlyUserVarMap(map[string]struct{}) {}
+
+// GetReadonlyUserVarMap gets the readonly user variable map.
+func (EmptyPlanContextExtended) GetReadonlyUserVarMap() map[string]struct{} { return nil }
+
+// Reset implements the PlanContext interface.
+func (EmptyPlanContextExtended) Reset() {}
 
 // BuildPBContext is used to build the `*tipb.Executor` according to the plan.
 type BuildPBContext struct {

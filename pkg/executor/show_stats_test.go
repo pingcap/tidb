@@ -17,12 +17,14 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -368,9 +370,9 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
 
 	is := dom.InfoSchema()
-	t1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	t2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, null, '2021-10-20 08:00:00')", t1.Meta().ID, t1.Meta().Columns[0].ID))
 	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", t2.Meta().ID, t2.Meta().Columns[0].ID))
@@ -421,7 +423,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][8])
 	serverInfo, err := infosync.GetServerInfo()
 	require.NoError(t, err)
-	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	addr := net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
 	require.Equal(t, addr, rows[0][9])
 	require.Equal(t, "<nil>", rows[0][10])
 

@@ -106,7 +106,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			if newJoin == nil {
 				continue
 			}
-			_, err := newJoin.RecursiveDeriveStats(nil)
+			_, _, err := newJoin.RecursiveDeriveStats(nil)
 			if err != nil {
 				return nil, err
 			}
@@ -139,7 +139,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
-		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		s.curJoinGroup = slices.Delete(s.curJoinGroup, bestIdx, bestIdx+1)
 		s.otherConds = finalRemainOthers
 	}
 	return curJoinTree, nil

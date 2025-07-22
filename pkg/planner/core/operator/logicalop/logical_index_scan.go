@@ -94,7 +94,7 @@ func (is *LogicalIndexScan) ExplainInfo() string {
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.PKOrUK = nil
-	for _, path := range is.Source.PossibleAccessPaths {
+	for _, path := range is.Source.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}
@@ -123,7 +123,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ []bool) (*property.StatsInfo, bool, error) {
 	return utilfuncp.DeriveStats4LogicalIndexScan(is, selfSchema)
 }
 

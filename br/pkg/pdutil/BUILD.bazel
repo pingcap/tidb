@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/httputil",
+        "//pkg/kv",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",
         "//pkg/util/codec",
@@ -23,7 +24,9 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
-        "@com_github_tikv_pd_client//retry",
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
+        "@com_github_tikv_pd_client//pkg/retry",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
     ],
@@ -40,6 +43,7 @@ go_test(
     flaky = True,
     shard_count = 4,
     deps = [
+        "//pkg/kv",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit/testsetup",
         "@com_github_coreos_go_semver//semver",

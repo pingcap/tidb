@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -42,7 +42,7 @@ func TestTableSampleBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
 
 	tk.MustExec("insert into t values (0), (1000), (2000);")
@@ -57,7 +57,7 @@ func TestTableSampleBasic(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a BIGINT PRIMARY KEY AUTO_RANDOM(3), b int auto_increment, key(b)) pre_split_regions=8;")
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		tk.MustExec("insert into t values();")
 	}
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("8"))
@@ -73,7 +73,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
@@ -82,7 +82,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 	tk.MustQuery("select a from t tablesample regions() where a = 0;").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t2 (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t2 values (?);", i)
 	}
 	rows = tk.MustQuery("select * from t tablesample regions(), t2 tablesample regions();").Rows()
@@ -123,7 +123,7 @@ func TestMaxChunkSize(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	tk.Session().GetSessionVars().MaxChunkSize = 1

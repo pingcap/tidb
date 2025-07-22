@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -38,7 +38,7 @@ func TestEnforceMPP(t *testing.T) {
 
 	// test query
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("create index idx on t(a)")
@@ -53,7 +53,7 @@ func TestEnforceMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
 	testkit.SetTiFlashReplica(t, dom, db.Name.L, "t")
 	testkit.SetTiFlashReplica(t, dom, db.Name.L, "s")
@@ -106,7 +106,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 
 	// test query
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as (a+1), c enum('xx', 'yy'), d bit(1))")
 	tk.MustExec("create index idx on t(a)")
@@ -131,7 +131,7 @@ func TestEnforceMPPWarning1(t *testing.T) {
 			// Create virtual tiflash replica info.
 			dom := domain.GetDomain(tk.Session())
 			is := dom.InfoSchema()
-			tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -163,14 +163,14 @@ func TestEnforceMPPWarning2(t *testing.T) {
 
 	// test query
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int, b char(20)) PARTITION BY HASH(a)")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -211,14 +211,14 @@ func TestEnforceMPPWarning3(t *testing.T) {
 
 	// test query
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int, b char(20))")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -268,7 +268,8 @@ func TestEnforceMPPWarning4(t *testing.T) {
 
 	// test table
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
+	tk.MustExec("set tidb_hash_join_version=optimized")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t(a int primary key)")
 	tk.MustExec("drop table if exists s")
@@ -313,7 +314,7 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 
 	// test table
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists c")
 	tk.MustExec("drop table if exists o")
 	tk.MustExec("create table c(c_id bigint)")
@@ -366,7 +367,7 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 
 	// test table
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b bigint not null, c bigint, d date, e varchar(20))")
 	// since allow-mpp is adjusted to false, there will be no physical plan if TiFlash cop is banned.
@@ -375,7 +376,7 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -416,14 +417,14 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 
 	// test table
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b bigint not null, c bigint, d date, e varchar(20) collate utf8mb4_general_ci)")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,

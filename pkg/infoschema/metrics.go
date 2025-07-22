@@ -24,6 +24,7 @@ type sieveStatusHookImpl struct {
 	hit   prometheus.Counter
 	miss  prometheus.Counter
 
+	objCnt   prometheus.Gauge
 	memUsage prometheus.Gauge
 	memLimit prometheus.Gauge
 }
@@ -34,6 +35,7 @@ func newSieveStatusHookImpl() *sieveStatusHookImpl {
 		hit:   metrics.InfoSchemaV2CacheCounter.WithLabelValues("hit"),
 		miss:  metrics.InfoSchemaV2CacheCounter.WithLabelValues("miss"),
 
+		objCnt:   metrics.InfoSchemaV2CacheObjCnt,
 		memUsage: metrics.InfoSchemaV2CacheMemUsage,
 		memLimit: metrics.InfoSchemaV2CacheMemLimit,
 	}
@@ -51,8 +53,9 @@ func (s *sieveStatusHookImpl) onMiss() {
 	s.miss.Inc()
 }
 
-func (s *sieveStatusHookImpl) onUpdateSize(size uint64) {
+func (s *sieveStatusHookImpl) onUpdate(size uint64, count uint64) {
 	s.memUsage.Set(float64(size))
+	s.objCnt.Set(float64(count))
 }
 
 func (s *sieveStatusHookImpl) onUpdateLimit(limit uint64) {

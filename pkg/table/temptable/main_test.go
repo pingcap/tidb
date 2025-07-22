@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -76,10 +76,10 @@ func (is *mockedInfoSchema) TableByID(_ context.Context, tblID int64) (table.Tab
 
 	tblInfo := &model.TableInfo{
 		ID:   tblID,
-		Name: pmodel.NewCIStr(fmt.Sprintf("tb%d", tblID)),
+		Name: ast.NewCIStr(fmt.Sprintf("tb%d", tblID)),
 		Columns: []*model.ColumnInfo{{
 			ID:        1,
-			Name:      pmodel.NewCIStr("col1"),
+			Name:      ast.NewCIStr("col1"),
 			Offset:    0,
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			State:     model.StatePublic,
@@ -130,7 +130,7 @@ func newMockedRetriever(t *testing.T) *mockedRetriever {
 func (r *mockedRetriever) SetData(data []*kv.Entry) *mockedRetriever {
 	lessFunc := func(i, j *kv.Entry) int { return bytes.Compare(i.Key, j.Key) }
 	if !slices.IsSortedFunc(data, lessFunc) {
-		data = append([]*kv.Entry{}, data...)
+		data = slices.Clone(data)
 		slices.SortFunc(data, lessFunc)
 	}
 
@@ -223,7 +223,7 @@ func (r *mockedRetriever) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iter
 	r.checkMethodInvokeAllowed("IterReverse")
 	if err = r.getMethodErr("IterReverse"); err == nil {
 		data := make([]*kv.Entry, 0)
-		for i := 0; i < len(r.data); i++ {
+		for i := range r.data {
 			item := r.data[len(r.data)-i-1]
 			if (len(k) == 0 || bytes.Compare(item.Key, k) < 0) && (len(lowerBound) == 0 || bytes.Compare(item.Key, lowerBound) >= 0) {
 				data = append(data, item)

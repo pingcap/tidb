@@ -19,7 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,12 +35,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -100,11 +99,11 @@ func TestCreateTableWithPartition(t *testing.T) {
 	);`)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tp"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	require.Equal(t, pmodel.PartitionTypeRange, part.Type)
+	require.Equal(t, ast.PartitionTypeRange, part.Type)
 	require.Equal(t, "`a`", part.Expr)
 	for _, pdef := range part.Definitions {
 		require.Greater(t, pdef.ID, int64(0))
@@ -764,7 +763,7 @@ create table log_message_1 (
 func generatePartitionTableByNum(num int) string {
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024))
 	buf.WriteString("create table gen_t (id int) partition by list  (id) (")
-	for i := 0; i < num; i++ {
+	for i := range num {
 		if i > 0 {
 			buf.WriteString(",")
 		}
@@ -931,7 +930,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		tblInfo := tbl.Meta()
 		require.NotNil(t, tblInfo.Partition)
 		require.True(t, tblInfo.Partition.Enable)
-		require.Equal(t, pmodel.PartitionTypeList, tblInfo.Partition.Type)
+		require.Equal(t, ast.PartitionTypeList, tblInfo.Partition.Type)
 	}
 }
 
@@ -1141,7 +1140,7 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 		tblInfo := tbl.Meta()
 		require.NotNil(t, tblInfo.Partition)
 		require.Equal(t, true, tblInfo.Partition.Enable)
-		require.True(t, tblInfo.Partition.Type == pmodel.PartitionTypeList)
+		require.True(t, tblInfo.Partition.Type == ast.PartitionTypeList)
 	}
 }
 
@@ -1162,10 +1161,10 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	require.True(t, part.Type == pmodel.PartitionTypeList)
+	require.True(t, part.Type == ast.PartitionTypeList)
 	require.Len(t, part.Definitions, 3)
 	require.Equal(t, [][]string{{"3"}, {"4"}}, part.Definitions[1].InValues)
-	require.Equal(t, pmodel.NewCIStr("p1"), part.Definitions[1].Name)
+	require.Equal(t, ast.NewCIStr("p1"), part.Definitions[1].Name)
 	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
 	sql := "alter table t truncate partition p10;"
@@ -1193,10 +1192,10 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	require.True(t, part.Type == pmodel.PartitionTypeList)
+	require.True(t, part.Type == ast.PartitionTypeList)
 	require.Len(t, part.Definitions, 3)
 	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
-	require.Equal(t, pmodel.NewCIStr("p1"), part.Definitions[1].Name)
+	require.Equal(t, ast.NewCIStr("p1"), part.Definitions[1].Name)
 	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
 	sql := "alter table t truncate partition p10;"
@@ -1233,11 +1232,11 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 	tk.MustExec(`alter table t2 truncate partition p3`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 }
 
 func TestCreateTableWithKeyPartition(t *testing.T) {
@@ -1423,7 +1422,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
 
 	tk2 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test`)
+	tk4.MustExec(`use test`)
 	tk2.MustExec(`begin`)
 	tk2.MustExec(`insert into test_global values (5,5,5)`)
 
@@ -1442,6 +1443,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 				v2 := dom.InfoSchema().SchemaMetaVersion()
 				if v2 > v1 {
 					// Also wait for the new infoschema loading
+					v1 = v2
 					break
 				}
 			}
@@ -1453,9 +1455,10 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tkTmp.MustExec(`begin`)
 	tkTmp.MustExec("use test")
 	tkTmp.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+	// Begin txn before tx2 rollbcak to let mdl block ddl job state.
+	tk4.MustExec(`begin`)
 	tk2.MustExec(`rollback`)
-	tk2.MustExec(`begin`)
-	tk2.MustExec(`insert into test_global values (5,5,5)`)
+	tk4.MustExec(`insert into test_global values (5,5,5)`)
 	tkTmp.MustExec(`rollback`)
 	waitFor(4, "delete only")
 	tk3 := testkit.NewTestKit(t, store)
@@ -1468,13 +1471,12 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
-	tk2.MustExec(`commit`)
+	tk4.MustExec(`commit`)
 	waitFor(4, "delete reorganization")
 	tk2.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk2.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.NoError(t, err)
-	tk2.MustExec(`begin`)
 	tk3.MustExec(`commit`)
 	tk.MustExec(`commit`)
 	<-syncChan
@@ -2130,8 +2132,7 @@ func TestAddPartitionTooManyPartitions(t *testing.T) {
 }
 
 func waitGCDeleteRangeDone(t *testing.T, tk *testkit.TestKit, physicalID int64) bool {
-	var i int
-	for i = 0; i < waitForCleanDataRound; i++ {
+	for range waitForCleanDataRound {
 		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", physicalID)
 		require.NoError(t, err)
 		rows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
@@ -2186,7 +2187,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	// Test truncate common table.
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (id int(11));")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t1 values (?)", i)
 	}
 	result := tk.MustQuery("select count(*) from t1;")
@@ -2198,7 +2199,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	// Test drop common table.
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (id int(11));")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t2 values (?)", i)
 	}
 	result = tk.MustQuery("select count(*) from t2;")
@@ -2235,7 +2236,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	result.Check(testkit.Rows("10"))
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	oldTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	// Only one partition id test is taken here.
 	tk.MustExec("truncate table t3;")
@@ -2270,7 +2271,7 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	result = tk.MustQuery("select count(*) from t4; ")
 	result.Check(testkit.Rows("10"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
+	oldTblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
 	// Only one partition id test is taken here.
 	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
@@ -2293,13 +2294,13 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
     	partition p5 values less than (2015)
    	);`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t5"))
+	oldTblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t5"))
 	require.NoError(t, err)
 	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
 
 	tk.MustExec("truncate table t5;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t5"))
+	newTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t5"))
 	require.NoError(t, err)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	require.True(t, oldPID != newPID)
@@ -2314,17 +2315,17 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	partition by hash( month(signed) )
 	partitions 12;`)
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("clients"))
+	oldTblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("clients"))
 	require.NoError(t, err)
 	oldDefs := oldTblInfo.Meta().Partition.Definitions
 
 	// Test truncate `hash partitioned table` reassigns new partitionIDs.
 	tk.MustExec("truncate table clients;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("clients"))
+	newTblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("clients"))
 	require.NoError(t, err)
 	newDefs := newTblInfo.Meta().Partition.Definitions
-	for i := 0; i < len(oldDefs); i++ {
+	for i := range oldDefs {
 		require.True(t, oldDefs[i].ID != newDefs[i].ID)
 	}
 }
@@ -2363,7 +2364,7 @@ func testPartitionDropIndex(t *testing.T, store kv.Storage, lease time.Duration,
    	);`)
 
 	num := 20
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into partition_drop_idx values (?, ?, ?)", i, i, i)
 	}
 	tk.MustExec(addIdxSQL)
@@ -2447,7 +2448,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 
 	f := func(end int, isPK bool) string {
 		dml := "insert into partition_add_idx values"
-		for i := 0; i < end; i++ {
+		for i := range end {
 			dVal := 1988 + rand.Intn(30)
 			if isPK {
 				dVal = 1518 + i
@@ -2473,7 +2474,7 @@ func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tt, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("partition_add_idx"))
+	tt, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partition_add_idx"))
 	require.NoError(t, err)
 	var idx1 table.Index
 	for _, idx := range tt.Indices() {
@@ -2541,7 +2542,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	}
 
 	// check records num after drop database.
-	for i := 0; i < waitForCleanDataRound; i++ {
+	for range waitForCleanDataRound {
 		recordsNum = getPartitionTableRecordsNum(t, ctx, tbl.(table.PartitionedTable))
 		if recordsNum == 0 {
 			break
@@ -2754,7 +2755,7 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
 	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
-	originErrCountLimit := variable.GetDDLErrorCountLimit()
+	originErrCountLimit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", originErrCountLimit))
@@ -2814,9 +2815,9 @@ func TestReorgPartitionTiFlash(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
 	pids := p.GetAllPartitionIDs()
-	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
+	slices.Sort(pids)
 	availablePids := tbl.Meta().TiFlashReplica.AvailablePartitionIDs
-	sort.Slice(availablePids, func(i, j int) bool { return availablePids[i] < availablePids[j] })
+	slices.Sort(availablePids)
 	require.Equal(t, pids, availablePids)
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWaitTiFlashReplicaOK", `return(true)`))
 	defer func() {
@@ -3216,31 +3217,31 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk2.MustExec(`insert into t values (null, 26)`)
 	tk3.MustExec(`COMMIT`)
 	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"35 34 22",
 		"39 38 24",
 		"43 42 26"))
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",
@@ -3250,16 +3251,16 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	waitFor(4, "t", "public")
 	tk2.MustExec(`commit`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11",
+		"14 2 2",
+		"15 12 12",
+		"17 16 18",
+		"19 18 4",
+		"21 20 5",
+		"23 22 6",
+		"25 24 7",
 		"27 26 8",
-		"30012 12 12",
-		"30013 18 4",
-		"30014 24 7",
-		"30015 16 18",
-		"30016 22 6",
-		"30017 28 9",
-		"30018 11 11",
-		"30019 2 2",
-		"30020 20 5",
+		"29 28 9",
 		"31 30 10",
 		"33 32 21",
 		"35 34 22",
@@ -3280,7 +3281,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		first partition less than ('2023-01-01')
 		last partition less than ('2023-01-03');`)
 	ctx := tk.Session()
-	tbl, err := domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pd := tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3289,7 +3290,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-03 00:00:00'", pd[2].LessThan[0])
 	tk.MustExec("alter table t last partition less than ('2024-01-04')")
 	tk.MustExec("alter table t last partition less than ('2025-01-01 00:00:00')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 732, len(pd))
@@ -3305,7 +3306,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		interval (2 day)
 		first partition less than ('2023-01-01')
 		last partition less than ('2023-01-05');`)
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3314,7 +3315,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
 	tk.MustExec("alter table t2 last partition less than ('2023-01-09')")
 	tk.MustExec("alter table t2 last partition less than ('2023-01-11 00:00:00')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 6, len(pd))
@@ -3331,7 +3332,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		interval (2 day)
 		first partition less than ('2023-01-01 12:01:02')
 		last partition less than ('2023-01-05 12:01:02');`)
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3339,7 +3340,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-03 12:01:02'", pd[1].LessThan[0])
 	require.Equal(t, "'2023-01-05 12:01:02'", pd[2].LessThan[0])
 	tk.MustExec("alter table t3 last partition less than ('2023-01-09 12:01:02')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 5, len(pd))
@@ -3355,7 +3356,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		interval (48 hour)
 		first partition less than ('2023-01-01')
 		last partition less than ('2023-01-05');`)
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 3, len(pd))
@@ -3363,7 +3364,7 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	require.Equal(t, "'2023-01-03 00:00:00'", pd[1].LessThan[0])
 	require.Equal(t, "'2023-01-05 00:00:00'", pd[2].LessThan[0])
 	tk.MustExec("alter table t4 last partition less than ('2023-01-09 00:00:00')")
-	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
+	tbl, err = domain.GetDomain(ctx).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
 	pd = tbl.Meta().Partition.Definitions
 	require.Equal(t, 5, len(pd))

@@ -43,7 +43,7 @@ go_test(
         ":exec",
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/statistics/handle/usage/indexusage",

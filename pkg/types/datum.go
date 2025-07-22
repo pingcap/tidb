@@ -20,10 +20,9 @@ import (
 	gjson "encoding/json"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -310,7 +310,7 @@ func (d *Datum) GetBinaryLiteral4Cmp() BinaryLiteral {
 	if bitLen == 0 {
 		return d.b
 	}
-	for i := 0; i < bitLen; i++ {
+	for i := range bitLen {
 		// Remove the prefix 0 in the bit array.
 		if d.b[i] != 0 {
 			return d.b[i:]
@@ -1189,6 +1189,8 @@ func (d *Datum) convertToString(ctx Context, target *FieldType) (Datum, error) {
 		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.
 		val, err := d.GetBinaryLiteral().ToInt(ctx)
+		// The length of BIT is limited to 64, so this function will never fail / truncated.
+		intest.AssertNoError(err)
 		if err != nil {
 			s = d.GetBinaryLiteral().ToString()
 		} else {
@@ -2403,44 +2405,26 @@ func MaxValueDatum() Datum {
 
 // SortDatums sorts a slice of datum.
 func SortDatums(ctx Context, datums []Datum) error {
-	sorter := datumsSorter{datums: datums, ctx: ctx}
-	sort.Sort(&sorter)
-	return sorter.err
-}
-
-type datumsSorter struct {
-	datums []Datum
-	ctx    Context
-	err    error
-}
-
-func (ds *datumsSorter) Len() int {
-	return len(ds.datums)
-}
-
-func (ds *datumsSorter) Less(i, j int) bool {
-	cmp, err := ds.datums[i].Compare(ds.ctx, &ds.datums[j], collate.GetCollator(ds.datums[i].Collation()))
+	var err error
+	slices.SortFunc(datums, func(a, b Datum) int {
+		var cmp int
+		cmp, err = a.Compare(ctx, &b, collate.GetCollator(b.Collation()))
+		if err != nil {
+			return 0
+		}
+		return cmp
+	})
 	if err != nil {
-		ds.err = errors.Trace(err)
-		return true
+		err = errors.Trace(err)
 	}
-	return cmp < 0
+	return err
 }
-
-func (ds *datumsSorter) Swap(i, j int) {
-	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
-}
-
-var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
 
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	n := len(datums)
-	builder := strBuilderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		strBuilderPool.Put(builder)
-	}()
+	builder := &strings.Builder{}
+	builder.Grow(8 * n)
 	if n > 1 {
 		builder.WriteString("(")
 	}

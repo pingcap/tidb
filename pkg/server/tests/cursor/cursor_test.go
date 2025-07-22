@@ -21,13 +21,17 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"testing"
+	"time"
 
 	mysqlcursor "github.com/YangKeao/go-mysql-driver"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	server2 "github.com/pingcap/tidb/pkg/server"
+	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -55,7 +59,7 @@ func TestCursorFetchErrorInFetch(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, payload BLOB)")
 	payload := make([]byte, 512)
-	for i := 0; i < 2048; i++ {
+	for i := range 2048 {
 		rand.Read(payload)
 		tk.MustExec("insert into t values (?, ?)", i, payload)
 	}
@@ -181,7 +185,7 @@ func runTestConcurrentExecuteAndFetch(t *testing.T, lazy bool) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -256,7 +260,7 @@ func TestSerialLazyExecuteAndFetch(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -319,7 +323,7 @@ func TestLazyExecuteProjection(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -381,7 +385,7 @@ func TestLazyExecuteSelection(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -443,7 +447,7 @@ func TestLazyExecuteWithParam(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "create table t1(id int primary key, v int)", nil)
 	require.NoError(t, err)
 	rowCount := 1000
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		_, err = conn.ExecContext(context.Background(), fmt.Sprintf("insert into t1 values(%d, %d)", i, i), nil)
 		require.NoError(t, err)
 	}
@@ -505,4 +509,52 @@ outerLoop:
 			}
 		}
 	}
+}
+
+func TestCursorExceedQuota(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.TempStoragePath = t.TempDir()
+
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.TempStorageQuota = 1000
+	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.TempStorageQuota)
+	ts := servertestkit.CreateTidbTestSuiteWithCfg(t, cfg)
+
+	mysqldriver := &mysqlcursor.MySQLDriver{}
+	rawConn, err := mysqldriver.Open(ts.GetDSNWithCursor(10))
+	require.NoError(t, err)
+	conn := rawConn.(mysqlcursor.Connection)
+
+	_, err = conn.ExecContext(context.Background(), "drop table if exists t1", nil)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "CREATE TABLE `t1` (`c1` varchar(100));", nil)
+	require.NoError(t, err)
+	rowCount := 1000
+	for range rowCount {
+		_, err = conn.ExecContext(context.Background(), "insert into t1 (c1) values ('201801');", nil)
+		require.NoError(t, err)
+	}
+
+	_, err = conn.ExecContext(context.Background(), "set tidb_mem_quota_query = 1;", nil)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "set global tidb_enable_tmp_storage_on_oom = 'ON'", nil)
+	require.NoError(t, err)
+
+	rawStmt, err := conn.Prepare("SELECT * FROM test.t1")
+	require.NoError(t, err)
+	stmt := rawStmt.(mysqlcursor.Statement)
+
+	_, err = stmt.QueryContext(context.Background(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Out Of Quota For Local Temporary Space!")
+
+	require.NoError(t, conn.Close())
+
+	time.Sleep(time.Second)
+
+	tempStoragePath := cfg.TempStoragePath
+	files, err := os.ReadDir(tempStoragePath)
+	require.NoError(t, err)
+	require.Empty(t, files)
 }

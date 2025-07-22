@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -25,132 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
-
-func TestTxnScopeConstraint(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop placement policy if exists p2")
-	defer func() {
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop placement policy if exists p1")
-		tk.MustExec("drop placement policy if exists p2")
-	}()
-
-	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
-	tk.MustExec("create placement policy p2 follower_constraints='[+zone=sh]'")
-	tk.MustExec(`create table t1 (c int)
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6),
-	PARTITION p1 VALUES LESS THAN (11),
-	PARTITION p2 VALUES LESS THAN (16),
-	PARTITION p3 VALUES LESS THAN (21)
-);`)
-
-	is := dom.InfoSchema()
-
-	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
-	require.NoError(t, err)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-
-	for _, def := range partDefs {
-		if def.Name.String() == "p0" {
-			tk.MustExec("alter table t1 partition p0 placement policy p1")
-		} else if def.Name.String() == "p2" {
-			tk.MustExec("alter table t1 partition p2 placement policy p2")
-		}
-	}
-
-	testCases := []struct {
-		name              string
-		sql               string
-		txnScope          string
-		zone              string
-		disableAutoCommit bool
-		err               error
-	}{
-		{
-			name:     "Insert into PARTITION p0 with global txnScope",
-			sql:      "insert into t1 (c) values (1)",
-			txnScope: "global",
-			zone:     "",
-			err:      nil,
-		},
-		{
-			name:     "insert into PARTITION p0 with wrong txnScope",
-			sql:      "insert into t1 (c) values (1)",
-			txnScope: "local",
-			zone:     "bj",
-			err:      fmt.Errorf(".*out of txn_scope.*"),
-		},
-		{
-			name:     "insert into PARTITION p1 with local txnScope",
-			sql:      "insert into t1 (c) values (10)",
-			txnScope: "local",
-			zone:     "bj",
-			err:      fmt.Errorf(".*doesn't have placement policies with txn_scope.*"),
-		},
-		{
-			name:     "insert into PARTITION p1 with global txnScope",
-			sql:      "insert into t1 (c) values (10)",
-			txnScope: "global",
-			err:      nil,
-		},
-		{
-			name:     "insert into PARTITION p2 with local txnScope",
-			sql:      "insert into t1 (c) values (15)",
-			txnScope: "local",
-			zone:     "bj",
-			err:      fmt.Errorf(".*leader placement policy is not defined.*"),
-		},
-		{
-			name:     "insert into PARTITION p2 with global txnScope",
-			sql:      "insert into t1 (c) values (15)",
-			txnScope: "global",
-			zone:     "",
-			err:      nil,
-		},
-		{
-			name:              "insert into PARTITION p0 with wrong txnScope and autocommit off",
-			sql:               "insert into t1 (c) values (1)",
-			txnScope:          "local",
-			zone:              "bj",
-			disableAutoCommit: true,
-			err:               fmt.Errorf(".*out of txn_scope.*"),
-		},
-	}
-
-	for _, testcase := range testCases {
-		failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone))
-		tk.MustExec("use test")
-		tk.MustExec("set global tidb_enable_local_txn = on;")
-		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
-		if testcase.disableAutoCommit {
-			tk.MustExec("set @@autocommit = 0")
-			tk.MustExec("begin")
-			tk.MustExec(testcase.sql)
-			err = tk.ExecToErr("commit")
-		} else {
-			err = tk.ExecToErr(testcase.sql)
-		}
-		if testcase.err == nil {
-			require.NoError(t, err)
-		} else {
-			require.Error(t, err)
-			require.Regexp(t, testcase.err.Error(), err.Error())
-		}
-		tk.MustExec("set global tidb_enable_local_txn = off;")
-		failpoint.Disable("tikvclient/injectTxnScope")
-	}
-}
 
 func TestCreateSchemaWithPlacement(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -188,7 +66,7 @@ func TestCreateSchemaWithPlacement(t *testing.T) {
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='SchemaPolicyPlacementTest' AND TABLE_NAME = 'UsePolicy'").Check(testkit.Rows(`def SchemaPolicyPlacementTest UsePolicy PolicyTableTest`))
 
 	is := dom.InfoSchema()
-	db, ok := is.SchemaByName(pmodel.NewCIStr("SchemaPolicyPlacementTest"))
+	db, ok := is.SchemaByName(ast.NewCIStr("SchemaPolicyPlacementTest"))
 	require.True(t, ok)
 	require.NotNil(t, db.PlacementPolicyRef)
 	require.Equal(t, "PolicySchemaTest", db.PlacementPolicyRef.Name.O)
@@ -311,7 +189,7 @@ func TestPlacementMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
-	existPolicy, ok := dom.InfoSchema().PolicyByName(pmodel.NewCIStr("p1"))
+	existPolicy, ok := dom.InfoSchema().PolicyByName(ast.NewCIStr("p1"))
 	require.True(t, ok)
 
 	// invalid values
@@ -349,7 +227,7 @@ func TestPlacementMode(t *testing.T) {
 
 	// create placement policy in ignore mode (policy name not exists)
 	newPolicy = existPolicy.Clone()
-	newPolicy.Name = pmodel.NewCIStr("p3")
+	newPolicy.Name = ast.NewCIStr("p3")
 	newPolicy.Followers = 8
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDLExecutor().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy, ddl.OnExistError)
@@ -534,9 +412,9 @@ func TestPlacementMode(t *testing.T) {
 	tbl, err := getClonedTableFromDomain("test", "t1", dom)
 	require.NoError(t, err)
 	require.NotNil(t, tbl.PlacementPolicyRef)
-	tbl.Name = pmodel.NewCIStr("t2")
+	tbl.Name = ast.NewCIStr("t2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDLExecutor().CreateTableWithInfo(tk.Session(), pmodel.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
+	err = dom.DDLExecutor().CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -547,10 +425,10 @@ func TestPlacementMode(t *testing.T) {
 	tbl, err = getClonedTableFromDomain("test", "t1", dom)
 	require.NoError(t, err)
 	require.NotNil(t, tbl.PlacementPolicyRef)
-	tbl.Name = pmodel.NewCIStr("t2")
-	tbl.PlacementPolicyRef.Name = pmodel.NewCIStr("pxx")
+	tbl.Name = ast.NewCIStr("t2")
+	tbl.PlacementPolicyRef.Name = ast.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = dom.DDLExecutor().CreateTableWithInfo(tk.Session(), pmodel.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
+	err = dom.DDLExecutor().CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tbl, nil, ddl.WithOnExist(ddl.OnExistError))
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -561,7 +439,7 @@ func TestPlacementMode(t *testing.T) {
 	db1, ok := getClonedDatabaseFromDomain("db1", dom)
 	require.True(t, ok)
 	require.NotNil(t, db1.PlacementPolicyRef)
-	db1.Name = pmodel.NewCIStr("db2")
+	db1.Name = ast.NewCIStr("db2")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDLExecutor().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
@@ -572,8 +450,8 @@ func TestPlacementMode(t *testing.T) {
 	db1, ok = getClonedDatabaseFromDomain("db1", dom)
 	require.True(t, ok)
 	require.NotNil(t, db1.PlacementPolicyRef)
-	db1.Name = pmodel.NewCIStr("db2")
-	db1.PlacementPolicyRef.Name = pmodel.NewCIStr("pxx")
+	db1.Name = ast.NewCIStr("db2")
+	db1.PlacementPolicyRef.Name = ast.NewCIStr("pxx")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDLExecutor().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
@@ -581,7 +459,7 @@ func TestPlacementMode(t *testing.T) {
 }
 
 func checkTiflashReplicaSet(t *testing.T, do *domain.Domain, db, tb string, cnt uint64) {
-	tbl, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tb))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tb))
 	require.NoError(t, err)
 
 	tiflashReplica := tbl.Meta().TiFlashReplica
@@ -728,7 +606,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 }
 
 func getClonedTableFromDomain(dbName string, tableName string, dom *domain.Domain) (*model.TableInfo, error) {
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
 	if err != nil {
 		return nil, err
 	}
@@ -741,7 +619,7 @@ func getClonedTableFromDomain(dbName string, tableName string, dom *domain.Domai
 }
 
 func getClonedDatabaseFromDomain(dbName string, dom *domain.Domain) (*model.DBInfo, bool) {
-	db, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr(dbName))
 	if !ok {
 		return nil, ok
 	}

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -445,11 +443,11 @@ func TestGetSnapshot(t *testing.T) {
 }
 
 func TestSnapshotInterceptor(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tmp1"))
+	tbl, err := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tmp1"))
 	require.NoError(t, err)
 	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
 	tblID := tbl.Meta().ID

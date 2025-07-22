@@ -47,6 +47,7 @@ func TestShowBackupQuery(t *testing.T) {
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 
 	log.SetLevel(zapcore.ErrorLevel)
+	defer log.SetLevel(zapcore.InfoLevel)
 	tk.MustExec("use test;")
 	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")
@@ -138,7 +139,7 @@ func TestExistedTables(t *testing.T) {
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
@@ -202,7 +203,7 @@ func TestExistedTables(t *testing.T) {
 	case <-done:
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
@@ -215,7 +216,7 @@ func TestExistedTablesOfIncremental(t *testing.T) {
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
@@ -227,7 +228,7 @@ func TestExistedTablesOfIncremental(t *testing.T) {
 	backupTs := res.Rows()[0][2].(string)
 
 	// write incremental data
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
 	}
@@ -237,7 +238,7 @@ func TestExistedTablesOfIncremental(t *testing.T) {
 	_ = tk.MustQuery(IncrementalBackupQuery)
 
 	// clean up tables
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
@@ -250,7 +251,7 @@ func TestExistedTablesOfIncremental(t *testing.T) {
 	restoreIncrementalQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s/incremental'", sqlTmp)
 	_ = tk.MustQuery(restoreIncrementalQuery)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
@@ -263,7 +264,7 @@ func TestExistedTablesOfIncremental_1(t *testing.T) {
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
@@ -275,7 +276,7 @@ func TestExistedTablesOfIncremental_1(t *testing.T) {
 	backupTs := res.Rows()[0][2].(string)
 
 	// write incremental data
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
 	}
@@ -285,7 +286,7 @@ func TestExistedTablesOfIncremental_1(t *testing.T) {
 	_ = tk.MustQuery(IncrementalBackupQuery)
 
 	// clean up tables
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
@@ -298,7 +299,7 @@ func TestExistedTablesOfIncremental_1(t *testing.T) {
 	restoreIncrementalQuery := fmt.Sprintf("RESTORE DATABASE test FROM 'local://%s/incremental'", sqlTmp)
 	_ = tk.MustQuery(restoreIncrementalQuery)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
@@ -311,7 +312,7 @@ func TestExistedTablesOfIncremental_2(t *testing.T) {
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
@@ -323,7 +324,7 @@ func TestExistedTablesOfIncremental_2(t *testing.T) {
 	backupTs := res.Rows()[0][2].(string)
 
 	// write incremental data
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
 	}
@@ -333,7 +334,7 @@ func TestExistedTablesOfIncremental_2(t *testing.T) {
 	_ = tk.MustQuery(IncrementalBackupQuery)
 
 	// clean up tables
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
@@ -346,7 +347,7 @@ func TestExistedTablesOfIncremental_2(t *testing.T) {
 	restoreIncrementalQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s/incremental'", sqlTmp)
 	_ = tk.MustQuery(restoreIncrementalQuery)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}

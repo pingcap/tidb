@@ -165,8 +165,8 @@ func TestSortedData(t *testing.T) {
 	keys := make([][]byte, kvNum)
 	values := make([][]byte, kvNum)
 	for i := range keys {
-		keys[i] = []byte(fmt.Sprintf("key%03d", i))
-		values[i] = []byte(fmt.Sprintf("val%03d", i))
+		keys[i] = fmt.Appendf(nil, "key%03d", i)
+		values[i] = fmt.Appendf(nil, "val%03d", i)
 	}
 
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
@@ -259,13 +259,21 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	}, dataFiles123)
 
 	multi := mockOneMultiFileStat(dataFiles123[:4], statFiles123[:4])
+	multi[0].MinKey = []byte("key01")
+	multi[0].MaxKey = []byte("key21")
 	multi2 := mockOneMultiFileStat(dataFiles123[4:], statFiles123[4:])
-	multiFileStat := []MultipleFilesStat{multi[0], multi2[0]}
+	multi2[0].MinKey = []byte("key02")
+	multi2[0].MaxKey = []byte("key22")
+	multiFileStat := []MultipleFilesStat{multi2[0], multi[0]}
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
 		ctx, multiFileStat, memStore, 1000, 2, 1000, 1, 1000, 1,
 	)
 	require.NoError(t, err)
+
+	// verify the multiFileStat is sorted
+	require.Equal(t, multi[0], multiFileStat[0])
+	require.Equal(t, multi2[0], multiFileStat[1])
 
 	// [key01, key03), split at key02
 	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
@@ -334,8 +342,8 @@ func TestExactlyKeyNum(t *testing.T) {
 	keys := make([][]byte, kvNum)
 	values := make([][]byte, kvNum)
 	for i := range keys {
-		keys[i] = []byte(fmt.Sprintf("key%03d", i))
-		values[i] = []byte(fmt.Sprintf("value%03d", i))
+		keys[i] = fmt.Appendf(nil, "key%03d", i)
+		values[i] = fmt.Appendf(nil, "value%03d", i)
 	}
 
 	subDir := "/mock-test"
@@ -397,7 +405,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 	eg := errgroup.Group{}
 	eg.SetLimit(30)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		eg.Go(func() error {
 			w := NewWriterBuilder().
 				SetMemorySizeLimit(DefaultMemSizeLimit).
@@ -406,10 +414,9 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 				SetPropSizeDistance(size.MB).
 				SetOnCloseFunc(onClose).
 				BuildOneFile(store, "/mock-test", uuid.New().String())
-			err := w.Init(ctx, int64(5*size.MB))
-			require.NoError(t, err)
+			w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
 			// we don't need data files
-			err = w.dataWriter.Close(ctx)
+			err := w.dataWriter.Close(ctx)
 			require.NoError(t, err)
 			w.dataWriter = storage.NoopWriter{}
 
@@ -422,13 +429,13 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			var maxKey []byte
 
 			memSize := uint64(0)
-			for j := 0; j < int(64*size.GB/kvSize); j++ {
+			for j := range int(64 * size.GB / kvSize) {
 
 				// copied from OneFileWriter.WriteRow
 
 				if memSize >= DefaultMemSizeLimit {
 					memSize = 0
-					w.kvStore.Close()
+					w.kvStore.finish()
 					encodedStat := w.rc.encode()
 					_, err := w.statWriter.Write(ctx, encodedStat)
 					if err != nil {
@@ -486,7 +493,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	require.NoError(t, eg.Wait())
 
 	multiStat := make([]MultipleFilesStat, 0, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for range fileNum {
 		multiStat = append(multiStat, <-statCh...)
 	}
 	splitter, err := NewRangeSplitter(
@@ -517,4 +524,51 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
+}
+
+func TestCalRangeSize(t *testing.T) {
+	var17 := 1.7
+	var35 := 3.5
+	commonUsedRegionSizeSettings := [][2]int64{
+		{96 * units.MiB, 960_000},
+		{256 * units.MiB, 2_560_000},
+		{512 * units.MiB, 5_120_000},
+		{units.GiB, 10_240_000},
+	}
+	cases := []struct {
+		memPerCore int64
+		rangeInfos [][3]int64 // [range-size, range-keys, sst-file-num]
+	}{
+		{memPerCore: int64(var17 * float64(units.GiB)), rangeInfos: [][3]int64{
+			{2 * 96 * units.MiB, 2 * 960_000, 1},
+			{256 * units.MiB, 2_560_000, 1},
+			{256*units.MiB + 1, 2_560_000, 2},
+			{256*units.MiB + 1, 2_560_000, 4},
+		}},
+		{memPerCore: int64(var35 * float64(units.GiB)), rangeInfos: [][3]int64{
+			{5 * 96 * units.MiB, 5 * 960_000, 1},
+			{512 * units.MiB, 5_120_000, 1},
+			{512 * units.MiB, 5_120_000, 1},
+			{512*units.MiB + 1, 5_120_000, 2},
+		}},
+	}
+
+	for i, c := range cases {
+		for j, rs := range commonUsedRegionSizeSettings {
+			t.Run(fmt.Sprintf("%d-%d", i, j), func(t *testing.T) {
+				regionSplitSize, regionSplitKeys := rs[0], rs[1]
+				rangeSize, rangeKeys := CalRangeSize(c.memPerCore, regionSplitSize, regionSplitKeys)
+				expectedRangeSize, expectedRangeKey, expectedFileNum := c.rangeInfos[j][0], c.rangeInfos[j][1], c.rangeInfos[j][2]
+				require.EqualValues(t, expectedRangeSize, rangeSize)
+				require.EqualValues(t, expectedRangeKey, rangeKeys)
+				fmt.Println(rangeSize, rangeKeys)
+				if expectedRangeSize >= regionSplitSize {
+					require.EqualValues(t, 1, expectedFileNum)
+					require.Zero(t, rangeSize%regionSplitSize)
+				} else {
+					require.EqualValues(t, expectedFileNum, int(math.Ceil(float64(regionSplitSize)/float64(rangeSize))))
+				}
+			})
+		}
+	}
 }

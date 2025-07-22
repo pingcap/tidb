@@ -75,41 +75,42 @@ func runValidateBackupFiles(cmd *cobra.Command, args []string) {
 // as full backup will have backup files ready in the storage path after returning from the command
 // and log backup will not, so we can only use restore point to validate.
 func parseCommand(cmd string) (string, bool) {
-	// Create a temporary cobra command to parse the input
-	tempCmd := &cobra.Command{}
-	tempCmd.Flags().String("s", "", "Storage path (short)")
-	tempCmd.Flags().String("storage", "", "Storage path (long)")
-
-	// Split the command string into args
+	// not using cobra since it has to define all the possible flags otherwise will report parsing error
 	args := strings.Fields(cmd)
 
-	// Parse the args
-	if err := tempCmd.Flags().Parse(args); err != nil {
-		return "", false
-	}
-
-	// Check for backup or restore point command
+	// check for backup or restore point command
 	hasBackupOrRestorePoint := false
-	for i, arg := range args {
+	storagePath := ""
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "backup" {
 			hasBackupOrRestorePoint = true
-			break
+			continue
 		}
 		if i < len(args)-1 && arg == "restore" && args[i+1] == "point" {
 			hasBackupOrRestorePoint = true
-			break
+			continue
+		}
+
+		// check for storage path in various formats
+		if arg == "-s" || arg == "--storage" {
+			if i+1 < len(args) {
+				storagePath = args[i+1]
+				i++ // skip the next arg since we consumed it
+			}
+		} else if strings.HasPrefix(arg, "--storage=") {
+			storagePath = strings.TrimPrefix(arg, "--storage=")
+		} else if strings.HasPrefix(arg, "-s=") {
+			storagePath = strings.TrimPrefix(arg, "-s=")
 		}
 	}
 
-	// Get the storage path from either -s or -storage flag
-	storagePath, _ := tempCmd.Flags().GetString("s")
-	if storagePath == "" {
-		storagePath, _ = tempCmd.Flags().GetString("storage")
-	}
-	storagePath = strings.TrimPrefix(storagePath, "local://")
-
-	if hasBackupOrRestorePoint && storagePath != "" {
-		return storagePath, true
+	if strings.HasPrefix(storagePath, "local://") {
+		storagePath = strings.TrimPrefix(storagePath, "local://")
+		if hasBackupOrRestorePoint && storagePath != "" {
+			return storagePath, true
+		}
 	}
 	return "", false
 }

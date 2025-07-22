@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -577,7 +576,7 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 	tk.MustExec("create table t2 (id int, a int, index(a),  foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into  t1 (id, a) values (1, 11),(2, 12), (3, 13), (4, 14)")
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -585,7 +584,7 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 			tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 			tk.MustExec("set @@foreign_key_checks=1")
 			tk.MustExec("use test")
-			for cnt := 0; cnt < 20; cnt++ {
+			for cnt := range 20 {
 				id := cnt%4 + 1
 				sql := fmt.Sprintf("insert into t2 (id, a) values (%v, %v)", cnt, id)
 				tk.MustExec(sql)
@@ -1172,7 +1171,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("alter table t1 add index idx_%v (c%v) ", i, i))
 		tk.MustExec(fmt.Sprintf("alter table t1 add foreign key (c%v) references t1 (c%v) on delete cascade", i, i-1))
 	}
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		vals := strings.Repeat(strconv.Itoa(i)+",", 20)
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v)", vals[:len(vals)-1]))
 	}
@@ -1202,7 +1201,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int);")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete cascade)")
 	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		tk.MustExec("insert into t1 (b) select b from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -1221,8 +1220,8 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		{types.NewDatum(2), types.NewDatum("b")},
 	}
 	cols := []*model.ColumnInfo{
-		{ID: 1, Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
-		{ID: 2, Name: pmodel.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+		{ID: 1, Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Name: ast.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 	}
 	restoreFn := func(stmt ast.StmtNode) string {
 		var sb strings.Builder
@@ -1238,29 +1237,29 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		require.Equal(t, restoreFn(expectedStmt), restoreFn(stmt))
 	}
 	var stmt ast.StmtNode
-	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
 	newValue1 := []types.Datum{types.NewDatum(10), types.NewDatum("aa")}
 	couple := &executor.UpdatedValuesCouple{
 		NewValues:     newValue1,
 		OldValuesList: fkValues,
 	}
-	stmt = executor.GenCascadeUpdateAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, couple)
 	checkStmtFn(stmt, "update test.t2 set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeUpdateAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, couple)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
 	// Test for 1 fk column.
 	fkValues = [][]types.Datum{{types.NewDatum(1)}, {types.NewDatum(2)}}
-	cols = []*model.ColumnInfo{{ID: 1, Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
-	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr(""), cols, fkValues)
+	cols = []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where a in (1,2)")
-	stmt = executor.GenCascadeDeleteAST(pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"), pmodel.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where a in (1,2)")
 }
 
@@ -1568,7 +1567,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int);")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete set null)")
 	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		tk.MustExec("insert into t1 (b) select b from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -1873,7 +1872,7 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int, index(b));")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(b) references t1(b) on update cascade)")
 	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		tk.MustExec("insert into t1 (b) select id from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -2424,7 +2423,7 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
 	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890');")
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		tk.MustExec("insert into t1 (name) select name from t1;")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
@@ -2486,7 +2485,7 @@ func TestFKBuild(t *testing.T) {
 	tk.MustExec("create table t1 (id int key);")
 	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("renametable")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/MockTryLoadDiffError", `return("renametable")`)
 
 	tk.MustExec("rename table t1 to t3;")
 	tk.MustExec("insert into test.t3 values (1)")
@@ -2529,7 +2528,7 @@ func TestLockKeysInDML(t *testing.T) {
 }
 
 func TestLockKeysInInsertIgnore(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int primary key);")

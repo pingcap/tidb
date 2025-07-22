@@ -33,10 +33,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
+	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -191,6 +190,7 @@ type Config struct {
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
+	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
@@ -229,7 +229,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
+	// EnableTelemetry enables the usage data print to log.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -340,11 +340,12 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		ZoneLabel:             c.Labels["zone"],
 	}
 }
 
 func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
-	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
+	dirName := base64.URLEncoding.EncodeToString(fmt.Appendf(nil, "%v:%v/%v:%v", host, port, statusHost, statusPort))
 	osUID := ""
 	currentUser, err := user.Current()
 	if err == nil {
@@ -456,13 +457,6 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
-}
-
-// LogBackup is the config for log backup service.
-// For now, it includes the embed advancer.
-type LogBackup struct {
-	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
-	Enabled  bool                 `toml:"enabled" json:"enabled"`
 }
 
 // Log is the log section of config.
@@ -748,7 +742,8 @@ type Performance struct {
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 
-	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	// Deprecated: This setting has no effect, as stats are now always initialized concurrently.
+	// ConcurrentlyInitStats indicates whether to use concurrency for initializing stats.
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 
 	// Deprecated: this config will not have any effect
@@ -1008,12 +1003,13 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
-		ConcurrentlyInitStats:             true,
+		// Deprecated: Stats are always initialized concurrently.
+		ConcurrentlyInitStats: true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-		Fallbackable:  false,
+		Fallbackable:  true,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,
@@ -1061,8 +1057,8 @@ var defaultConf = Config{
 	Enable32BitsConnectionID:             true,
 	TrxSummary:                           DefaultTrxSummary(),
 	DisaggregatedTiFlash:                 false,
-	TiFlashComputeAutoScalerType:         tiflashcompute.DefASStr,
-	TiFlashComputeAutoScalerAddr:         tiflashcompute.DefAWSAutoScalerAddr,
+	TiFlashComputeAutoScalerType:         DefASStr,
+	TiFlashComputeAutoScalerAddr:         DefAWSAutoScalerAddr,
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
 	UseAutoScaler:                        false,
@@ -1304,6 +1300,9 @@ func (c *Config) Load(confFile string) error {
 
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	if err := naming.Check(c.KeyspaceName); err != nil {
+		return errors.Annotate(err, "invalid keyspace name")
+	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
 		// if two options conflict, we will use the value of EnableErrorStack
@@ -1338,6 +1337,11 @@ func (c *Config) Valid() error {
 
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
+		return err
+	}
+
+	// pd-client
+	if err := c.PDClient.Valid(); err != nil {
 		return err
 	}
 
@@ -1385,9 +1389,9 @@ func (c *Config) Valid() error {
 
 	// Check tiflash_compute topo fetch is valid.
 	if c.DisaggregatedTiFlash && c.UseAutoScaler {
-		if !tiflashcompute.IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
+		if !IsValidAutoScalerConfig(c.TiFlashComputeAutoScalerType) {
 			return fmt.Errorf("invalid AutoScaler type, expect %s, %s or %s, got %s",
-				tiflashcompute.MockASStr, tiflashcompute.AWSASStr, tiflashcompute.GCPASStr, c.TiFlashComputeAutoScalerType)
+				MockASStr, AWSASStr, GCPASStr, c.TiFlashComputeAutoScalerType)
 		}
 		if c.TiFlashComputeAutoScalerAddr == "" {
 			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")

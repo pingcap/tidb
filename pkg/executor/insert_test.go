@@ -17,13 +17,14 @@ package executor_test
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -272,15 +273,15 @@ func TestAllocateContinuousRowID(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		idx := i
 		wg.Run(func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				k := strconv.Itoa(idx*100 + j)
 				sql := "insert into t1(a,b) values (" + k + ", 2)"
-				for t := 0; t < 20; t++ {
+				for range 20 {
 					sql += ",(" + k + ",2)"
 				}
 				tk.MustExec(sql)
@@ -425,7 +426,9 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
 	require.Equal(t, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
-	stats.Merge(stats.Clone())
+	newStats := stats.Clone()
+	newStats.(*executor.InsertRuntimeStat).BasicRuntimeStats.Record(5*time.Second, 1)
+	stats.Merge(newStats)
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
 	stats.FKCheckTime = time.Second
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
@@ -435,7 +438,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+	for _, enable := range []vardef.ClusteredIndexDefMode{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff, vardef.ClusteredIndexDefModeIntOnly} {
 		tk.Session().GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
@@ -513,7 +516,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		newTk.MustExec("use test")
 		newTk.MustExec("begin")
-		for i := 0; i < loops; i++ {
+		for range loops {
 			newTk.MustExec("insert temp_test value(0)")
 			newTk.MustExec("insert temp_test value(0), (0)")
 		}
@@ -522,7 +525,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk.MustExec("commit")
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		wg.Run(insertFunc)
 	}
 	wg.Wait()
@@ -702,4 +705,55 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustExec("update t1 set col1 = null where id = 3")
 	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
+}
+
+func TestInsertLargeRow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ver := tk.MustQuery("select tidb_version()").Rows()[0][0].(string)
+	if !strings.Contains(ver, "Store: unistore") {
+		t.Skipf("Only support 'Store: unistore'\n%s", ver)
+	}
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, b longtext)")
+	tk.MustExec("set tidb_txn_entry_size_limit = 1<<23")
+	// the unistore arena blocksize is 8MB (8388608 bytes), so Unistore cannot handle larger rows than that!
+	// since a row cannot span multiple arena blocks.
+	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "unistore lock entry too big")
+}
+
+func TestInsertDuplicateToGeneratedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+		CREATE TABLE tmv (
+  			J1 json,
+			J2 json GENERATED ALWAYS AS (j1) VIRTUAL,
+  			UNIQUE KEY i1 ((cast(j1 as signed array))),
+  			KEY i2 ((cast(j2 as signed array))))`)
+	tk.MustExec("insert into tmv set j1 = '[1]'")
+	tk.MustExec("insert ignore into tmv set j1 = '[1]' on duplicate key update j1 = '[2]'")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table tmv;")
+	}
+
+	tk.MustExec(`
+		CREATE TABLE ttime (
+			id int primary key,
+			t1 datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			t2 datetime GENERATED ALWAYS AS (date_add(t1, interval 1 day)) VIRTUAL,
+			t3 datetime GENERATED ALWAYS AS (date_add(t2, interval 1 day)) VIRTUAL,
+			t4 datetime GENERATED ALWAYS AS (date_sub(t2, interval 10 MINUTE)) VIRTUAL,
+			UNIQUE KEY i1 (t1),
+			UNIQUE KEY i2 (t2),
+			UNIQUE KEY i3 (id, t3),
+			KEY i4 (t4))`)
+	tk.MustExec(`insert into ttime set id = 1, t1 = "2011-12-20 17:15:50"`)
+	tk.MustExec("insert into ttime set id = 1 on duplicate key update id = 2")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table ttime;")
+	}
 }

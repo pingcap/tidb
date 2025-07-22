@@ -113,6 +113,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 		totalWaitTime:      time.Second,
 		reqStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: 15,
+		fetchRspDuration:   time.Second,
 	}
 	s1.copRespTime.Add(execdetails.Duration(time.Second))
 	s1.copRespTime.Add(execdetails.Duration(time.Millisecond))
@@ -123,20 +124,17 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats.RegisterStats(1, s1.Clone())
 	stmtStats.RegisterStats(1, s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, open:0s, close:0s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, open:0s, close:0s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, fetch_resp_duration: 2s, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
 
-	s1.reqStat.RPCStats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
-		Count:   1,
-		Consume: int64(time.Second),
-	}
+	s1.reqStat.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Second)
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	stmtStats.RegisterStats(2, s1.Clone())
 	stats = stmtStats.GetRootStats(2)
-	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, rpc_info:{Cop:{num_rpc:1, total_time:1s}, rpc_errors:{server_is_busy:2}}, backoff{RegionMiss: 1ms}"
+	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, fetch_resp_duration: 1s, rpc_info:{Cop:{num_rpc:1, total_time:1s}, rpc_errors:{server_is_busy:2}}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
@@ -249,13 +247,13 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 			numRows -= rows
 
 			colTypes := make([]*types.FieldType, 4)
-			for i := 0; i < 4; i++ {
+			for i := range 4 {
 				colTypes[i] = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()
 			}
 			chk := chunk.New(colTypes, numRows, numRows)
 
-			for rowOrdinal := 0; rowOrdinal < rows; rowOrdinal++ {
-				for colOrdinal := 0; colOrdinal < 4; colOrdinal++ {
+			for range rows {
+				for colOrdinal := range 4 {
 					chk.AppendInt64(colOrdinal, 123)
 				}
 			}

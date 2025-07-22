@@ -80,10 +80,13 @@ done
 wait
 
 run_sql "ALTER TABLE $DB.${TABLE}_Hash ADD UNIQUE INDEX idx(c1) GLOBAL" &
+run_sql "ALTER TABLE $DB.${TABLE}_Hash ADD INDEX idx1(c1) GLOBAL" &
 run_sql "ALTER TABLE $DB.${TABLE}_List ADD UNIQUE INDEX idx(c1) GLOBAL" &
+run_sql "ALTER TABLE $DB.${TABLE}_List ADD INDEX idx1(c1) GLOBAL" &
 
 for i in $(seq $TABLE_COUNT); do
     run_sql "ALTER TABLE $DB.$TABLE${i} ADD UNIQUE INDEX idx(c1) GLOBAL" &
+    run_sql "ALTER TABLE $DB.$TABLE${i} ADD INDEX idx1(c1) GLOBAL" &
 done
 wait
 

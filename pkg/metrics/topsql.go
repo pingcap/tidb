@@ -14,7 +14,10 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // Top SQL metrics.
 var (
@@ -25,7 +28,7 @@ var (
 
 // InitTopSQLMetrics initializes top-sql metrics.
 func InitTopSQLMetrics() {
-	TopSQLIgnoredCounter = NewCounterVec(
+	TopSQLIgnoredCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "topsql",
@@ -33,7 +36,7 @@ func InitTopSQLMetrics() {
 			Help:      "Counter of ignored top-sql metrics (register-sql, register-plan, collect-data and report-data), normally it should be 0.",
 		}, []string{LblType})
 
-	TopSQLReportDurationHistogram = NewHistogramVec(
+	TopSQLReportDurationHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "topsql",
@@ -42,7 +45,7 @@ func InitTopSQLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 2.3h
 		}, []string{LblType, LblResult})
 
-	TopSQLReportDataHistogram = NewHistogramVec(
+	TopSQLReportDataHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "topsql",

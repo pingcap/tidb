@@ -75,6 +75,10 @@ func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
 
+func (t *mockTxn) CommitTS() uint64 {
+	return 0
+}
+
 func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
@@ -273,6 +277,14 @@ func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 
 func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
+}
+
+func (s *mockStorage) GetClusterID() uint64 {
+	return 1
+}
+
+func (s *mockStorage) GetKeyspace() string {
+	return ""
 }
 
 // newMockStorage creates a new mockStorage.

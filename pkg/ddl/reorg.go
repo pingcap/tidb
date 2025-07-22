@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -225,7 +226,7 @@ func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.Exchang
 // newReorgTableMutateContext creates a new table.MutateContext for reorganization.
 func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext {
 	rowEncoder := &rowcodec.Encoder{
-		Enable: variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1,
+		Enable: vardef.GetDDLReorgRowFormat() != vardef.DefTiDBRowFormatV1,
 	}
 
 	encodingConfig := tblctx.RowEncodingConfig{
@@ -241,7 +242,7 @@ func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext
 		// we still provide a valid one to keep the context complete and to avoid panic if it is used in the future.
 		shardID: variable.NewRowIDShardGenerator(
 			rand.New(rand.NewSource(time.Now().UnixNano())), // #nosec G404
-			variable.DefTiDBShardAllocateStep,
+			vardef.DefTiDBShardAllocateStep,
 		),
 	}
 }
@@ -339,6 +340,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(
+	jobCtx *jobContext,
 	reorgInfo *reorgInfo,
 	tblInfo *model.TableInfo,
 	reorgFn func() error,
@@ -380,7 +382,13 @@ func (w *worker) runReorgJob(
 		})
 	}
 
-	updateProcessTicker := time.NewTicker(5 * time.Second)
+	updateProgressInverval := 5 * time.Second
+	failpoint.Inject("updateProgressIntervalInMs", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			updateProgressInverval = time.Duration(v) * time.Millisecond
+		}
+	})
+	updateProcessTicker := time.NewTicker(updateProgressInverval)
 	defer updateProcessTicker.Stop()
 	for {
 		select {
@@ -392,6 +400,7 @@ func (w *worker) runReorgJob(
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
+				jobCtx.reorgTimeoutOccurred = true
 				return dbterror.ErrWaitReorgTimeout
 			}
 			// Since job is cancelled，we don't care about its partial counts.
@@ -403,9 +412,13 @@ func (w *worker) runReorgJob(
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			if err != nil {
-				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+				logutil.DDLLogger().Warn("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+				logutil.DDLLogger().Info("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount))
 			}
 
 			// Update a job's warnings.
@@ -427,6 +440,8 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
+			jobCtx.reorgTimeoutOccurred = true
+			return dbterror.ErrWaitReorgTimeout
 		}
 	}
 }
@@ -511,12 +526,26 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			label = metrics.LblAddIndex
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		idxNames := ""
+		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
+		} else {
+			idxNames = getIdxNamesFromArgs(args)
+		}
+		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		colName := ""
+		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyColumnArgs", zap.Error(err))
+		} else {
+			colName = args.OldColumnName.O
+		}
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
 	}
 }
 
@@ -598,7 +627,7 @@ func (r *reorgInfo) NewJobContext() *ReorgContext {
 func (r *reorgInfo) String() string {
 	var isEnabled bool
 	if ingest.LitInitialized {
-		_, isEnabled = ingest.LitBackCtxMgr.Load(r.Job.ID)
+		isEnabled = r.ReorgMeta != nil && r.ReorgMeta.IsFastReorg
 	}
 	return "CurrElementType:" + string(r.currElement.TypeKey) + "," +
 		"CurrElementID:" + strconv.FormatInt(r.currElement.ID, 10) + "," +
@@ -949,6 +978,19 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }
 
 func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {

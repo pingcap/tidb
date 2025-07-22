@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -26,11 +27,40 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCascadesTemplate(t *testing.T) {
+	// wrap your test body with.
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		// test your basic sql interface and assert the execution result.
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int primary key, b int)")
+		tk.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4)")
+		tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+
+		// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		cascadesData := GetCascadesTemplateData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+			})
+			res := tk.MustQuery("explain format=brief " + tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+		}
+	})
+}
 
 func TestDeriveStats(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -48,8 +78,9 @@ func TestDeriveStats(t *testing.T) {
 	p := parser.New()
 	var input []string
 	var output []struct {
-		SQL string
-		Str []string
+		SQL   string
+		Str   []string
+		OpNum uint64
 	}
 	statsSuiteData := GetCascadesSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -63,15 +94,15 @@ func TestDeriveStats(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, nodeW)
+		p.SCtx().GetSessionVars().StmtCtx.OriginalSQL = tt
 		require.NoError(t, err, tt)
-		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, tt)
 		lp := p.(base.LogicalPlan)
-		_, err = plannercore.RecursiveDeriveStats4Test(lp)
-		require.NoError(t, err, tt)
+		lp.ExtractFD()
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
-		mm := memo.NewMemo()
+		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
 		_, err = mm.Init(lp)
 		require.Nil(t, err)
 		// check the stats state in memo group.
@@ -101,11 +132,15 @@ func TestDeriveStats(t *testing.T) {
 					statsStr := fmt.Sprintf("count %v, ColNDVs %v, GroupNDVs %v", logicProp.Stats.RowCount, logicProp.Stats.ColNDVs, logicProp.Stats.GroupNDVs)
 					sb.WriteString("stats:{" + statsStr + "}")
 				}
-				sb.WriteString(", ")
 				if logicProp.Schema == nil {
-					sb.WriteString("schema:nil")
+					sb.WriteString(", schema:nil")
 				} else {
-					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
+					sb.WriteString(", schema:{" + logicProp.Schema.String() + "}")
+				}
+				if logicProp.FD == nil {
+					sb.WriteString(", fd:nil")
+				} else {
+					sb.WriteString(", fd:{" + logicProp.FD.String() + "}")
 				}
 				sb.WriteString("}")
 			}
@@ -116,8 +151,9 @@ func TestDeriveStats(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Str = strs
+			output[i].OpNum = lp.SCtx().GetSessionVars().StmtCtx.OperatorNum
 		})
-		require.Equal(t, output[i].Str, strs, "case i "+tt)
+		require.Equal(t, output[i].Str, strs, "case i:"+strconv.Itoa(i)+" "+tt)
 	}
 }
 
@@ -125,7 +161,7 @@ func TestGroupNDVCols(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
 	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
@@ -141,8 +177,9 @@ func TestGroupNDVCols(t *testing.T) {
 	p := parser.New()
 	var input []string
 	var output []struct {
-		SQL string
-		Str []string
+		SQL   string
+		Str   []string
+		OpNum uint64
 	}
 	statsSuiteData := GetCascadesSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -157,14 +194,13 @@ func TestGroupNDVCols(t *testing.T) {
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, tt)
-		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, tt)
 		lp := p.(base.LogicalPlan)
-		_, err = plannercore.RecursiveDeriveStats4Test(lp)
-		require.NoError(t, err, tt)
+		lp.ExtractFD()
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase
 		// of memo, we don't have to expect the upper operator's group cols passing down anymore.
-		mm := memo.NewMemo()
+		mm := memo.NewMemo(lp.SCtx().GetSessionVars().StmtCtx.OperatorNum)
 		mm.Init(lp)
 		// check the stats state in memo group.
 		b := &bytes.Buffer{}
@@ -193,11 +229,15 @@ func TestGroupNDVCols(t *testing.T) {
 					statsStr := fmt.Sprintf("count %v, ColNDVs %v, GroupNDVs %v", logicProp.Stats.RowCount, logicProp.Stats.ColNDVs, logicProp.Stats.GroupNDVs)
 					sb.WriteString("stats:{" + statsStr + "}")
 				}
-				sb.WriteString(", ")
 				if logicProp.Schema == nil {
-					sb.WriteString("schema:nil")
+					sb.WriteString(", schema:nil")
 				} else {
-					sb.WriteString("schema:{" + logicProp.Schema.String() + "}")
+					sb.WriteString(", schema:{" + logicProp.Schema.String() + "}")
+				}
+				if logicProp.FD == nil {
+					sb.WriteString(", fd:nil")
+				} else {
+					sb.WriteString(", fd:{" + logicProp.FD.String() + "}")
 				}
 				sb.WriteString("}")
 			}
@@ -208,7 +248,8 @@ func TestGroupNDVCols(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Str = strs
+			output[i].OpNum = lp.SCtx().GetSessionVars().StmtCtx.OperatorNum
 		})
-		require.Equal(t, output[i].Str, strs, "case i "+tt)
+		require.Equal(t, output[i].Str, strs, "case i:"+strconv.Itoa(i)+" "+tt)
 	}
 }

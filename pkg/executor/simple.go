@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -52,8 +52,10 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -94,6 +96,17 @@ type SimpleExec struct {
 
 	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
 	staleTxnStartTS uint64
+}
+
+// resourceOptionsInfo represents the resource infomations to limit user.
+// It contains 'MAX_QUERIES_PER_HOUR', 'MAX_UPDATES_PER_HOUR', 'MAX_CONNECTIONS_PER_HOUR' and 'MAX_USER_CONNECTIONS'.
+// It only implements the option of 'MAX_USER_CONNECTIONS' now.
+// To do: implement the other three options.
+type resourceOptionsInfo struct {
+	maxQueriesPerHour     int64
+	maxUpdatesPerHour     int64
+	maxConnectionsPerHour int64
+	maxUserConnections    int64
 }
 
 type passwordOrLockOptionsInfo struct {
@@ -170,6 +183,8 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeSetSessionStates(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
+	case *ast.RefreshStatsStmt:
+		err = e.executeRefreshStats(ctx, x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil
@@ -209,9 +224,6 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 	}
 	sql := new(strings.Builder)
 	for _, u := range s.UserList {
-		if u.Hostname == "" {
-			u.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
@@ -260,9 +272,6 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -320,9 +329,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -351,9 +357,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 func (e *SimpleExec) setDefaultRoleForCurrentUser(ctx context.Context, s *ast.SetDefaultRoleStmt) (err error) {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user := s.UserList[0]
-	if user.Hostname == "" {
-		user.Hostname = "%"
-	}
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -506,7 +509,7 @@ func (e *SimpleExec) setRoleAllExcept(ctx context.Context, s *ast.SetRoleStmt) e
 
 	filter := func(arr []*auth.RoleIdentity, f func(*auth.RoleIdentity) bool) []*auth.RoleIdentity {
 		i, j := 0, 0
-		for i = 0; i < len(arr); i++ {
+		for i = range arr {
 			if f(arr[i]) {
 				arr[j] = arr[i]
 				j++
@@ -585,7 +588,7 @@ func (e *SimpleExec) dbAccessDenied(dbname string) error {
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
-	dbname := model.NewCIStr(s.DBName)
+	dbname := ast.NewCIStr(s.DBName)
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
@@ -609,7 +612,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// collation if this one is not supported.
 	// The SetSystemVar will also update the CharsetDatabase
 	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
-	return sessionVars.SetSystemVarWithoutValidation(variable.CollationDatabase, dbCollate)
+	return sessionVars.SetSystemVarWithoutValidation(vardef.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
@@ -748,9 +751,9 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 
 			// delete from activeRoles
 			if curUser == user.Username && curHost == user.Hostname {
-				for i := 0; i < len(activeRoles); i++ {
+				for i := range activeRoles {
 					if activeRoles[i].Username == role.Username && activeRoles[i].Hostname == role.Hostname {
-						activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+						activeRoles = slices.Delete(activeRoles, i, i+1)
 						break
 					}
 				}
@@ -817,18 +820,34 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+func (info *resourceOptionsInfo) loadResourceOptions(userResource []*ast.ResourceOption) error {
+	for _, option := range userResource {
+		switch option.Type {
+		case ast.MaxQueriesPerHour:
+			info.maxQueriesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUpdatesPerHour:
+			info.maxUpdatesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxConnectionsPerHour:
+			info.maxConnectionsPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUserConnections:
+			info.maxUserConnections = min(option.Count, math.MaxInt16)
+		}
+	}
+	return nil
+}
+
 func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	var passwdSaveNum, passwdSaveTime int64
 	// If the user specifies a default, read the global variable.
 	if plOptions.passwordHistoryChange && plOptions.passwordHistory != notSpecified {
 		passwdSaveNum = plOptions.passwordHistory
 	} else {
-		passwdSaveNum = variable.PasswordHistory.Load()
+		passwdSaveNum = vardef.PasswordHistory.Load()
 	}
 	if plOptions.passwordReuseIntervalChange && plOptions.passwordReuseInterval != notSpecified {
 		passwdSaveTime = plOptions.passwordReuseInterval
 	} else {
-		passwdSaveTime = variable.PasswordReuseInterval.Load()
+		passwdSaveTime = vardef.PasswordReuseInterval.Load()
 	}
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
@@ -946,12 +965,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,7 +1026,7 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
-	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.ValidatePasswordEnable)
 	if err != nil {
 		return false
 	}
@@ -1042,6 +1056,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
+	if err != nil {
+		return err
+	}
+
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		maxUserConnections:    0,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
 	if err != nil {
 		return err
 	}
@@ -1077,7 +1103,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	if s.ResourceGroupNameOption != nil {
-		if !variable.EnableResourceControl.Load() {
+		if !vardef.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
 		if s.IsCreateRole {
@@ -1088,7 +1114,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		// check if specified resource group exists
 		if resourceGroupName != resourcegroup.DefaultResourceGroupName && resourceGroupName != "" {
-			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+			_, exists := e.is.ResourceGroupByName(ast.NewCIStr(resourceGroupName))
 			if !exists {
 				return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 			}
@@ -1114,14 +1140,14 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
 		sqlescape.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
 	}
-	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1184,7 +1210,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			}
 		}
 
-		pwd, ok := encodePassword(spec, pluginImpl)
+		pwd, ok := encodePasswordWithPlugin(*spec, pluginImpl, defaultAuthPlugin)
 		if !ok {
 			return errors.Trace(exeerrors.ErrPasswordFormat)
 		}
@@ -1200,7 +1226,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
+		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime, userResource.maxUserConnections)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
@@ -1292,12 +1318,7 @@ func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host str
 	if err != nil {
 		return false, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 1)
 	if err != nil {
 		return false, err
 	}
@@ -1314,12 +1335,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1327,12 +1343,12 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if !row.IsNull(0) {
 			res.passwordHistory = int64(row.GetUint64(0))
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 		if !row.IsNull(1) {
 			res.passwordReuseInterval = int64(row.GetUint64(1))
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	if plOptions.passwordHistoryChange {
@@ -1340,7 +1356,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordHistory != notSpecified {
 			res.passwordHistory = plOptions.passwordHistory
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 	}
 	if plOptions.passwordReuseIntervalChange {
@@ -1348,7 +1364,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordReuseInterval != notSpecified {
 			res.passwordReuseInterval = plOptions.passwordReuseInterval
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	return res, nil
@@ -1358,10 +1374,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
-	beforeTimeS := nowTimeS - passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second)
-	if beforeTimeS < 0 {
-		beforeTimeS = 0
-	}
+	beforeTimeS := max(nowTimeS-passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second), 0)
 	return time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
 }
 
@@ -1439,12 +1452,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return 0, err
 	}
@@ -1465,12 +1473,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1485,12 +1488,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1513,12 +1511,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1535,12 +1528,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1562,12 +1550,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1581,12 +1564,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1604,10 +1582,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	}
 
 	// the maximum number of records that can be deleted.
-	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
-	if canDeleteNum < 0 {
-		canDeleteNum = 0
-	}
+	canDeleteNum := max(passwordNum-passwordReuse.passwordHistory+1, 0)
 
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return true, canDeleteNum, nil
@@ -1695,6 +1670,20 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		// can't set 0 to maxUserConnections as default, because user could set 0 to this field.
+		// so we use -1(invalid value) as default.
+		maxUserConnections: -1,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
+	if err != nil {
+		return err
+	}
+
 	plOptions := passwordOrLockOptionsInfo{
 		lockAccount:                 "",
 		passwordExpired:             "",
@@ -1755,7 +1744,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 	for _, spec := range s.Specs {
 		user := e.Ctx().GetSessionVars().User
-		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
+		alterPassword := false
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
+			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
+				alterPassword = true
+			}
+		}
+		if alterCurrentUser && alterPassword {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
@@ -1856,7 +1852,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			pwd, ok := encodePassword(spec, authPluginImpl)
+			// we have assigned the currentAuthPlugin to spec.AuthOpt.AuthPlugin if the latter is empty, so keep the incomming argument defaultPlugin empty is ok.
+			pwd, ok := encodePasswordWithPlugin(*spec, authPluginImpl, "")
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
@@ -1923,6 +1920,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
 		}
 
+		if userResource.maxUserConnections >= 0 {
+			// need `CREATE USER` privilege for the operation of modifying max_user_connections.
+			if !hasCreateUserPriv {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+			fields = append(fields, alterField{"max_user_connections=%?", userResource.maxUserConnections})
+		}
+
 		var newAttributes []string
 		if s.CommentOrAttributeOption != nil {
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
@@ -1932,7 +1937,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if s.ResourceGroupNameOption != nil {
-			if !variable.EnableResourceControl.Load() {
+			if !vardef.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
 			}
 			is, err := isRole(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
@@ -1946,7 +1951,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// check if specified resource group exists
 			resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 			if resourceGroupName != resourcegroup.DefaultResourceGroupName && s.ResourceGroupNameOption.Value != "" {
-				_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+				_, exists := e.is.ResourceGroupByName(ast.NewCIStr(resourceGroupName))
 				if !exists {
 					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 				}
@@ -2251,7 +2256,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 }
 
 func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
-	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
@@ -2405,9 +2410,9 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete from activeRoles
 		if s.IsDropRole {
-			for i := 0; i < len(activeRoles); i++ {
+			for i := range activeRoles {
 				if activeRoles[i].Username == user.Username && activeRoles[i].Hostname == user.Hostname {
-					activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+					activeRoles = slices.Delete(activeRoles, i, i+1)
 					break
 				}
 			}
@@ -2723,6 +2728,63 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	return err
 }
 
+func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	if e.IsFromRemote {
+		// TODO: do the real refresh stats
+		statslogutil.StatsLogger().Info("Refresh stats from remote", zap.String("sql", s.Text()))
+		return nil
+	}
+	return broadcast(ctx, e.Ctx(), s.Text())
+}
+
+func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	broadcastExec := &tipb.Executor{
+		Tp: tipb.ExecType_TypeBroadcastQuery,
+		BroadcastQuery: &tipb.BroadcastQuery{
+			Query: &sql,
+		},
+	}
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{broadcastExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
+		SetStoreType(kv.TiDB).
+		// Send to all TiDB instances.
+		SetTiDBServerID(0).
+		SetStartTS(math.MaxUint64).
+		Build()
+	if err != nil {
+		return err
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	if _, err := resp.Next(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+	return nil
+}
+
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
@@ -2794,7 +2856,7 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 			}
 		}
 	}
-	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
+	if err := h.DeleteTableStatsFromKV(statsIDs, true); err != nil {
 		return err
 	}
 	return h.Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
@@ -2959,7 +3021,7 @@ func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
 		return errors.New("only support alter range policy")
 	}
 	bundle := &placement.Bundle{}
-	policyName := model.NewCIStr(s.PlacementOption.StrValue)
+	policyName := ast.NewCIStr(s.PlacementOption.StrValue)
 	if policyName.L != placement.DefaultKwd {
 		policy, ok := e.is.PolicyByName(policyName)
 		if !ok {

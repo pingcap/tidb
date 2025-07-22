@@ -15,7 +15,7 @@ go_test(
         "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/parser/terror",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/copr",
         "//pkg/store/driver/backoff",
         "//pkg/store/helper",

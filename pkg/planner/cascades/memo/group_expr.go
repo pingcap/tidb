@@ -15,6 +15,8 @@
 package memo
 
 import (
+	"unsafe"
+
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -22,7 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -120,18 +125,6 @@ func (e *GroupExpression) Equals(other any) bool {
 	return true
 }
 
-// NewGroupExpression creates a new GroupExpression with the given logical plan and children.
-func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
-	return &GroupExpression{
-		group:       nil,
-		Inputs:      inputs,
-		LogicalPlan: lp,
-		hash64:      0,
-		// todo: add rule set length
-		mask: bitset.New(1),
-	}
-}
-
 // Init initializes the GroupExpression with the given group and hasher.
 func (e *GroupExpression) Init(h base2.Hasher) {
 	e.Hash64(h)
@@ -158,6 +151,28 @@ func (e *GroupExpression) SetAbandoned() {
 	e.abandoned = true
 }
 
+// mergeTo will migrate the src GE state to dst GE and remove src GE from its group.
+func (e *GroupExpression) mergeTo(target *GroupExpression) {
+	e.GetGroup().Delete(e)
+	// rule mask | OR
+	target.mask.InPlaceUnion(e.mask)
+	// clear parentGE refs work
+	for _, childG := range e.Inputs {
+		childG.removeParentGEs(e)
+	}
+	e.Inputs = e.Inputs[:0]
+	e.group = nil
+}
+
+func (e *GroupExpression) addr() unsafe.Pointer {
+	return unsafe.Pointer(e)
+}
+
+// GetWrappedLogicalPlan overrides the logical plan interface implemented by BaseLogicalPlan.
+func (e *GroupExpression) GetWrappedLogicalPlan() base.LogicalPlan {
+	return e.LogicalPlan
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -168,33 +183,145 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	}
 	childStats := make([]*property.StatsInfo, 0, len(e.Inputs))
 	childSchema := make([]*expression.Schema, 0, len(e.Inputs))
+	childProperties := make([][][]*expression.Column, 0, len(e.Inputs))
 	for _, childG := range e.Inputs {
 		childGProp := childG.GetLogicalProperty()
 		childStats = append(childStats, childGProp.Stats)
 		childSchema = append(childSchema, childGProp.Schema)
+		childProperties = append(childProperties, childGProp.PossibleProps)
 	}
 	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
 	// currently the schemaProducer side logical op is still useful for group schema.
-	// just add this mock for a mocked logical-plan which is with the id less than 0.
-	//  todo: functional dependency
+	tmpFD := e.LogicalPlan.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).FDs()
 	tmpSchema := e.LogicalPlan.Schema()
 	tmpStats := e.LogicalPlan.StatsInfo()
-	// only for those new created logical op from XForm, we should rebuild their stats;
-	// in memo init phase, all logical ops has maintained their stats already, just use them.
-	if tmpStats == nil {
-		skipDeriveStats := false
-		failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
-			skipDeriveStats = val.(bool)
-		})
-		if !skipDeriveStats {
-			// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-			tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
-			if err != nil {
-				return err
-			}
+	var tmpPossibleProps [][]*expression.Column
+	// the leaves node may have already had their stats in join reorder est phase, while
+	// their group ndv signal is passed in CollectPredicateColumnsPoint which is applied
+	// behind join reorder rule, we should build their group ndv again (implied in DeriveStats).
+	skipDeriveStats := false
+	failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+		skipDeriveStats = val.(bool)
+	})
+	if !skipDeriveStats {
+		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
+		tmpStats, _, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
+		if err != nil {
+			return err
 		}
+		// todo: extractFD should be refactored as take in childFDs, and return the new FDSet rather than depend on tree.
+		tmpFD = e.LogicalPlan.ExtractFD()
+		// prepare the possible sort columns for the group, which require fillIndexPath to fill index cols.
+		tmpPossibleProps = e.LogicalPlan.PreparePossibleProperties(tmpSchema, childProperties...)
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
 	e.GetGroup().GetLogicalProperty().Stats = tmpStats
+	e.GetGroup().GetLogicalProperty().FD = tmpFD
+	e.GetGroup().GetLogicalProperty().PossibleProps = tmpPossibleProps
 	return nil
+}
+
+// ExhaustPhysicalPlans implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
+func (e *GroupExpression) ExhaustPhysicalPlans(prop *property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error) {
+	// since different logical operator may have different ExhaustPhysicalPlans before like:
+	// utilfuncp.ExhaustPhysicalPlans4LogicalCTE = exhaustPhysicalPlans4LogicalCTE
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalSort = exhaustPhysicalPlans4LogicalSort
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalTopN = exhaustPhysicalPlans4LogicalTopN
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalLock = exhaustPhysicalPlans4LogicalLock
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalJoin = exhaustPhysicalPlans4LogicalJoin
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalApply = exhaustPhysicalPlans4LogicalApply
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalLimit = exhaustPhysicalPlans4LogicalLimit
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalWindow = exhaustPhysicalPlans4LogicalWindow
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalExpand = exhaustPhysicalPlans4LogicalExpand
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll = exhaustPhysicalPlans4LogicalUnionAll
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalSequence = exhaustPhysicalPlans4LogicalSequence
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalSelection = exhaustPhysicalPlans4LogicalSelection
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow = exhaustPhysicalPlans4LogicalMaxOneRow
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan = exhaustPhysicalPlans4LogicalUnionScan
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalProjection = exhaustPhysicalPlans4LogicalProjection
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
+	//	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
+	// once we call GE's ExhaustPhysicalPlans from group expression level, we should judge from here, and get the
+	// wrapped logical plan and then call their specific function pointer to handle logic inside. Why not we just
+	// remove GE's level implementation, and call wrapped logical plan's implementing? Cuz sometimes, the wrapped
+	// logical plan may has some dependency on the children/group's logical property, so we should pass the GE into
+	// the specific function pointer, and then iterate its children to get their logical property.
+	switch x := e.GetWrappedLogicalPlan().(type) {
+	case *logicalop.LogicalCTE:
+		// we pass GE rather than logical plan, it's a super set of LogicalPlan interface, which enable cascades
+		// framework to iterate its children, and then get their logical property. Meanwhile, we can also get basic
+		// wrapped logical plan from GE, so we can use same function pointer to handle logic inside.
+		return utilfuncp.ExhaustPhysicalPlans4LogicalCTE(x, prop)
+	case *logicalop.LogicalSort:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalSort(x, prop)
+	case *logicalop.LogicalTopN:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalTopN(x, prop)
+	case *logicalop.LogicalLock:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalLock(x, prop)
+	case *logicalop.LogicalJoin:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalJoin(e, prop)
+	case *logicalop.LogicalApply:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalApply(e, prop)
+	case *logicalop.LogicalLimit:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalLimit(x, prop)
+	case *logicalop.LogicalWindow:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(x, prop)
+	case *logicalop.LogicalExpand:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalExpand(x, prop)
+	case *logicalop.LogicalUnionAll:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
+	case *logicalop.LogicalSequence:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalSequence(e, prop)
+	case *logicalop.LogicalSelection:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalSelection(x, prop)
+	case *logicalop.LogicalMaxOneRow:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+	case *logicalop.LogicalUnionScan:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
+	case *logicalop.LogicalProjection:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalProjection(e, prop)
+	case *logicalop.LogicalAggregation:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
+	case *logicalop.LogicalPartitionUnionAll:
+		return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+	default:
+		panic("unreachable")
+	}
+}
+
+// FindBestTask implements LogicalPlan.<3rd> interface, it's used to override the wrapped logicalPlans.
+func (e *GroupExpression) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
+	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
+	// since different logical operator may have different findBestTask before like:
+	// 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
+	//	utilfuncp.FindBestTask4LogicalCTE = findBestTask4LogicalCTE
+	//	utilfuncp.FindBestTask4LogicalShow = findBestTask4LogicalShow
+	//	utilfuncp.FindBestTask4LogicalCTETable = findBestTask4LogicalCTETable
+	//	utilfuncp.FindBestTask4LogicalMemTable = findBestTask4LogicalMemTable
+	//	utilfuncp.FindBestTask4LogicalTableDual = findBestTask4LogicalTableDual
+	//	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource
+	//	utilfuncp.FindBestTask4LogicalShowDDLJobs = findBestTask4LogicalShowDDLJobs
+	// once we call GE's findBestTask from group expression level, we should judge from here, and get the
+	// wrapped logical plan and then call their specific function pointer to handle logic inside. At the
+	// same time, we will pass ge (also implement LogicalPlan interface) as the first parameter for iterate
+	// ge's children in memo scenario.
+	// And since base.LogicalPlan is a common parent pointer of GE and LogicalPlan, we can use same portal.
+	switch e.GetWrappedLogicalPlan().(type) {
+	case *logicalop.LogicalCTE:
+		return utilfuncp.FindBestTask4LogicalCTE(e, prop, planCounter, opt)
+	case *logicalop.LogicalShow:
+		return utilfuncp.FindBestTask4LogicalShow(e, prop, planCounter, opt)
+	case *logicalop.LogicalCTETable:
+		return utilfuncp.FindBestTask4LogicalCTETable(e, prop, planCounter, opt)
+	case *logicalop.LogicalMemTable:
+		return utilfuncp.FindBestTask4LogicalMemTable(e, prop, planCounter, opt)
+	case *logicalop.LogicalTableDual:
+		return utilfuncp.FindBestTask4LogicalTableDual(e, prop, planCounter, opt)
+	case *logicalop.DataSource:
+		return utilfuncp.FindBestTask4LogicalDataSource(e, prop, planCounter, opt)
+	case *logicalop.LogicalShowDDLJobs:
+		return utilfuncp.FindBestTask4LogicalShowDDLJobs(e, prop, planCounter, opt)
+	default:
+		return utilfuncp.FindBestTask4BaseLogicalPlan(e, prop, planCounter, opt)
+	}
 }

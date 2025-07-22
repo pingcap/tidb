@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +29,7 @@ import (
 func createTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	return tk
 }
 
@@ -158,7 +158,7 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ", "))
 	tk.MustExec("insert into tnormal values " + strings.Join(vals, ", "))
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		cond := fmt.Sprintf("where a in (%v, %v, %v) and b < %v", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
 		result := tk.MustQuery("select * from tnormal " + cond).Sort().Rows()
 		tk.MustQuery("select * from thash use index(primary) " + cond).Sort().Check(result)

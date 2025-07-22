@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
@@ -68,7 +68,7 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, val int)")
 	dom = domain.GetDomain(tk.Session())
 	schema := dom.InfoSchema()
-	tbl, err := schema.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := schema.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values (1, 1)")

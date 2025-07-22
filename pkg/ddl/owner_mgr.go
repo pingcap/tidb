@@ -19,7 +19,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -64,7 +63,6 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("injectEtcdClient", &cli)
 	if cli == nil {
 		return errors.New("etcd client is nil, maybe the server is not started with PD")
 	}

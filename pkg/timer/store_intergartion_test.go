@@ -22,17 +22,35 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/timer/runtime"
 	"github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+type mockSessionPool struct {
+	t *testing.T
+	syssession.Pool
+	pool  syssession.Pool
+	inuse atomic.Bool
+}
+
+func (p *mockSessionPool) WithSession(fn func(*syssession.Session) error) error {
+	return p.pool.WithSession(func(s *syssession.Session) error {
+		require.True(p.t, p.inuse.CompareAndSwap(false, true))
+		defer func() {
+			require.True(p.t, p.inuse.CompareAndSwap(true, false))
+		}()
+		return fn(s)
+	})
+}
 
 func TestMemTimerStore(t *testing.T) {
 	timeutil.SetSystemTZ("Asia/Shanghai")
@@ -47,30 +65,28 @@ func TestMemTimerStore(t *testing.T) {
 
 func TestTableTimerStore(t *testing.T) {
 	timeutil.SetSystemTZ("Asia/Shanghai")
-	store := testkit.CreateMockStore(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "test"
 	tblName := "timerstore"
 	tk.MustExec("use test")
 	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
 
+	pool := &mockSessionPool{t: t, pool: do.AdvancedSysSessionPool()}
 	// test CURD
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-
 	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
 	defer timerStore.Close()
 	runTimerStoreTest(t, timerStore)
 
 	// test cluster time zone
 	runClusterTimeZoneTest(t, timerStore, func(tz string) {
-		r, err := pool.Get()
-		defer pool.Put(r)
-		require.NoError(t, err)
-		err = r.(sessionctx.Context).GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), "time_zone", tz)
-		require.NoError(t, err)
+		require.NoError(t, pool.WithSession(func(s *syssession.Session) error {
+			ctx := util.WithInternalSourceType(context.TODO(), kv.InternalTimer)
+			rs, err := s.ExecuteInternal(ctx, "SET @@global.time_zone = %?", tz)
+			require.NoError(t, err)
+			require.Nil(t, rs)
+			return nil
+		}))
 	})
 
 	// test notifications
@@ -84,6 +100,9 @@ func TestTableTimerStore(t *testing.T) {
 	timerStore = tablestore.NewTableTimerStore(1, pool, dbName, tblName, cli)
 	defer timerStore.Close()
 	runTimerStoreWatchTest(t, timerStore)
+
+	// check pool
+	require.False(t, pool.inuse.Load())
 }
 
 func runClusterTimeZoneTest(t *testing.T, store *api.TimerStore, setClusterTZ func(string)) {
@@ -787,19 +806,14 @@ func (h *mockHook) OnSchedEvent(ctx context.Context, event api.TimerShedEvent) e
 }
 
 func TestTableStoreManualTrigger(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "test"
 	tblName := "timerstore"
 	tk.MustExec("use test")
 	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
 
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-
-	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
+	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), dbName, tblName, nil)
 	defer timerStore.Close()
 
 	var hookReqID atomic.Pointer[string]
@@ -881,7 +895,7 @@ func TestTimerStoreWithTimeZone(t *testing.T) {
 	testTimerStoreWithTimeZone(t, api.NewMemoryTimerStore(), timeutil.SystemLocation().String())
 
 	// table store
-	store := testkit.CreateMockStore(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "test"
 	tblName := "timerstore"
@@ -889,11 +903,7 @@ func TestTimerStoreWithTimeZone(t *testing.T) {
 	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
 	tk.MustExec("set @@time_zone = 'America/Los_Angeles'")
 
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-
+	pool := &mockSessionPool{t: t, pool: do.AdvancedSysSessionPool()}
 	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
 	defer timerStore.Close()
 
@@ -904,6 +914,9 @@ func TestTimerStoreWithTimeZone(t *testing.T) {
 
 	// check time zone should be set back to the previous one.
 	require.Equal(t, "America/Los_Angeles", tk.Session().GetSessionVars().Location().String())
+
+	// check pool
+	require.False(t, pool.inuse.Load())
 }
 
 func testTimerStoreWithTimeZone(t *testing.T, timerStore *api.TimerStore, defaultTZ string) {

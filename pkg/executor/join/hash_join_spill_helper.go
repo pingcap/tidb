@@ -70,11 +70,14 @@ type hashJoinSpillHelper struct {
 	spilledPartitions []bool
 
 	validJoinKeysBuffer [][]byte
+	spilledValidRowNum  atomic.Uint64
 
 	// This variable will be set to false before restoring
 	spillTriggered bool
 
 	canSpillFlag atomic.Bool
+
+	round int
 
 	spillTriggeredForTest                        bool
 	spillRoundForTest                            int
@@ -96,6 +99,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // row data
 	helper.probeSpillFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
 	helper.spilledPartitions = make([]bool, partitionNum)
+	helper.spilledValidRowNum.Store(0)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
 
@@ -108,6 +112,8 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	for i := 1; i < len(helper.probeSpillFieldTypes); i++ {
 		helper.probeSpilledRowIdx = append(helper.probeSpilledRowIdx, i)
 	}
+
+	helper.round = 0
 
 	// hashJoinExec may be nil in test
 	if hashJoinExec != nil {
@@ -233,7 +239,7 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64) ([]int, int64) {
 	partitionNum := h.hashJoinExec.partitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
-	for i := 0; i < int(partitionNum); i++ {
+	for i := range int(partitionNum) {
 		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
 		if hashTableMemUsage != nil {
 			partitionsMemoryUsage[i] += hashTableMemUsage[i]
@@ -288,15 +294,17 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 	return spilledPartitions, releasedMemoryUsage
 }
 
-func (*hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
+func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
 	validJoinKeys = validJoinKeys[:rowLen]
-	for i := 0; i < rowLen; i++ {
+	for i := range rowLen {
 		validJoinKeys[i] = byte(0)
 	}
 	for _, pos := range seg.validJoinKeyPos {
 		validJoinKeys[pos] = byte(1)
 	}
+
+	h.spilledValidRowNum.Add(uint64(len(seg.validJoinKeyPos)))
 	return validJoinKeys
 }
 
@@ -331,7 +339,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 		h.validJoinKeysBuffer[workerID] = h.generateSpilledValidJoinKey(seg, h.validJoinKeysBuffer[workerID])
 
 		rowNum := seg.getRowNum()
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			row := seg.getRowBytes(i)
 			if h.tmpSpillBuildSideChunks[workerID].IsFull() {
 				err := disk.Add(h.tmpSpillBuildSideChunks[workerID])
@@ -389,6 +397,30 @@ func (h *hashJoinSpillHelper) init() {
 	}
 }
 
+func (h *hashJoinSpillHelper) getSpilledPartitionsNum() int {
+	return len(h.getSpilledPartitions())
+}
+
+func (h *hashJoinSpillHelper) getBuildSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.buildRowsInDisk)
+}
+
+func (h *hashJoinSpillHelper) getProbeSpillBytes() int64 {
+	return h.getSpillBytesImpl(h.probeRowsInDisk)
+}
+
+func (*hashJoinSpillHelper) getSpillBytesImpl(disks [][]*chunk.DataInDiskByChunks) int64 {
+	totalBytes := int64(0)
+	for _, disk := range disks {
+		for _, d := range disk {
+			if d != nil {
+				totalBytes += d.GetTotalBytesInDisk()
+			}
+		}
+	}
+	return totalBytes
+}
+
 func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, totalReleasedMemory int64) error {
 	workerNum := len(h.hashJoinExec.BuildWorkers)
 	errChannel := make(chan error, workerNum)
@@ -405,7 +437,7 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
-	for i := 0; i < workerNum; i++ {
+	for i := range workerNum {
 		workerID := i
 		wg.RunWithRecover(
 			func() {
@@ -496,6 +528,7 @@ func (h *hashJoinSpillHelper) reset() {
 		h.spilledPartitions[i] = false
 	}
 
+	h.spilledValidRowNum.Store(0)
 	h.spillTriggered = false
 }
 
@@ -516,11 +549,11 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 	partNum := h.hashJoinExec.partitionNumber
 	concurrency := int(h.hashJoinExec.Concurrency)
 
-	for i := 0; i < int(partNum); i++ {
+	for i := range int(partNum) {
 		if h.spilledPartitions[i] {
 			buildInDisks := make([]*chunk.DataInDiskByChunks, 0)
 			probeInDisks := make([]*chunk.DataInDiskByChunks, 0)
-			for j := 0; j < concurrency; j++ {
+			for j := range concurrency {
 				if h.buildRowsInDisk[j] != nil && h.buildRowsInDisk[j][i] != nil {
 					buildInDisks = append(buildInDisks, h.buildRowsInDisk[j][i])
 					probeInDisks = append(probeInDisks, h.probeRowsInDisk[j][i])

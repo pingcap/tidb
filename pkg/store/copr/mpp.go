@@ -36,6 +36,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -229,7 +230,7 @@ func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
 }
 
 // EstablishMPPConns build a mpp connection to receive data, return valid response when err is nil
-func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc.MPPStreamResponse, error) {
+func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc.MPPStreamResponse, bool, error) {
 	req := param.Req
 	taskMeta := param.TaskMeta
 	connReq := &mpp.EstablishMPPConnectionRequest{
@@ -252,7 +253,6 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 	wrappedReq.StoreTp = getEndPointType(kv.TiFlash)
 
 	// Drain results from root task.
-	// We don't need to process any special error. When we meet errors, just let it fail.
 	rpcResp, err := c.store.GetTiKVClient().SendRequest(param.Ctx, req.Meta.GetAddress(), wrappedReq, TiFlashReadTimeoutUltraLong)
 
 	var stream *tikvrpc.MPPStreamResponse
@@ -264,14 +264,20 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 		if stream != nil {
 			stream.Close()
 		}
-		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !config.GetGlobalConfig().UseAutoScaler {
 			c.store.GetRegionCache().InvalidateTiFlashComputeStores()
 		}
-		return nil, err
+		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
+			return nil, false, err
+		}
+		bo := backoff.NewBackofferWithTikvBo(param.Bo)
+		if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
+			return nil, true, err
+		}
+		return nil, false, err
 	}
 
-	return stream, nil
+	return stream, false, nil
 }
 
 // CheckVisibility checks if it is safe to read using given ts.
@@ -309,7 +315,7 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 
 	// update mpp store cache
 	cnt := 0
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 
 	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
 		if value.(bool) {

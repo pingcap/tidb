@@ -17,6 +17,7 @@ package kv
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
 )
@@ -33,7 +34,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestMppVersion(t *testing.T) {
-	assert.Equal(t, int64(2), GetNewestMppVersion().ToInt64())
+	assert.Equal(t, int64(3), GetNewestMppVersion().ToInt64())
 	{
 		v, ok := ToMppVersion("unspecified")
 		assert.True(t, ok)
@@ -59,34 +60,39 @@ func TestMppVersion(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, v, MppVersionV2)
 	}
+	{
+		v, ok := ToMppVersion("3")
+		assert.True(t, ok)
+		assert.Equal(t, v, MppVersionV3)
+	}
 }
 
 func TestExchangeCompressionMode(t *testing.T) {
-	assert.Equal(t, "UNSPECIFIED", ExchangeCompressionModeUnspecified.Name())
+	assert.Equal(t, "UNSPECIFIED", vardef.ExchangeCompressionModeUnspecified.Name())
 	{
-		a, ok := ToExchangeCompressionMode("UNSPECIFIED")
-		assert.Equal(t, a, ExchangeCompressionModeUnspecified)
+		a, ok := vardef.ToExchangeCompressionMode("UNSPECIFIED")
+		assert.Equal(t, a, vardef.ExchangeCompressionModeUnspecified)
 		assert.True(t, ok)
 	}
-	assert.Equal(t, "NONE", ExchangeCompressionModeNONE.Name())
+	assert.Equal(t, "NONE", vardef.ExchangeCompressionModeNONE.Name())
 	{
-		a, ok := ToExchangeCompressionMode("NONE")
-		assert.Equal(t, a, ExchangeCompressionModeNONE)
+		a, ok := vardef.ToExchangeCompressionMode("NONE")
+		assert.Equal(t, a, vardef.ExchangeCompressionModeNONE)
 		assert.True(t, ok)
 	}
-	assert.Equal(t, "FAST", ExchangeCompressionModeFast.Name())
+	assert.Equal(t, "FAST", vardef.ExchangeCompressionModeFast.Name())
 	{
-		a, ok := ToExchangeCompressionMode("FAST")
-		assert.Equal(t, a, ExchangeCompressionModeFast)
+		a, ok := vardef.ToExchangeCompressionMode("FAST")
+		assert.Equal(t, a, vardef.ExchangeCompressionModeFast)
 		assert.True(t, ok)
 	}
-	assert.Equal(t, "HIGH_COMPRESSION", ExchangeCompressionModeHC.Name())
+	assert.Equal(t, "HIGH_COMPRESSION", vardef.ExchangeCompressionModeHC.Name())
 	{
-		a, ok := ToExchangeCompressionMode("HIGH_COMPRESSION")
-		assert.Equal(t, a, ExchangeCompressionModeHC)
+		a, ok := vardef.ToExchangeCompressionMode("HIGH_COMPRESSION")
+		assert.Equal(t, a, vardef.ExchangeCompressionModeHC)
 		assert.True(t, ok)
 	}
 	// default `FAST`
-	assert.Equal(t, ExchangeCompressionModeFast, RecommendedExchangeCompressionMode)
-	assert.Equal(t, tipb.CompressionMode_FAST, RecommendedExchangeCompressionMode.ToTipbCompressionMode())
+	assert.Equal(t, vardef.ExchangeCompressionModeFast, vardef.RecommendedExchangeCompressionMode)
+	assert.Equal(t, tipb.CompressionMode_FAST, vardef.RecommendedExchangeCompressionMode.ToTipbCompressionMode())
 }

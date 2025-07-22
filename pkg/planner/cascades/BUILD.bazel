@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cascades",
+    srcs = ["cascades.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/base/cascadesctx",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/cascades/rule",
+        "//pkg/planner/cascades/task",
+        "//pkg/planner/core/base",
+        "//pkg/util/intest",
+        "@com_github_bits_and_blooms_bitset//:bitset",
+    ],
+)
+
+go_test(
+    name = "cascades_test",
+    timeout = "short",
+    srcs = ["cascades_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

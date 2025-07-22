@@ -18,7 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/implementation"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -64,7 +64,7 @@ func (*OrderEnforcer) NewProperty(_ *property.PhysicalProperty) (newProp *proper
 // OnEnforce adds sort operator to satisfy required order property.
 func (*OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
 	childPlan := child.GetPlan()
-	sort := plannercore.PhysicalSort{
+	sort := physicalop.PhysicalSort{
 		ByItems: make([]*util.ByItems, 0, len(reqProp.SortItems)),
 	}.Init(childPlan.SCtx(), childPlan.StatsInfo(), childPlan.QueryBlockOffset(), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	for _, item := range reqProp.SortItems {
@@ -82,7 +82,7 @@ func (*OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.I
 func (*OrderEnforcer) GetEnforceCost(g *memo.Group) float64 {
 	// We need a SessionCtx to calculate the cost of a sort.
 	sctx := g.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode.SCtx()
-	sort := plannercore.PhysicalSort{}.Init(sctx, g.Prop.Stats, 0, nil)
+	sort := physicalop.PhysicalSort{}.Init(sctx, g.Prop.Stats, 0, nil)
 	cost := sort.GetCost(g.Prop.Stats.RowCount, g.Prop.Schema)
 	return cost
 }

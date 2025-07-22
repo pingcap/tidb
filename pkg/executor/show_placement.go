@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/table"
@@ -112,7 +112,7 @@ func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]any) []string 
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", metadef.InformationSchemaName.O, infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -283,7 +283,7 @@ func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			policy, ok := e.is.PolicyByName(pmodel.NewCIStr(policyName))
+			policy, ok := e.is.PolicyByName(ast.NewCIStr(policyName))
 			if !ok {
 				return errors.Errorf("Policy with name '%s' not found", policyName)
 			}
@@ -304,7 +304,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemaNames()
-	slices.SortFunc(dbs, func(i, j pmodel.CIStr) int { return cmp.Compare(i.O, j.O) })
+	slices.SortFunc(dbs, func(i, j ast.CIStr) int { return cmp.Compare(i.O, j.O) })
 
 	for _, dbName := range dbs {
 		if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.DBIsVisible(activeRoles, dbName.O) {
@@ -360,7 +360,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemaNames()
-	slices.SortFunc(dbs, func(i, j pmodel.CIStr) int { return cmp.Compare(i.O, j.O) })
+	slices.SortFunc(dbs, func(i, j ast.CIStr) int { return cmp.Compare(i.O, j.O) })
 
 	tbls := e.is.ListTablesWithSpecialAttribute(infoschemacontext.AllSpecialAttribute)
 	for _, db := range tbls {

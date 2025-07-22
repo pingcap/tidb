@@ -66,8 +66,8 @@ type SlotManager struct {
 	reservedSlots map[string]int
 	// represents the number of slots taken by task on each node
 	// on some cases it might be larger than capacity:
-	// 	current step of higher rank task A has little subtasks, so we start
-	// 	to schedule lower rank task, but next step of A has many subtasks.
+	// 	current step of high ranking task A has little subtasks, so we start
+	// 	to schedule low ranking task, but next step of A has many subtasks.
 	// once initialized, the length of usedSlots should be equal to number of nodes
 	// managed by dist framework.
 	usedSlots atomic.Pointer[map[string]int]
@@ -168,7 +168,7 @@ func (sm *SlotManager) unReserve(task *proto.TaskBase, execID string) {
 	if !ok {
 		return
 	}
-	sm.reservedStripes = append(sm.reservedStripes[:idx], sm.reservedStripes[idx+1:]...)
+	sm.reservedStripes = slices.Delete(sm.reservedStripes, idx, idx+1)
 	delete(sm.task2Index, task.ID)
 	for i, s := range sm.reservedStripes {
 		sm.task2Index[s.task.ID] = i

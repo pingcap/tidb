@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -47,7 +47,7 @@ type SplitIndexRegionExec struct {
 	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
-	partitionNames []pmodel.CIStr
+	partitionNames []ast.CIStr
 	indexInfo      *model.IndexInfo
 	lower          []types.Datum
 	upper          []types.Datum
@@ -271,7 +271,7 @@ type SplitTableRegionExec struct {
 	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
-	partitionNames []pmodel.CIStr
+	partitionNames []ast.CIStr
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int
@@ -437,7 +437,7 @@ func (e *SplitTableRegionExec) getSplitTableKeysFromValueList() ([][]byte, error
 func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 	for _, v := range e.valueLists {
-		handle, err := e.handleCols.BuildHandleByDatums(v)
+		handle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, v)
 		if err != nil {
 			return nil, err
 		}
@@ -537,11 +537,11 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 		}
 		return keys, nil
 	}
-	lowerHandle, err := e.handleCols.BuildHandleByDatums(e.lower)
+	lowerHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.lower)
 	if err != nil {
 		return nil, err
 	}
-	upperHandle, err := e.handleCols.BuildHandleByDatums(e.upper)
+	upperHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.upper)
 	if err != nil {
 		return nil, err
 	}

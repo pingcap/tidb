@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -444,13 +443,13 @@ func TestLogicalMemTableHash64Equals(t *testing.T) {
 	require.False(t, m1.Equals(m2))
 
 	m2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
-	m2.DBName = pmodel.NewCIStr("d1")
+	m2.DBName = ast.NewCIStr("d1")
 	hasher2.Reset()
 	m2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, m1.Equals(m2))
 
-	m2.DBName = pmodel.NewCIStr("")
+	m2.DBName = ast.NewCIStr("")
 	m2.TableInfo = &model.TableInfo{ID: 1}
 	hasher2.Reset()
 	m2.Hash64(hasher2)
@@ -994,9 +993,8 @@ func TestHandleColsHash64Equals(t *testing.T) {
 		UniqueID: 2,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
-	ctx := mock.NewContext()
-	handles1 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
-	handles2 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles1 := util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 := util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
@@ -1005,31 +1003,31 @@ func TestHandleColsHash64Equals(t *testing.T) {
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 2}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 2}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 2}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 2}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col1})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col1})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -65,10 +66,10 @@ func TestGroupNDVs(t *testing.T) {
 		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, nodeW)
 		require.NoError(t, err, comment)
-		p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
+		p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		lp := p.(base.LogicalPlan)
-		_, err = core.RecursiveDeriveStats4Test(lp)
+		_, _, err = core.RecursiveDeriveStats4Test(lp)
 		require.NoError(t, err, comment)
 		var agg *logicalop.LogicalAggregation
 		var join *logicalop.LogicalJoin
@@ -127,7 +128,7 @@ func TestNDVGroupCols(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
 	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")

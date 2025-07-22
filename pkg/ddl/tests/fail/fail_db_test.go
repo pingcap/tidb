@@ -30,9 +30,9 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -128,10 +128,10 @@ func TestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("use cancel_job_db")
 	tk.MustExec("select * from tx")
 	// test for exchanging partition
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(3)
 	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
+		vardef.SetDDLErrorCountLimit(limit)
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/exchangePartitionErr", `return(true)`))
 	defer func() {
@@ -202,14 +202,14 @@ func TestAddIndexFailed(t *testing.T) {
 	tk.MustExec("use test_add_index_failed")
 
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
 	}
 
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test_add_index_failed"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -236,34 +236,34 @@ func TestFailSchemaSyncer(t *testing.T) {
 	defer func() {
 		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
-	require.True(t, s.dom.SchemaValidator.IsStarted())
+	require.True(t, s.dom.GetSchemaValidator().IsStarted())
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*schemaver.MemSyncer)
 	require.True(t, ok)
 
 	// make reload failed.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
-	for i := 0; i < 50; i++ {
-		if !s.dom.SchemaValidator.IsStarted() {
+	for range 50 {
+		if !s.dom.GetSchemaValidator().IsStarted() {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	require.False(t, s.dom.SchemaValidator.IsStarted())
+	require.False(t, s.dom.GetSchemaValidator().IsStarted())
 	_, err := tk.Exec("insert into t values(1)")
 	require.Error(t, err)
 	require.EqualError(t, err, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
 	// wait the schemaValidator is started.
-	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() {
+	for range 50 {
+		if s.dom.GetSchemaValidator().IsStarted() {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	require.True(t, s.dom.SchemaValidator.IsStarted())
+	require.True(t, s.dom.GetSchemaValidator().IsStarted())
 	err = tk.ExecToErr("insert into t values(1)")
 	require.NoError(t, err)
 }
@@ -321,7 +321,7 @@ func TestGenGlobalIDFail(t *testing.T) {
 func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 	s := createFailDBSuite(t)
 	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
-		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+		tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
 	})
 }
@@ -348,7 +348,7 @@ func TestRunDDLJobPanicEnableFastCreateTable(t *testing.T) {
 }
 
 func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
-	if variable.EnableDistTask.Load() {
+	if vardef.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
 	}
 
@@ -376,8 +376,8 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 	}
 
 	is := s.dom.InfoSchema()
-	schemaName := model.NewCIStr("test_db")
-	tableName := model.NewCIStr("test_add_index")
+	schemaName := ast.NewCIStr("test_db")
+	tableName := ast.NewCIStr("test_add_index")
 	tbl, err := is.TableByName(context.Background(), schemaName, tableName)
 	require.NoError(t, err)
 
@@ -388,7 +388,7 @@ func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.Test
 
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
 	require.NoError(t, err)
-	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+	originDDLAddIndexWorkerCnt := vardef.GetDDLReorgWorkerCounter()
 	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
 	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
@@ -478,7 +478,7 @@ func TestModifyColumn(t *testing.T) {
 	tk.MustExec("alter table t change column b bb mediumint first")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	cols := tbl.Meta().Columns
 	colsStr := ""
@@ -532,11 +532,11 @@ func TestModifyColumn(t *testing.T) {
 	maxBatch := 20
 	batchCnt := 100
 	// Make sure there are no duplicate keys.
-	defaultBatchSize := variable.DefTiDBDDLReorgBatchSize * variable.DefTiDBDDLReorgWorkerCount
+	defaultBatchSize := vardef.DefTiDBDDLReorgBatchSize * vardef.DefTiDBDDLReorgWorkerCount
 	base := defaultBatchSize * 20
 	for i := 1; i < batchCnt; i++ {
 		n := base + i*defaultBatchSize + i
-		for j := 0; j < rand.Intn(maxBatch); j++ {
+		for j := range rand.Intn(maxBatch) {
 			n += j
 			sql := fmt.Sprintf("insert into t3 values (%d, %d, %d)", n, n, n)
 			tk.MustExec(sql)

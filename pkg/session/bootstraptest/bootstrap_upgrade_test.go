@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -68,7 +68,7 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	req := rStatsHistoryTbl.NewChunk(nil)
 	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
 	require.Equal(t, 5, req.NumRows())
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		row := req.GetRow(i)
 		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
 		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
@@ -90,7 +90,7 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	req = rStatsMetaHistoryTbl.NewChunk(nil)
 	require.NoError(t, rStatsMetaHistoryTbl.Next(ctx, req))
 	require.Equal(t, 6, req.NumRows())
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		row := req.GetRow(i)
 		require.Equal(t, statsMetaHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
 		require.Equal(t, statsMetaHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
@@ -460,9 +460,9 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 
 // checkDDLJobExecSucc is used to make sure the DDL operation is successful.
 func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
-	sql := fmt.Sprintf(" admin show ddl jobs where job_id=%d", jobID)
+	sql := fmt.Sprintf(" admin show ddl jobs 20 where job_id=%d", jobID)
 	suc := false
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		rows, err := execute(context.Background(), se, sql)
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
@@ -519,7 +519,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 		}
 	})
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) {
 		if job != nil && job.ID == jobID {
 			once.Do(func() { ch <- struct{}{} })
 		}
@@ -724,7 +724,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			require.NoError(t, err)
 			cmt := fmt.Sprintf("job: %s", runJob.String())
 			isPause := runJob.IsPausedBySystem() || runJob.IsPausing()
-			if tidbutil.IsSysDB(runJob.SchemaName) {
+			if metadef.IsSystemRelatedDB(runJob.SchemaName) {
 				require.False(t, isPause, cmt)
 			} else {
 				require.True(t, isPause, cmt)
@@ -788,7 +788,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	var rows []chunk.Row
 
 	// Make sure all DDLs are done.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		sql = "select count(1) from mysql.tidb_ddl_job"
 		rows, err = execute(context.Background(), tk.Session(), sql)
 		require.NoError(t, err)

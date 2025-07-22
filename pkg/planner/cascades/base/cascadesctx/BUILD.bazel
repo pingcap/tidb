@@ -8,5 +8,6 @@ go_library(
     deps = [
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/memo",
+        "@com_github_bits_and_blooms_bitset//:bitset",
     ],
 )

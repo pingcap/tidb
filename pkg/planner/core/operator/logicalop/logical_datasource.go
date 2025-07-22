@@ -24,10 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -54,9 +52,9 @@ type DataSource struct {
 	Table         table.Table
 	TableInfo     *model.TableInfo `hash64-equals:"true"`
 	Columns       []*model.ColumnInfo
-	DBName        pmodel.CIStr
+	DBName        ast.CIStr
 
-	TableAsName *pmodel.CIStr `hash64-equals:"true"`
+	TableAsName *ast.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
@@ -68,13 +66,20 @@ type DataSource struct {
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
-	// PossibleAccessPaths stores all the possible access path for physical plan, including table scan.
+	// AllPossibleAccessPaths stores all the possible access path from build datasource phase.
+	AllPossibleAccessPaths []*util.AccessPath
+	// PossibleAccessPaths stores all the possible access path for one specific logical alternative.
+	// because different logical alternative may have different filter condition, so the possible access path may be different.
+	// like:
+	// * special rule XForm will gen additional selection which will be push down to a ds alternative.
+	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
+	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
 	PossibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
-	PhysicalTableID int64
-	PartitionNames  []pmodel.CIStr
+	PhysicalTableID int64 `hash64-equals:"true"`
+	PartitionNames  []ast.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
@@ -93,7 +98,7 @@ type DataSource struct {
 	// PreferStoreType means the DataSource is enforced to which storage.
 	PreferStoreType int `hash64-equals:"true"`
 	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
-	PreferPartitions map[int][]pmodel.CIStr
+	PreferPartitions map[int][]ast.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
 	IS               infoschema.InfoSchema
 	// IsForUpdateRead should be true in either of the following situations
@@ -113,6 +118,9 @@ type DataSource struct {
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
+
+	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
+	AskedColumnGroup [][]*expression.Column
 }
 
 // Init initializes DataSource.
@@ -146,16 +154,20 @@ func (ds *DataSource) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.<0th> interface.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
-	predicates = constraint.DeleteTrueExprs(ds, predicates)
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+	predicates = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), predicates, true)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
 	ds.AllConds = predicates
+	dual := Conds2TableDual(ds, ds.AllConds)
+	if dual != nil {
+		AppendTableDualTraceStep(ds, dual, predicates, opt)
+		return nil, dual, nil
+	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
-	return predicates, ds
+	return predicates, ds, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
@@ -185,6 +197,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 				continue
 			}
 			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
+			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
@@ -279,8 +292,8 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
-	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
+	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true)
+	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true)
 	return p
 }
 
@@ -291,17 +304,16 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	return utilfuncp.DeriveStats4DataSource(ds, colGroups)
+func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ []bool) (*property.StatsInfo, bool, error) {
+	return utilfuncp.DeriveStats4DataSource(ds)
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-
-	for _, path := range ds.PossibleAccessPaths {
+	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
+	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {

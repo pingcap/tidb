@@ -26,9 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -68,9 +67,9 @@ func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
+func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error) {
 	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return DeleteTableStatsFromKV(sctx, statsIDs)
+		return DeleteTableStatsFromKV(sctx, statsIDs, soft)
 	}, util.FlagWrapTxn)
 }
 
@@ -127,7 +126,7 @@ func GCStats(
 
 	if err := ClearOutdatedHistoryStats(sctx); err != nil {
 		logutil.BgLogger().Warn("failed to gc outdated historical stats",
-			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
+			zap.Duration("duration", vardef.HistoricalStatsDuration.Load()),
 			zap.Error(err))
 	}
 
@@ -136,18 +135,31 @@ func GCStats(
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err error) {
+func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool) (err error) {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, statsID := range statsIDs {
-		// We only update the version so that other tidb will know that this table is deleted.
-		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
+		// We update the version so that other tidb will know that this table is deleted.
+		// And we also update the last_stats_histograms_version to tell other tidb that the stats histogram is deleted
+		// and they should update their memory cache. It's mainly for soft delete triggered by DROP STATS.
+		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %? ", startTS, startTS, statsID); err != nil {
 			return err
 		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
-			return err
+		if soft {
+			// Soft delete is triggered by DROP STATS, we just reset the meta info of each column.
+			if _, err = util.Exec(sctx,
+				"update mysql.stats_histograms "+
+					"set distinct_count = 0, null_count = 0, tot_col_size = 0, modify_count = 0, version = %?,"+
+					"cm_sketch = null, stats_ver = 0, flag = 0, correlation = 0, last_analyze_pos = null where table_id = %?",
+				startTS, statsID); err != nil {
+				return
+			}
+		} else {
+			if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
+				return err
+			}
 		}
 		if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %?", statsID); err != nil {
 			return err
@@ -185,7 +197,7 @@ func forCount(total int64, batch int64) int64 {
 // ClearOutdatedHistoryStats clear outdated historical stats
 func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-	rs, err := util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
 		return err
 	}
@@ -199,16 +211,16 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	}
 	count := rows[0].GetInt64(0)
 	if count > 0 {
-		for n := int64(0); n < forCount(count, int64(1000)); n++ {
+		for range forCount(count, int64(1000)) {
 			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
-			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 			if err != nil {
 				return err
 			}
 		}
-		for n := int64(0); n < forCount(count, int64(50)); n++ {
+		for range forCount(count, int64(50)) {
 			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
-			_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
+			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 			return err
 		}
 		logutil.BgLogger().Info("clear outdated historical stats")
@@ -235,7 +247,7 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 		return errors.Trace(err)
 	}
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
+	if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %? ", startTS, startTS, physicalID); err != nil {
 		return err
 	}
 	// delete histogram meta
@@ -287,7 +299,7 @@ func gcTableStats(sctx sessionctx.Context,
 			// It's the first time to run into it. Delete column/index stats to notify other TiDB nodes.
 			logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("tableID", physicalID))
 			return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
-				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
+				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}, false))
 			})
 		}
 		// len(rows) == 0 => The table's stats is empty.
@@ -297,7 +309,6 @@ func gcTableStats(sctx sessionctx.Context,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cache.TableRowStatsCache.Invalidate(physicalID)
 		return nil
 	}
 
@@ -425,7 +436,7 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %?, last_stats_histograms_version = %? WHERE table_id = %?", version, version, tableID); err != nil {
 		return 0, err
 	}
 	statsVer = version

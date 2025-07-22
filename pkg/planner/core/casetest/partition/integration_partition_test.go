@@ -247,3 +247,23 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+// Issue 58475
+func TestGeneratedColumnWithPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`
+		CREATE TABLE tp (
+			id int,
+			c1 int,
+			c2 int GENERATED ALWAYS AS (c1) VIRTUAL,
+			KEY idx (id)
+		) PARTITION BY RANGE (id)
+		(PARTITION p0 VALUES LESS THAN (0),
+		PARTITION p1 VALUES LESS THAN (10000))
+	`)
+	tk.MustExec(`INSERT INTO tp (id, c1) VALUES (0, 1)`)
+	tk.MustExec(`select /*+ FORCE_INDEX(tp, idx) */id from tp where c2 = 2 group by id having id in (0)`)
+}

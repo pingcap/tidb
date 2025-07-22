@@ -57,7 +57,6 @@ func TestRefine(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -90,7 +89,7 @@ func TestAggEliminator(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	var input []string
@@ -123,10 +122,36 @@ func TestAggEliminator(t *testing.T) {
 func TestRuleColumnPruningLogicalApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
+	tk.MustExec(`CREATE TABLE t1 (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
+	tk.MustExec(`CREATE TABLE t2 (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
+	tk.MustExec(`CREATE TABLE t3 (
+  a int(11) DEFAULT NULL,
+  b int(11) DEFAULT NULL,
+  c int(11) DEFAULT NULL,
+  KEY idx_a (a)
+);`)
 	var input []string
 	var output []struct {
 		SQL  string
 		Best string
+		Plan []string
 	}
 	planSuiteData := GetPlanSuiteData()
 	planSuiteData.LoadTestCases(t, &input, &output)
@@ -140,12 +165,15 @@ func TestRuleColumnPruningLogicalApply(t *testing.T) {
 		require.NoError(t, err, comment)
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
+		row := tk.MustQuery("explain format = 'brief' " + tt)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
+			output[i].Plan = testdata.ConvertRowsToStrings(row.Rows())
 		})
 		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+		row.Check(testkit.Rows(output[i].Plan...))
 	}
 }
 
@@ -153,7 +181,6 @@ func TestSemiJoinToInner(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -220,7 +247,7 @@ func TestIssue37520(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int primary key, b int);")
 	tk.MustExec("create table t2(a int, b int, index ia(a));")
@@ -250,7 +277,7 @@ func TestMPPHints(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
@@ -292,12 +319,12 @@ func TestMPPHintsScope(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 	tk.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
@@ -531,7 +558,7 @@ func TestMPPRightSemiJoin(t *testing.T) {
 	}
 	tk.MustExec("analyze table t1 all columns")
 	tk.MustExec("analyze table t2 all columns")
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1; set @@tidb_hash_join_version=optimized;")
 	{
 		var input []string
 		var output []struct {
@@ -621,7 +648,7 @@ func TestHintScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
 
 	var input []string
@@ -657,7 +684,6 @@ func TestJoinHints(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -768,7 +794,7 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("create table t(a int, b int, c int)")
 
 	sessionVars := tk.Session().GetSessionVars()
@@ -975,7 +1001,6 @@ func TestIndexMergeHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -1030,7 +1055,6 @@ func TestQueryBlockHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 
 	var input []string
 	var output []struct {
@@ -1121,7 +1145,7 @@ func TestIndexJoinHint(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec(`drop table if exists test.t1, test.t2, test.t;`)
 	tk.MustExec(`create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	tk.MustExec(`create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
@@ -1258,7 +1282,7 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int primary key, b int not null)")
 	tk.MustExec("create table t2(a int primary key, b int not null)")
@@ -1296,7 +1320,7 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee(empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("set tidb_enforce_mpp=0")
@@ -1533,4 +1557,70 @@ func TestExplainExpand(t *testing.T) {
 func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 	// PhysicalApply is expected not to implement PhysicalJoin.
 	require.NotImplements(t, (*core.PhysicalJoin)(nil), new(core.PhysicalApply))
+}
+
+func TestRuleAggElimination4Join(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("CREATE TABLE t1 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, UNIQUE KEY `UK_id1_id2` (id1,id2));")
+		tk.MustExec("CREATE TABLE t2 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, UNIQUE KEY `UK_id1_id2` (id1,id2));")
+		tk.MustExec("CREATE TABLE t3 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, UNIQUE KEY `UK_id1_id2` (id1,id2));")
+		tk.MustExec("CREATE TABLE t4 ( id1 int NOT NULL, id2 int NOT NULL, id3 int NOT NULL, id4 int NOT NULL, KEY `UK_id1_id2` (id1,id2));")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+
+		cascadesData := getCascadesTemplateData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
+}
+
+func TestIssue62331(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("CREATE TABLE t1 (col_1 time DEFAULT NULL,col_2 mediumint NOT NULL,KEY idx_1 (col_2,col_1) /*T![global_index] GLOBAL */,KEY idx_2 (col_2,col_1),PRIMARY KEY (col_2) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY idx_4 (col_2)) PARTITION BY RANGE COLUMNS(col_2) (PARTITION p0 VALUES LESS THAN (7429676));")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+
+		cascadesData := getCascadesTemplateData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+		tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
+}
+
+// Helper: load cascades_template test data
+func getCascadesTemplateData() testdata.TestData {
+	var testDataMap = make(testdata.BookKeeper)
+	testDataMap.LoadTestSuiteData("testdata", "cascades_template", true)
+	return testDataMap["cascades_template"]
 }
