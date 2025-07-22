@@ -35,7 +35,9 @@ func NewProjectionImpl(proj *physicalop.PhysicalProjection) *ProjectionImpl {
 // CalcCost implements Implementation CalcCost interface.
 func (impl *ProjectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	proj := impl.plan.(*physicalop.PhysicalProjection)
-	impl.cost = utilfuncp.GetCost4PhysicalProjection(proj, children[0].GetPlan().StatsInfo().RowCount) + children[0].GetCost()
+	child := children[0]
+	impl.cost = utilfuncp.GetCost4PhysicalProjection(proj,
+		child.GetPlan().StatsInfo().RowCount) + child.GetCost()
 	return impl.cost
 }
 
