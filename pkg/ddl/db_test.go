@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -550,7 +549,7 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 }
 
 func TestIssue60047(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -570,8 +569,13 @@ func TestIssue60047(t *testing.T) {
 	}
 
 	// parallel execute `insert ... on duplicate key update` and `alter table ... add column after ...`
-	var err error
-	hookFunc := func(job *model.Job) {
+	err := errors.New("Test has not run the insert!")
+	hook := &callback.TestDDLCallback{Do: dom}
+	d := dom.DDL()
+	originalHook := d.GetHook()
+	d.SetHook(hook)
+	defer d.SetHook(originalHook)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
@@ -581,8 +585,6 @@ func TestIssue60047(t *testing.T) {
 			err = tk1.ExecToErr(insertSQL)
 		}
 	}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
-
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	ddlSQL := "alter table t add column `d` decimal(20,4) not null default '0'"
