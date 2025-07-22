@@ -64,6 +64,18 @@ func checkSequenceFunction(exprs []Expression) bool {
 	return true
 }
 
+// HasGroupingFunc checks whether an expression contains Grouping function.
+func HasGroupingFunc(expr Expression) bool {
+	scalaFunc, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if scalaFunc.FuncName.L == ast.Grouping {
+		return true
+	}
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasGroupingFunc)
+}
+
 // HasGetSetVarFunc checks whether an expression contains SetVar/GetVar function.
 func HasGetSetVarFunc(expr Expression) bool {
 	scalaFunc, ok := expr.(*ScalarFunction)

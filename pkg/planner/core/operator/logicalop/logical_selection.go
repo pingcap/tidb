@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -336,7 +337,7 @@ func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotB
 	canBePushDown = make([]expression.Expression, 0, len(filters))
 	canNotBePushDown = make([]expression.Expression, 0, len(filters))
 	for _, expr := range filters {
-		if expression.HasGetSetVarFunc(expr) {
+		if expression.HasGetSetVarFunc(expr) || expression.HasGroupingFunc(expr) {
 			canNotBePushDown = append(canNotBePushDown, expr)
 		} else {
 			canBePushDown = append(canBePushDown, expr)

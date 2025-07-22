@@ -741,6 +741,17 @@ func ReHashCode(sf *ScalarFunction) {
 		evalTp := sf.RetType.EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
 	}
+	if sf.FuncName.L == ast.Grouping {
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
+		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(marks)))
+		for _, mark := range marks {
+			sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(mark)))
+			for k := range mark {
+				sf.hashcode = codec.EncodeInt(sf.hashcode, int64(k))
+			}
+		}
+	}
 }
 
 // ResolveIndices implements Expression interface.

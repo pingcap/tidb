@@ -113,19 +113,19 @@ func TestLogicalProjectionPushDownTopN(t *testing.T) {
 col16 json DEFAULT NULL,
 col17 json DEFAULT NULL
 );`)
-	sql := `explain format='brief' SELECT 
+	sql := `explain format='brief' SELECT
        s.column16 AS column16,
        s.column17 AS column17
 FROM
-  (SELECT 
+  (SELECT
           col16 -> '$[].optUid' AS column16,
           JSON_UNQUOTE(JSON_EXTRACT(col17, '$[0].value')) AS column17
    FROM
-     (SELECT 
+     (SELECT
              col16,
              col17
       FROM table_test) ta24e
-   ) AS s 
+   ) AS s
 ORDER BY CONVERT(column16 USING GBK) ASC,column17 ASC
 LIMIT 0,
       20;`
@@ -146,4 +146,60 @@ LIMIT 0,
 		"      └─TableReader 10000.00 root  data:Projection",
 		"        └─Projection 10000.00 cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column#4, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#5",
 		"          └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
+}
+
+func TestLogicalExpandBuildKeyInfo(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test;")
+		tk.MustExec("CREATE TABLE `testorg` (\n  `org_id` decimal(19,0) NOT NULL,\n  `org_code` varchar(100) DEFAULT NULL,\n  `org_name` varchar(100) DEFAULT NULL,\n  `org_type` varchar(100) DEFAULT NULL,\n  PRIMARY KEY (`org_id`) /*T![clustered_index] CLUSTERED */\n) ")
+		tk.MustExec("CREATE TABLE `testpay` (\n  `bill_code` varchar(100) NOT NULL,\n  `org_id` decimal(19,0) DEFAULT NULL,\n  `amt` decimal(15,2) DEFAULT NULL,\n  `pay_date` varchar(10) DEFAULT NULL,\n  PRIMARY KEY (`bill_code`) /*T![clustered_index] CLUSTERED */\n)")
+		tk.MustExec("CREATE TABLE `testreturn` (\n  `bill_code` varchar(100) NOT NULL,\n  `org_id` decimal(19,0) DEFAULT NULL,\n  `amt` decimal(15,2) DEFAULT NULL,\n  `ret_date` varchar(10) DEFAULT NULL,\n  PRIMARY KEY (`bill_code`) /*T![clustered_index] CLUSTERED */\n)")
+		tk.MustExec("insert into testorg (org_id,org_code,org_name,org_type) values(1,'ORG0001','部门1','DEPT');" +
+			"insert into testorg (org_id,org_code,org_name,org_type) values(2,'ORG0002','部门2','DEPT');" +
+			"insert into testorg (org_id,org_code,org_name,org_type) values(3,'ORG0003','部门3','DEPT');" +
+			"insert into testorg (org_id,org_code,org_name,org_type) values(4,'ORG0004','部门4','DEPT');" +
+			"insert into testorg (org_id,org_code,org_name,org_type) values(5,'ORG0005','公司1','ORG');" +
+			"insert into testorg (org_id,org_code,org_name,org_type) values(6,'ORG0006','公司2','ORG');" +
+			"insert into testorg (org_id,org_code,org_name,org_type) values(7,'ORG0007','公司3','ORG');")
+		tk.MustExec("insert into testpay (bill_code,org_id,amt,pay_date) values('PAY0001',1,100,'2024-06-01');" +
+			"insert into testpay (bill_code,org_id,amt,pay_date) values('PAY0002',2,200,'2024-06-02');" +
+			"insert into testpay (bill_code,org_id,amt,pay_date) values('PAY0003',3,300,'2024-06-03');" +
+			"insert into testpay (bill_code,org_id,amt,pay_date) values('PAY0004',4,400,'2024-07-01');" +
+			"insert into testpay (bill_code,org_id,amt,pay_date) values('PAY0005',5,500,'2024-07-02');" +
+			"insert into testpay (bill_code,org_id,amt,pay_date) values('PAY0006',6,600,'2024-07-03');")
+		tk.MustExec("insert into testreturn (bill_code,org_id,amt,ret_date) values('RET0001',1,100,'2024-06-01');" +
+			"insert into testreturn (bill_code,org_id,amt,ret_date) values('RET0002',2,200,'2024-06-02');" +
+			"insert into testreturn (bill_code,org_id,amt,ret_date) values('RET0003',3,300,'2024-06-03');" +
+			"insert into testreturn (bill_code,org_id,amt,ret_date) values('RET0004',4,400,'2024-07-01'); ")
+		res := tk.MustQuery("SELECT\n  SUM(IFNULL(pay.payamt, 0)) AS payamt," +
+			"  SUM(IFNULL(ret.retamt, 0)) AS retamt," +
+			"  org.org_type," +
+			"  org.org_id," +
+			"  org.org_name" +
+			" FROM testorg org" +
+			" LEFT JOIN (" +
+			"  SELECT" +
+			"    SUM(IFNULL(amt, 0)) AS payamt," +
+			"    org_id" +
+			"  FROM testpay tp" +
+			"  WHERE tp.pay_date BETWEEN '2024-06-01' AND '2024-07-31'" +
+			"  GROUP BY org_id" +
+			") pay ON pay.org_id = org.org_id" +
+			" LEFT JOIN (" +
+			"  SELECT" +
+			"    SUM(IFNULL(amt, 0)) AS retamt," +
+			"    org_id" +
+			"  FROM testreturn tr" +
+			"  WHERE tr.ret_date BETWEEN '2024-06-01' AND '2024-07-31'" +
+			"  GROUP BY org_id" +
+			") ret ON ret.org_id = org.org_id" +
+			" GROUP BY org.org_type, org.org_id WITH ROLLUP;")
+		require.Equal(t, len(res.Rows()), 10)
+		res = tk.MustQuery("SELECT * FROM (   SELECT     SUM(IFNULL(pay.payamt, 0)) AS payamt,     SUM(IFNULL(ret.retamt, 0)) AS retamt,     GROUPING(org.org_type) AS grouptype,     org.org_type,     GROUPING(org.org_id) AS groupid,     org.org_id,     org.org_name   FROM testorg org   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS payamt,       org_id     FROM testpay tp     WHERE tp.pay_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) pay ON pay.org_id = org.org_id   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS retamt,       org_id     FROM testreturn tr     WHERE tr.ret_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) ret ON ret.org_id = org.org_id   GROUP BY org.org_type, org.org_id WITH ROLLUP ) t WHERE groupid = 1 AND grouptype = 1;\n")
+		require.Equal(t, len(res.Rows()), 1)
+		res = tk.MustQuery("SELECT SUM(IFNULL(pay.payamt, 0)) AS payamt,     SUM(IFNULL(ret.retamt, 0)) AS retamt,     GROUPING(org.org_type) AS grouptype,     org.org_type,     GROUPING(org.org_id) AS groupid,     org.org_id,     org.org_name   FROM testorg org   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS payamt,       org_id     FROM testpay tp     WHERE tp.pay_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) pay ON pay.org_id = org.org_id   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS retamt,       org_id     FROM testreturn tr     WHERE tr.ret_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) ret ON ret.org_id = org.org_id   GROUP BY org.org_type, org.org_id WITH ROLLUP having  groupid = 1 AND grouptype = 1;")
+		require.Equal(t, len(res.Rows()), 1)
+	})
 }
