@@ -71,7 +71,7 @@ const (
 	JobStepValidating = "validating"
 
 	baseQuerySQL = `SELECT
-					id, create_time, start_time, end_time,
+					id, create_time, start_time, state_update_time, end_time,
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
 					status, step, summary, error_message
 				FROM mysql.tidb_import_jobs`
@@ -103,6 +103,7 @@ type JobInfo struct {
 	ID             int64
 	CreateTime     types.Time
 	StartTime      types.Time
+	UpdateTime     types.Time
 	EndTime        types.Time
 	TableSchema    string
 	TableName      string
@@ -289,24 +290,27 @@ func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMs
 
 func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	// start_time, end_time, summary, error_message can be NULL, need to use row.IsNull() to check.
-	startTime, endTime := types.ZeroTime, types.ZeroTime
+	startTime, updateTime, endTime := types.ZeroTime, types.ZeroTime, types.ZeroTime
 	if !row.IsNull(2) {
 		startTime = row.GetTime(2)
 	}
 	if !row.IsNull(3) {
-		endTime = row.GetTime(3)
+		updateTime = row.GetTime(3)
+	}
+	if !row.IsNull(4) {
+		endTime = row.GetTime(4)
 	}
 
 	parameters := ImportParameters{}
-	parametersStr := row.GetString(8)
+	parametersStr := row.GetString(9)
 	if err := json.Unmarshal([]byte(parametersStr), &parameters); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	var summary *Summary
 	var summaryStr string
-	if !row.IsNull(12) {
-		summaryStr = row.GetString(12)
+	if !row.IsNull(13) {
+		summaryStr = row.GetString(13)
 	}
 	if len(summaryStr) > 0 {
 		summary = &Summary{}
@@ -316,22 +320,23 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	}
 
 	var errMsg string
-	if !row.IsNull(13) {
-		errMsg = row.GetString(13)
+	if !row.IsNull(14) {
+		errMsg = row.GetString(14)
 	}
 	return &JobInfo{
 		ID:             row.GetInt64(0),
 		CreateTime:     row.GetTime(1),
 		StartTime:      startTime,
+		UpdateTime:     updateTime,
 		EndTime:        endTime,
-		TableSchema:    row.GetString(4),
-		TableName:      row.GetString(5),
-		TableID:        row.GetInt64(6),
-		CreatedBy:      row.GetString(7),
+		TableSchema:    row.GetString(5),
+		TableName:      row.GetString(6),
+		TableID:        row.GetInt64(7),
+		CreatedBy:      row.GetString(8),
 		Parameters:     parameters,
-		SourceFileSize: row.GetInt64(9),
-		Status:         row.GetString(10),
-		Step:           row.GetString(11),
+		SourceFileSize: row.GetInt64(10),
+		Status:         row.GetString(11),
+		Step:           row.GetString(12),
 		Summary:        summary,
 		ErrorMessage:   errMsg,
 	}, nil
