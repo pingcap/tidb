@@ -151,7 +151,7 @@
           "TopN 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader 1.00 root  index:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─IndexRangeScan 7.00 cop[tikv] table:t, index:idx_bc(b, c) range:[-inf,6], keep order:false"
+          "    └─IndexRangeScan 6.23 cop[tikv] table:t, index:idx_bc(b, c) range:[-inf,6], keep order:false"
         ]
       },
       {
@@ -166,7 +166,7 @@
           "  └─TopN(Probe) 1.00 root  test.t.a, offset:0, count:1",
           "    └─IndexReader 1.00 root  index:TopN",
           "      └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "        └─IndexRangeScan 7.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false"
+          "        └─IndexRangeScan 6.23 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false"
         ]
       },
       {
@@ -222,7 +222,7 @@
           "TopN 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader 1.00 root  index:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─Selection 6.00 cop[tikv]  gt(test.t.a, 0)",
+          "    └─Selection 5.82 cop[tikv]  gt(test.t.a, 0)",
           "      └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
@@ -450,8 +450,8 @@
       "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
       "TableReader(Table(t)->Sel([le(test.t.b, 1)])->Limit)->Limit",
       "IndexLookUp(Index(t.b)[[1,1]], Table(t))",
-      "TableReader(Table(t)->Sel([lt(test.t.d, 1991-09-05 00:00:00)]))",
-      "TableReader(Table(t)->Sel([lt(test.t.ts, 1991-09-05 00:00:00.000000)]))",
+      "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
+      "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
       "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->Projection->Projection->StreamAgg->Limit"
     ]
   },
