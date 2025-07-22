@@ -49,14 +49,14 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
-	testTableBasicInfoSlice(t, tablesInMySQLDatabase)
+	testTableBasicInfoSlice(t, tablesInSystemDatabase)
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		for _, tbl := range v.tables {
 			reservedIDs = append(reservedIDs, tbl.ID)
 		}
 	}
-	for _, tbl := range tablesInMySQLDatabase {
+	for _, tbl := range tablesInSystemDatabase {
 		reservedIDs = append(reservedIDs, tbl.ID)
 	}
 	for _, db := range systemDatabases {

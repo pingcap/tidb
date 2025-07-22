@@ -1107,10 +1107,10 @@ var systemDatabases = []DatabaseBasicInfo{
 	{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
 }
 
-// tablesInMySQLDatabase contains the definitions of system tables in the mysql
+// tablesInSystemDatabase contains the definitions of system tables in the mysql
 // database, or the system database, except DDL related tables, see ddlTableVersionTables.
 // TODO: the reserved ID will be used later.
-var tablesInMySQLDatabase = []TableBasicInfo{
+var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.UserTableID, Name: "user", SQL: CreateUserTable},
 	{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: CreatePasswordHistoryTable},
 	{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: CreateGlobalPrivTable},
@@ -1170,7 +1170,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	for _, db := range systemDatabases {
 		mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
 	}
-	for _, tbl := range tablesInMySQLDatabase {
+	for _, tbl := range tablesInSystemDatabase {
 		mustExecute(s, tbl.SQL)
 	}
 	// Create bind_info table.
