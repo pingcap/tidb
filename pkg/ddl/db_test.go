@@ -569,7 +569,7 @@ func TestIssue60047(t *testing.T) {
 	}
 
 	// parallel execute `insert ... on duplicate key update` and `alter table ... add column after ...`
-	err := errors.New("Test has not run the insert!")
+	err := errors.New("test has not run the insert")
 	hook := &callback.TestDDLCallback{Do: dom}
 	d := dom.DDL()
 	originalHook := d.GetHook()
