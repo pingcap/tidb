@@ -80,7 +80,7 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
-	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
+	github.com/pingcap/errors v0.11.5-0.20241219054535-6b8c588c3122
 	github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20240208102409-a554af8ee11f
@@ -105,7 +105,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20250722083450-d40b4b96e490
+	github.com/tikv/client-go/v2 v2.0.8-0.20250723054726-9e62374f9254
 	github.com/tikv/pd/client v0.0.0-20250219063534-ff54072887c0
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
