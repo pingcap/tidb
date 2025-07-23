@@ -1366,7 +1366,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR)
+	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR, client.IsIncremental())
 
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	// some more checks once we get tables and files information
@@ -2546,8 +2546,9 @@ func createDBsAndTables(
 	return createdTables, nil
 }
 
-func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool) {
-	if cfg.ExplicitFilter && isPiTR {
+func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
+	isIncremental bool) {
+	if cfg.ExplicitFilter && isPiTR && !isIncremental {
 		for i, table := range tables {
 			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
 			if table.Info.IsSequence() {
