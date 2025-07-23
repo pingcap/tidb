@@ -90,6 +90,10 @@ type PlanContext interface {
 	SetReadonlyUserVarMap(readonlyUserVars map[string]struct{})
 	// GetReadonlyUserVarMap gets the readonly user variable map.
 	GetReadonlyUserVarMap() map[string]struct{}
+	// SetHasFTSFunc sets the has FTS function flag.
+	SetHasFTSFunc()
+	// HasFTSFunc checks if the FTS function is used.
+	HasFTSFunc() bool
 	// Reset reset the local context.
 	Reset()
 }
@@ -110,6 +114,12 @@ func (EmptyPlanContextExtended) GetReadonlyUserVarMap() map[string]struct{} { re
 
 // Reset implements the PlanContext interface.
 func (EmptyPlanContextExtended) Reset() {}
+
+// SetHasFTSFunc sets the has FTS function flag.
+func (EmptyPlanContextExtended) SetHasFTSFunc() {}
+
+// HasFTSFunc checks if the FTS function is used.
+func (EmptyPlanContextExtended) HasFTSFunc() bool { return false }
 
 // BuildPBContext is used to build the `*tipb.Executor` according to the plan.
 type BuildPBContext struct {

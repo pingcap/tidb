@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -38,9 +39,14 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -167,6 +173,18 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
+	if ds.SCtx().HasFTSFunc() {
+		err := ds.analyzeFTSFunc()
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			// If there's no fts filters, we should remove all the fts index paths.
+			// They're not suitable do normal scan.
+			return path.Index != nil && path.Index.FullTextInfo != nil
+		})
+	}
 	return predicates, ds, nil
 }
 
@@ -619,4 +637,109 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// analyzeFTSFunc checks whether FTS function is used and is a valid one.
+// Then convert the function to index call because it can not be executed without the index.
+func (ds *DataSource) analyzeFTSFunc() error {
+	ticiIdx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
+	idSetForCheck := intset.NewFastIntSet()
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.Index != nil && path.Index.FullTextInfo != nil {
+			s := intset.NewFastIntSet()
+			for _, col := range path.Index.Columns {
+				s.Insert(int(ds.TableInfo.Columns[col.Offset].ID))
+			}
+			ticiIdx2FastCheck[path.Index] = s
+		}
+	}
+	var matchedIdx *model.IndexInfo
+	var matchedFunc *expression.ScalarFunction
+	var matchedCondPos int
+	matchedColumns := make([]*expression.Column, 0, 2)
+	for i, cond := range ds.PushedDownConds {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.FTSMatchWord {
+			if expression.ContainsFullTextSearchFn(cond) {
+				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
+			}
+			continue
+		}
+		idSetForCheck.Clear()
+		for i := 1; i < len(sf.GetArgs()); i++ {
+			col := sf.GetArgs()[i].(*expression.Column)
+			idSetForCheck.Insert(int(col.ID))
+		}
+		// Check TiCI version first.
+		var currentIndex *model.IndexInfo
+		for idx, set := range ticiIdx2FastCheck {
+			// The used columns in the FTS function should be a subset of the index columns.
+			if idSetForCheck.SubsetOf(set) {
+				currentIndex = idx
+				goto finalCheck
+			}
+		}
+	finalCheck:
+		// If the index is not found, it means that the FTS function is not valid.
+		if currentIndex == nil {
+			return errors.New("Full text search can only be used with a matching fulltext index and a columnar storage")
+		}
+		// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
+		if matchedIdx != nil {
+			return errors.New("Current TiDB doesn't support multiple fulltext search functions used with multiple index calls")
+		}
+		matchedIdx = currentIndex
+		matchedFunc = sf
+		matchedCondPos = i
+		matchedColumns = matchedColumns[:0]
+		for i := 1; i < len(sf.GetArgs()); i++ {
+			col := sf.GetArgs()[i].(*expression.Column)
+			matchedColumns = append(matchedColumns, col)
+		}
+	}
+	// Remove the matched condition from PushedDownConds.
+	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
+	logutil.BgLogger().Warn("building FTS access path",
+		zap.String("conds after pruning", fmt.Sprintf("%v", ds.PushedDownConds)),
+		zap.String("matched index", matchedIdx.Name.O),
+	)
+	// Build protobuf info for the matched index.
+	pbColumns := make([]*tipb.ColumnInfo, 0, len(matchedColumns))
+	for _, col := range matchedColumns {
+		pbColumns = append(pbColumns, tidbutil.ColumnToProto(col.ToInfo(), false, false))
+	}
+	colNames := make([]string, 0, len(matchedColumns))
+	for _, col := range matchedColumns {
+		colNames = append(colNames, col.OrigName)
+	}
+	ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc, pbColumns, colNames)
+	logutil.BgLogger().Info("built TiCI FTS access path",
+		zap.String("index", ds.PossibleAccessPaths[0].Index.Name.O),
+		zap.String("is fts", fmt.Sprintf("%v", ds.PossibleAccessPaths[0].FtsQueryInfo != nil)),
+	)
+	// If we build a TiCI FTS access path, we should remove all the
+	return nil
+}
+
+func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
+	index *model.IndexInfo,
+	ftsFunc *expression.ScalarFunction,
+	pbColumns []*tipb.ColumnInfo,
+	columnNames []string,
+) {
+	// Fulltext index must be used. So we prune all other possible access paths.
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.Index == nil || path.Index.ID != index.ID
+	})
+	// Build tipb protobuf info for the matched index.
+	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
+		QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
+		IndexId:        index.ID,
+		Columns:        pbColumns,
+		ColumnNames:    columnNames,
+		QueryText:      ftsFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
+		QueryTokenizer: string(index.FullTextInfo.ParserType),
+		QueryFunc:      tipb.ScalarFuncSig_FTSMatchWord,
+	}
+	ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
 }

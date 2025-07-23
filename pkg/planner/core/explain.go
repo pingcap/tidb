@@ -115,6 +115,21 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 			}
 		}
 	}
+	if p.FtsQueryInfo != nil {
+		buffer.WriteString("textSearch:(")
+		if normalized {
+			buffer.WriteString("?")
+		} else {
+			buffer.WriteString(p.FtsQueryInfo.QueryText)
+		}
+		buffer.WriteString(" IN ")
+		if normalized {
+			buffer.WriteString("?")
+		} else {
+			fmt.Fprintf(&buffer, "%s", strings.Join(p.FtsQueryInfo.ColumnNames, ", "))
+		}
+		buffer.WriteString("), ")
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
@@ -145,7 +160,7 @@ func (p *PhysicalIndexScan) haveCorCol() bool {
 }
 
 func (p *PhysicalIndexScan) isFullScan() bool {
-	if len(p.rangeInfo) > 0 || p.haveCorCol() {
+	if len(p.rangeInfo) > 0 || p.haveCorCol() || p.FtsQueryInfo != nil {
 		return false
 	}
 	for _, ran := range p.Ranges {
