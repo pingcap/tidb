@@ -34,18 +34,18 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -130,8 +130,8 @@ const (
 	// * The 'GRANT'/'REVOKE' could be case-insensitive for new clusters(compatible with MySQL).
 	// * Keep all behaviors unchanged for upgraded cluster.
 
-	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
-	CreateDBPrivTable = `CREATE TABLE IF NOT EXISTS mysql.db (
+	// CreateDBTable is the SQL statement creates DB scope privilege table in system db.
+	CreateDBTable = `CREATE TABLE IF NOT EXISTS mysql.db (
 		Host					CHAR(255),
 		DB						CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User					CHAR(32),
@@ -156,8 +156,8 @@ const (
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User),
 		KEY i_user (User));`
-	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
-	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
+	// CreateTablesPrivTable is the SQL statement creates table scope privilege table in system db.
+	CreateTablesPrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
 		DB			CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User		CHAR(32),
@@ -168,8 +168,8 @@ const (
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name),
 		KEY i_user (User));`
-	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
-	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
+	// CreateColumnsPrivTable is the SQL statement creates column scope privilege table in system db.
+	CreateColumnsPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv (
 		Host		CHAR(255),
 		DB			CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		User		CHAR(32),
@@ -183,20 +183,20 @@ const (
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
+	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.global_variables (
 		VARIABLE_NAME  VARCHAR(64) NOT NULL PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(16383) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
-	CreateTiDBTable = `CREATE TABLE IF NOT EXISTS mysql.tidb(
+	CreateTiDBTable = `CREATE TABLE IF NOT EXISTS mysql.tidb (
 		VARIABLE_NAME  	VARCHAR(64) NOT NULL PRIMARY KEY,
 		VARIABLE_VALUE 	VARCHAR(1024) DEFAULT NULL,
 		COMMENT 		VARCHAR(1024));`
 
-	// CreateHelpTopic is the SQL statement creates help_topic table in system db.
+	// CreateHelpTopicTable is the SQL statement creates help_topic table in system db.
 	// See: https://dev.mysql.com/doc/refman/5.5/en/system-database.html#system-database-help-tables
-	CreateHelpTopic = `CREATE TABLE IF NOT EXISTS mysql.help_topic (
+	CreateHelpTopicTable = `CREATE TABLE IF NOT EXISTS mysql.help_topic (
   		help_topic_id 		INT(10) UNSIGNED NOT NULL,
   		name 				CHAR(64) NOT NULL,
   		help_category_id 	SMALLINT(5) UNSIGNED NOT NULL,
@@ -219,8 +219,8 @@ const (
 		UNIQUE INDEX tbl(table_id)
 	);`
 
-	// CreateStatsColsTable stores the statistics of table columns.
-	CreateStatsColsTable = `CREATE TABLE IF NOT EXISTS mysql.stats_histograms (
+	// CreateStatsHistogramsTable stores the statistics of table columns.
+	CreateStatsHistogramsTable = `CREATE TABLE IF NOT EXISTS mysql.stats_histograms (
 		table_id 			BIGINT(64) NOT NULL,
 		is_index 			TINYINT(2) NOT NULL,
 		hist_id 			BIGINT(64) NOT NULL,
@@ -337,20 +337,20 @@ const (
 		INDEX tbl(table_id, is_index, hist_id)
 	);`
 
-	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
-	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
+	// CreateExprPushdownBlacklistTable stores the expressions which are not allowed to be pushed down.
+	CreateExprPushdownBlacklistTable = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
 		name 		CHAR(100) NOT NULL,
 		store_type 	CHAR(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
 		reason 		VARCHAR(200)
 	);`
 
-	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
-	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
+	// CreateOptRuleBlacklistTable stores the list of disabled optimizing operations.
+	CreateOptRuleBlacklistTable = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
 		name 	CHAR(100) NOT NULL
 	);`
 
-	// CreateStatsExtended stores the registered extended statistics.
-	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
+	// CreateStatsExtendedTable stores the registered extended statistics.
+	CreateStatsExtendedTable = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
 		name varchar(32) NOT NULL,
 		type tinyint(4) NOT NULL,
 		table_id bigint(64) NOT NULL,
@@ -381,8 +381,8 @@ const (
 		PRIMARY KEY (USER,HOST,PRIV),
 		KEY i_user (USER)
 	);`
-	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
-	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
+	// CreateCapturePlanBaselinesBlacklistTable stores the baseline capture filter rules.
+	CreateCapturePlanBaselinesBlacklistTable = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
 		id bigint(64) auto_increment,
 		filter_type varchar(32) NOT NULL COMMENT "type of the filter, only db, table and frequency supported now",
 		filter_value varchar(32) NOT NULL,
@@ -416,8 +416,8 @@ const (
 		column_ids TEXT(19372),
 		PRIMARY KEY (table_id) CLUSTERED
 	);`
-	// CreateStatsHistory stores the historical stats.
-	CreateStatsHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_history (
+	// CreateStatsHistoryTable stores the historical stats.
+	CreateStatsHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.stats_history (
 		table_id bigint(64) NOT NULL,
 		stats_data longblob NOT NULL,
 		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
@@ -427,8 +427,8 @@ const (
 		KEY table_create_time (table_id, create_time, seq_no),
     	KEY idx_create_time (create_time)
 	);`
-	// CreateStatsMetaHistory stores the historical meta stats.
-	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
+	// CreateStatsMetaHistoryTable stores the historical meta stats.
+	CreateStatsMetaHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
 		table_id bigint(64) NOT NULL,
 		modify_count bigint(64) NOT NULL,
 		count bigint(64) NOT NULL,
@@ -439,8 +439,8 @@ const (
 		KEY table_create_time (table_id, create_time),
     	KEY idx_create_time (create_time)
 	);`
-	// CreateAnalyzeJobs stores the analyze jobs.
-	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
+	// CreateAnalyzeJobsTable stores the analyze jobs.
+	CreateAnalyzeJobsTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
 		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		table_schema CHAR(64) NOT NULL DEFAULT '',
@@ -459,12 +459,12 @@ const (
 		INDEX idx_schema_table_state (table_schema, table_name, state),
 		INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)
 	);`
-	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
-	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
+	// CreateAdvisoryLocksTable stores the advisory locks (get_lock, release_lock).
+	CreateAdvisoryLocksTable = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
-	// CreateMDLView is a view about metadata locks.
-	CreateMDLView = `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
+	// CreateTiDBMDLView is a view about metadata locks.
+	CreateTiDBMDLView = `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
 		SELECT tidb_mdl_info.job_id,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
@@ -496,16 +496,16 @@ const (
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		PRIMARY KEY (sql_digest,plan_digest));`
 
-	// CreateStatsTableLocked stores the locked tables
-	CreateStatsTableLocked = `CREATE TABLE IF NOT EXISTS mysql.stats_table_locked(
+	// CreateStatsTableLockedTable stores the locked tables
+	CreateStatsTableLockedTable = `CREATE TABLE IF NOT EXISTS mysql.stats_table_locked (
 		table_id bigint(64) NOT NULL,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id));`
 
-	// CreatePasswordHistory is a table save history passwd.
-	CreatePasswordHistory = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
+	// CreatePasswordHistoryTable is a table save history passwd.
+	CreatePasswordHistoryTable = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
          Host char(255)  NOT NULL DEFAULT '',
          User char(32)  NOT NULL DEFAULT '',
          Password_timestamp timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -513,8 +513,8 @@ const (
          PRIMARY KEY (Host,User,Password_timestamp )
         ) COMMENT='Password history for user accounts' `
 
-	// CreateTTLTableStatus is a table about TTL job schedule
-	CreateTTLTableStatus = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
+	// CreateTiDBTTLTableStatusTable is a table about TTL job schedule
+	CreateTiDBTTLTableStatusTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_table_status (
 		table_id bigint(64) PRIMARY KEY,
         parent_table_id bigint(64),
         table_statistics text DEFAULT NULL,
@@ -533,8 +533,8 @@ const (
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 
-	// CreateTTLTask is a table about parallel ttl tasks
-	CreateTTLTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
+	// CreateTiDBTTLTaskTable is a table about parallel ttl tasks
+	CreateTiDBTTLTaskTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
 		job_id varchar(64) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		scan_id int NOT NULL,
@@ -551,8 +551,8 @@ const (
 		primary key(job_id, scan_id),
 		key(created_time));`
 
-	// CreateTTLJobHistory is a table that stores ttl job's history
-	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
+	// CreateTiDBTTLJobHistoryTable is a table that stores ttl job's history
+	CreateTiDBTTLJobHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
 		job_id varchar(64) PRIMARY KEY,
 		table_id bigint(64) NOT NULL,
         parent_table_id bigint(64) NOT NULL,
@@ -572,8 +572,8 @@ const (
     	key(create_time)
 	);`
 
-	// CreateGlobalTask is a table about global task.
-	CreateGlobalTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
+	// CreateTiDBGlobalTaskTable is a table about global task.
+	CreateTiDBGlobalTaskTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
@@ -598,8 +598,8 @@ const (
 		UNIQUE KEY task_key(task_key)
 	);`
 
-	// CreateGlobalTaskHistory is a table about history global task.
-	CreateGlobalTaskHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task_history (
+	// CreateTiDBGlobalTaskHistoryTable is a table about history global task.
+	CreateTiDBGlobalTaskHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task_history (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
@@ -624,16 +624,16 @@ const (
 		UNIQUE KEY task_key(task_key)
 	);`
 
-	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
-	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
+	// CreateDistFrameworkMetaTable create a system table that distributed task framework use to store meta information
+	CreateDistFrameworkMetaTable = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
         host VARCHAR(261) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         cpu_count int default 0,
         keyspace_id bigint(8) NOT NULL DEFAULT -1
     );`
 
-	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
-	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
+	// CreateTiDBRunawayQueriesTable stores the query which is identified as runaway or quarantined because of in watch list.
+	CreateTiDBRunawayQueriesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,
 		repeats int default 1,
@@ -648,8 +648,34 @@ const (
 		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
-	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
-	CreateRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch (
+	// CreateTiDBTimersTable is a table to store all timers for tidb
+	CreateTiDBTimersTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_timers (
+		ID BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
+		NAMESPACE VARCHAR(256) NOT NULL,
+		TIMER_KEY VARCHAR(256) NOT NULL,
+		TIMER_DATA BLOB,
+		TIMEZONE VARCHAR(64) NOT NULL,
+		SCHED_POLICY_TYPE VARCHAR(32) NOT NULL,
+		SCHED_POLICY_EXPR VARCHAR(256) NOT NULL,
+		HOOK_CLASS VARCHAR(64) NOT NULL,
+		WATERMARK TIMESTAMP DEFAULT NULL,
+		ENABLE TINYINT(2) NOT NULL,
+		TIMER_EXT JSON NOT NULL,
+		EVENT_STATUS VARCHAR(32) NOT NULL,
+		EVENT_ID VARCHAR(64) NOT NULL,
+		EVENT_DATA BLOB,
+		EVENT_START TIMESTAMP DEFAULT NULL,
+		SUMMARY_DATA BLOB,
+		CREATE_TIME TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UPDATE_TIME TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		VERSION BIGINT(64) UNSIGNED NOT NULL,
+		PRIMARY KEY (ID),
+		UNIQUE KEY timer_key(NAMESPACE, TIMER_KEY),
+		KEY hook_class(HOOK_CLASS)
+	)`
+
+	// CreateTiDBRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
+	CreateTiDBRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		resource_group_name varchar(32) not null,
 		start_time datetime(6) NOT NULL,
@@ -664,8 +690,8 @@ const (
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
-	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
-	CreateDoneRunawayWatchTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch_done (
+	// CreateTiDBRunawayWatchDoneTable stores the condition which is used to check whether query should be quarantined.
+	CreateTiDBRunawayWatchDoneTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_watch_done (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		record_id BIGINT(20) not null,
 		resource_group_name varchar(32) not null,
@@ -690,8 +716,8 @@ const (
 		KEY (resource_group)
 	);`
 
-	// CreateImportJobs is a table that IMPORT INTO uses.
-	CreateImportJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
+	// CreateTiDBImportJobsTable is a table that IMPORT INTO uses.
+	CreateTiDBImportJobsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
 		id bigint(64) NOT NULL AUTO_INCREMENT,
 		create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 		start_time TIMESTAMP(6) NULL DEFAULT NULL,
@@ -711,10 +737,10 @@ const (
 		KEY (created_by),
 		KEY (status));`
 
-	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	// CreateTiDBPITRIDMapTable is a table that records the id map from upstream to downstream for PITR.
 	// set restore id default to 0 to make it compatible for old BR tool to restore to a new TiDB, such case should be
 	// rare though.
-	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+	CreateTiDBPITRIDMapTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
 		restore_id BIGINT NOT NULL DEFAULT 0,
 		restored_ts BIGINT NOT NULL,
 		upstream_cluster_id BIGINT NOT NULL,
@@ -723,8 +749,8 @@ const (
 		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (restore_id, restored_ts, upstream_cluster_id, segment_id));`
 
-	// CreateRestoreRegistryTable is a table that tracks active restore tasks to prevent conflicts.
-	CreateRestoreRegistryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_restore_registry (
+	// CreateTiDBRestoreRegistryTable is a table that tracks active restore tasks to prevent conflicts.
+	CreateTiDBRestoreRegistryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_restore_registry (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
 		filter_hash VARCHAR(64) NOT NULL,
@@ -749,9 +775,6 @@ const (
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
 
-	// CreateSysSchema creates a new schema called `sys`.
-	CreateSysSchema = `CREATE DATABASE IF NOT EXISTS sys;`
-
 	// CreateSchemaUnusedIndexesView creates a view to use `information_schema.tidb_index_usage` to get the unused indexes.
 	CreateSchemaUnusedIndexesView = `CREATE OR REPLACE VIEW sys.schema_unused_indexes AS
 		SELECT
@@ -766,8 +789,8 @@ const (
 		HAVING
 			sum(last_access_time) is null;`
 
-	// CreateIndexAdvisorTable is a table to store the index advisor results.
-	CreateIndexAdvisorTable = `CREATE TABLE IF NOT EXISTS mysql.index_advisor_results (
+	// CreateIndexAdvisorResultsTable is a table to store the index advisor results.
+	CreateIndexAdvisorResultsTable = `CREATE TABLE IF NOT EXISTS mysql.index_advisor_results (
        id bigint primary key not null auto_increment,
        created_at datetime not null,
        updated_at datetime not null,
@@ -785,8 +808,8 @@ const (
        index idx_update(updated_at),
        unique index idx(schema_name, table_name, index_columns));`
 
-	// CreateKernelOptionsTable is a table to store kernel options for tidb.
-	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
+	// CreateTiDBKernelOptionsTable is a table to store kernel options for tidb.
+	CreateTiDBKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
         module varchar(128),
         name varchar(128),
         value varchar(128),
@@ -807,11 +830,8 @@ const (
 		index idx_table_id (table_id));`
 )
 
-// CreateTimers is a table to store all timers for tidb
-var CreateTimers = timertable.CreateTimerTableSQL("mysql", "tidb_timers")
-
 // bootstrap initiates system DB for a store.
-func bootstrap(s sessiontypes.Session) {
+func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
@@ -890,7 +910,7 @@ func DisableRunBootstrapSQLFileInTest() {
 	}
 }
 
-func checkBootstrapped(s sessiontypes.Session) (bool, error) {
+func checkBootstrapped(s sessionapi.Session) (bool, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	//  Check if system db exists.
 	_, err := s.ExecuteInternal(ctx, "USE %n", mysql.SystemDB)
@@ -918,7 +938,7 @@ func checkBootstrapped(s sessiontypes.Session) (bool, error) {
 
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
-func getTiDBVar(s sessiontypes.Session, name string) (sVal string, isNull bool, e error) {
+func getTiDBVar(s sessionapi.Session, name string) (sVal string, isNull bool, e error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME= %?`,
 		mysql.SystemDB,
@@ -979,7 +999,7 @@ func acquireLock(store kv.Storage) (func(), error) {
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
-func upgrade(s sessiontypes.Session) {
+func upgrade(s sessionapi.Session) {
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
@@ -1043,7 +1063,7 @@ func upgrade(s sessiontypes.Session) {
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
-func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
+func initGlobalVariableIfNotExists(s sessionapi.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	terror.MustNil(err)
@@ -1055,7 +1075,7 @@ func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any)
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, val)
 }
 
-func writeOOMAction(s sessiontypes.Session) {
+func writeOOMAction(s sessionapi.Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, vardef.OOMActionLog, comment, vardef.OOMActionLog,
@@ -1063,7 +1083,7 @@ func writeOOMAction(s sessiontypes.Session) {
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
-func updateBootstrapVer(s sessiontypes.Session) {
+func updateBootstrapVer(s sessionapi.Session) {
 	// Update bootstrap version.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB bootstrap version.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion, currentBootstrapVersion,
@@ -1071,7 +1091,7 @@ func updateBootstrapVer(s sessiontypes.Session) {
 }
 
 // getBootstrapVersion gets bootstrap version from mysql.tidb table;
-func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
+func getBootstrapVersion(s sessionapi.Session) (int64, error) {
 	sVal, isNull, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1082,125 +1102,90 @@ func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
 	return strconv.ParseInt(sVal, 10, 64)
 }
 
+var systemDatabases = []DatabaseBasicInfo{
+	{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB},
+	{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+}
+
+// tablesInSystemDatabase contains the definitions of system tables in the mysql
+// database, or the system database, except DDL related tables, see ddlTableVersionTables.
+// TODO: the reserved ID will be used later.
+var tablesInSystemDatabase = []TableBasicInfo{
+	{ID: metadef.UserTableID, Name: "user", SQL: CreateUserTable},
+	{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: CreatePasswordHistoryTable},
+	{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: CreateGlobalPrivTable},
+	{ID: metadef.DBTableID, Name: "db", SQL: CreateDBTable},
+	{ID: metadef.TablesPrivTableID, Name: "tables_priv", SQL: CreateTablesPrivTable},
+	{ID: metadef.ColumnsPrivTableID, Name: "columns_priv", SQL: CreateColumnsPrivTable},
+	{ID: metadef.GlobalVariablesTableID, Name: "global_variables", SQL: CreateGlobalVariablesTable},
+	{ID: metadef.TiDBTableID, Name: "tidb", SQL: CreateTiDBTable},
+	{ID: metadef.HelpTopicTableID, Name: "help_topic", SQL: CreateHelpTopicTable},
+	{ID: metadef.StatsMetaTableID, Name: "stats_meta", SQL: CreateStatsMetaTable},
+	{ID: metadef.StatsHistogramsTableID, Name: "stats_histograms", SQL: CreateStatsHistogramsTable},
+	{ID: metadef.StatsBucketsTableID, Name: "stats_buckets", SQL: CreateStatsBucketsTable},
+	{ID: metadef.GCDeleteRangeTableID, Name: "gc_delete_range", SQL: CreateGCDeleteRangeTable},
+	{ID: metadef.GCDeleteRangeDoneTableID, Name: "gc_delete_range_done", SQL: CreateGCDeleteRangeDoneTable},
+	{ID: metadef.StatsFeedbackTableID, Name: "stats_feedback", SQL: CreateStatsFeedbackTable},
+	{ID: metadef.RoleEdgesTableID, Name: "role_edges", SQL: CreateRoleEdgesTable},
+	{ID: metadef.DefaultRolesTableID, Name: "default_roles", SQL: CreateDefaultRolesTable},
+	{ID: metadef.BindInfoTableID, Name: "bind_info", SQL: CreateBindInfoTable},
+	{ID: metadef.StatsTopNTableID, Name: "stats_top_n", SQL: CreateStatsTopNTable},
+	{ID: metadef.ExprPushdownBlacklistTableID, Name: "expr_pushdown_blacklist", SQL: CreateExprPushdownBlacklistTable},
+	{ID: metadef.OptRuleBlacklistTableID, Name: "opt_rule_blacklist", SQL: CreateOptRuleBlacklistTable},
+	{ID: metadef.StatsExtendedTableID, Name: "stats_extended", SQL: CreateStatsExtendedTable},
+	{ID: metadef.StatsFMSketchTableID, Name: "stats_fm_sketch", SQL: CreateStatsFMSketchTable},
+	{ID: metadef.GlobalGrantsTableID, Name: "global_grants", SQL: CreateGlobalGrantsTable},
+	{ID: metadef.CapturePlanBaselinesBlacklistTableID, Name: "capture_plan_baselines_blacklist", SQL: CreateCapturePlanBaselinesBlacklistTable},
+	{ID: metadef.ColumnStatsUsageTableID, Name: "column_stats_usage", SQL: CreateColumnStatsUsageTable},
+	{ID: metadef.TableCacheMetaTableID, Name: "table_cache_meta", SQL: CreateTableCacheMetaTable},
+	{ID: metadef.AnalyzeOptionsTableID, Name: "analyze_options", SQL: CreateAnalyzeOptionsTable},
+	{ID: metadef.StatsHistoryTableID, Name: "stats_history", SQL: CreateStatsHistoryTable},
+	{ID: metadef.StatsMetaHistoryTableID, Name: "stats_meta_history", SQL: CreateStatsMetaHistoryTable},
+	{ID: metadef.AnalyzeJobsTableID, Name: "analyze_jobs", SQL: CreateAnalyzeJobsTable},
+	{ID: metadef.AdvisoryLocksTableID, Name: "advisory_locks", SQL: CreateAdvisoryLocksTable},
+	{ID: metadef.PlanReplayerStatusTableID, Name: "plan_replayer_status", SQL: CreatePlanReplayerStatusTable},
+	{ID: metadef.PlanReplayerTaskTableID, Name: "plan_replayer_task", SQL: CreatePlanReplayerTaskTable},
+	{ID: metadef.StatsTableLockedTableID, Name: "stats_table_locked", SQL: CreateStatsTableLockedTable},
+	{ID: metadef.TiDBTTLTableStatusTableID, Name: "tidb_ttl_table_status", SQL: CreateTiDBTTLTableStatusTable},
+	{ID: metadef.TiDBTTLTaskTableID, Name: "tidb_ttl_task", SQL: CreateTiDBTTLTaskTable},
+	{ID: metadef.TiDBTTLJobHistoryTableID, Name: "tidb_ttl_job_history", SQL: CreateTiDBTTLJobHistoryTable},
+	{ID: metadef.TiDBGlobalTaskTableID, Name: "tidb_global_task", SQL: CreateTiDBGlobalTaskTable},
+	{ID: metadef.TiDBGlobalTaskHistoryTableID, Name: "tidb_global_task_history", SQL: CreateTiDBGlobalTaskHistoryTable},
+	{ID: metadef.TiDBImportJobsTableID, Name: "tidb_import_jobs", SQL: CreateTiDBImportJobsTable},
+	{ID: metadef.TiDBRunawayWatchTableID, Name: "tidb_runaway_watch", SQL: CreateTiDBRunawayWatchTable},
+	{ID: metadef.TiDBRunawayQueriesTableID, Name: "tidb_runaway_queries", SQL: CreateTiDBRunawayQueriesTable},
+	{ID: metadef.TiDBTimersTableID, Name: "tidb_timers", SQL: CreateTiDBTimersTable},
+	{ID: metadef.TiDBRunawayWatchDoneTableID, Name: "tidb_runaway_watch_done", SQL: CreateTiDBRunawayWatchDoneTable},
+	{ID: metadef.DistFrameworkMetaTableID, Name: "dist_framework_meta", SQL: CreateDistFrameworkMetaTable},
+	{ID: metadef.RequestUnitByGroupTableID, Name: "request_unit_by_group", SQL: CreateRequestUnitByGroupTable},
+	{ID: metadef.TiDBPITRIDMapTableID, Name: "tidb_pitr_id_map", SQL: CreateTiDBPITRIDMapTable},
+	{ID: metadef.TiDBRestoreRegistryTableID, Name: "tidb_restore_registry", SQL: CreateTiDBRestoreRegistryTable},
+	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: CreateIndexAdvisorResultsTable},
+	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: CreateTiDBKernelOptionsTable},
+	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: CreateTiDBWorkloadValuesTable},
+}
+
 // doDDLWorks executes DDL statements in bootstrap stage.
-func doDDLWorks(s sessiontypes.Session) {
-	// Create a test database.
-	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
-	// Create system db.
-	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
-	// Create user table.
-	mustExecute(s, CreateUserTable)
-	// Create password history.
-	mustExecute(s, CreatePasswordHistory)
-	// Create privilege tables.
-	mustExecute(s, CreateGlobalPrivTable)
-	mustExecute(s, CreateDBPrivTable)
-	mustExecute(s, CreateTablePrivTable)
-	mustExecute(s, CreateColumnPrivTable)
-	// Create global system variable table.
-	mustExecute(s, CreateGlobalVariablesTable)
-	// Create TiDB table.
-	mustExecute(s, CreateTiDBTable)
-	// Create help table.
-	mustExecute(s, CreateHelpTopic)
-	// Create stats_meta table.
-	mustExecute(s, CreateStatsMetaTable)
-	// Create stats_columns table.
-	mustExecute(s, CreateStatsColsTable)
-	// Create stats_buckets table.
-	mustExecute(s, CreateStatsBucketsTable)
-	// Create gc_delete_range table.
-	mustExecute(s, CreateGCDeleteRangeTable)
-	// Create gc_delete_range_done table.
-	mustExecute(s, CreateGCDeleteRangeDoneTable)
-	// Create stats_feedback table.
-	// NOTE: Feedback is deprecated, but we still need to create this table for compatibility.
-	mustExecute(s, CreateStatsFeedbackTable)
-	// Create role_edges table.
-	mustExecute(s, CreateRoleEdgesTable)
-	// Create default_roles table.
-	mustExecute(s, CreateDefaultRolesTable)
+func doDDLWorks(s sessionapi.Session) {
+	for _, db := range systemDatabases {
+		mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
+	}
+	for _, tbl := range tablesInSystemDatabase {
+		mustExecute(s, tbl.SQL)
+	}
 	// Create bind_info table.
-	initBindInfoTable(s)
-	// Create stats_topn_store table.
-	mustExecute(s, CreateStatsTopNTable)
-	// Create expr_pushdown_blacklist table.
-	mustExecute(s, CreateExprPushdownBlacklist)
-	// Create opt_rule_blacklist table.
-	mustExecute(s, CreateOptRuleBlacklist)
-	// Create stats_extended table.
-	mustExecute(s, CreateStatsExtended)
-	// Create stats_fm_sketch table.
-	mustExecute(s, CreateStatsFMSketchTable)
-	// Create global_grants
-	mustExecute(s, CreateGlobalGrantsTable)
-	// Create capture_plan_baselines_blacklist
-	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
-	// Create column_stats_usage table
-	mustExecute(s, CreateColumnStatsUsageTable)
-	// Create table_cache_meta table.
-	mustExecute(s, CreateTableCacheMetaTable)
-	// Create analyze_options table.
-	mustExecute(s, CreateAnalyzeOptionsTable)
-	// Create stats_history table.
-	mustExecute(s, CreateStatsHistory)
-	// Create stats_meta_history table.
-	mustExecute(s, CreateStatsMetaHistory)
-	// Create analyze_jobs table.
-	mustExecute(s, CreateAnalyzeJobs)
-	// Create advisory_locks table.
-	mustExecute(s, CreateAdvisoryLocks)
-	// Create mdl view.
-	mustExecute(s, CreateMDLView)
-	// Create plan_replayer_status table
-	mustExecute(s, CreatePlanReplayerStatusTable)
-	// Create plan_replayer_task table
-	mustExecute(s, CreatePlanReplayerTaskTable)
-	// Create stats_meta_table_locked table
-	mustExecute(s, CreateStatsTableLocked)
-	// Create tidb_ttl_table_status table
-	mustExecute(s, CreateTTLTableStatus)
-	// Create tidb_ttl_task table
-	mustExecute(s, CreateTTLTask)
-	// Create tidb_ttl_job_history table
-	mustExecute(s, CreateTTLJobHistory)
-	// Create tidb_global_task table
-	mustExecute(s, CreateGlobalTask)
-	// Create tidb_global_task_history table
-	mustExecute(s, CreateGlobalTaskHistory)
-	// Create tidb_import_jobs
-	mustExecute(s, CreateImportJobs)
-	// create runaway_watch
-	mustExecute(s, CreateRunawayWatchTable)
-	// create runaway_queries
-	mustExecute(s, CreateRunawayTable)
-	// create tidb_timers
-	mustExecute(s, CreateTimers)
-	// create runaway_watch done
-	mustExecute(s, CreateDoneRunawayWatchTable)
-	// create dist_framework_meta
-	mustExecute(s, CreateDistFrameworkMeta)
-	// create request_unit_by_group
-	mustExecute(s, CreateRequestUnitByGroupTable)
-	// create tidb_pitr_id_map
-	mustExecute(s, CreatePITRIDMap)
-	// create tidb_restore_registry
-	mustExecute(s, CreateRestoreRegistryTable)
-	// create `sys` schema
-	mustExecute(s, CreateSysSchema)
+	insertBuiltinBindInfoRow(s)
+	// Create `mysql.tidb_mdl_view` view.
+	mustExecute(s, CreateTiDBMDLView)
 	// create `sys.schema_unused_indexes` view
 	mustExecute(s, CreateSchemaUnusedIndexesView)
-	// create mysql.index_advisor_results
-	mustExecute(s, CreateIndexAdvisorTable)
-	// create mysql.tidb_kernel_options
-	mustExecute(s, CreateKernelOptionsTable)
-	// create mysql.tidb_workload_values
-	mustExecute(s, CreateTiDBWorkloadValuesTable)
+	// Create a test database.
+	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
 // It is useful for setting the initial value of GLOBAL variables.
-func doBootstrapSQLFile(s sessiontypes.Session) error {
+func doBootstrapSQLFile(s sessionapi.Session) error {
 	sqlFile := config.GetGlobalConfig().InitializeSQLFile
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if sqlFile == "" {
@@ -1239,7 +1224,7 @@ func doBootstrapSQLFile(s sessiontypes.Session) error {
 
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
-func doDMLWorks(s sessiontypes.Session) {
+func doDMLWorks(s sessionapi.Session) {
 	mustExecute(s, "BEGIN")
 	if config.GetGlobalConfig().Security.SecureBootstrap {
 		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
@@ -1315,7 +1300,7 @@ func doDMLWorks(s sessiontypes.Session) {
 	}
 }
 
-func mustExecute(s sessiontypes.Session, sql string, args ...any) {
+func mustExecute(s sessionapi.Session, sql string, args ...any) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)

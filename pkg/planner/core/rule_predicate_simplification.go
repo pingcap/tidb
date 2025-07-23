@@ -151,10 +151,11 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 		return inPredicate, true
 	}
 	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(ctx.GetExprCtx().GetEvalCtx(), notEQValue)
+		redundantValue := valueOK && value.Equal(evalCtx, notEQValue)
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}
@@ -175,7 +176,10 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 }
 
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
-	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
+	if len(predicates) == 0 {
+		return predicates
+	}
+	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
@@ -190,6 +194,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 			}
 		}
 	}
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)

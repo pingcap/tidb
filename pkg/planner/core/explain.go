@@ -413,39 +413,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return str.String()
 }
 
-// ExplainInfo implements Plan interface.
-func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainInfo() string {
-	exprStr := string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return exprStr
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainNormalizedInfo() string {
-	if vardef.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Conditions))
-	}
-	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainInfo() string {
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
-	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.Schema(), enableRedactLog)
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return exprStr
-}
-
 func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
@@ -470,41 +437,6 @@ func (p *PhysicalExpand) explainInfoV2() string {
 	sb.WriteString(strings.Join(colStrs, ","))
 	sb.WriteString("]")
 	return sb.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainNormalizedInfo() string {
-	if vardef.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
-	}
-	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rows:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalLimit) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", ")
-	}
-	if redact == perrors.RedactLogDisable {
-		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-	} else if redact == perrors.RedactLogMarker {
-		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
-	} else if redact == perrors.RedactLogEnable {
-		fmt.Fprintf(buffer, "offset:?, count:?")
-	}
-	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -800,52 +732,6 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
-// ExplainInfo implements Plan interface.
-func (p *PhysicalTopN) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
-		buffer.WriteString(" ")
-	}
-	if len(p.ByItems) > 0 {
-		// Add order by text to separate partition by. Otherwise, do not add order by to
-		// avoid breaking existing TopN tests.
-		if len(p.GetPartitionBy()) > 0 {
-			buffer.WriteString("order by ")
-		}
-		buffer = util.ExplainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
-	}
-	switch p.SCtx().GetSessionVars().EnableRedactLog {
-	case perrors.RedactLogDisable:
-		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
-	case perrors.RedactLogMarker:
-		fmt.Fprintf(buffer, ", offset:‹%v›, count:‹%v›", p.Offset, p.Count)
-	case perrors.RedactLogEnable:
-		fmt.Fprintf(buffer, ", offset:?, count:?")
-	}
-	return buffer.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalTopN) ExplainNormalizedInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
-		buffer.WriteString(" ")
-	}
-	if len(p.ByItems) > 0 {
-		// Add order by text to separate partition by. Otherwise, do not add order by to
-		// avoid breaking existing TopN tests.
-		if len(p.GetPartitionBy()) > 0 {
-			buffer.WriteString("order by ")
-		}
-		buffer = explainNormalizedByItems(buffer, p.ByItems)
-	}
-	return buffer.String()
-}
-
 func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop.FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
@@ -994,36 +880,4 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return res
-}
-
-func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
-	for i, item := range byItems {
-		if item.Desc {
-			fmt.Fprintf(buffer, "%s:desc", item.Expr.ExplainNormalizedInfo())
-		} else {
-			fmt.Fprintf(buffer, "%s", item.Expr.ExplainNormalizedInfo())
-		}
-
-		if i+1 < len(byItems) {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
-	if len(operatorInfo) == 0 {
-		return accessObject
-	}
-	return accessObject + ", " + operatorInfo
-}
-
-// OperatorInfo implements DataAccesser interface.
-func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
-	if p.Extractor != nil {
-		return p.Extractor.ExplainInfo(p)
-	}
-	return ""
 }

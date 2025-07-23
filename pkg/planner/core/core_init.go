@@ -69,16 +69,43 @@ func init() {
 	utilfuncp.Attach2Task4PhysicalUnionAll = attach2Task4PhysicalUnionAll
 	utilfuncp.GetPlanCostVer14PhysicalUnionAll = getPlanCostVer14PhysicalUnionAll
 	utilfuncp.GetPlanCostVer24PhysicalUnionAll = getPlanCostVer24PhysicalUnionAll
+	// for physical limit.
+	utilfuncp.ResolveIndices4PhysicalLimit = resolveIndices4PhysicalLimit
+	utilfuncp.Attach2Task4PhysicalLimit = attach2Task4PhysicalLimit
+	// for physical topN.
+	utilfuncp.GetPlanCostVer14PhysicalTopN = getPlanCostVer14PhysicalTopN
+	utilfuncp.GetPlanCostVer24PhysicalTopN = getPlanCostVer24PhysicalTopN
+	utilfuncp.Attach2Task4PhysicalTopN = attach2Task4PhysicalTopN
+	utilfuncp.ResolveIndices4PhysicalTopN = resolveIndices4PhysicalTopN
+	// for physical selection.
+	utilfuncp.Attach2Task4PhysicalSelection = attach2Task4PhysicalSelection
+	utilfuncp.ResolveIndices4PhysicalSelection = resolveIndices4PhysicalSelection
+	utilfuncp.GetPlanCostVer24PhysicalSelection = getPlanCostVer24PhysicalSelection
+	utilfuncp.GetPlanCostVer14PhysicalSelection = getPlanCostVer14PhysicalSelection
+	// for physical union scan.
+	utilfuncp.Attach2Task4PhysicalUnionScan = attach2Task4PhysicalUnionScan
+	utilfuncp.ResolveIndices4PhysicalUnionScan = resolveIndices4PhysicalUnionScan
+	// for physical projection.
+	utilfuncp.GetCost4PhysicalProjection = getCost4PhysicalProjection
+	utilfuncp.Attach2Task4PhysicalProjection = attach2Task4PhysicalProjection
+	utilfuncp.GetPlanCostVer14PhysicalProjection = getPlanCostVer14PhysicalProjection
+	utilfuncp.GetPlanCostVer24PhysicalProjection = getPlanCostVer24PhysicalProjection
+	utilfuncp.ResolveIndices4PhysicalProjection = resolveIndices4PhysicalProjection
 
 	utilfuncp.DoOptimize = doOptimize
+	utilfuncp.GetPlanCost = getPlanCost
 	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
 	utilfuncp.AttachPlan2Task = attachPlan2Task
+	utilfuncp.GetTaskPlanCost = getTaskPlanCost
+	utilfuncp.CompareTaskCost = compareTaskCost
+
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
 	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
+	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -48,8 +49,9 @@ type encodeAndSortOperator struct {
 	wg       tidbutil.WaitGroupWrapper
 	firstErr atomic.Error
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
+	collector execute.Collector
 
 	taskID, subtaskID int64
 	tableImporter     *importer.TableImporter
@@ -66,6 +68,7 @@ func newEncodeAndSortOperator(
 	ctx context.Context,
 	executor *importStepExecutor,
 	sharedVars *SharedVars,
+	collector execute.Collector,
 	subtaskID int64,
 	concurrency int,
 ) *encodeAndSortOperator {
@@ -73,6 +76,7 @@ func newEncodeAndSortOperator(
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
 		cancel:        cancel,
+		collector:     collector,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
 		tableImporter: executor.tableImporter,
@@ -193,7 +197,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter); err != nil {
+	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector); err != nil {
 		w.op.onError(err)
 	}
 }

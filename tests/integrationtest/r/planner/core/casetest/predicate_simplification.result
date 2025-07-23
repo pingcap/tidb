@@ -652,6 +652,19 @@ IndexMerge	0.00	root		type: union
 ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t4, index:iad(a, d)	range:[1 6,1 6], keep order:false, stats:pseudo
 └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t4.a, 1), or(or(eq(planner__core__casetest__predicate_simplification.t4.b, 2), eq(planner__core__casetest__predicate_simplification.t4.c, 4)), or(eq(planner__core__casetest__predicate_simplification.t4.b, 12), or(eq(planner__core__casetest__predicate_simplification.t4.c, 5), eq(planner__core__casetest__predicate_simplification.t4.d, 6))))
   └─TableRowIDScan	8.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+drop table if exists t5, t6;
+create table t5 (c0 int, c1 int);
+create table t6 (c0 int, c1 int);
+explain format=brief  select * from t5 join t6 on t5.c0 = t6.c0
+where t5.c1 = null or t5.c1 > 0 and t6.c1 > 0;
+id	estRows	task	access object	operator info
+HashJoin	4162.50	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.t5.c0, planner__core__casetest__predicate_simplification.t6.c0)]
+├─TableReader(Build)	3330.00	root		data:Selection
+│ └─Selection	3330.00	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t6.c1, 0), not(isnull(planner__core__casetest__predicate_simplification.t6.c0))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t6	keep order:false, stats:pseudo
+└─TableReader(Probe)	3330.00	root		data:Selection
+  └─Selection	3330.00	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t5.c1, 0), not(isnull(planner__core__casetest__predicate_simplification.t5.c0))
+    └─TableFullScan	10000.00	cop[tikv]	table:t5	keep order:false, stats:pseudo
 CREATE TABLE `t910beff5` (
 `col_40` tinyint unsigned DEFAULT '95',
 `col_41` tinytext COLLATE gbk_bin NOT NULL
@@ -667,3 +680,34 @@ HashAgg	8.00	root		group by:Column#7, Column#8, funcs:avg(distinct Column#6)->Co
   └─TableReader	10.00	root		data:Selection
     └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t910beff5.col_41, "cwx!P4xaX)U"), or(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "D1$9+VTpEe)"), and(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "znRD*2pkmtm4"), le(planner__core__casetest__predicate_simplification.t910beff5.col_41, "PBueg(&tWY%dzsT(_")))
       └─TableFullScan	10000.00	cop[tikv]	table:t910beff5	keep order:false, stats:pseudo
+CREATE TABLE t43fc4f8a (
+col_48 date NOT NULL DEFAULT '1991-09-25',
+col_49 smallint unsigned NOT NULL DEFAULT '14803',
+col_50 char(87) COLLATE utf8mb4_unicode_ci DEFAULT 'GhnCJw~(RZ!i#ZxgC',
+col_51 date DEFAULT NULL,
+UNIQUE KEY idx_7 (col_51)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY LIST COLUMNS(col_51)
+(PARTITION p0 VALUES IN ('1970-09-10','1982-04-21','1990-08-27','1990-10-22','1996-02-27','2018-06-05','2027-05-18'),
+PARTITION p1 VALUES IN ('1972-01-21','1974-11-21','1994-02-23','1996-11-08','2000-04-05','2000-09-01','2005-12-17','2014-09-24','2016-12-01','2024-07-27','2025-02-14','2029-06-22','2036-04-30'));
+CREATE TABLE tlcf30036b (
+col_71 varbinary(257) NOT NULL,
+col_72 timestamp NULL DEFAULT NULL,
+col_73 time NOT NULL,
+PRIMARY KEY (col_71(2)) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY idx_14 (col_72,col_71) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
+explain format=brief select /*+ NO_HASH_JOIN( t43fc4f8a , st_57 */ avg( distinct  st_57.r1 ) as r0 from t43fc4f8a , ( select  /*+ use_index( tlcf30036b ) */ /*+ agg_to_cop()  */  elt(2, tlcf30036b.col_72 , tlcf30036b.col_72 ) as r0 , bit_or( tlcf30036b.col_71 ) as r1 from tlcf30036b where IsNull( tlcf30036b.col_71 ) and not( tlcf30036b.col_72 in ( '1980-08-05' ,'2033-10-20' ,'2030-06-22' ,'1972-04-20' ) ) group by tlcf30036b.col_72  having tlcf30036b.col_72 in ( '2004-03-24' ,'2006-02-04' ,'1993-06-20' ,null ) and not( tlcf30036b.col_72 < '2026-03-29' ) order by r0,r1 ) st_57 where st_57.r1 in ( 13307631398032338238 ,10696905560280898882 ,5314440087685082217 ,17229250596274672311 ) group by t43fc4f8a.col_51,t43fc4f8a.col_49  having t43fc4f8a.col_49 <=> 11261 order by r0 limit 562300838;
+id	estRows	task	access object	operator info
+TopN	8.00	root		Column#13, offset:0, count:562300838
+└─HashAgg	8.00	root		group by:Column#18, Column#19, funcs:avg(distinct Column#17)->Column#13
+  └─Projection	8.00	root		cast(Column#9, decimal(20,0) UNSIGNED BINARY)->Column#17, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51->Column#18, planner__core__casetest__predicate_simplification.t43fc4f8a.col_49->Column#19
+    └─Projection	8.00	root		planner__core__casetest__predicate_simplification.t43fc4f8a.col_49, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51, Column#9
+      └─HashJoin	8.00	root		CARTESIAN inner join
+        ├─Selection(Build)	0.80	root		in(Column#9, 13307631398032338238, 10696905560280898882, 5314440087685082217, 17229250596274672311)
+        │ └─HashAgg	1.00	root		group by:Column#16, funcs:bit_or(Column#15)->Column#9
+        │   └─Projection	0.00	root		cast(planner__core__casetest__predicate_simplification.tlcf30036b.col_71, bigint BINARY)->Column#15, planner__core__casetest__predicate_simplification.tlcf30036b.col_72->Column#16
+        │     └─TableDual	0.00	root		rows:0
+        └─TableReader(Probe)	10.00	root	partition:all	data:Selection
+          └─Selection	10.00	cop[tikv]		nulleq(planner__core__casetest__predicate_simplification.t43fc4f8a.col_49, 11261)
+            └─TableFullScan	10000.00	cop[tikv]	table:t43fc4f8a	keep order:false, stats:pseudo
