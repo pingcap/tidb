@@ -83,7 +83,7 @@ func (h coprHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	}
 
 	var execDetails []*execDetail
-	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+	if dagReq.GetCollectExecutionSummaries() {
 		execDetails = e.ExecDetails()
 	}
 

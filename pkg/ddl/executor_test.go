@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -146,7 +146,7 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
+func enQueueDDLJobs(t *testing.T, sess sessionapi.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),

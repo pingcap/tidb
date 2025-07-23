@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -725,7 +725,7 @@ func TestIssue33031(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 }
 
-func newSession(t *testing.T, store kv.Storage, dbName string) sessiontypes.Session {
+func newSession(t *testing.T, store kv.Storage, dbName string) sessionapi.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	mustExec(t, se, "create database if not exists "+dbName)
@@ -733,7 +733,7 @@ func newSession(t *testing.T, store kv.Storage, dbName string) sessiontypes.Sess
 	return se
 }
 
-func mustExec(t *testing.T, se sessiontypes.Session, sql string) {
+func mustExec(t *testing.T, se sessionapi.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	require.NoError(t, err)
 }

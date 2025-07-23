@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -48,6 +49,7 @@ const (
 	maxErrorRetryCount              = 3
 	defaultGCLifeTime               = 100 * time.Hour
 	lightningServicePrefix          = "lightning"
+	importIntoServicePrefix         = "import-into"
 )
 
 var (
@@ -116,7 +118,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 
 	tableName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 
-	task := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "remote checksum")
+	task := log.BeginTask(logutil.Logger(ctx).With(zap.String("table", tableName)), "remote checksum")
 
 	conn, err := e.db.Conn(ctx)
 	if err != nil {
@@ -215,7 +217,7 @@ func (m *gcLifeTimeManager) removeOneJob(ctx context.Context, db *sql.DB) {
 				"UPDATE mysql.tidb SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
 				m.oriGCLifeTime,
 			)
-			log.FromContext(ctx).Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
+			logutil.Logger(ctx).Warn("revert GC lifetime failed, please reset the GC lifetime manually after Lightning completed",
 				zap.String("query", query),
 				log.ShortError(err),
 			)
@@ -254,7 +256,7 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 // obtainGCLifeTime obtains the current GC lifetime.
 func obtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 	var gcLifeTime string
-	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
+	err := common.SQLWithRetry{DB: db, Logger: log.Wrap(logutil.Logger(ctx))}.QueryRow(
 		ctx,
 		"obtain GC lifetime",
 		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -267,7 +269,7 @@ func obtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 func updateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
 	sql := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
+		Logger: log.Wrap(logutil.Logger(ctx)).With(zap.String("gcLifeTime", gcLifeTime)),
 	}
 	return sql.Exec(ctx, "update GC lifetime",
 		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -299,6 +301,19 @@ func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanCon
 	}
 }
 
+// NewTiKVChecksumManagerForImportInto return a new tikv checksum manager
+func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName string) *TiKVChecksumManager {
+	prefix := fmt.Sprintf("%s-%d", importIntoServicePrefix, taskID)
+	return &TiKVChecksumManager{
+		client:                    store.GetClient(),
+		manager:                   newGCTTLManager(store.(kv.StorageWithPD).GetPDClient(), prefix),
+		distSQLScanConcurrency:    distSQLScanConcurrency,
+		backoffWeight:             backoffWeight,
+		resourceGroupName:         resourceGroupName,
+		explicitRequestSourceType: importIntoServicePrefix,
+	}
+}
+
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
@@ -312,6 +327,10 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 
 	distSQLScanConcurrency := int(e.distSQLScanConcurrency)
 	for i := range maxErrorRetryCount {
+		logutil.Logger(ctx).Info("checksum table",
+			zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name),
+			zap.Int("distSQLConcurrency", distSQLScanConcurrency),
+			zap.Int("backoffWeight", e.backoffWeight))
 		_ = executor.Each(func(request *kv.Request) error {
 			request.Concurrency = distSQLScanConcurrency
 			return nil
@@ -328,7 +347,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 			}, nil
 		}
 
-		log.FromContext(ctx).Warn("remote checksum failed", zap.String("db", tableInfo.DB),
+		logutil.Logger(ctx).Warn("remote checksum failed", zap.String("db", tableInfo.DB),
 			zap.String("table", tableInfo.Name), zap.Error(err),
 			zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
 
@@ -361,7 +380,7 @@ func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 		}
 		retryTime++
 		if retryTime%60 == 0 {
-			log.FromContext(ctx).Warn("fetch tso from pd failed and retrying",
+			logutil.Logger(ctx).Warn("fetch tso from pd failed and retrying",
 				zap.Int("retryTime", retryTime),
 				zap.Error(err))
 		}
@@ -488,7 +507,7 @@ func (m *gcTTLManager) removeOneJob(table string) {
 }
 
 func (m *gcTTLManager) doUpdateGCTTL(ctx context.Context, ttl int64, ts uint64) error {
-	log.FromContext(ctx).Debug("update PD safePoint limit with TTL",
+	logutil.Logger(ctx).Debug("update PD safePoint limit with TTL",
 		zap.Uint64("currnet_ts", ts))
 	var err error
 	if ts > 0 {
@@ -509,7 +528,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 		currentTS := m.currentTS
 		m.lock.Unlock()
 		if err := m.doUpdateGCTTL(ctx, serviceSafePointTTL, currentTS); err != nil {
-			log.FromContext(ctx).Warn("failed to update service safe point, checksum may fail if gc triggered", zap.Error(err))
+			logutil.Logger(ctx).Warn("failed to update service safe point, checksum may fail if gc triggered", zap.Error(err))
 		}
 	}
 
@@ -520,7 +539,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				log.FromContext(ctx).Info("service safe point keeper exited")
+				logutil.Logger(ctx).Info("service safe point keeper exited")
 				return
 			case <-updateTick.C:
 				updateGCTTL()
@@ -529,7 +548,7 @@ func (m *gcTTLManager) start(ctx context.Context) {
 				// we will use the last safe point, as after all job removed, we
 				// will set currentTS to 0.
 				if err := m.doUpdateGCTTL(ctx, 0, m.lastSP.Load()); err != nil {
-					log.FromContext(ctx).Warn("failed to remove service safe point", zap.Error(err))
+					logutil.Logger(ctx).Warn("failed to remove service safe point", zap.Error(err))
 				}
 				return
 			}

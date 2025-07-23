@@ -1017,6 +1017,11 @@ result
 select ((exists (select 1)) * -5) as c1;
 c1
 -5
+SELECT IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ');
+IS_UUID(' 6ccd780c-baba-1026-8567-4cc3505b2a62 ')
+0
+SELECT UUID_TO_BIN(' 6ccd780c-baba-1026-9564-5b8c656024db ');
+Error 1411 (HY000): Incorrect string value: ' 6ccd780c-baba-1026-9564-5b8c656024db ' for function uuid_to_bin
 SELECT is_ipv4_mapped(NULL);
 is_ipv4_mapped(NULL)
 NULL
@@ -1032,3 +1037,9 @@ NULL
 SELECT IS_IPV6(NULL + INTERVAL 1 DAY);
 IS_IPV6(NULL + INTERVAL 1 DAY)
 NULL
+CREATE TABLE test_62458 (c1 INT, c2 VARCHAR(255)) PARTITION BY LIST (c1) (PARTITION p1 VALUES IN (1, 2, 3), PARTITION p2 VALUES IN (4, 5, 6));
+CREATE UNIQUE INDEX i ON test_62458 (c1);
+DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
+CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
+ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_extract; a JSON string or JSON type is required.

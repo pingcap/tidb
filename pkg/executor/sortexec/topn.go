@@ -285,8 +285,9 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	for uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
-		// adjust required rows by total limit
-		srcChk.SetRequiredRows(int(e.chkHeap.totalLimit-uint64(e.chkHeap.rowChunks.Len())), e.MaxChunkSize())
+		// TopN requires its child to return all data, so don't need to set RequiredRows here according to the limit.
+		// Instead, setting RequiredRows here might lead smaller BatchSize in its child operator and cause more
+		// requests to TiKV. Please see #62135 for more info.
 		err := exec.Next(ctx, e.Children(0), srcChk)
 		if err != nil {
 			return err

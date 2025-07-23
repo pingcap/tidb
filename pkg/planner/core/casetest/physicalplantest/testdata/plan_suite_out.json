@@ -461,7 +461,9 @@
           "            └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+        ]
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2, t3]), broadcast_join(t1, t2, t3), straight_join() */ * from t t2, t t1, t t3 where t1.a=t2.a and t2.b=t3.b",
@@ -1063,7 +1065,10 @@
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
+        ]
       },
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1, t2]), shuffle_join(t1, t2), hash_join_probe(t1) */ * from t t1 right join t t2 on t1.a=t2.a",
@@ -1079,7 +1084,10 @@
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
+        ]
       },
       {
         "SQL": "select /*+ shuffle_join(t1, t2@sel_2), hash_join_build(t2@sel_2) */ a from t t1 where t1.a>1 or t1.a in (select a from t t2);",
@@ -1095,7 +1103,8 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints"
+          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
         ]
       },
       {
@@ -1114,7 +1123,8 @@
         "Warn": [
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
           "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints",
-          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
         ]
       },
       {
@@ -1133,7 +1143,8 @@
         "Warn": [
           "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
           "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints",
-          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
         ]
       },
       {
@@ -1150,7 +1161,8 @@
           "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints"
+          "[planner:1815]HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
         ]
       }
     ]
@@ -1378,6 +1390,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid",
           "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
         ]
       },
@@ -1393,6 +1406,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid",
           "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid"
         ]
       }

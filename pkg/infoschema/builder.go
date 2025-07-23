@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -844,6 +844,17 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
+	allIndexPublic := true
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			allIndexPublic = false
+			break
+		}
+	}
+	if allIndexPublic {
+		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+	}
+
 	if !b.enableV2 {
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
 		tableNames.tables[tblInfo.Name.L] = tbl
@@ -1166,7 +1177,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
+func NewBuilder(r autoid.Requirement, schemaCacheSize uint64, factory func() (pools.Resource, error), infoData *Data, useV2 bool) *Builder {
 	builder := &Builder{
 		Requirement:  r,
 		infoschemaV2: NewInfoSchemaV2(r, factory, infoData),
@@ -1175,7 +1186,6 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		infoData:     infoData,
 		enableV2:     useV2,
 	}
-	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
 	return builder
 }

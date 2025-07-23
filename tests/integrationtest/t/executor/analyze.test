@@ -931,5 +931,15 @@ SELECT * FROM Issue34228;
 
 connection default;
 disconnect conn1;
+
+
+# https://github.com/pingcap/tidb/issues/61606
+create table analyze_virtual_col(a int generated always as (1) virtual, b int);
+insert into analyze_virtual_col(b) values(2);
+analyze table analyze_virtual_col all columns;
+select * from analyze_virtual_col where a > 1 and b > 1;
+--sorted_result
+show stats_topn where table_name = 'analyze_virtual_col';
+
 SET @@global.tidb_analyze_version = default;
 SET @@session.tidb_partition_prune_mode = default;
