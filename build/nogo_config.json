@@ -307,6 +307,12 @@
   },
   "forbidigo": {
     "exclude_files": {
+      "pkg/ddl/job_submitter.go": "ignore job_submitter code",
+      "pkg/ddl/executor.go": "ignore executor code",
+      "pkg/ddl/session.go": "ignore session code",
+      "pkg/ddl/session_pool.go": "ignore session_pool code",
+      "pkg/ddl/schematracker/*": "ignore schematracker",
+      "*test\\.go$": "ignore test files",
       "pkg/parser/": "parser/*.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",

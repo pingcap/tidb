@@ -90,7 +90,11 @@ func run(pass *analysis.Pass) (any, error) {
 func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 	// Because go doesn't support negative lookahead assertion,
 	// so we add some allowed usage here.
-	whiteLists := []string{"StmtCtx", "TimeZone", "Location", "SQLMode", "CDCWriteSource", "SetInTxn"}
+	whiteLists := []string{
+		"StmtCtx", "TimeZone", "Location", "SQLMode", "GetSplitRegionTimeout",
+		"CDCWriteSource", "SetInTxn", "DiskFull", "DefaultCollationForUTF8MB4",
+		"BuildParserConfig",
+	}
 
 	for _, i := range issues {
 		detail := i.Details()

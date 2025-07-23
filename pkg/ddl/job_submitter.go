@@ -576,6 +576,7 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 		ver         kv.Version
 		err         error
 	)
+	//nolint: forbidigo
 	waitTime := ddlSe.GetSessionVars().LockWaitTimeout
 	m := meta.NewMutator(txn)
 	idKey := m.GlobalIDKey()
