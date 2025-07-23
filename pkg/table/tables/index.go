@@ -281,7 +281,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				return nil, err
 			}
 			if keyIsTempIdxKey {
-				metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, false)
+				metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, false)
 			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
@@ -290,7 +290,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if err != nil {
 					return nil, err
 				}
-				metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, true)
+				metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, true)
 			}
 			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
@@ -379,7 +379,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					return nil, err
 				}
 				if keyIsTempIdxKey {
-					metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, false)
+					metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, false)
 				}
 				if len(tempKey) > 0 {
 					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
@@ -388,7 +388,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					if err != nil {
 						return nil, err
 					}
-					metrics.DDLSetTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, 1, true)
+					metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, true)
 				}
 			} else if lazyCheck {
 				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
@@ -490,7 +490,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
-				metrics.DDLSetTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, 1, doubleWrite)
+				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
 			}
 		} else {
 			if len(key) > 0 {
@@ -513,7 +513,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
-				metrics.DDLSetTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, 1, doubleWrite)
+				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {

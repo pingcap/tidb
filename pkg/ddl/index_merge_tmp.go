@@ -268,8 +268,7 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 		break
 	}
 
-	metrics.DDLSetTempIndexScan(w.table.Meta().ID, uint64(taskCtx.scanCount))
-	metrics.DDLSetTempIndexMerge(w.table.Meta().ID, uint64(taskCtx.addedCount))
+	metrics.DDLSetTempIndexScanAndMerge(w.table.Meta().ID, uint64(taskCtx.scanCount), uint64(taskCtx.addedCount))
 	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionMerging != nil {
