@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -201,5 +202,22 @@ func TestLogicalExpandBuildKeyInfo(t *testing.T) {
 		require.Equal(t, len(res.Rows()), 1)
 		res = tk.MustQuery("SELECT SUM(IFNULL(pay.payamt, 0)) AS payamt,     SUM(IFNULL(ret.retamt, 0)) AS retamt,     GROUPING(org.org_type) AS grouptype,     org.org_type,     GROUPING(org.org_id) AS groupid,     org.org_id,     org.org_name   FROM testorg org   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS payamt,       org_id     FROM testpay tp     WHERE tp.pay_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) pay ON pay.org_id = org.org_id   LEFT JOIN (     SELECT       SUM(IFNULL(amt, 0)) AS retamt,       org_id     FROM testreturn tr     WHERE tr.ret_date BETWEEN '2024-06-01' AND '2024-07-31'     GROUP BY org_id   ) ret ON ret.org_id = org.org_id   GROUP BY org.org_type, org.org_id WITH ROLLUP having  groupid = 1 AND grouptype = 1;")
 		require.Equal(t, len(res.Rows()), 1)
+
+		// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		cascadesData := GetCascadesSuiteData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+			})
+			res := tk.MustQuery("explain format=brief " + tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+		}
 	})
 }
