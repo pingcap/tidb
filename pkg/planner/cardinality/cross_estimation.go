@@ -67,7 +67,7 @@ func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 		// Record the variable usage for explain explore.
 		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 		if orderRatio > 0 {
-			rowCount += max(0, (path.CountAfterAccess-rowCount)) * orderRatio
+			rowCount += max(0, path.CountAfterAccess-rowCount) * orderRatio
 		}
 	}
 	return rowCount
