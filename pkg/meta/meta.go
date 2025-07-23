@@ -95,11 +95,13 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
-	mBootTableVersion    = []byte("BootTableVersion")
-	mBDRRole             = []byte("BDRRole")
-	mMetaDataLock        = []byte("metadataLock")
-	mSchemaCacheSize     = []byte("SchemaCacheSize")
-	mRequestUnitStats    = []byte("RequestUnitStats")
+	// the name doesn't contain nextgen, as we might impl the same logic in classic
+	// kernel later, then we can reuse the same meta key.
+	mBootTableVersion = []byte("BootTableVersion")
+	mBDRRole          = []byte("BDRRole")
+	mMetaDataLock     = []byte("metadataLock")
+	mSchemaCacheSize  = []byte("SchemaCacheSize")
+	mRequestUnitStats = []byte("RequestUnitStats")
 
 	mIngestMaxBatchSplitRangesKey  = []byte("IngestMaxBatchSplitRanges")
 	mIngestMaxSplitRangesPerSecKey = []byte("IngestMaxSplitRangesPerSec")
@@ -160,16 +162,19 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
-// BootTableVersion is the version of nextgen bootstrapping.
-type BootTableVersion int
+// NextGenBootTableVersion is the version of nextgen bootstrapping.
+// it serves the same purpose as DDLTableVersion, to avoid the same table created
+// twice, as we are creating those tables in meta kv directly, without going
+// through DDL.
+type NextGenBootTableVersion int
 
 const (
-	// InitBootTableVersion means it's a fresh cluster, we haven't bootstrapped yet.
-	InitBootTableVersion BootTableVersion = 0
-	// BaseBootTableVersion is the first version of nextgen bootstrapping, we
+	// InitNextGenBootTableVersion means it's a fresh cluster, we haven't bootstrapped yet.
+	InitNextGenBootTableVersion NextGenBootTableVersion = 0
+	// BaseNextGenBootTableVersion is the first version of nextgen bootstrapping, we
 	// will create 52 physical tables.
 	// Note: DDL related tables are created separately, see DDLTableVersion.
-	BaseBootTableVersion BootTableVersion = 1
+	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -762,8 +767,8 @@ func (m *Mutator) SetDDLTableVersion(ddlTableVersion DDLTableVersion) error {
 	return m.setTableVersion(mDDLTableVersion, int(ddlTableVersion))
 }
 
-// SetBootTableVersion set the table version on initial bootstrap.
-func (m *Mutator) SetBootTableVersion(version BootTableVersion) error {
+// SetNextGenBootTableVersion set the table version on initial bootstrap.
+func (m *Mutator) SetNextGenBootTableVersion(version NextGenBootTableVersion) error {
 	return m.setTableVersion(mBootTableVersion, int(version))
 }
 
@@ -777,10 +782,10 @@ func (m *Mutator) GetDDLTableVersion() (DDLTableVersion, error) {
 	return DDLTableVersion(v), err
 }
 
-// GetBootTableVersion checks the version of the bootstrapping tables.
-func (m *Mutator) GetBootTableVersion() (BootTableVersion, error) {
+// GetNextGenBootTableVersion checks the version of the bootstrapping tables.
+func (m *Mutator) GetNextGenBootTableVersion() (NextGenBootTableVersion, error) {
 	v, err := m.getTableVersion(mBootTableVersion)
-	return BootTableVersion(v), err
+	return NextGenBootTableVersion(v), err
 }
 
 func (m *Mutator) getTableVersion(key []byte) (int, error) {

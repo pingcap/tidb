@@ -50,7 +50,8 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
-	require.Len(t, tablesInSystemDatabase, 52)
+	require.Len(t, tablesInSystemDatabase, 52,
+		"remember to add the new tables to versionedBootstrapSchemas too")
 	testTableBasicInfoSlice(t, tablesInSystemDatabase)
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
@@ -2648,6 +2649,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
 	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	var allTableCount int
 	for _, vbs := range versionedBootstrapSchemas {
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
@@ -2655,12 +2657,14 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 			allIDs = append(allIDs, db.ID)
 
 			testTableBasicInfoSlice(t, db.Tables)
-
+			allTableCount += len(db.Tables)
 			for _, tbl := range db.Tables {
 				allIDs = append(allIDs, tbl.ID)
 			}
 		}
 	}
+	require.Len(t, len(tablesInSystemDatabase), allTableCount,
+		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
 	slices.Sort(allIDs)
 	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
 }

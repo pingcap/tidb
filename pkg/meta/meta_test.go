@@ -1232,14 +1232,14 @@ func TestBootTableVersion(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		ver, err := m.GetBootTableVersion()
+		ver, err := m.GetNextGenBootTableVersion()
 		require.NoError(t, err)
-		require.EqualValues(t, meta.InitBootTableVersion, ver)
+		require.EqualValues(t, meta.InitNextGenBootTableVersion, ver)
 
-		require.NoError(t, m.SetBootTableVersion(meta.BaseBootTableVersion))
-		ver, err = m.GetBootTableVersion()
+		require.NoError(t, m.SetNextGenBootTableVersion(meta.BaseNextGenBootTableVersion))
+		ver, err = m.GetNextGenBootTableVersion()
 		require.NoError(t, err)
-		require.EqualValues(t, meta.BaseBootTableVersion, ver)
+		require.EqualValues(t, meta.BaseNextGenBootTableVersion, ver)
 		// make sure we use correct key
 		ddlVer, err := m.GetDDLTableVersion()
 		require.NoError(t, err)
