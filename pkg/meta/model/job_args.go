@@ -1788,8 +1788,10 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 
 // RefreshMetaArgs is the argument for RefreshMeta.
 type RefreshMetaArgs struct {
-	SchemaID int64 `json:"schema_id,omitempty"`
-	TableID  int64 `json:"table_id,omitempty"`
+	SchemaID   int64  `json:"schema_id,omitempty"`
+	TableID    int64  `json:"table_id,omitempty"`
+	SchemaName string `json:"schema_name,omitempty"`
+	TableName  string `json:"table_name,omitempty"`
 }
 
 func (a *RefreshMetaArgs) getArgsV1(*Job) []any {

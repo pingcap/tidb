@@ -7087,14 +7087,10 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				// For RefreshMeta, the table/schema might not exist anymore.
-				// Since we can't determine the exact target, use model.InvolvingAll to block concurrent DDLs as a safe default.
-				Database: model.InvolvingAll,
-				Table:    model.InvolvingAll,
-			},
-		},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: args.SchemaName,
+			Table:    args.TableName,
+		}},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)
