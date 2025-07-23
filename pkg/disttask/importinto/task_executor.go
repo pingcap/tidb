@@ -106,15 +106,25 @@ func getTableImporter(
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
-func (s *importStepExecutor) Init(ctx context.Context) error {
+func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
-	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
+	var tableImporter *importer.TableImporter
+	var taskManager *dxfstorage.TaskManager
+	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
 	s.tableImporter = tableImporter
+	defer func() {
+		if err == nil {
+			return
+		}
+		if err2 := s.tableImporter.Close(); err2 != nil {
+			s.logger.Error("close importer failed", zap.Error(err2))
+		}
+	}()
 
-	taskManager, err := dxfstorage.GetTaskManager()
+	taskManager, err = dxfstorage.GetTaskManager()
 	if err != nil {
 		return err
 	}

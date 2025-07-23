@@ -1268,6 +1268,16 @@ func CheckImportIntoTableIsEmpty(
 	sessCtx sessionctx.Context,
 	tbl table.Table,
 ) (bool, error) {
+	failpoint.Inject("checkImportIntoTableIsEmpty", func(_val failpoint.Value) {
+		if val, ok := _val.(string); ok {
+			switch val {
+			case "error":
+				failpoint.Return(false, errors.New("check is empty get error"))
+			case "notEmpty":
+				failpoint.Return(false, nil)
+			}
+		}
+	})
 	txn, err := sessCtx.Txn(true)
 	if err != nil {
 		return false, err

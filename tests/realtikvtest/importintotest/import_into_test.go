@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -1339,7 +1340,8 @@ func (s *mockGCSSuite) TestTableMode() {
 		Content: content,
 	})
 	s.prepareAndUseDB("import_into")
-	s.tk.MustExec("create table table_mode (id int primary key, fk int);")
+	createTableSQL := "create table table_mode (id int primary key, fk int);"
+	s.tk.MustExec(createTableSQL)
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO import_into.table_mode
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 
@@ -1380,7 +1382,7 @@ func (s *mockGCSSuite) TestTableMode() {
 			}
 			return true
 		}, 10*time.Second, 100*time.Millisecond)
-		tk2.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
+		tk2.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows([]string{"1 1", "2 2"}...))
 	}()
 	wg.Wait()
 
@@ -1396,4 +1398,26 @@ func (s *mockGCSSuite) TestTableMode() {
 	)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
+
+	// Test import into check table is empty get error.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
+	err = s.tk.QueryToErr(loadDataSQL)
+	require.ErrorContains(s.T(), err, "check is empty get error")
+	adminRepairTable(s.tk, "import_into.table_mode", createTableSQL)
+	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
+
+	// Test import into check table is not empty before alter table mode to Import.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
+	err = s.tk.QueryToErr(loadDataSQL)
+	require.ErrorContains(s.T(), err, "target table is not empty")
+	adminRepairTable(s.tk, "import_into.table_mode", createTableSQL)
+	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
+}
+
+func adminRepairTable(tk *testkit.TestKit, table, createTableSQL string) {
+	domainutil.RepairInfo.SetRepairMode(true)
+	domainutil.RepairInfo.SetRepairTableList([]string{table})
+	tk.MustExec("admin repair table " + table + createTableSQL)
 }
