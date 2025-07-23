@@ -688,7 +688,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_12])->Projection"
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_13])->Projection"
       }
     ]
   }

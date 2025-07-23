@@ -782,7 +782,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
@@ -800,13 +800,13 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalStreamAgg{},
 		&physicalop.PhysicalLimit{},
 		&physicalop.PhysicalSort{},
-		&plannercore.PhysicalTopN{},
+		&physicalop.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},
 		&plannercore.PhysicalMaxOneRow{},
-		&plannercore.PhysicalProjection{},
-		&plannercore.PhysicalSelection{},
-		&plannercore.PhysicalTableDual{},
+		&physicalop.PhysicalProjection{},
+		&physicalop.PhysicalSelection{},
+		&physicalop.PhysicalTableDual{},
 		&plannercore.PhysicalWindow{},
 		&plannercore.PhysicalShuffle{},
 		&physicalop.PhysicalUnionAll{},
@@ -921,7 +921,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
@@ -1381,7 +1381,7 @@ func TestApplyCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, index idx(a));")
 	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")

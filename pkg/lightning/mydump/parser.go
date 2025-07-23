@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
@@ -188,7 +189,7 @@ func NewChunkParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
+		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
 		escFlavor:   escFlavor,
 	}
 }

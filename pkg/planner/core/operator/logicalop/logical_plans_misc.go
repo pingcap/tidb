@@ -216,6 +216,7 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 }
 
 // CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
+// Deprecated: don't depend on subtree based push check, use prop based `CanSelfBeingPushedToCopImpl` instead.
 func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	ret := true

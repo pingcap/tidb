@@ -26,13 +26,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -436,7 +439,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 
 func TestGetDataSourceType(t *testing.T) {
 	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
-		SelectPlan: &plannercore.PhysicalSelection{},
+		SelectPlan: &physicalop.PhysicalSelection{},
 	}))
 	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }
@@ -471,5 +474,13 @@ func TestParseFileType(t *testing.T) {
 			actual := parseFileType(tc.path)
 			require.Equal(t, tc.expected, actual)
 		})
+	}
+}
+
+func TestGetDefMaxEngineSize(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.Equal(t, config.ByteSize(500*units.GiB), getDefMaxEngineSize())
+	} else {
+		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
 	}
 }

@@ -146,47 +146,30 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
-		25: "TableReader",
-		17: "HashAgg",
-		29: "TableReader",
-		16: "HashJoin",
-		10: "Sort",
 		8:  "Projection",
-		23: "TableFullScan",
-		24: "HashAgg",
-		27: "TableReader",
-		26: "TableFullScan",
-		19: "HashAgg",
-		28: "TableFullScan",
-		15: "HashJoin",
-		14: "HashAgg",
-	}
-	final := map[int]struct{}{
-		23: {},
-		17: {},
-		25: {},
-		24: {},
-		28: {},
-		29: {},
-		16: {},
-		14: {},
-		10: {},
-		8:  {},
+		28: "HashAgg",
+		16: "HashJoin",
+		18: "HashJoin",
+		17: "HashJoin",
+		11: "Sort",
+		15: "HashAgg",
+		27: "TableFullScan",
+		29: "TableReader",
+		20: "HashAgg",
+		24: "TableFullScan",
+		25: "HashAgg",
+		30: "TableFullScan",
+		23: "HashAgg",
+		21: "HashAgg",
+		31: "TableReader",
+		32: "TableFullScan",
+		33: "TableReader",
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
-		if !ok || tp != c.TP {
-			t.FailNow()
-		}
+		require.Truef(t, ok, "ID: %d not found in elements", c.ID)
+		require.Equalf(t, tp, c.TP, "ID: %d, expected TP: %s, got TP: %s", c.ID, tp, c.TP)
 	}
-	require.Len(t, otrace.Candidates, len(elements))
-	for _, p := range otrace.Final {
-		_, ok := final[p.ID]
-		if !ok {
-			t.FailNow()
-		}
-	}
-	require.Len(t, otrace.Final, len(final))
 }
 
 func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {

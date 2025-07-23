@@ -340,6 +340,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		ZoneLabel:             c.Labels["zone"],
 	}
 }
 
@@ -1336,6 +1337,11 @@ func (c *Config) Valid() error {
 
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
+		return err
+	}
+
+	// pd-client
+	if err := c.PDClient.Valid(); err != nil {
 		return err
 	}
 
