@@ -97,10 +97,11 @@ func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 	}
 
 	for _, i := range issues {
-		detail := i.Details()
+		s := i.String()
+		fmt.Print("s =", s)
 		skip := false
 		for _, whiteList := range whiteLists {
-			if strings.Contains(detail, whiteList) {
+			if strings.Contains(s, whiteList) {
 				skip = true
 				break
 			}
@@ -110,7 +111,7 @@ func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 		}
 		diag := analysis.Diagnostic{
 			Pos:      i.Pos(),
-			Message:  detail,
+			Message:  i.Details(),
 			Category: "restriction",
 		}
 		pass.Report(diag)

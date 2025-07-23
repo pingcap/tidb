@@ -220,6 +220,7 @@ func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varValue := row.GetString(1)
+		//nolint: forbidigo
 		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
 			return err
 		}
@@ -426,6 +427,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	defer terror.Call(rs.Close)
+	//nolint: forbidigo
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
 		return false, errors.Trace(err)
