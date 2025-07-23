@@ -398,7 +398,7 @@ func (p *LogicalExpand) GenerateGroupingIDIncrementModeNumericSet(oneSetOffset i
 }
 
 // BuildKeyInfo implements base.LogicalPlan interface.
-func (p *LogicalExpand) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
+func (*LogicalExpand) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	// since LogicalExpand is a logical operator which will split the rows out, duplicated rows may exist in the output.
 	selfSchema.SetKeys(nil)
 }
