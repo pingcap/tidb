@@ -61,7 +61,7 @@ func init() {
 	Analyzer.Flags.BoolVar(&analyzeTypes, "analyze_types", false, `when set, expressions get expanded instead of matching the literal source code`)
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	linter, err := forbidigo.NewLinter(patterns,
 		forbidigo.OptionIgnorePermitDirectives(!usePermitDirective),
 		forbidigo.OptionExcludeGodocExamples(!includeExamples),
