@@ -13,6 +13,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
