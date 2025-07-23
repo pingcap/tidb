@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -187,6 +188,10 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}
+	trxTableName := "CLUSTER_TIDB_TRX"
+	failpoint.Inject("mockModifySchemaReadOnlyDDL", func() {
+		trxTableName = "TIDB_TRX"
+	})
 
 	switch job.SchemaState {
 	case model.StateNone:
@@ -199,7 +204,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		}
 		job.SchemaState = model.StatePendingReadOnly
 	case model.StatePendingReadOnly:
-		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, w.sess, job.Query, dbInfo.ID)
+		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, w.sess, job.Query, dbInfo.ID, trxTableName)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -207,7 +212,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		// check and wait all uncommitted txn
 		for len(uncommittedTxn) > 0 {
 			for txnID := range uncommittedTxn {
-				sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.CLUSTER_TIDB_TRX WHERE ID = %d", txnID)
+				sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID = %d", trxTableName, txnID)
 				r, err := w.sess.Execute(jobCtx.stepCtx, sql, "check if txn committed")
 				if err != nil {
 					return ver, errors.Trace(err)
@@ -233,7 +238,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	return ver, nil
 }
 
-func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, ddlQuery string, targetDBID int64) (map[int64]struct{}, error) {
+func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, ddlQuery string, targetDBID int64, trxTableName string) (map[int64]struct{}, error) {
 	var currTS = uint64(0)
 	err := kv.RunInNewTxn(jobCtx.ctx, jobCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		currTS = txn.StartTS()
@@ -245,9 +250,10 @@ func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, ddlQuery strin
 	is := jobCtx.infoCache.GetLatest()
 	sql := fmt.Sprintf(
 		"SELECT RELATED_TABLE_IDS, CURRENT_SQL_DIGEST, ID "+
-			"FROM INFORMATION_SCHEMA.CLUSTER_TIDB_TRX "+
+			"FROM INFORMATION_SCHEMA.%s "+
 			"WHERE (CURRENT_SQL_DIGEST IS NULL OR CURRENT_SQL_DIGEST != TIDB_ENCODE_SQL_DIGEST('%s')) "+ // exclude ddl
 			"AND ID < %d", // exclude new transactions
+		trxTableName,
 		ddlQuery,
 		currTS,
 	)
