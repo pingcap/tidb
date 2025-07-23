@@ -374,10 +374,12 @@ func (sa *statsAnalyze) Close() {
 
 // CheckAutoAnalyzeWindow determine the time window for auto-analysis and verify if the current time falls within this range.
 // parameters is a map of auto analyze parameters. it is from GetAutoAnalyzeParameters.
-func CheckAutoAnalyzeWindow(sctx sessionctx.Context) (string, string, bool) {
+func CheckAutoAnalyzeWindow(sctx sessionctx.Context) (startStr, endStr string, ok bool) {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
 	start, end, ok := checkAutoAnalyzeWindow(parameters)
-	return start.Format("15:04"), end.Format("15:04"), ok
+	startStr = start.Format("15:04")
+	endStr = end.Format("15:04")
+	return
 }
 
 func checkAutoAnalyzeWindow(parameters map[string]string) (time.Time, time.Time, bool) {
