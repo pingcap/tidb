@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "physicalop",
     srcs = [
+        "base_physical_join.go",
         "base_physical_plan.go",
         "nominal_sort.go",
         "physical_limit.go",
@@ -26,6 +27,7 @@ go_library(
         "//pkg/planner/core/access",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/baseimpl",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/planner/util/costusage",

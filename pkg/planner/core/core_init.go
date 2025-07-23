@@ -106,6 +106,7 @@ func init() {
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
+	utilfuncp.CloneColumnsForPlanCache = cloneColumnsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

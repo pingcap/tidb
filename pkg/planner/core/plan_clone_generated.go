@@ -112,11 +112,11 @@ func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan
 func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalHashJoin)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalJoin = *basePlan
+	cloned.BasePhysicalJoin = *basePlan
 	cloned.EqualConditions = cloneScalarFunctionsForPlanCache(op.EqualConditions, nil)
 	cloned.NAEqualConditions = cloneScalarFunctionsForPlanCache(op.NAEqualConditions, nil)
 	if op.runtimeFilterList != nil {
@@ -129,11 +129,11 @@ func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 func (op *PhysicalMergeJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalMergeJoin)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalJoin = *basePlan
+	cloned.BasePhysicalJoin = *basePlan
 	return cloned, true
 }
 
@@ -241,11 +241,11 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexJoin)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalJoin = *basePlan
+	cloned.BasePhysicalJoin = *basePlan
 	if op.innerPlan != nil {
 		innerPlan, ok := op.innerPlan.CloneForPlanCache(newCtx)
 		if !ok {
