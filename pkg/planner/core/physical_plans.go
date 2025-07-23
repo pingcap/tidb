@@ -61,7 +61,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
-	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
+	_ base.PhysicalPlan = &physicalop.PhysicalMaxOneRow{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}

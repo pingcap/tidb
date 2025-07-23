@@ -286,7 +286,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTableDual(v)
 	case *plannercore.PhysicalApply:
 		return b.buildApply(v)
-	case *plannercore.PhysicalMaxOneRow:
+	case *physicalop.PhysicalMaxOneRow:
 		return b.buildMaxOneRow(v)
 	case *plannercore.Analyze:
 		return b.buildAnalyze(v)
