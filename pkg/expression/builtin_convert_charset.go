@@ -310,7 +310,7 @@ var convertActionMap = map[funcProp][]string{
 		/* result is binary-aware */
 		ast.ASCII, ast.BitLength, ast.Hex, ast.Length, ast.OctetLength, ast.ToBase64,
 		/* encrypt functions */
-		ast.AesDecrypt, ast.Decode, ast.Encode, ast.PasswordFunc, ast.MD5, ast.SHA, ast.SHA1,
+		ast.AesDecrypt, ast.Decode, ast.Encode, ast.MD5, ast.SHA, ast.SHA1,
 		ast.SHA2, ast.SM3, ast.Compress, ast.AesEncrypt,
 	},
 	funcPropAuto: {
