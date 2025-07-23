@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"strings"
 
 	"github.com/ashanbrown/forbidigo/forbidigo"
 	"github.com/pingcap/tidb/build/linter/util"
@@ -87,12 +88,25 @@ func run(pass *analysis.Pass) (any, error) {
 }
 
 func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
+	// Because go doesn't support negative lookahead assertion,
+	// so we add some allowed usage here.
+	whiteLists := []string{"StmtCtx", "TimeZone", "Location", "SQLMode", "CDCWriteSource", "SetInTxn"}
+
 	for _, i := range issues {
-		fmt.Print("String", i.String(), "\n")
-		fmt.Print("Details", i.Details(), "\n")
+		detail := i.Details()
+		skip := false
+		for _, whiteList := range whiteLists {
+			if strings.Contains(detail, whiteList) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
 		diag := analysis.Diagnostic{
 			Pos:      i.Pos(),
-			Message:  i.Details(),
+			Message:  detail,
 			Category: "restriction",
 		}
 		pass.Report(diag)

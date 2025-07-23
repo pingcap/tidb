@@ -318,6 +318,9 @@
       "_cgo_gotypes.go": "skip _cgo_gotypes.go",
       "_cgo_imports.go": "skip _cgo_imports.go",
       ".*.cgo1.go": "skip cgo1.go"
+    },
+    "only_files": {
+      "pkg/ddl/": "only for ddl code"
     }
   },
   "gci": {
