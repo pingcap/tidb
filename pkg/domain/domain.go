@@ -482,8 +482,8 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 			statslogutil.StatsLogger().Warn("Kill auto analyze process because it exceeded the window",
 				zap.Uint64("processID", id),
 				zap.Time("now", time.Now()),
-				zap.Time("start", start),
-				zap.Time("end", end),
+				zap.String("start", start),
+				zap.String("end", end),
 			)
 			do.SysProcTracker().KillSysProcess(id)
 		}
