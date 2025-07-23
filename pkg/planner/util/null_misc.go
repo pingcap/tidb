@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 // allConstants checks if only the expression has only constants.
@@ -70,6 +71,22 @@ func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
 // IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
 func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
 	skipPlanCacheCheck bool) bool {
+	// If the join is outer join, we simplify predicates to make null rejected check easier.
+	// The benefits can be summarized in several aspects:
+	// 1. We simple the predicates to avoid complex evaluation. such as or(ne(test.t1.c2, test.t1.c2), 1) => 1
+	// 2. We split the And Condition, and check each condition separately.
+	// 3. Const null will be removed, so we can avoid the case that
+	predicates := utilfuncp.ApplyPredicateSimplification(ctx, []expression.Expression{predicate}, false)
+	for _, p := range predicates {
+		if isNullRejectedInternal(ctx, innerSchema, p, skipPlanCacheCheck) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNullRejectedInternal(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
+	skipPlanCacheCheck bool) bool {
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	if expression.ContainOuterNot(predicate) {
 		return false
@@ -91,6 +108,14 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 			return isNullRejectedInList(ctx, expr, innerSchema, skipPlanCacheCheck)
 		}
 		return isNullRejectedSimpleExpr(ctx, innerSchema, expr, skipPlanCacheCheck)
+	case *expression.Constant:
+		if expr.Value.IsNull() {
+			return true
+		} else if isTrue, err := expr.Value.ToBool(
+			ctx.GetSessionVars().StmtCtx.TypeCtxOrDefault()); err == nil && isTrue == 0 {
+			return true
+		}
+		return false
 	default:
 		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate, skipPlanCacheCheck)
 	}

@@ -712,7 +712,11 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	// First, simplify this join
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		canBeSimplified := false
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates)
 		for _, expr := range predicates {
+			if _, ok := expr.(*expression.Constant); ok {
+				continue
+			}
 			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 			if isOk {
 				canBeSimplified = true

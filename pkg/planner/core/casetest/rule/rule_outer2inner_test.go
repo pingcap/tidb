@@ -84,3 +84,36 @@ func TestOuter2InnerIssue55886(t *testing.T) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestJoinNullRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// https://github.com/pingcap/tidb/issues/60080
+	// constant is not null rejected, so the outer to inner join should not be applied.
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE t0 (c0 int) ;`)
+	tk.MustExec(`INSERT INTO t0 VALUES (61);`)
+	tk.MustExec(`CREATE TABLE t1 (c1 int,c2 double );`)
+	tk.MustExec("INSERT INTO `t1` VALUES (NULL,0);")
+	tk.MustExec(`CREATE TABLE t2 (c3 varchar(100),c4 varchar(100)) ;`)
+	tk.MustExec(`INSERT INTO t2 VALUES (NULL,NULL);`)
+	var input Input
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	suiteData := GetOuter2InnerSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain format = 'brief' " + sql)
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			result := tk.MustQuery(sql)
+			output[i].Result = testdata.ConvertRowsToStrings(result.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
+}
