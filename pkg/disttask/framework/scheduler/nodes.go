@@ -159,8 +159,7 @@ func (nm *NodeManager) getNodes() []proto.ManagedNode {
 	if nodes == nil {
 		return []proto.ManagedNode{}
 	}
-	res := slices.Clone(nodes)
-	return res
+	return slices.Clone(nodes)
 }
 
 func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
