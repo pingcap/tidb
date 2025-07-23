@@ -406,16 +406,16 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
 
 	// index join
-	baseJoin := basePhysicalJoin{
+	baseJoin := physicalop.BasePhysicalJoin{
 		LeftJoinKeys:    []*expression.Column{col},
 		RightJoinKeys:   nil,
 		OtherConditions: []expression.Expression{col},
 	}
 
 	indexJoin := &PhysicalIndexJoin{
-		basePhysicalJoin: baseJoin,
-		innerPlan:        indexScan,
-		Ranges:           ranger.Ranges{},
+		physicalop.BasePhysicalJoin: baseJoin,
+		innerPlan:                   indexScan,
+		Ranges:                      ranger.Ranges{},
 	}
 	indexJoin = indexJoin.Init(ctx, stats, 0)
 	indexJoin.SetSchema(schema)
