@@ -89,7 +89,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20250616075548-d951fb623bb3
+	github.com/pingcap/kvproto v0.0.0-20250723064614-9024e53c5611
 	github.com/pingcap/log v1.1.1-0.20250514022801-14f3b4ca066e
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -330,7 +330,6 @@ require (
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 
-	github.com/pingcap/kvproto => github.com/wshwsh12/kvproto v0.0.0-20250717070922-58d243ccbbda
 	github.com/pingcap/tidb/pkg/indexer => ./pkg/tici
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
