@@ -3536,14 +3536,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
+	if kerneltype.IsNextGen() {
+		if err := bootstrapSchemas(store); err != nil {
+			return nil, err
+		}
+	}
 	err := InitDDLTables(store)
 	if err != nil {
 		return nil, err
-	}
-	if kerneltype.IsNextGen() {
-		if err = bootstrapSchemas(store); err != nil {
-			return nil, err
-		}
 	}
 	err = InitTiDBSchemaCacheSize(store)
 	if err != nil {

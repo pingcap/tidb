@@ -15,6 +15,7 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -2635,4 +2636,26 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 	ver, err := getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
+}
+
+func TestVersionedBootstrapSchemas(t *testing.T) {
+	require.True(t, slices.IsSortedFunc(versionedBootstrapSchemas, func(a, b versionedBootstrapSchema) int {
+		return cmp.Compare(a.ver, b.ver)
+	}), "versionedBootstrapSchemas should be sorted by version")
+	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	for _, vbs := range versionedBootstrapSchemas {
+		for _, db := range vbs.databases {
+			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
+			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
+			allIDs = append(allIDs, db.ID)
+
+			testTableBasicInfoSlice(t, db.Tables)
+
+			for _, tbl := range db.Tables {
+				allIDs = append(allIDs, tbl.ID)
+			}
+		}
+	}
+	slices.Sort(allIDs)
+	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
 }
