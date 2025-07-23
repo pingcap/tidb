@@ -1143,7 +1143,7 @@ type PhysicalApply struct {
 }
 
 // PhysicalJoinImplement has an extra bool return value compared with PhysicalJoin interface.
-// This will override physicalop.BasePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
+// This will override BasePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
 // base.PhysicalJoin interface.
 func (*PhysicalApply) PhysicalJoinImplement() bool { return false }
 
