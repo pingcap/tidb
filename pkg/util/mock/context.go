@@ -372,6 +372,11 @@ func (c *Context) GetSQLServer() sqlsvrapi.Server {
 	return c.dom.(sqlsvrapi.Server)
 }
 
+// IsCrossKS implements sessionctx.Context IsCrossKS interface.
+func (*Context) IsCrossKS() bool {
+	return false
+}
+
 // GetSchemaValidator implements sessionctx.Context GetSchemaValidator interface.
 func (c *Context) GetSchemaValidator() validatorapi.Validator {
 	return c.schValidator

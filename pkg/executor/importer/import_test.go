@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -436,7 +437,7 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 
 func TestGetDataSourceType(t *testing.T) {
 	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
-		SelectPlan: &plannercore.PhysicalSelection{},
+		SelectPlan: &physicalop.PhysicalSelection{},
 	}))
 	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }

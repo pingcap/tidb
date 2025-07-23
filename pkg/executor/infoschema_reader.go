@@ -624,14 +624,36 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
+func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls []*model.TableInfo) {
+	needUpdate := false
 	for _, col := range e.columns {
 		// only the following columns need stats cache.
 		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
-			return true
+			needUpdate = true
+			break
 		}
 	}
-	return false
+	if !needUpdate {
+		return
+	}
+
+	tableIDs := make([]int64, 0, len(tbls))
+	for _, tbl := range tbls {
+		if pi := tbl.GetPartitionInfo(); pi != nil {
+			for _, def := range pi.Definitions {
+				tableIDs = append(tableIDs, def.ID)
+			}
+		}
+		tableIDs = append(tableIDs, tbl.ID)
+	}
+	// Even for partitioned tables, we must update the stats cache for the main table itself.
+	// This is necessary because the global index length from the table also needs to be included.
+	// For further details, see: https://github.com/pingcap/tidb/issues/54173
+	err := cache.TableRowStatsCache.UpdateByID(sctx, tableIDs...)
+	if err != nil {
+		logutil.BgLogger().Warn("cannot update stats cache for tables", zap.Error(err))
+	}
+	intest.AssertNoError(err)
 }
 
 func (e *memtableRetriever) setDataFromOneTable(
@@ -641,7 +663,6 @@ func (e *memtableRetriever) setDataFromOneTable(
 	schema ast.CIStr,
 	table *model.TableInfo,
 	rows [][]types.Datum,
-	useStatsCache bool,
 ) ([][]types.Datum, error) {
 	collation := table.Collate
 	if collation == "" {
@@ -682,26 +703,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			policyName = table.PlacementPolicyRef.Name.O
 		}
 
-		var rowCount, avgRowLength, dataLength, indexLength uint64
-		if useStatsCache {
-			// Even for partitioned tables, we must update the stats cache for the main table itself.
-			// This is necessary because the global index length from the table also needs to be included.
-			// For further details, see: https://github.com/pingcap/tidb/issues/54173
-			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-			if err != nil {
-				return rows, err
-			}
-			if table.GetPartitionInfo() != nil {
-				// needs to update all partitions for partition table.
-				for _, pi := range table.GetPartitionInfo().Definitions {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
-					if err != nil {
-						return rows, err
-					}
-				}
-			}
-			rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
-		}
+		rowCount, avgRowLength, dataLength, indexLength := cache.TableRowStatsCache.EstimateDataLength(table)
 
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
@@ -881,13 +883,13 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	useStatsCache := e.updateStatsCacheIfNeed()
+	e.updateStatsCacheIfNeed(sctx, tables)
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
 	}
 	for i, table := range tables {
-		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
+		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1267,7 +1269,6 @@ func calcCharOctLength(lenInChar int, cs string) int {
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context) error {
-	useStatsCache := e.updateStatsCacheIfNeed()
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
@@ -1283,6 +1284,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.updateStatsCacheIfNeed(sctx, tables)
 	for i, table := range tables {
 		schema := schemas[i]
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
@@ -1295,22 +1297,6 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 		}
 
 		var rowCount, dataLength, indexLength uint64
-		if useStatsCache {
-			if table.GetPartitionInfo() == nil {
-				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-				if err != nil {
-					return err
-				}
-			} else {
-				// needs to update needed partitions for partition table.
-				for _, pi := range table.GetPartitionInfo().Definitions {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
-					if err != nil {
-						return err
-					}
-				}
-			}
-		}
 		if table.GetPartitionInfo() == nil {
 			rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
 			dataLength, indexLength = cache.TableRowStatsCache.GetDataAndIndexLength(table, table.ID, rowCount)

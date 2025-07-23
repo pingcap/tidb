@@ -357,8 +357,9 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalUnionScan) ResolveIndices() (err error) {
+// resolveIndices4PhysicalUnionScan implements Plan interface.
+func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalUnionScan)
 	err = p.BasePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err
@@ -485,8 +486,9 @@ func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 	return nil
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalSelection) ResolveIndices() (err error) {
+// resolveIndices4PhysicalSelection implements Plan interface.
+func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalSelection)
 	err = p.BasePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err

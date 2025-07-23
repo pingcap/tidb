@@ -260,7 +260,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildUnionAll(v)
 	case *plannercore.Update:
 		return b.buildUpdate(v)
-	case *plannercore.PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		return b.buildUnionScanExec(v)
 	case *plannercore.PhysicalHashJoin:
 		return b.buildHashJoin(v)
@@ -272,7 +272,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpMergeJoin(v)
 	case *plannercore.PhysicalIndexHashJoin:
 		return b.buildIndexNestedLoopHashJoin(v)
-	case *plannercore.PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plannercore.PhysicalHashAgg:
 		return b.buildHashAgg(v)
@@ -282,7 +282,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildProjection(v)
 	case *plannercore.PhysicalMemTable:
 		return b.buildMemTable(v)
-	case *plannercore.PhysicalTableDual:
+	case *physicalop.PhysicalTableDual:
 		return b.buildTableDual(v)
 	case *plannercore.PhysicalApply:
 		return b.buildApply(v)
@@ -1421,7 +1421,7 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) exec.Execut
 	}
 }
 
-func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) exec.Executor {
+func (b *executorBuilder) buildUnionScanExec(v *physicalop.PhysicalUnionScan) exec.Executor {
 	oriEncounterUnionScan := b.encounterUnionScan
 	b.encounterUnionScan = true
 	defer func() {
@@ -1438,7 +1438,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) e
 // buildUnionScanFromReader builds union scan executor from child executor.
 // Note that this function may be called by inner workers of index lookup join concurrently.
 // Be careful to avoid data race.
-func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plannercore.PhysicalUnionScan) exec.Executor {
+func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *physicalop.PhysicalUnionScan) exec.Executor {
 	// If reader is union, it means a partition table and we should transfer as above.
 	if x, ok := reader.(*unionexec.UnionExec); ok {
 		for i, child := range x.AllChildren() {
@@ -2152,7 +2152,7 @@ func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v
 	return e
 }
 
-func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) exec.Executor {
+func (b *executorBuilder) buildSelection(v *physicalop.PhysicalSelection) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2228,7 +2228,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 	return e
 }
 
-func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.Executor {
+func (b *executorBuilder) buildTableDual(v *physicalop.PhysicalTableDual) exec.Executor {
 	if v.RowCount != 0 && v.RowCount != 1 {
 		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
 		return nil
@@ -3409,7 +3409,7 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 	for _, p := range plans {
 		switch x := p.(type) {
-		case *plannercore.PhysicalSelection:
+		case *physicalop.PhysicalSelection:
 			for _, cond := range x.Conditions {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
 					return true
@@ -4591,13 +4591,13 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
-	case *plannercore.PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *plannercore.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
-	case *plannercore.PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4636,7 +4636,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
 }
 
-func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
+func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *physicalop.PhysicalUnionScan,
 	values []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
 	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
 	childBuilder, err := builder.newDataReaderBuilder(v.Children()[0])

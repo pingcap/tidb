@@ -179,7 +179,7 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (base.PhysicalPlan, erro
 	if err != nil {
 		return nil, err
 	}
-	p := PhysicalSelection{
+	p := physicalop.PhysicalSelection{
 		Conditions: conds,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -330,7 +330,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		}
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		selection := plan
 		conditions, child := b.predicatePushDown(plan.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {

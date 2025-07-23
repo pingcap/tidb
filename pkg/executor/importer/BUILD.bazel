@@ -137,6 +137,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/util",
         "//pkg/session",

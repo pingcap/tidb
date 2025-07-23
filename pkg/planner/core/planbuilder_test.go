@@ -337,7 +337,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
-	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &physicalop.PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
 

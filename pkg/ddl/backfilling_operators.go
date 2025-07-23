@@ -87,14 +87,8 @@ type OperatorCtx struct {
 }
 
 // NewDistTaskOperatorCtx is used for adding index with dist framework.
-func NewDistTaskOperatorCtx(
-	ctx context.Context,
-	taskID, subtaskID int64,
-) (*OperatorCtx, context.CancelFunc) {
+func NewDistTaskOperatorCtx(ctx context.Context) (*OperatorCtx, context.CancelFunc) {
 	opCtx, cancel := context.WithCancel(ctx)
-	opCtx = logutil.WithFields(opCtx,
-		zap.Int64("task-id", taskID),
-		zap.Int64("subtask-id", subtaskID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,

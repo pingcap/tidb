@@ -237,7 +237,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *logicalop.LogicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *logicalop.LogicalProjection, *PhysicalProjection:
 		str = "Projection"
@@ -245,7 +245,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *physicalop.PhysicalTopN:
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
-	case *logicalop.LogicalTableDual, *PhysicalTableDual:
+	case *logicalop.LogicalTableDual, *physicalop.PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
 		str = "HashAgg"
@@ -275,7 +275,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str += ToString(paritalPlan)
 		}
 		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
-	case *PhysicalUnionScan:
+	case *physicalop.PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
 	case *PhysicalIndexJoin:
 		last := len(idxs) - 1

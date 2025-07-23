@@ -414,28 +414,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainInfo() string {
-	exprStr := string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return exprStr
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainNormalizedInfo() string {
-	if vardef.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Conditions))
-	}
-	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
@@ -478,14 +456,6 @@ func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
 	}
 	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rows:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
 }
 
 // ExplainInfo implements Plan interface.

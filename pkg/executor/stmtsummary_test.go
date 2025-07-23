@@ -33,7 +33,8 @@ import (
 
 func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 	data := infoschema.NewData()
-	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
 	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
@@ -78,7 +79,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 
 func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 	data := infoschema.NewData()
-	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
 	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
@@ -158,7 +160,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 
 	data := infoschema.NewData()
-	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
 	err = infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)

@@ -85,19 +85,6 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalSelection)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions, nil)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalProjection)
 	*cloned = *op
@@ -463,22 +450,6 @@ func (op *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 		for k, v := range op.TblID2PhysTblIDCol {
 			cloned.TblID2PhysTblIDCol[k] = v.Clone().(*expression.Column)
 		}
-	}
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalUnionScan)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions, nil)
-	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	return cloned, true
 }

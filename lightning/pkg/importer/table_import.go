@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -317,7 +318,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 					tr.tableInfo.Core,
 					region.Chunk.Columns,
 					tr.ignoreColumns,
-					log.FromContext(ctx))
+					log.Wrap(logutil.Logger(ctx)))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -893,11 +894,11 @@ ChunkLoop:
 		if isLocalBackend(rc.cfg) && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
 			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
-				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				logutil.Logger(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
 			if err2 := trySavePendingChunks(context.Background()); err2 != nil {
-				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				logutil.Logger(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 			}
 		}
 		return nil, errors.Trace(err)
@@ -1238,7 +1239,7 @@ func getChunkCompressedSizeForParquet(
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
 	s := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
+		Logger: log.Wrap(logutil.Logger(ctx)).With(zap.Int64("tableID", tableID)),
 	}
 	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
 		rs, err := tx.ExecContext(ctx, `
@@ -1415,7 +1416,7 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 }
 
 func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
-	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
@@ -1470,7 +1471,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 		return nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("table", tableName))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("table", tableName))
 
 	defer func() {
 		if retErr == nil {
@@ -1537,7 +1538,7 @@ func (*TableImporter) executeDDL(
 	ddl string,
 	updateProgress func(status *ddlStatus),
 ) error {
-	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
+	logger := log.Wrap(logutil.Logger(ctx)).With(zap.String("ddl", ddl))
 	logger.Info("execute ddl")
 
 	s := common.SQLWithRetry{

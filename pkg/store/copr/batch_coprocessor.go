@@ -557,7 +557,9 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 	}
 	wg.Wait()
 
-	logutil.BgLogger().Info("detecting available mpp stores", zap.Int("total", len(stores)), zap.Int("alive", len(aliveIdx)))
+	if len(stores) != len(aliveIdx) {
+		logutil.BgLogger().Info("detecting available mpp stores", zap.Int("total", len(stores)), zap.Int("alive", len(aliveIdx)))
+	}
 	return aliveIdx
 }
 
@@ -825,8 +827,15 @@ func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedT
 	aliveStores = new(aliveStoresBundle)
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	allUsedTiFlashStores := getAllUsedTiFlashStores(allTiFlashStores, allUsedTiFlashStoresMap)
-	aliveStores.storesInAllZones = filterAliveStores(ctx, allUsedTiFlashStores, ttl, store)
 
+	// Get storesInAllZones and storeIDsInAllZones for all policy.
+	aliveStores.storesInAllZones = filterAliveStores(ctx, allUsedTiFlashStores, ttl, store)
+	aliveStores.storeIDsInAllZones = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
+	for _, as := range aliveStores.storesInAllZones {
+		aliveStores.storeIDsInAllZones[as.StoreID()] = struct{}{}
+	}
+
+	// Only get storesInTiDBZone and storeIDsInTiDBZone for closest_replica and closest_adaptive.
 	if !tiflashReplicaReadPolicy.IsAllReplicas() {
 		aliveStores.storeIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
 		for _, as := range aliveStores.storesInAllZones {
@@ -835,12 +844,6 @@ func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedT
 				aliveStores.storeIDsInTiDBZone[as.StoreID()] = struct{}{}
 				aliveStores.storesInTiDBZone = append(aliveStores.storesInTiDBZone, as)
 			}
-		}
-	}
-	if !tiflashReplicaReadPolicy.IsClosestReplicas() {
-		aliveStores.storeIDsInAllZones = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
-		for _, as := range aliveStores.storesInAllZones {
-			aliveStores.storeIDsInAllZones[as.StoreID()] = struct{}{}
 		}
 	}
 	return aliveStores

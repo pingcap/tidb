@@ -10,6 +10,7 @@ go_library(
         "sequence_state.go",
         "session.go",
         "setvar_affect.go",
+        "slow_log.go",
         "statusvar.go",
         "sysvar.go",
         "tidb_vars.go",
