@@ -3272,6 +3272,12 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
+// DatabaseBasicInfo contains the basic information of a database.
+type DatabaseBasicInfo struct {
+	ID   int64
+	Name string
+}
+
 // TableBasicInfo contains the basic information of a table used in DDL.
 type TableBasicInfo struct {
 	ID   int64
