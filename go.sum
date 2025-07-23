@@ -807,8 +807,8 @@ github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d/go.mod h1:p8QnkZn
 github.com/pingcap/errors v0.11.0/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTwv5KuLY8=
 github.com/pingcap/errors v0.11.4/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTwv5KuLY8=
 github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTwv5KuLY8=
-github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f h1:FxA+NgsdHNOv+/hZGxUh8Gb3WuZqgqmxDwztEOiA1v4=
-github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f/go.mod h1:X2r9ueLEUZgtx2cIogM0v4Zj5uvvzhuuiu7Pn8HzMPg=
+github.com/pingcap/errors v0.11.5-0.20241219054535-6b8c588c3122 h1:jc1bYMk3a2uD0+yK6Y8sRDrqvRELf/u2foUu7IT40Dw=
+github.com/pingcap/errors v0.11.5-0.20241219054535-6b8c588c3122/go.mod h1:X2r9ueLEUZgtx2cIogM0v4Zj5uvvzhuuiu7Pn8HzMPg=
 github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a h1:UgrcL8INjEbPRKE2h8yVgZvjOn2OGkxK9CFvoBWzgbk=
 github.com/pingcap/failpoint v0.0.0-20240527053858-9b3b6e34194a/go.mod h1:gPdo4h708R0CrwKM/DO0/6xJ64fz9vxzp2yKE2QON+s=
 github.com/pingcap/fn v1.0.0 h1:CyA6AxcOZkQh52wIqYlAmaVmF6EvrcqFywP463pjA8g=
@@ -1000,8 +1000,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20250722083450-d40b4b96e490 h1:PXrES865QyLGjfVKLBF9oOOAalEgOrfw5KIhFDF62hQ=
-github.com/tikv/client-go/v2 v2.0.8-0.20250722083450-d40b4b96e490/go.mod h1:zXX9NBGF4U3joK/GEldf3Fggi7Q6JA2u1ozh7Phhv8E=
+github.com/tikv/client-go/v2 v2.0.8-0.20250723054726-9e62374f9254 h1:fbQxH5zt6Un7YBJlf+oxbBrR7gULa5UhIjM6at/z6aQ=
+github.com/tikv/client-go/v2 v2.0.8-0.20250723054726-9e62374f9254/go.mod h1:Opq/BD9eaxwq20kguns2LQlvwXeJmQRr9vFKMzH1OLw=
 github.com/tikv/pd/client v0.0.0-20250219063534-ff54072887c0 h1:ifZWl2XmCK6xzOykeLDDcy5nTe1oAhxrufCPmXWJ9BM=
 github.com/tikv/pd/client v0.0.0-20250219063534-ff54072887c0/go.mod h1:NW6Af689Jw1FDxjq+WL0nqOdmQ1XT0ly2R1SIKfQuUw=
 github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966 h1:quvGphlmUVU+nhpFa4gg4yJyTRJ13reZMDHrKwYw53M=
