@@ -76,7 +76,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
 		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
