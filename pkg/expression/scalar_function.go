@@ -747,7 +747,13 @@ func ReHashCode(sf *ScalarFunction) {
 		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(marks)))
 		for _, mark := range marks {
 			sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(mark)))
+			// we need to sort map keys to ensure the hashcode is deterministic.
+			keys := make([]uint64, 0, len(mark))
 			for k := range mark {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
 				sf.hashcode = codec.EncodeInt(sf.hashcode, int64(k))
 			}
 		}
