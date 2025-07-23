@@ -83,7 +83,7 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "post_process")
 	taskID, err := mgr.CreateTask(ctx, "key1", proto.ImportInto, 1, "", 0, proto.ExtraParams{}, metaBytes)
 	require.NoError(t, err)
-	taskMeta.JobID = 1
+	taskMeta.JobID = taskID
 	bytes, err := json.Marshal(stepMeta)
 	require.NoError(t, err)
 	var taskKS string
