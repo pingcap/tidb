@@ -2663,7 +2663,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 			}
 		}
 	}
-	require.Len(t, len(tablesInSystemDatabase), allTableCount,
+	require.Len(t, tablesInSystemDatabase, allTableCount,
 		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
 	slices.Sort(allIDs)
 	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
