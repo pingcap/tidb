@@ -662,7 +662,7 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.Lo
 	newJoin.LeftConditions = leftConds
 	newJoin.RightConditions = rightConds
 	newJoin.JoinType = joinType
-	if newJoin.EqualConditions != nil && newJoin.JoinType == logicalop.InnerJoin {
+	if newJoin.JoinType == logicalop.InnerJoin {
 		if newJoin.LeftConditions != nil {
 			left := newJoin.Children()[0]
 			logicalop.AddSelection(newJoin, left, newJoin.LeftConditions, 0, opt)
