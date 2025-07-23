@@ -6,6 +6,8 @@ go_library(
         "base_physical_plan.go",
         "nominal_sort.go",
         "physical_limit.go",
+        "physical_mem_table.go",
+        "physical_projection.go",
         "physical_schema_producer.go",
         "physical_selection.go",
         "physical_sort.go",
@@ -19,6 +21,9 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/planner/core/access",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/baseimpl",
         "//pkg/planner/property",

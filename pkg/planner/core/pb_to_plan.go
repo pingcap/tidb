@@ -120,7 +120,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 		return nil, err
 	}
 	schema := b.buildTableScanSchema(tbl.Meta(), columns)
-	p := PhysicalMemTable{
+	p := physicalop.PhysicalMemTable{
 		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
@@ -168,7 +168,7 @@ func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := PhysicalProjection{
+	p := physicalop.PhysicalProjection{
 		Exprs: exprs,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -307,7 +307,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		return predicates, physicalPlan
 	}
 	switch plan := physicalPlan.(type) {
-	case *PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		memTable := plan
 		if memTable.Extractor == nil {
 			return predicates, plan

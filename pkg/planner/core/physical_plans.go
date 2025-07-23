@@ -59,7 +59,7 @@ import (
 
 var (
 	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
-	_ base.PhysicalPlan = &PhysicalProjection{}
+	_ base.PhysicalPlan = &physicalop.PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
@@ -386,7 +386,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
+		case *PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -887,28 +887,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 	return columns, schema, true
 }
 
-// PhysicalMemTable reads memory table.
-type PhysicalMemTable struct {
-	physicalop.PhysicalSchemaProducer
-
-	DBName         ast.CIStr
-	Table          *model.TableInfo
-	Columns        []*model.ColumnInfo
-	Extractor      base.MemTablePredicateExtractor
-	QueryTimeRange util.QueryTimeRange
-}
-
-// MemoryUsage return the memory usage of PhysicalMemTable
-func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfPointer + size.SizeOfSlice +
-		int64(cap(p.Columns))*size.SizeOfPointer + size.SizeOfInterface + p.QueryTimeRange.MemoryUsage()
-	return
-}
-
 // PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalop.PhysicalSchemaProducer
@@ -1161,55 +1139,6 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	}
 	for _, col := range ts.tblCols {
 		sum += col.MemoryUsage()
-	}
-	return
-}
-
-// PhysicalProjection is the physical operator of projection.
-type PhysicalProjection struct {
-	physicalop.PhysicalSchemaProducer
-
-	Exprs            []expression.Expression
-	CalculateNoDelay bool
-
-	// AvoidColumnEvaluator is ONLY used to avoid building columnEvaluator
-	// for the expressions of Projection which is child of Union operator.
-	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
-	AvoidColumnEvaluator bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalProjection) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalProjection)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.Exprs = util.CloneExprs(p.Exprs)
-	return cloned, err
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
-	for _, expr := range p.Exprs {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalProjection
-func (p *PhysicalProjection) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfBool*2
-	for _, expr := range p.Exprs {
-		sum += expr.MemoryUsage()
 	}
 	return
 }

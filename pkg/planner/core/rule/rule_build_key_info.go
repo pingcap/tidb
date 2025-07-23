@@ -16,10 +16,12 @@ package rule
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
 
 // BuildKeySolver is used to build key info for logical plan.
@@ -40,15 +42,22 @@ func (*BuildKeySolver) Optimize(_ context.Context, p base.LogicalPlan, _ *optimi
 }
 
 // **************************** end implementation of LogicalOptRule interface ****************************
+var childSchemaSlicePool = zeropool.New[[]*expression.Schema](func() []*expression.Schema {
+	return make([]*expression.Schema, 0, 4)
+})
 
 // buildKeyInfo recursively calls base.LogicalPlan's BuildKeyInfo method.
 func buildKeyInfo(lp base.LogicalPlan) {
 	for _, child := range lp.Children() {
 		buildKeyInfo(child)
 	}
-	childSchema := make([]*expression.Schema, len(lp.Children()))
-	for i, child := range lp.Children() {
-		childSchema[i] = child.Schema()
+	childSchema := childSchemaSlicePool.Get()
+	childSchema = slices.Grow(childSchema, len(lp.Children()))
+	defer func() {
+		childSchemaSlicePool.Put(childSchema[:0])
+	}()
+	for _, child := range lp.Children() {
+		childSchema = append(childSchema, child.Schema())
 	}
 	lp.BuildKeyInfo(lp.Schema(), childSchema)
 }

@@ -587,7 +587,7 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
 		return false, "get a Shuffle plan"
-	case *PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
