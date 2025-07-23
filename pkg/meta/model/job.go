@@ -390,8 +390,8 @@ type Job struct {
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 
-	// SystemVars store session variables
-	SystemVars map[string]string `json:"system_vars,omitempty"`
+	// SessionVars store system variables
+	SessionVars map[string]string `json:"session_vars,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -696,14 +696,14 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
-// AddSessionVars add a session variable in DDL job.
-func (job *Job) AddSessionVars(name string, value string) {
-	job.SystemVars[name] = value
+// AddSystemVars add a system variable in DDL job.
+func (job *Job) AddSystemVars(name string, value string) {
+	job.SessionVars[name] = value
 }
 
 // GetSystemVars get a system variable stored in DDL job.
 func (job *Job) GetSystemVars(name string) (string, bool) {
-	value, ok := job.SystemVars[name]
+	value, ok := job.SessionVars[name]
 	return value, ok
 }
 
