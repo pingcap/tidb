@@ -48,7 +48,7 @@ func (v *listVar) String() string {
 }
 
 var (
-	patterns           = []string{`{p: ^\.GetSessionVars$}`}
+	patterns           = []string{`sessionctx.Context.GetSessionVars`}
 	includeExamples    bool
 	usePermitDirective bool
 	analyzeTypes       bool
@@ -58,7 +58,7 @@ func init() {
 	Analyzer.Flags.Var(&listVar{values: &patterns}, "p", "pattern")
 	Analyzer.Flags.BoolVar(&includeExamples, "examples", false, "check godoc examples")
 	Analyzer.Flags.BoolVar(&usePermitDirective, "permit", true, `when set, lines with "//permit" directives will be ignored`)
-	Analyzer.Flags.BoolVar(&analyzeTypes, "analyze_types", false, `when set, expressions get expanded instead of matching the literal source code`)
+	Analyzer.Flags.BoolVar(&analyzeTypes, "analyze_types", true, `when set, expressions get expanded instead of matching the literal source code`)
 }
 
 func run(pass *analysis.Pass) (any, error) {
