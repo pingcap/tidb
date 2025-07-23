@@ -94,11 +94,11 @@ func initializeVariables[T comparable](
 	var zero T
 	if isNull || val == zero {
 		val = defaultVal
-		logger.Info("meta kv not found in meta store, initialized to default and persisted",
+		logger.Info("meta kv not found in meta store, initialized to default",
 			zap.String("key", varName),
 			zap.Any("value", defaultVal))
 	} else {
-		logger.Info("loaded value from meta store",
+		logger.Info("loaded meta kv from meta store",
 			zap.String("key", varName),
 			zap.Any("value", val))
 	}

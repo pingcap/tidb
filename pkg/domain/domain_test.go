@@ -93,10 +93,8 @@ func TestInfo(t *testing.T) {
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop", `return(true)`))
 	require.NoError(t, dom.Init(sysMockFactory, nil))
 	require.NoError(t, dom.Start(ddl.Bootstrap))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL"))
 
 	// Test for GetServerInfo and GetServerInfoByID.

@@ -295,7 +295,6 @@ func (t TableScanTask) String() string {
 type IndexRecordChunk struct {
 	ID    int
 	Chunk *chunk.Chunk
-	Err   error
 	Done  bool
 	ctx   *OperatorCtx
 }
@@ -581,6 +580,9 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	if err != nil {
 		w.ctx.onError(err)
 	}
+	failpoint.Inject("mockCopSenderError", func() {
+		w.ctx.onError(errors.New("mock cop error"))
+	})
 	for i, idxResult := range idxResults {
 		sender(idxResult)
 		rowCnt := idxResult.Chunk.NumRows()
