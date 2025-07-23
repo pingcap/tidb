@@ -126,6 +126,9 @@ type Server struct {
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
 
+	normalClosedConnsMutex sync.Mutex
+	normalClosedConns      map[string]string
+
 	userResLock  sync.RWMutex // userResLock used to protect userResource
 	userResource map[string]*userResourceLimits
 
@@ -138,6 +141,7 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
 	health         *uatomic.Bool
+	forceShutdown  *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[any]struct{}
@@ -200,6 +204,28 @@ func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 	return true, s.statusAddr
 }
 
+// SetNormalClosedConn sets the normal closed connection message by specified connID.
+func (s *Server) SetNormalClosedConn(keyspaceName, connID, msg string) {
+	if connID == "" {
+		return
+	}
+
+	s.normalClosedConnsMutex.Lock()
+	defer s.normalClosedConnsMutex.Unlock()
+	s.normalClosedConns[keyspaceName+"-"+connID] = msg
+}
+
+// GetNormalClosedConn gets the normal closed connection message.
+func (s *Server) GetNormalClosedConn(keyspaceName, connID string) string {
+	if connID == "" {
+		return ""
+	}
+
+	s.normalClosedConnsMutex.Lock()
+	defer s.normalClosedConnsMutex.Unlock()
+	return s.normalClosedConns[keyspaceName+"-"+connID]
+}
+
 // ConnectionCount gets current connection count.
 func (s *Server) ConnectionCount() int {
 	s.rwlock.RLock()
@@ -252,11 +278,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		normalClosedConns: make(map[string]string),
 		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
+		forceShutdown:     uatomic.NewBool(false),
 	}
 	s.capability = defaultCapability
 	setSystemTimeZoneVariable()
@@ -618,6 +646,16 @@ func (s *Server) closeListener() {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
 }
 
+// SetForceShutdown sets the force shutdown flag.
+func (s *Server) SetForceShutdown() {
+	s.forceShutdown.Store(true)
+}
+
+// GetForceShutdown gets the force shutdown flag.
+func (s *Server) GetForceShutdown() bool {
+	return s.forceShutdown.Load()
+}
+
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
@@ -819,20 +857,34 @@ func (s *Server) checkConnectionCount() error {
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	rs := make(map[uint64]*util.ProcessInfo)
-	maps.Copy(rs, s.getUserProcessList())
+	maps.Copy(rs, s.GetUserProcessList())
 	if s.dom != nil {
 		maps.Copy(rs, s.dom.SysProcTracker().GetSysProcessList())
 	}
 	return rs
 }
 
-func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
+// GetUserProcessList returns all process info that are created by user.
+func (s *Server) GetUserProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo)
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
+		}
+	}
+	return rs
+}
+
+// GetClientCapabilityList returns all client capability.
+func (s *Server) GetClientCapabilityList() map[uint64]uint32 {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]uint32)
+	for id, client := range s.clients {
+		if client.ctx.Session != nil {
+			rs[id] = client.capability
 		}
 	}
 	return rs
@@ -1174,4 +1226,9 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, id := range connIDs {
 		s.Kill(id, false, false, false)
 	}
+}
+
+// Health returns if the server is healthy (begin to shut down)
+func (s *Server) Health() bool {
+	return s.health.Load()
 }

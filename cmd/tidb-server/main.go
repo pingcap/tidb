@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/standby"
 	"github.com/pingcap/tidb/pkg/statistics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -137,6 +138,10 @@ const (
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 	nmKeyspaceName                = "keyspace-name"
 	nmTiDBServiceScope            = "tidb-service-scope"
+
+	nmStandby           = "standby"
+	nmActivationTimeout = "activation-timeout"
+	nmMaxIdleSeconds    = "max-idle-seconds"
 )
 
 var (
@@ -193,6 +198,11 @@ var (
 	keyspaceName                *string
 	serviceScope                *string
 	help                        *bool
+
+	// Standby
+	standbyMode       *bool
+	activationTimeout *uint
+	maxIdleSeconds    *uint
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -249,6 +259,12 @@ func initFlagSet() *flag.FlagSet {
 	keyspaceName = fset.String(nmKeyspaceName, "", "keyspace name.")
 	serviceScope = fset.String(nmTiDBServiceScope, "", "tidb service scope")
 	help = fset.Bool("help", false, "show the usage")
+
+	// Standby
+	standbyMode = flagBoolean(fset, nmStandby, false, "start tidb-server as standby")
+	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
+	maxIdleSeconds = fset.Uint(nmMaxIdleSeconds, 0, "max idle seconds for a connection, 0 means no limit")
+
 	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
 	// nolint:errcheck
@@ -280,12 +296,33 @@ func main() {
 	}
 	// we cannot add this check inside config.Valid(), as previous '-V' also relies
 	// on initialized global config.
-	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is required for nextgen TiDB")
+	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().StandByMode {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is required for nextgen TiDB")
 		os.Exit(0)
-	} else if kerneltype.IsClassic() && len(config.GetGlobalConfig().KeyspaceName) > 0 {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name is not supported for classic TiDB")
+	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().StandByMode) {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is not supported for classic TiDB")
 		os.Exit(0)
+	}
+
+	var standbyController server.StandbyController
+	if config.GetGlobalConfig().StandByMode {
+		standbyController = standby.NewLoadKeyspaceController()
+	}
+
+	mainErrHandler := func(err error) { terror.MustNil(err) }
+
+	// If running standby mode, overwrite the keyspace config and error handlers.
+	if standbyController != nil {
+		standbyController.WaitForActivate()
+		// replace mainErrHandler to make sure standby handler can exit gracefully.
+		mainErrHandler = func(err error) {
+			if err != nil {
+				standbyController.EndStandby(err)
+				terror.MustNil(err)
+			}
+		}
+		// need to validate config again in case of config change via standby
+		mainErrHandler(config.GetGlobalConfig().Valid())
 	}
 
 	signal.SetupUSR1Handler()
@@ -339,6 +376,12 @@ func main() {
 	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
+	if standbyController != nil {
+		standbyController.EndStandby(nil)
+
+		svr.StandbyController = standbyController
+		svr.StandbyController.OnServerCreated(svr)
+	}
 
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func() {
@@ -660,6 +703,18 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 		err = naming.Check(*serviceScope)
 		terror.MustNil(err)
 		cfg.Instance.TiDBServiceScope = *serviceScope
+	}
+
+	if actualFlags[nmStandby] {
+		cfg.StandByMode = *standbyMode
+	}
+
+	if actualFlags[nmActivationTimeout] {
+		cfg.ActivationTimeout = *activationTimeout
+	}
+
+	if actualFlags[nmMaxIdleSeconds] {
+		cfg.MaxIdleSeconds = *maxIdleSeconds
 	}
 }
 

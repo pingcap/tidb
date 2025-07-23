@@ -1,0 +1,467 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package standby
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/signal"
+	"go.uber.org/zap"
+)
+
+const (
+	standbyState   = "standby"
+	activatedState = "activated"
+
+	connNormalClosed         = "normal closed"
+	tidbNormalRestartLogPath = "/tmp/tidb-normal-restart.log"
+
+	httpPathPrefix = "/tidb-pool/"
+)
+
+// ActivateRequest is the request body for activating the tidb server.
+type ActivateRequest struct {
+	KeyspaceName   string          `json:"keyspace_name"`
+	AuditLog       *AuditLogConfig `json:"audit_log,omitempty"`
+	ExportID       string          `json:"export_id"`
+	MaxIdleSeconds uint            `json:"max_idle_seconds"`
+
+	// Worker Metadata
+	Role   string `json:"role"`
+	ExecID string `json:"exec_id"`
+
+	// analyze table
+	RunAutoAnalyze            bool `json:"run_auto_analyze"`
+	EnableAutoAnalyzeSysTable bool `json:"enable_auto_analyze-sys-table"`
+
+	// GCV2
+	SkipGCWorker      bool `json:"skip_gc_worker"`
+	EnableGCFastStart bool `json:"enable_gc_fast_start"`
+
+	// TTL
+	EnableRunTTLTask bool `json:"enable_run_ttl_task"`
+
+	// DDL
+	TiDBEnableDDL bool `json:"tidb_enable_ddl"`
+
+	// serverless info
+	TenantID  string `json:"tenant_id"`
+	ProjectID string `json:"project_id"`
+	ClusterID string `json:"cluster_id"`
+}
+
+func (r *ActivateRequest) auditLogEnabled() bool {
+	if r.AuditLog == nil {
+		return false
+	}
+	return r.AuditLog.Enable
+}
+
+func (r *ActivateRequest) auditLogRedacted() bool {
+	if r.AuditLog == nil {
+		return false
+	}
+	return r.AuditLog.Redacted
+}
+
+// AuditLogConfig is the configuration about audit log when activating the tidb server.
+type AuditLogConfig struct {
+	Enable     bool   `json:"enable"`
+	EncryptKey string `json:"encrypt_key"`
+	Redacted   bool   `json:"redacted"`
+}
+
+// LoadKeyspaceController controls the tidb server to be in standby mode or activated.
+type LoadKeyspaceController struct {
+	serverStartCh  chan struct{}
+	startServerErr error
+	endOnce        sync.Once
+
+	lastActive int64
+}
+
+// NewLoadKeyspaceController creates a new StandbyController.
+func NewLoadKeyspaceController() *LoadKeyspaceController {
+	return &LoadKeyspaceController{
+		serverStartCh: make(chan struct{}),
+	}
+}
+
+var (
+	mu              sync.RWMutex
+	state           = standbyState
+	activateRequest ActivateRequest
+
+	// activationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
+	activationTimeout uint
+
+	preTidbNormalRestartKeyspaceName, preTidbNormalRestartMsg string
+)
+
+var activateCh = make(chan struct{}, 1)
+
+// KeyspaceMismatch is the response body when the keyspace name in http request
+// does not match the local keyspace name.
+type KeyspaceMismatch struct {
+	Remote string `json:"remote"`
+	Local  string `json:"local"`
+}
+
+func keyspaceChecker(next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		remote := r.URL.Query().Get("keyspace")
+		local := config.GetGlobalKeyspaceName()
+		if remote != local {
+			w.WriteHeader(http.StatusPreconditionFailed)
+			mismatch := KeyspaceMismatch{
+				Remote: remote,
+				Local:  local,
+			}
+			body, err := json.Marshal(mismatch)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Write(body)
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
+// LoadTiDBNormalRestartLog loads the tidb normal restart log file.
+func LoadTiDBNormalRestartLog() ([]byte, error) {
+	data, err := os.ReadFile(tidbNormalRestartLogPath)
+	return data, err
+}
+
+func loadTiDBNormalRestartInfoAndRemove() {
+	data, err := os.ReadFile(tidbNormalRestartLogPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logutil.BgLogger().Error("failed to read tidb normal restart log file", zap.Error(err))
+		}
+		return
+	}
+
+	parts := strings.SplitN(string(data), ":", 2)
+	if len(parts) < 2 {
+		logutil.BgLogger().Error("invalid tidb normal restart log file")
+		return
+	}
+
+	preTidbNormalRestartKeyspaceName = parts[0]
+	preTidbNormalRestartMsg = parts[1]
+	logutil.BgLogger().Info("load tidb normal restart log file",
+		zap.String("preTidbNormalRestartKeyspaceName", preTidbNormalRestartKeyspaceName),
+		zap.String("preTidbNormalRestartMsg", preTidbNormalRestartMsg))
+
+	if err := os.Remove(tidbNormalRestartLogPath); err != nil {
+		logutil.BgLogger().Error("failed to remove tidb normal restart log file", zap.Error(err))
+	}
+}
+
+// SaveTidbNormalRestartInfo saves tidb normal restart info to file.
+func SaveTidbNormalRestartInfo(msg string) {
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
+	if keyspaceName == "" {
+		return
+	}
+
+	if err := os.WriteFile(tidbNormalRestartLogPath, []byte(keyspaceName+":"+msg), 0644); err != nil {
+		logutil.BgLogger().Error("failed to write tidb normal restart log file", zap.Error(err))
+	}
+}
+
+// IsPreTidbNormalRestart returns whether tidb is restarted normally before.
+func IsPreTidbNormalRestart(keyspaceName string) (bool, string) {
+	if keyspaceName == "" || preTidbNormalRestartKeyspaceName != keyspaceName {
+		return false, ""
+	}
+
+	return true, preTidbNormalRestartMsg
+}
+
+// Handler returns a handler to query tidb pool status or activate or exit the tidb server.
+func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.ServeMux) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(httpPathPrefix+"status", statusHandler)
+	mux.HandleFunc(httpPathPrefix+"activate", func(w http.ResponseWriter, r *http.Request) {
+		var req ActivateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.KeyspaceName == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.AuditLog != nil && req.AuditLog.Enable {
+			if req.AuditLog.EncryptKey != "" && len(req.AuditLog.EncryptKey) != 32 {
+				logutil.BgLogger().Error("bad audit log encrypt key", zap.String("encrypt_key", req.AuditLog.EncryptKey))
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			logutil.BgLogger().Info("activate with audit log enabled", zap.String("keyspaceName", req.KeyspaceName), zap.Bool("redacted", req.AuditLog.Redacted))
+		}
+
+		mu.Lock()
+		switch {
+		case state == standbyState:
+			state = activatedState
+			activateRequest = req
+			activateCh <- struct{}{}
+		case svr != nil && !svr.Health():
+			mu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("server is going to shutdown"))
+			return
+		case activateRequest.KeyspaceName != req.KeyspaceName:
+			mu.Unlock()
+			w.WriteHeader(http.StatusPreconditionFailed)
+			w.Write([]byte("server is not in standby mode"))
+			return
+		case activateRequest.auditLogEnabled() != req.auditLogEnabled() || activateRequest.auditLogRedacted() != req.auditLogRedacted():
+			mu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("server audit log status has changed"))
+			return
+		}
+		// if client tries to activate with same keyspace name, wait for ready signal and return 200.
+		mu.Unlock()
+
+		timeout := make(<-chan time.Time)
+		if activationTimeout > 0 {
+			timeout = time.After(time.Duration(activationTimeout) * time.Second)
+		}
+
+		select {
+		case <-r.Context().Done(): // client closed connection.
+			go func() {
+				c.EndStandby(errors.New("client closed connection"))
+				signal.TiDBExit(syscall.SIGTERM)
+			}()
+		case <-timeout: // reach hardlimit timeout from config.
+			logutil.BgLogger().Warn("timeout waiting for activation")
+			w.WriteHeader(http.StatusRequestTimeout)
+			w.Write([]byte("timeout waiting for activation"))
+			go func() {
+				c.EndStandby(errors.New("timeout waiting for activation"))
+				signal.TiDBExit(syscall.SIGTERM)
+			}()
+		case <-c.serverStartCh:
+			if c.startServerErr != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(c.startServerErr.Error()))
+				return
+			}
+			statusHandler(w, r)
+		}
+	})
+	mux.HandleFunc(httpPathPrefix+"exit", keyspaceChecker(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logutil.BgLogger().Info("receiving exit request")
+		if svr != nil {
+			svr.SetForceShutdown()
+			SaveTidbNormalRestartInfo("received exit request")
+		}
+		w.WriteHeader(http.StatusOK)
+		// Consider the server is going to fore shutdown, send a high priority signal to kill tidb.
+		signal.TiDBExit(syscall.SIGINT)
+	})))
+	mux.HandleFunc(httpPathPrefix+"checkconn", func(w http.ResponseWriter, r *http.Request) {
+		keyspaceName, connID := r.URL.Query().Get("keyspace_name"), r.URL.Query().Get("conn_id")
+		if keyspaceName == "" || connID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("keyspace_name or conn_id is empty"))
+			return
+		}
+		logger := logutil.BgLogger().With(zap.String("keyspace_name", keyspaceName), zap.String("conn_id", connID))
+		logger.Info("check connection")
+		if svr != nil {
+			if msg := svr.GetNormalClosedConn(keyspaceName, connID); msg != "" {
+				logger.Info("connection is normal closed", zap.String("msg", msg))
+				w.Write([]byte(connNormalClosed))
+				return
+			}
+		}
+		if ok, msg := IsPreTidbNormalRestart(keyspaceName); ok {
+			logger.Info("connection is normal closed", zap.String("msg", msg))
+			w.Write([]byte(connNormalClosed))
+			return
+		}
+		logger.Info("connection is unconfirmed")
+		w.Write([]byte(`unconfirmed`))
+	})
+	return httpPathPrefix, mux
+}
+
+func statusHandler(w http.ResponseWriter, r *http.Request) {
+	mu.RLock()
+	defer mu.RUnlock()
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	if activateRequest.ExportID != "" {
+		fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s","export_id": "%s"}`,
+			state, activateRequest.KeyspaceName, activateRequest.ExportID)
+	} else {
+		fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s"}`, state, activateRequest.KeyspaceName)
+	}
+}
+
+var httpServer *http.Server
+
+// WaitForActivate starts a http server to listen and wait for activation signal.
+func (c *LoadKeyspaceController) WaitForActivate() {
+	host := config.GetGlobalConfig().Status.StatusHost
+	port := config.GetGlobalConfig().Status.StatusPort
+	timeout := config.GetGlobalConfig().ActivationTimeout
+
+	_, mux := c.Handler(nil)
+	// handle liveness probe.
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	// handle health
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"status":"standby"}`)) })
+	httpServer = &http.Server{
+		Handler: mux,
+	}
+	activationTimeout = timeout
+	loadTiDBNormalRestartInfoAndRemove()
+	logutil.BgLogger().Info("tidb-server is now running as standby, waiting for activation...", zap.String("addr", httpServer.Addr))
+	go func() {
+		addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to listen", zap.Error(err))
+			os.Exit(1)
+		}
+		clusterSecurity := config.GetGlobalConfig().Security.ClusterSecurity()
+		tlsConfig, err := clusterSecurity.ToTLSConfig()
+		if err != nil {
+			logutil.BgLogger().Warn("failed to get tls config", zap.Error(err))
+			os.Exit(1)
+		}
+		if tlsConfig != nil {
+			l = tls.NewListener(l, tlsConfig)
+		}
+		if err := httpServer.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logutil.BgLogger().Warn("failed to start tidb-server as standby", zap.Error(err))
+			os.Exit(1)
+		}
+	}()
+
+	<-activateCh
+
+	logutil.BgLogger().Info("standby receive activate request", zap.Any("activate-request", activateRequest))
+
+	config.UpdateGlobal(func(c *config.Config) {
+		c.KeyspaceName = activateRequest.KeyspaceName
+		// if activateRequest.AuditLog != nil {
+		// 	c.AuditLog.Enable = activateRequest.AuditLog.Enable
+		// 	c.AuditLog.EncryptKey = activateRequest.AuditLog.EncryptKey
+		// 	c.AuditLog.Redacted = activateRequest.AuditLog.Redacted
+		// }
+		// // export mode
+		// c.ExportID = activateRequest.ExportID
+		if activateRequest.MaxIdleSeconds > 0 {
+			c.MaxIdleSeconds = activateRequest.MaxIdleSeconds
+		}
+
+		// Worker Meta
+		// if activateRequest.Role != "" {
+		// 	c.TiDBWorker.Role = activateRequest.Role
+		// }
+
+		// if activateRequest.ExecID != "" {
+		// 	c.TiDBWorker.ExecID = activateRequest.ExecID
+		// }
+
+		// // TTL config
+		// if activateRequest.EnableRunTTLTask {
+		// 	c.EnableRunTTLTask = activateRequest.EnableRunTTLTask
+		// }
+
+		// DDL config
+		if activateRequest.TiDBEnableDDL {
+			c.Instance.TiDBEnableDDL = *config.NewAtomicBool(activateRequest.TiDBEnableDDL)
+		}
+
+		// ananlyze table
+		if activateRequest.RunAutoAnalyze {
+			c.Performance.RunAutoAnalyze = activateRequest.RunAutoAnalyze
+		}
+
+		// if activateRequest.EnableAutoAnalyzeSysTable {
+		// 	c.EnableAutoAnalyzeSysTable = activateRequest.EnableAutoAnalyzeSysTable
+		// }
+
+		// // GC V2 config
+		// if activateRequest.SkipGCWorker {
+		// 	c.SkipGCWorker = activateRequest.SkipGCWorker
+		// }
+
+		// if activateRequest.EnableGCFastStart {
+		// 	c.EnableGCFastStart = activateRequest.EnableGCFastStart
+		// }
+	})
+}
+
+// EndStandby is used to notify the temp http server that the tidb server is ready or failed to init.
+func (c *LoadKeyspaceController) EndStandby(err error) {
+	c.endOnce.Do(func() {
+		c.startServerErr = err
+		close(c.serverStartCh)
+		if httpServer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			httpServer.Shutdown(ctx)
+		}
+	})
+}
+
+// OnServerShutdown is called when the server is going to shut down.
+// It will notify the tidb manager to the pod could be put back to the free cache.
+func (c *LoadKeyspaceController) OnServerShutdown(svr *server.Server) {
+	// if c.mgrCli == nil || svr.Health() || svr.GetForceShutdown() {
+	// 	return
+	// }
+
+	// exitReason, err := LoadTiDBNormalRestartLog()
+	// if err != nil && !os.IsNotExist(err) {
+	// 	logutil.BgLogger().Error("failed to load restart log", zap.Error(err))
+	// 	return
+	// }
+
+	// ctx, cancel := context.WithTimeout(context.Background(), tidbmanager.DefaultTimeout)
+	// defer cancel()
+	// err = c.mgrCli.Free(ctx, string(exitReason))
+	// if err != nil {
+	// 	logutil.BgLogger().Info("failed to report free", zap.Error(err))
+	// }
+}
