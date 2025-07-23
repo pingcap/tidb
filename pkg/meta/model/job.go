@@ -390,7 +390,8 @@ type Job struct {
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 
-	// SessionVars store system variables
+	// SessionVars store system variables used in the DDL execution.
+	// To keep the backward compatibility, we still name it SessionVars.
 	SessionVars map[string]string `json:"session_vars,omitempty"`
 }
 
