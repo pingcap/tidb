@@ -413,9 +413,9 @@ func TestPhysicalPlanClone(t *testing.T) {
 	}
 
 	indexJoin := &PhysicalIndexJoin{
-		physicalop.BasePhysicalJoin: baseJoin,
-		innerPlan:                   indexScan,
-		Ranges:                      ranger.Ranges{},
+		BasePhysicalJoin: baseJoin,
+		innerPlan:        indexScan,
+		Ranges:           ranger.Ranges{},
 	}
 	indexJoin = indexJoin.Init(ctx, stats, 0)
 	indexJoin.SetSchema(schema)
