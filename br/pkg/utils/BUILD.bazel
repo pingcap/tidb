@@ -63,6 +63,7 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
