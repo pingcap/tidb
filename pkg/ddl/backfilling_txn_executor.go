@@ -225,7 +225,7 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 }
 
 func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
-	sv := sessCtx.GetSessionVars() //nolint: forbidigo
+	sv := sessCtx.GetSessionVars() //nolint:forbidigo
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
 	var timezone *time.Location

@@ -143,7 +143,7 @@ func getSplitIdxPhysicalKeysFromValueList(
 ) ([][]byte, error) {
 	destKeys = getSplitIdxPhysicalStartAndOtherIdxKeys(tblInfo, idxInfo, physicalID, destKeys)
 	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
-	//nolint: forbidigo
+	//nolint:forbidigo
 	ss := sctx.GetSessionVars()
 	sc := ss.StmtCtx
 	for _, v := range splitDatum {
@@ -211,7 +211,7 @@ func getSplitIdxPhysicalKeysFromBound(
 	destKeys = getSplitIdxPhysicalStartAndOtherIdxKeys(tblInfo, idxInfo, physicalID, destKeys)
 	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
-	s := sctx.GetSessionVars() //nolint: forbidigo
+	s := sctx.GetSessionVars() //nolint:forbidigo
 	sc := s.StmtCtx
 	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), lower, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {

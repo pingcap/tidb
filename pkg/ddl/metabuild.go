@@ -23,7 +23,7 @@ import (
 // NewMetaBuildContextWithSctx creates a new MetaBuildContext with the given session context.
 func NewMetaBuildContextWithSctx(sctx sessionctx.Context, otherOpts ...metabuild.Option) *metabuild.Context {
 	intest.AssertNotNil(sctx)
-	sessVars := sctx.GetSessionVars() //nolint: forbidigo
+	sessVars := sctx.GetSessionVars() //nolint:forbidigo
 	intest.AssertNotNil(sessVars)
 	opts := []metabuild.Option{
 		metabuild.WithExprCtx(sctx.GetExprCtx()),

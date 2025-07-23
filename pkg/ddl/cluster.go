@@ -143,7 +143,7 @@ func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBack
 }
 
 func getGlobalSysVarAsBool(sess sessionctx.Context, name string) (bool, error) {
-	//nolint: forbidigo
+	//nolint:forbidigo
 	val, err := sess.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
 	if err != nil {
 		return false, errors.Trace(err)

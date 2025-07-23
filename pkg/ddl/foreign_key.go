@@ -152,7 +152,7 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
-	//nolint: forbidigo
+	//nolint:forbidigo
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
