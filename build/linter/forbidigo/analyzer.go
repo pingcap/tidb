@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package gofmt
+package forbidigo
 
 import (
 	"errors"
@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
+
+var lc = newLineCache()
 
 // Analyzer is the analyzer struct of gofmt.
 var Analyzer = &analysis.Analyzer{
@@ -49,22 +51,20 @@ func (v *listVar) String() string {
 }
 
 var (
-	patterns           = []string{`sessionctx.Context.GetSessionVars`}
-	includeExamples    bool
-	usePermitDirective bool
-	analyzeTypes       bool
+	patterns        = []string{`sessionctx.Context.GetSessionVars`}
+	includeExamples bool
+	analyzeTypes    bool
 )
 
 func init() {
 	Analyzer.Flags.Var(&listVar{values: &patterns}, "p", "pattern")
 	Analyzer.Flags.BoolVar(&includeExamples, "examples", false, "check godoc examples")
-	Analyzer.Flags.BoolVar(&usePermitDirective, "permit", true, `when set, lines with "//permit" directives will be ignored`)
 	Analyzer.Flags.BoolVar(&analyzeTypes, "analyze_types", true, `when set, expressions get expanded instead of matching the literal source code`)
 }
 
 func run(pass *analysis.Pass) (any, error) {
 	linter, err := forbidigo.NewLinter(patterns,
-		forbidigo.OptionIgnorePermitDirectives(!usePermitDirective),
+		forbidigo.OptionIgnorePermitDirectives(true),
 		forbidigo.OptionExcludeGodocExamples(!includeExamples),
 		forbidigo.OptionAnalyzeTypes(analyzeTypes),
 	)
@@ -97,15 +97,17 @@ func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 	}
 
 	for _, i := range issues {
-		s := i.String()
-		fmt.Print("s =", s)
 		skip := false
-		for _, whiteList := range whiteLists {
-			if strings.Contains(s, whiteList) {
-				skip = true
-				break
+		if s, err := lc.GetLine(i.Position().Filename, i.Position().Line); err == nil {
+			fmt.Print("s =", s)
+			for _, whiteList := range whiteLists {
+				if strings.Contains(s, whiteList) {
+					skip = true
+					break
+				}
 			}
 		}
+
 		if skip {
 			continue
 		}

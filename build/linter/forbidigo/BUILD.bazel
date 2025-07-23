@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "forbidigo",
-    srcs = ["analyzer.go"],
+    srcs = [
+        "analyzer.go",
+        "linecache.go",
+    ],
     importpath = "github.com/pingcap/tidb/build/linter/forbidigo",
     visibility = ["//visibility:public"],
     deps = [
