@@ -53,6 +53,7 @@ type BasePhysicalJoin struct {
 	RightNAJoinKeys []*expression.Column
 }
 
+// GetJoinType returns the type of the join operation.
 func (p *BasePhysicalJoin) GetJoinType() logicalop.JoinType {
 	return p.JoinType
 }
@@ -92,6 +93,7 @@ func (p *BasePhysicalJoin) CloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 	return cloned, true
 }
 
+// CloneWithSelf clones the BasePhysicalJoin with self.
 func (p *BasePhysicalJoin) CloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*BasePhysicalJoin, error) {
 	cloned := new(BasePhysicalJoin)
 	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, newSelf)
