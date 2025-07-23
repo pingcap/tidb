@@ -88,6 +88,8 @@ func run(pass *analysis.Pass) (any, error) {
 
 func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 	for _, i := range issues {
+		fmt.Print("String", i.String(), "\n")
+		fmt.Print("Details", i.Details(), "\n")
 		diag := analysis.Diagnostic{
 			Pos:      i.Pos(),
 			Message:  i.Details(),
