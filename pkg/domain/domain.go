@@ -1864,8 +1864,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		defer util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 
 		var (
-			count int
-			resp  clientv3.WatchResponse
+			closeChanCnt int
+			resp         clientv3.WatchResponse
 		)
 		for {
 			ok := true
@@ -1873,41 +1873,41 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case <-do.exit:
 				return
 			case resp, ok = <-watchCh:
-			case <-time.After(duration):
-			}
-			if !ok {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
-				watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
-				count++
-				if count > 10 {
-					time.Sleep(time.Duration(count) * time.Second)
+				if !ok {
+					logutil.BgLogger().Error("load privilege loop watch channel closed")
+					watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
+					closeChanCnt++
+					if closeChanCnt > 10 {
+						time.Sleep(time.Duration(closeChanCnt) * time.Second)
+					}
+					continue
 				}
-				continue
-			}
+				closeChanCnt = 0
 
-			// Skip the event from this TiDB-Server
-			eventCnt := len(resp.Events)
-			for _, event := range resp.Events {
-				if event.Kv != nil {
-					val := event.Kv.Value
-					if len(val) > 0 {
-						var tmp PrivilegeEvent
-						err := json.Unmarshal(val, &tmp)
-						if err != nil {
-							logutil.BgLogger().Warn("decode PrivilegeEvent unmarshal fail", zap.Error(err))
-							continue
-						}
-						if do.serverID != 0 && do.serverID == tmp.ServerID {
-							eventCnt--
+				// Skip the event from this TiDB-Server
+				eventCnt := len(resp.Events)
+				for _, event := range resp.Events {
+					if event.Kv != nil {
+						val := event.Kv.Value
+						if len(val) > 0 {
+							var tmp PrivilegeEvent
+							err := json.Unmarshal(val, &tmp)
+							if err != nil {
+								logutil.BgLogger().Warn("decode PrivilegeEvent unmarshal fail", zap.Error(err))
+								continue
+							}
+							if do.serverID != 0 && do.serverID == tmp.ServerID {
+								eventCnt--
+							}
 						}
 					}
 				}
-			}
-			if eventCnt == 0 {
-				continue
+				if eventCnt == 0 {
+					continue
+				}
+			case <-time.After(duration):
 			}
 
-			count = 0
 			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
