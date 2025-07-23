@@ -5770,6 +5770,8 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     schema.Name.O,
+		TableName:      table.Meta().Name.O,
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
@@ -7083,14 +7085,18 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     args.SchemaName,
+		TableName:      args.TableName,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: args.SchemaName,
-			Table:    args.TableName,
-		}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: args.SchemaName,
+				Table:    args.TableName,
+			},
+		},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)
