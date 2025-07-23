@@ -61,7 +61,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
-	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
+	_ base.PhysicalPlan = &physicalop.PhysicalMaxOneRow{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
@@ -1979,32 +1979,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
 		p.Ranges[0].IsPointNonNullable(tc)
-}
-
-// PhysicalMaxOneRow is the physical operator of maxOneRow.
-type PhysicalMaxOneRow struct {
-	physicalop.BasePhysicalPlan
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalMaxOneRow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalMaxOneRow)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalPlan = *base
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalMaxOneRow
-func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.BasePhysicalPlan.MemoryUsage()
 }
 
 // PhysicalWindow is the physical operator of window function.

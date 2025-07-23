@@ -803,7 +803,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&physicalop.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
 		&plannercore.PhysicalCTETable{},
-		&plannercore.PhysicalMaxOneRow{},
+		&physicalop.PhysicalMaxOneRow{},
 		&physicalop.PhysicalProjection{},
 		&physicalop.PhysicalSelection{},
 		&physicalop.PhysicalTableDual{},
