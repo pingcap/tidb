@@ -279,7 +279,8 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 	return
 }
 
-func (*mergeIndexWorker) AddMetricInfo(float64) {
+func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
+	w.metricCounter.Add(cnt)
 }
 
 func (*mergeIndexWorker) String() string {
