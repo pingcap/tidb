@@ -1353,6 +1353,16 @@ func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
 }
 
+// DropFullTextIndex drop fulltext infex on TiCI.
+func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
+	ticiManager, err := NewTiCIManager("0.0.0.0", "50061")
+	if err != nil {
+		return err
+	}
+	defer ticiManager.conn.Close()
+	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
+}
+
 // CloseTiFlashManager closes TiFlash manager.
 func CloseTiFlashManager(ctx context.Context) {
 	is, err := getGlobalInfoSyncer()

@@ -57,6 +57,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			Type:         int32(tblInfo.Columns[offset].GetType()),
 			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
+			Flag:         uint32(tblInfo.Columns[offset].GetFlag()),
 			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
 			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
 			IsArray:      len(indexInfo.Columns) > 1,
@@ -93,6 +94,7 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 			DatabaseName: schemaName,
 			Version:      int64(tblInfo.Version),
 			Columns:      tableColumns,
+			IsClustered:  tblInfo.HasClusteredIndex(),
 		},
 	}
 	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
@@ -100,10 +102,28 @@ func (t *TiCIManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model
 		return err
 	}
 	if resp.Status != 0 {
-		logutil.BgLogger().Error("create fulltext index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
+		logutil.BgLogger().Error("create fulltext index failed", zap.Int64("indexID", req.IndexInfo.IndexId), zap.String("errorMessage", resp.ErrorMessage))
 		return nil
 	}
-	logutil.BgLogger().Info("create fulltext index success", zap.String("indexID", resp.IndexId))
+	logutil.BgLogger().Info("create fulltext index success", zap.Int64("indexID", req.IndexInfo.IndexId))
 
+	return nil
+}
+
+// DropFullTextIndex drop full text index on TiCI.
+func (t *TiCIManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int64) error {
+	req := &tici.DropIndexRequest{
+		TableId: tableID,
+		IndexId: indexID,
+	}
+	resp, err := t.metaServiceClient.DropIndex(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp.Status != 0 {
+		logutil.BgLogger().Error("drop full text index failed", zap.Int64("table ID", req.TableId), zap.Int64("index ID", req.IndexId), zap.String("errorMessage", resp.ErrorMessage))
+		return nil
+	}
+	logutil.BgLogger().Info("drop full text index success", zap.Int64("index ID", req.TableId), zap.Int64("index ID", req.IndexId))
 	return nil
 }
