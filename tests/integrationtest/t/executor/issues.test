@@ -779,3 +779,8 @@ select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s'
 
 # TestIssue56641
 select ((exists (select 1)) * -5) as c1;
+
+# TestIssue62458 should no error
+CREATE TABLE test_62458 (c1 INT, c2 VARCHAR(255)) PARTITION BY LIST (c1) (PARTITION p1 VALUES IN (1, 2, 3), PARTITION p2 VALUES IN (4, 5, 6));
+CREATE UNIQUE INDEX i ON test_62458 (c1);
+DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
