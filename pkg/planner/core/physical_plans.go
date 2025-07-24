@@ -62,7 +62,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
 	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
-	_ base.PhysicalPlan = &PhysicalTableDual{}
+	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
 	_ base.PhysicalPlan = &physicalop.NominalSort{}
@@ -80,7 +80,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
-	_ base.PhysicalPlan = &PhysicalUnionScan{}
+	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
 	_ base.PhysicalPlan = &PhysicalWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
@@ -875,28 +875,6 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 		ID:       model.ExtraPhysTblID,
 	})
 	return columns, schema, true
-}
-
-// PhysicalMemTable reads memory table.
-type PhysicalMemTable struct {
-	physicalop.PhysicalSchemaProducer
-
-	DBName         ast.CIStr
-	Table          *model.TableInfo
-	Columns        []*model.ColumnInfo
-	Extractor      base.MemTablePredicateExtractor
-	QueryTimeRange util.QueryTimeRange
-}
-
-// MemoryUsage return the memory usage of PhysicalMemTable
-func (p *PhysicalMemTable) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.DBName.MemoryUsage() + size.SizeOfPointer + size.SizeOfSlice +
-		int64(cap(p.Columns))*size.SizeOfPointer + size.SizeOfInterface + p.QueryTimeRange.MemoryUsage()
-	return
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -2186,40 +2164,6 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 	return p.basePhysicalAgg.MemoryUsage()
 }
 
-// PhysicalUnionScan represents a union scan operator.
-type PhysicalUnionScan struct {
-	physicalop.BasePhysicalPlan
-
-	Conditions []expression.Expression
-
-	HandleCols util.HandleCols
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0)
-	for _, cond := range p.Conditions {
-		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of PhysicalUnionScan
-func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice
-	if p.HandleCols != nil {
-		sum += p.HandleCols.MemoryUsage()
-	}
-	for _, cond := range p.Conditions {
-		sum += cond.MemoryUsage()
-	}
-	return
-}
-
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 	return p.isPartition, p.physicalTableID
@@ -2257,40 +2201,6 @@ func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
 	}
 
 	return p.BasePhysicalPlan.MemoryUsage()
-}
-
-// PhysicalTableDual is the physical operator of dual.
-type PhysicalTableDual struct {
-	physicalop.PhysicalSchemaProducer
-
-	RowCount int
-
-	// names is used for OutputNames() method. Dual may be inited when building point get plan.
-	// So it needs to hold names for itself.
-	names []*types.FieldName
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() types.NameSlice {
-	return p.names
-}
-
-// SetOutputNames sets the outputting name by the given slice.
-func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
-	p.names = names
-}
-
-// MemoryUsage return the memory usage of PhysicalTableDual
-func (p *PhysicalTableDual) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfSlice + int64(cap(p.names))*size.SizeOfPointer
-	for _, name := range p.names {
-		sum += name.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalWindow is the physical operator of window function.

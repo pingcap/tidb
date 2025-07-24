@@ -3661,13 +3661,13 @@ def go_deps():
         name = "com_github_grafana_pyroscope_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/grafana/pyroscope-go",
-        sha256 = "55b34ec6dedb083508cb61d4b9109b3e79df475abbeabe6957d58c5dcb781095",
-        strip_prefix = "github.com/grafana/pyroscope-go@v1.2.2",
+        sha256 = "cfb937666678331da6317a45d2794108f8763c22a3a548466a73ddec135fbb20",
+        strip_prefix = "github.com/grafana/pyroscope-go@v1.2.3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.2.zip",
-            "http://ats.apps.svc/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
+            "http://ats.apps.svc/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
         ],
     )
     go_repository(
@@ -5295,13 +5295,13 @@ def go_deps():
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/mgechev/revive",
-        sha256 = "fbe5c1a1027233d52a6c3f4bdb95ab144edba41de6df38506f16c862378a4e1e",
-        strip_prefix = "github.com/mgechev/revive@v1.10.0",
+        sha256 = "fdd3cb85a75d3278df0bfaad99067b75e3984825473f0af76dcd36f3f922ca77",
+        strip_prefix = "github.com/mgechev/revive@v1.11.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.10.0.zip",
-            "http://ats.apps.svc/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.10.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.10.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.10.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
+            "http://ats.apps.svc/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
         ],
     )
     go_repository(

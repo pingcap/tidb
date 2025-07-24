@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -155,6 +156,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	defer func() {
 		if retErr == nil {
 			// Override the resource group if the hint is set.
+			// resource group name is case-insensitive. so we need to convert it to lower case.
+			lowerRgName := strings.ToLower(sessVars.StmtCtx.StmtHints.ResourceGroup)
 			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
 				if vardef.EnableResourceControl.Load() {
 					hasPriv := true
@@ -168,7 +171,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 						}
 					}
 					if hasPriv {
-						sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+						sessVars.StmtCtx.ResourceGroupName = lowerRgName
 						// if we are in a txn, should update the txn resource name to let the txn
 						// commit with the hint resource group.
 						if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
@@ -182,6 +185,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 					err := infoschema.ErrResourceGroupSupportDisabled
 					sessVars.StmtCtx.AppendWarning(err)
 				}
+			}
+
+			// Handle SetVars hints for cached plans.
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
 		}
 	}()
@@ -222,14 +234,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
-	}
-
-	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-		sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
-	}
-
-	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 	}
 
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -299,13 +303,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 
-			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
-				sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL binding")
-			}
-
-			if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL binding")
-			}
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 				if err != nil {

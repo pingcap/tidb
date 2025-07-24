@@ -27,9 +27,9 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -93,10 +93,10 @@ func (local *Backend) splitAndScatterRegionByRanges(
 	startTime := time.Now()
 	unScatteredCount, err := local.splitCli.WaitRegionsScattered(ctx, scatterRegions)
 	if unScatteredCount == 0 {
-		log.FromContext(ctx).Info("waiting for scattering regions done",
+		logutil.Logger(ctx).Info("waiting for scattering regions done",
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
-		log.FromContext(ctx).Info("waiting for scattering regions timeout",
+		logutil.Logger(ctx).Info("waiting for scattering regions timeout",
 			zap.Int("unScatteredCount", unScatteredCount),
 			zap.Int("allRegionCount", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)),

@@ -92,12 +92,11 @@ type BaseScheduler struct {
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID),
-		zap.Stringer("task-type", task.Type),
-		zap.Bool("allocated-slots", param.allocatedSlots))
+	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
+	ctx = logutil.WithLogger(ctx, logger)
 	s := &BaseScheduler{
 		ctx:    ctx,
 		Param:  param,
@@ -105,6 +104,7 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	s.task.Store(task)
+	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
 	return s
 }
 
