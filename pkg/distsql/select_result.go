@@ -539,10 +539,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
 		return
 	}
-	if copStats.ScanDetail.ProcessedKeys > 0 || copStats.TimeDetail.KvReadWallTime > 0 {
-		readKeys := copStats.ScanDetail.ProcessedKeys
+	if (copStats.ScanDetail != nil && copStats.ScanDetail.ProcessedKeys > 0) || copStats.TimeDetail.KvReadWallTime > 0 {
+		var readKeys int64
+		var readSize float64
+		if copStats.ScanDetail != nil {
+			readKeys = copStats.ScanDetail.ProcessedKeys
+			readSize = float64(copStats.ScanDetail.ProcessedKeysSize)
+		}
 		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
-		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
 
@@ -703,7 +707,9 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
-	s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+	if copStats.ScanDetail != nil {
+		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+	}
 	if len(copStats.BackoffSleep) > 0 {
 		if s.backoffSleep == nil {
 			s.backoffSleep = make(map[string]time.Duration)
