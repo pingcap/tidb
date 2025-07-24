@@ -580,7 +580,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.ScanDetail, copStats.TimeDetail, nil)
+			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
 		}
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
 		// report MPP cross AZ network traffic bytes to resource control manager.
@@ -614,7 +614,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, &copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
