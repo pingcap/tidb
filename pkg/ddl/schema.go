@@ -177,7 +177,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		return ver, nil
 	}
 	// If the database is set to read-write from read-only, we don't need the middle state.
-	if dbInfo.ReadOnly == true && args.ReadOnly == false {
+	if dbInfo.ReadOnly && !args.ReadOnly {
 		dbInfo.ReadOnly = args.ReadOnly
 		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
 			return ver, errors.Trace(err)

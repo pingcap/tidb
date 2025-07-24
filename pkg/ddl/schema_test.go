@@ -570,17 +570,17 @@ func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 	tk1.MustExec("begin")
 	tk1.MustExec("select * from t")
 	r := tk1.MustQuery("select @@tidb_current_ts").Rows()
-	txnId, err := strconv.ParseInt(r[0][0].(string), 10, 64)
+	txnID, err := strconv.ParseInt(r[0][0].(string), 10, 64)
 	require.NoError(t, err)
-	var txnIds map[int64]struct{}
+	var txnIDs map[int64]struct{}
 	go func() {
 		require.Eventually(t, func() bool {
-			return len(txnIds) == 1 && txnIds[txnId] == struct{}{}
+			return len(txnIDs) == 1 && txnIDs[txnID] == struct{}{}
 		}, 5*time.Second, 100*time.Millisecond)
 		tk1.MustExec("commit")
 	}()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
-		txnIds = ids
+		txnIDs = ids
 	})
 	tk2.MustExec("alter database test_db read only = 1")
 	tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
@@ -652,12 +652,12 @@ func TestReadOnlyInMiddleState(t *testing.T) {
 		defer wg.Done()
 		tk2.MustExec("alter database test_db read only = 1")
 	}()
-	var txnIds map[int64]struct{}
+	var txnIDs map[int64]struct{}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
-		txnIds = ids
+		txnIDs = ids
 	})
 	require.Eventually(t, func() bool {
-		return len(txnIds) == 1
+		return len(txnIDs) == 1
 	}, 5*time.Second, 100*time.Millisecond)
 	is := sessiontxn.GetTxnManager(tk3.Session()).GetTxnInfoSchema()
 	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test_db"))
@@ -694,12 +694,12 @@ func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
 		defer wg.Done()
 		tk2.MustExec("alter schema test read only = 1")
 	}()
-	var txnIds map[int64]struct{}
+	var txnIDs map[int64]struct{}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkUncommittedTxns", func(ids map[int64]struct{}) {
-		txnIds = ids
+		txnIDs = ids
 	})
 	require.Eventually(t, func() bool {
-		return len(txnIds) == 1
+		return len(txnIDs) == 1
 	}, 5*time.Second, 100*time.Millisecond)
 
 	//conn1.Close()
