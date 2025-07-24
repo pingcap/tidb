@@ -49,8 +49,16 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, 
 	for i, proj := range p.Children() {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
+<<<<<<< HEAD
 		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
 		addSelection(p, newChild, retCond, i, opt)
+=======
+		retCond, newChild, err := proj.PredicatePushDown(newExprs, opt)
+		if err != nil {
+			return nil, nil, err
+		}
+		AddSelection(p, newChild, retCond, i, opt)
+>>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
 	}
 	return nil, p
 }
