@@ -1107,10 +1107,9 @@ type regionJobBaseWorker struct {
 	jobFromWorkerCh chan *regionJob
 }
 
-// startWorker creates a worker that reads from the job channel and processes.
-// startWorker will return nil if it's expected to stop, where the only case is
-// the context canceled. It will return not nil error when it actively stops.
-// startWorker must Done the jobWg if it does not put the job into jobOutCh.
+// HandleTask process a single job that reads from the job channel.
+// If the worker fails to process the job, it will set the error to the context.
+// Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
 	defer util.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
@@ -1141,7 +1140,7 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 		select {
 		case <-ctx.Done():
 			job.done(w.jobWg)
-			return nil
+			return ctx.Err()
 		case w.jobFromWorkerCh <- job:
 		}
 	case needRescan:
@@ -1220,11 +1219,6 @@ func newRegionJobOperator(
 		afterExecuteJob func([]*metapb.Peer)
 	)
 
-	// if balancer != nil {
-	// 	afterExecuteJob = balancer.releaseStoreLoad
-	// 	sourceChannel = balancer.innerJobToWorkerCh
-	// }
-
 	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
 
 	pool := workerpool.NewWorkerPool(
@@ -1264,8 +1258,8 @@ func (j *jobOperator) Open() error {
 	// In happy path, this goroutine will exit when we call j.Close().
 	// In error case:
 	// 1. if other goroutine in the worker group returns error, j.ctx will be canceled
-	// 2. if this worker pool meets error, this context will also be canceled by
-	//     j.ctx.OnError(err). And this error will be exposed to the worker pool.
+	// 2. if this worker pool meets error, this error will be exposed to the worker pool,
+	//    so all components in the worker pool can quit and make `jobWg.Wait()` pass.
 	j.workerGroup.Go(func() error {
 		<-j.ctx.Done()
 		return j.ctx.OperatorErr()

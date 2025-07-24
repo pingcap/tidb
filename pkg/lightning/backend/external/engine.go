@@ -664,7 +664,7 @@ func (e *Engine) UpdateResource(ctx context.Context, concurrency int, memCapacit
 		select {
 		case <-ctx.Done():
 			logutil.BgLogger().Info("context done when updating resource, skip update resource")
-			return nil
+			return ctx.Err()
 		case _, ok := <-e.readyCh:
 			if ok {
 				logutil.BgLogger().Info("update resource for external engine",
