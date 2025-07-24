@@ -857,7 +857,7 @@ func (gs *tidbGlueSession) RefreshMeta(
 	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	d := domain.GetDomain(gs.se).DDLExecutor()
 	gs.se.SetValue(sessionctx.QueryString,
-		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d SCHEMA_NAME=%s TABLE_NAME=%s", args.SchemaID, args.TableID, args.SchemaName, args.TableName))
+		fmt.Sprintf("REFRESH META INVOLVED_DB_ID=%d INVOLVED_TABLE_ID=%d INVOLVED_DB_NAME=%s INVOLVED_TABLE_NAME=%s", args.InvolvedDBID, args.InvolvedTableID, args.InvolvedDBName, args.InvolvedTableName))
 	return d.RefreshMeta(gs.se, args)
 }
 

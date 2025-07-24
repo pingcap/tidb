@@ -1932,10 +1932,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 					}
 				}
 				args := &model.RefreshMetaArgs{
-					SchemaID:   dbID,
-					TableID:    tableID,
-					SchemaName: dbName,
-					TableName:  tableName,
+					InvolvedDBID:      dbID,
+					InvolvedTableID:   tableID,
+					InvolvedDBName:    dbName,
+					InvolvedTableName: tableName,
 				}
 
 				log.Info("refreshing deleted table meta",
@@ -1961,10 +1961,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 			dbName = dbReplace.Name
 		}
 		args := &model.RefreshMetaArgs{
-			SchemaID:   dbID,
-			TableID:    0, // 0 for database-only refresh
-			SchemaName: dbName,
-			TableName:  model.InvolvingAll,
+			InvolvedDBID:      dbID,
+			InvolvedTableID:   0, // 0 for database-only refresh
+			InvolvedDBName:    dbName,
+			InvolvedTableName: model.InvolvingAll,
 		}
 
 		log.Info("refreshing potential deleted database meta",
@@ -1994,10 +1994,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		}
 
 		args := &model.RefreshMetaArgs{
-			SchemaID:   dbReplace.DbID,
-			TableID:    0, // tableID = 0 for database-only refresh
-			SchemaName: dbReplace.Name,
-			TableName:  model.InvolvingAll,
+			InvolvedDBID:      dbReplace.DbID,
+			InvolvedTableID:   0, // tableID = 0 for database-only refresh
+			InvolvedDBName:    dbReplace.Name,
+			InvolvedTableName: model.InvolvingAll,
 		}
 		log.Info("refreshing database-only meta",
 			zap.Int64("schemaID", dbReplace.DbID),
@@ -2028,10 +2028,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 				}
 
 				args := &model.RefreshMetaArgs{
-					SchemaID:   dbReplace.DbID,
-					TableID:    tableReplace.TableID,
-					SchemaName: dbReplace.Name,
-					TableName:  tableReplace.Name,
+					InvolvedDBID:      dbReplace.DbID,
+					InvolvedTableID:   tableReplace.TableID,
+					InvolvedDBName:    dbReplace.Name,
+					InvolvedTableName: tableReplace.Name,
 				}
 				log.Info("refreshing regular table meta",
 					zap.Int64("schemaID", dbReplace.DbID),

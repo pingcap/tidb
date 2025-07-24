@@ -5771,7 +5771,6 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
 		SchemaName:     schema.Name.O,
-		TableName:      table.Meta().Name.O,
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
@@ -6780,12 +6779,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
-	// all DDLs should set InvolvingSchemaInfo to make sure DDL execution in order.
-	for _, info := range job.GetInvolvingSchemaInfo() {
-		if info.Database == model.InvolvingNone || info.Table == model.InvolvingNone {
-			return dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job args: InvolvingSchemaInfo")
-		}
-	}
+	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	e.deliverJobTask(jobW)
@@ -7089,18 +7083,17 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
 	job := &model.Job{
 		Version:        model.JobVersion2,
-		SchemaID:       args.SchemaID,
-		TableID:        args.TableID,
-		SchemaName:     args.SchemaName,
-		TableName:      args.TableName,
+		SchemaID:       args.InvolvedDBID,
+		TableID:        args.InvolvedTableID,
+		SchemaName:     args.InvolvedDBName,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database: args.SchemaName,
-				Table:    args.TableName,
+				Database: args.InvolvedDBName,
+				Table:    args.InvolvedTableName,
 			},
 		},
 	}
