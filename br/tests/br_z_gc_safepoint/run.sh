@@ -50,13 +50,6 @@ if [ "$backup_gc_fail" -ne "0" ];then
     exit 1
 fi
 
-# set safePoint otherwise the default safePoint is zero
-bin/gc -pd $PD_ADDR \
-    --ca "$TEST_DIR/certs/ca.pem" \
-    --cert "$TEST_DIR/certs/br.pem" \
-    --key "$TEST_DIR/certs/br.key" \
-    -gc-offset "1s"
-
 backup_gc_fail=0
 echo "incremental backup start (expect fail)..."
 run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/2" --db $DB -t $TABLE --lastbackupts 1 --ratelimit 1 --ratelimit-unit 1 || backup_gc_fail=1
