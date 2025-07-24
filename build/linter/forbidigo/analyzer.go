@@ -84,10 +84,6 @@ func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 	}
 
 	for _, i := range issues {
-		if !strings.HasPrefix(i.Position().Filename, "pkg/ddl") {
-			continue
-		}
-
 		skip := false
 		// Copied from golanglint-ci
 		if s, err := lc.GetLine(i.Position().Filename, i.Position().Line); err == nil {
