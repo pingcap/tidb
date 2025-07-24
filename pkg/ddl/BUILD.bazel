@@ -311,6 +311,7 @@ go_test(
         "//pkg/disttask/operator",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/executor",
