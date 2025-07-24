@@ -32,6 +32,10 @@ const (
 	KeyOpDefaultRetryCnt = 5
 	// KeyOpDefaultTimeout is the default time out for etcd store.
 	KeyOpDefaultTimeout = 1 * time.Second
+	// TopologyInformationPath means etcd path for storing topology info.
+	TopologyInformationPath = "/topology/tidb"
+	// TopologySessionTTL is ttl for topology, ant it's the ETCD session's TTL in seconds.
+	TopologySessionTTL = 45
 )
 
 // VersionInfo is the server version and git_hash.

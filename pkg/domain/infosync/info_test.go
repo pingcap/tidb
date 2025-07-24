@@ -88,8 +88,8 @@ func TestTopology(t *testing.T) {
 	selfInfo := info.getLocalServerInfo()
 	require.Equal(t, selfInfo.ToTopologyInfo(), *topology)
 
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
-	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, selfInfo.IP, selfInfo.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", serverinfo.TopologyInformationPath, selfInfo.IP, selfInfo.Port)
 
 	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestTopology(t *testing.T) {
 
 func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*serverinfo.TopologyInfo, error) {
 	info := is.getLocalServerInfo()
-	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.IP, info.Port)
+	key := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*serverinfo.Topo
 
 func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 	info := is.getLocalServerInfo()
-	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.IP, info.Port)
+	key := fmt.Sprintf("%s/%s:%v/ttl", serverinfo.TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return false, err

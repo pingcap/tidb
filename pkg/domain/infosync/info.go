@@ -69,10 +69,6 @@ const (
 	TiFlashTableSyncProgressPath = "/tiflash/table/sync"
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
 	ReportInterval = 30 * time.Second
-	// TopologyInformationPath means etcd path for storing topology info.
-	TopologyInformationPath = "/topology/tidb"
-	// TopologySessionTTL is ttl for topology, ant it's the ETCD session's TTL in seconds.
-	TopologySessionTTL = 45
 	// TopologyTimeToRefresh means time to refresh etcd.
 	TopologyTimeToRefresh = 30 * time.Second
 	// TopologyPrometheus means address of prometheus.
@@ -657,7 +653,7 @@ func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
+	key := fmt.Sprintf("%s/%s/info", serverinfo.TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	// Note: no lease is required here.
 	err = util.PutKVToEtcd(ctx, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, key, str)
 	if err != nil {
@@ -805,7 +801,7 @@ func (is *InfoSyncer) GetAllTiDBTopology(ctx context.Context) ([]*serverinfo.Top
 	if is.etcdCli == nil {
 		return topos, nil
 	}
-	response, err := is.etcdCli.Get(ctx, TopologyInformationPath, clientv3.WithPrefix())
+	response, err := is.etcdCli.Get(ctx, serverinfo.TopologyInformationPath, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
@@ -843,8 +839,8 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 		return nil
 	}
 	info := is.getLocalServerInfo()
-	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
-	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", serverinfo.TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, serverinfo.TopologySessionTTL)
 	if err != nil {
 		return err
 	}
@@ -859,7 +855,7 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 		return nil
 	}
 	info := is.getLocalServerInfo()
-	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
+	key := fmt.Sprintf("%s/%s/ttl", serverinfo.TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	return util.PutKVToEtcd(ctx, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
@@ -873,7 +869,7 @@ func (is *InfoSyncer) RemoveTopologyInfo() {
 	info := is.info.Load()
 	prefix := fmt.Sprintf(
 		"%s/%s",
-		TopologyInformationPath,
+		serverinfo.TopologyInformationPath,
 		net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))),
 	)
 	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
