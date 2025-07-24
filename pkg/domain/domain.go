@@ -1868,7 +1868,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			resp         clientv3.WatchResponse
 		)
 		for {
-			ok := true
+			var ok bool
 			select {
 			case <-do.exit:
 				return
