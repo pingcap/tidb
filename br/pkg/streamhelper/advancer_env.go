@@ -57,6 +57,9 @@ func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 		return 0, errors.Trace(err)
 	}
 	state, err := cli.GetGCState(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	return state.TxnSafePoint, nil
 }
 
