@@ -72,6 +72,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -114,6 +115,8 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
 	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
+const normalClosedConnsCapacity = 1000
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
@@ -127,7 +130,7 @@ type Server struct {
 	clients map[uint64]*clientConn
 
 	normalClosedConnsMutex sync.Mutex
-	normalClosedConns      map[string]string
+	normalClosedConns      *kvcache.SimpleLRUCache
 
 	userResLock  sync.RWMutex // userResLock used to protect userResource
 	userResource map[string]*userResourceLimits
@@ -203,6 +206,15 @@ func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 	return true, s.statusAddr
 }
 
+type normalCloseConnKey struct {
+	keyspaceName string
+	connID       string
+}
+
+func (k normalCloseConnKey) Hash() []byte {
+	return []byte(fmt.Sprintf("%s-%s", k.keyspaceName, k.connID))
+}
+
 // SetNormalClosedConn sets the normal closed connection message by specified connID.
 func (s *Server) SetNormalClosedConn(keyspaceName, connID, msg string) {
 	if connID == "" {
@@ -211,7 +223,7 @@ func (s *Server) SetNormalClosedConn(keyspaceName, connID, msg string) {
 
 	s.normalClosedConnsMutex.Lock()
 	defer s.normalClosedConnsMutex.Unlock()
-	s.normalClosedConns[keyspaceName+"-"+connID] = msg
+	s.normalClosedConns.Put(normalCloseConnKey{keyspaceName: keyspaceName, connID: connID}, msg)
 }
 
 // GetNormalClosedConn gets the normal closed connection message.
@@ -222,7 +234,11 @@ func (s *Server) GetNormalClosedConn(keyspaceName, connID string) string {
 
 	s.normalClosedConnsMutex.Lock()
 	defer s.normalClosedConnsMutex.Unlock()
-	return s.normalClosedConns[keyspaceName+"-"+connID]
+	v, ok := s.normalClosedConns.Get(normalCloseConnKey{keyspaceName: keyspaceName, connID: connID})
+	if !ok {
+		return ""
+	}
+	return v.(string)
 }
 
 // ConnectionCount gets current connection count.
@@ -277,13 +293,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		normalClosedConns: make(map[string]string),
+		normalClosedConns: kvcache.NewSimpleLRUCache(normalClosedConnsCapacity, 0, 0),
 		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
-		forceShutdown:     uatomic.NewBool(false),
 	}
 	s.capability = defaultCapability
 	setSystemTimeZoneVariable()
