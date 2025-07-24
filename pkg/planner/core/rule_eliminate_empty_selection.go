@@ -38,8 +38,8 @@ func (e *EmptySelectionEliminator) recursivePlan(p base.LogicalPlan, opt *optimi
 			if len(sel.Conditions) == 0 {
 				p.SetChild(idx, sel.Children()[0])
 				appendRemoveSelectionTraceStep(p, sel, opt)
-				e.recursivePlan(sel.Children()[0], opt)
 			}
+			e.recursivePlan(sel.Children()[0], opt)
 		} else {
 			e.recursivePlan(child, opt)
 		}

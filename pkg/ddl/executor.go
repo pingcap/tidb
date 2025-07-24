@@ -1159,47 +1159,6 @@ func getSharedInvolvingSchemaInfo(info *model.TableInfo) []model.InvolvingSchema
 	return ret
 }
 
-func (e *executor) createTableWithInfoPost(
-	ctx sessionctx.Context,
-	tbInfo *model.TableInfo,
-	schemaID int64,
-	scatterScope string,
-) error {
-	var err error
-	var partitions []model.PartitionDefinition
-	if pi := tbInfo.GetPartitionInfo(); pi != nil {
-		partitions = pi.Definitions
-	}
-	preSplitAndScatter(ctx, e.store, tbInfo, partitions, scatterScope)
-	if tbInfo.AutoIncID > 1 {
-		// Default tableAutoIncID base is 0.
-		// If the first ID is expected to greater than 1, we need to do rebase.
-		newEnd := tbInfo.AutoIncID - 1
-		var allocType autoid.AllocatorType
-		if tbInfo.SepAutoInc() {
-			allocType = autoid.AutoIncrementType
-		} else {
-			allocType = autoid.RowIDAllocType
-		}
-		if err = e.handleAutoIncID(tbInfo, schemaID, newEnd, allocType); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	// For issue https://github.com/pingcap/tidb/issues/46093
-	if tbInfo.AutoIncIDExtra != 0 {
-		if err = e.handleAutoIncID(tbInfo, schemaID, tbInfo.AutoIncIDExtra-1, autoid.RowIDAllocType); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if tbInfo.AutoRandID > 1 {
-		// Default tableAutoRandID base is 0.
-		// If the first ID is expected to greater than 1, we need to do rebase.
-		newEnd := tbInfo.AutoRandID - 1
-		err = e.handleAutoIncID(tbInfo, schemaID, newEnd, autoid.AutoRandomType)
-	}
-	return err
-}
-
 func (e *executor) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName ast.CIStr,
@@ -1229,9 +1188,9 @@ func (e *executor) CreateTableWithInfo(
 		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
-		err = e.createTableWithInfoPost(ctx, tbInfo, jobW.SchemaID, scatterScope)
-	}
 
+		preSplitAndScatterTable(ctx, e.store, tbInfo, scatterScope)
+	}
 	return errors.Trace(err)
 }
 
@@ -1326,9 +1285,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
-		if err = e.createTableWithInfoPost(ctx, tblArgs.TableInfo, jobW.SchemaID, scatterScope); err != nil {
-			return errors.Trace(err)
-		}
+		preSplitAndScatterTable(ctx, e.store, tblArgs.TableInfo, scatterScope)
 	}
 
 	return nil
@@ -1409,6 +1366,14 @@ func preSplitAndScatter(ctx sessionctx.Context, store kv.Storage, tbInfo *model.
 	} else {
 		go preSplit()
 	}
+}
+
+func preSplitAndScatterTable(ctx sessionctx.Context, store kv.Storage, tbInfo *model.TableInfo, scatterScope string) {
+	var partitions []model.PartitionDefinition
+	if pi := tbInfo.GetPartitionInfo(); pi != nil {
+		partitions = pi.Definitions
+	}
+	preSplitAndScatter(ctx, store, tbInfo, partitions, scatterScope)
 }
 
 func (e *executor) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error {
@@ -1539,19 +1504,6 @@ func checkCharsetAndCollation(cs string, co string) error {
 	}
 	if co != "" {
 		if _, err := collate.GetCollationByName(co); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
-// For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (e *executor) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
-	allocs := autoid.NewAllocatorsFromTblInfo(e.getAutoIDRequirement(), schemaID, tbInfo)
-	if alloc := allocs.Get(tp); alloc != nil {
-		err := alloc.Rebase(context.Background(), newEnd, false)
-		if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -5774,6 +5726,12 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    table.Meta().Name.L,
+			},
+		},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)
@@ -7081,6 +7039,14 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				// For RefreshMeta, the table/schema might not exist anymore.
+				// Since we can't determine the exact target, use model.InvolvingAll to block concurrent DDLs as a safe default.
+				Database: model.InvolvingAll,
+				Table:    model.InvolvingAll,
+			},
+		},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)

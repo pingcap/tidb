@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,8 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -45,6 +47,26 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+func TestMySQLDBTables(t *testing.T) {
+	testTableBasicInfoSlice(t, tablesInSystemDatabase)
+	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
+	for _, v := range ddlTableVersionTables {
+		for _, tbl := range v.tables {
+			reservedIDs = append(reservedIDs, tbl.ID)
+		}
+	}
+	for _, tbl := range tablesInSystemDatabase {
+		reservedIDs = append(reservedIDs, tbl.ID)
+	}
+	for _, db := range systemDatabases {
+		reservedIDs = append(reservedIDs, db.ID)
+	}
+	slices.Sort(reservedIDs)
+	require.IsIncreasing(t, reservedIDs, "used IDs should be in increasing order")
+	require.Greater(t, reservedIDs[0], metadef.ReservedGlobalIDLowerBound, "reserved ID should be greater than ReservedGlobalIDLowerBound")
+	require.LessOrEqual(t, reservedIDs[len(reservedIDs)-1], metadef.ReservedGlobalIDUpperBound, "reserved ID should be less than or equal to ReservedGlobalIDUpperBound")
+}
 
 // This test file have many problem.
 // 1. Please use testkit to create dom, session and store.
@@ -299,7 +321,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	dom.Close()
 }
 
-func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
+func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
@@ -1528,7 +1550,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s sessiontypes.Session) {
+	resetTo139 := func(s sessionapi.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMutator(txn)

@@ -127,6 +127,8 @@ func TestIsSimplePointPlan(t *testing.T) {
 	require.False(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         HashJoin    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
         └─Point_Get_5   root    1       table:t, handle:2               0       time:143.2µs, open:1.71µs, close:5.92µs, loops:1, Get:{num_rpc:1, total_time:40µs}      N/A             N/A`))
+	require.False(t, bindinfo.IsSimplePointPlan(``))
+	require.False(t, bindinfo.IsSimplePointPlan(`  \n   `))
 }
 
 func TestRelevantOptVarsAndFixes(t *testing.T) {

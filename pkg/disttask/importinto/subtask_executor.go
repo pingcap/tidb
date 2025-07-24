@@ -139,7 +139,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		defer mgr.Close()
 		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
 			func() (*local.RemoteChecksum, error) {
-				ctxWithLogger := log.NewContext(ctx, log.Logger{Logger: logger})
+				ctxWithLogger := logutil.WithLogger(ctx, logger)
 				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
 					DB:   plan.DBName,
 					Name: plan.TableInfo.Name.L,

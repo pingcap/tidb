@@ -335,7 +335,7 @@ go_test(
         "//pkg/parser/types",
         "//pkg/server",
         "//pkg/session",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
