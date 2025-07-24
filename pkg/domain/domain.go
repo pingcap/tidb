@@ -197,12 +197,14 @@ type Domain struct {
 		expiredTimeStamp types.Time
 	}
 
-	brOwnerMgr               owner.Manager
-	logBackupAdvancer        *daemon.OwnerDaemon
-	historicalStatsWorker    *HistoricalStatsWorker
-	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
-	runawayManager           *runaway.Manager
-	resourceGroupsController *rmclient.ResourceGroupsController
+	brOwnerMgr            owner.Manager
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	runawayManager        *runaway.Manager
+	// resourceGroupsController can be changed via `SetResourceGroupsController`
+	// in unit test.
+	resourceGroupsController atomic.Pointer[rmclient.ResourceGroupsController]
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1655,12 +1657,12 @@ func (do *Domain) RunawayManager() *runaway.Manager {
 
 // ResourceGroupsController returns the resource groups controller.
 func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
-	return do.resourceGroupsController
+	return do.resourceGroupsController.Load()
 }
 
 // SetResourceGroupsController is only used in test.
 func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
-	do.resourceGroupsController = controller
+	do.resourceGroupsController.Store(controller)
 }
 
 // SetupHistoricalStatsWorker setups worker
