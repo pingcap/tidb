@@ -37,7 +37,6 @@ var Analyzer = &analysis.Analyzer{
 var (
 	patterns = []string{`{
 		p: "sessionctx.Context.GetSessionVars",
-		pkg: "github.com/pingcap/tidb/pkg/ddl",
 		msg: "Please check if the usage of GetSessionVars is appropriate,\n
 		      you can add //nolint:forbidigo to ignore this check if necessary."
 	}`}
@@ -56,10 +55,7 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		nodes = append(nodes, f)
 	}
-	debugLog := func(format string, args ...any) {
-		fmt.Printf(format+"\n", args...)
-	}
-	config := forbidigo.RunConfig{Fset: pass.Fset, DebugLog: debugLog, TypesInfo: pass.TypesInfo}
+	config := forbidigo.RunConfig{Fset: pass.Fset, DebugLog: nil, TypesInfo: pass.TypesInfo}
 	issues, err := linter.RunWithConfig(config, nodes...)
 	if err != nil {
 		return nil, err
@@ -88,6 +84,10 @@ func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 	}
 
 	for _, i := range issues {
+		if !strings.HasPrefix(i.Position().Filename, "pkg/ddl") {
+			continue
+		}
+
 		skip := false
 		// Copied from golanglint-ci
 		if s, err := lc.GetLine(i.Position().Filename, i.Position().Line); err == nil {
