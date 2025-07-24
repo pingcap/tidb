@@ -24194,7 +24194,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Total encode/deliver/merges/import-kv speed of distributed task.",
+          "description": "Total encode/deliver/merge/import-kv speed of distributed task.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
