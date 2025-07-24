@@ -51,13 +51,32 @@ func TestInvalidDDLJob(t *testing.T) {
 		TableID:             0,
 		Type:                model.ActionNone,
 		BinlogInfo:          &model.HistoryInfo{},
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{Database: "db", Table: "table"}},
 	}
 	ctx := testNewContext(t, store)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	de := dom.DDLExecutor().(ddl.ExecutorForTest)
 	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
+}
+
+func TestInvalidInvolvingSchemaInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+
+	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
+		SchemaID:            0,
+		TableID:             0,
+		Type:                model.ActionCreateSchema,
+		BinlogInfo:          &model.HistoryInfo{},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{},
+	}
+	ctx := testNewContext(t, store)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	de := dom.DDLExecutor().(ddl.ExecutorForTest)
+	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
+	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
+	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job args: InvolvingSchemaInfo")
 }
 
 func TestAddBatchJobError(t *testing.T) {

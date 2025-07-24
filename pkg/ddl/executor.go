@@ -6780,6 +6780,12 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
+	// // all DDLs should set InvolvingSchemaInfo to make sure DDL execution in order.
+	// for _, info := range job.GetInvolvingSchemaInfo() {
+	// 	if info.Database == model.InvolvingNone || info.Table == model.InvolvingNone {
+	// 		// return dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job args: InvolvingSchemaInfo")
+	// 	}
+	// }
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	e.deliverJobTask(jobW)
