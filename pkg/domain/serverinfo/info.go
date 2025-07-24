@@ -19,6 +19,7 @@ import (
 	"maps"
 	"os"
 	"path"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -27,6 +28,10 @@ import (
 const (
 	// ServerInformationPath store server information such as IP, port and so on.
 	ServerInformationPath = "/tidb/server/info"
+	// KeyOpDefaultRetryCnt is the default retry count for etcd store.
+	KeyOpDefaultRetryCnt = 5
+	// KeyOpDefaultTimeout is the default time out for etcd store.
+	KeyOpDefaultTimeout = 1 * time.Second
 )
 
 // VersionInfo is the server version and git_hash.

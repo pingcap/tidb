@@ -67,10 +67,6 @@ const (
 	ServerMinStartTSPath = "/tidb/server/minstartts"
 	// TiFlashTableSyncProgressPath store the tiflash table replica sync progress.
 	TiFlashTableSyncProgressPath = "/tiflash/table/sync"
-	// keyOpDefaultRetryCnt is the default retry count for etcd store.
-	keyOpDefaultRetryCnt = 5
-	// keyOpDefaultTimeout is the default time out for etcd store.
-	keyOpDefaultTimeout = 1 * time.Second
 	// ReportInterval is interval of infoSyncerKeeper reporting min startTS.
 	ReportInterval = 30 * time.Second
 	// TopologyInformationPath means etcd path for storing topology info.
@@ -354,7 +350,7 @@ func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*server
 		return localInfo, nil
 	}
 	key := fmt.Sprintf("%s/%s", serverinfo.ServerInformationPath, id)
-	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	infoMap, err := getInfo(ctx, is.etcdCli, key, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +403,7 @@ func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
 	if err != nil {
 		return err
 	}
@@ -616,7 +612,7 @@ func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*serveri
 		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
 		return allInfo, nil
 	}
-	allInfo, err := getInfo(ctx, is.etcdCli, serverinfo.ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
+	allInfo, err := getInfo(ctx, is.etcdCli, serverinfo.ServerInformationPath, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
@@ -634,7 +630,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
 	return err
 }
 
@@ -643,7 +639,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
 	}
@@ -663,7 +659,7 @@ func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 	str := string(hack.String(infoBuf))
 	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	// Note: no lease is required here.
-	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
+	err = util.PutKVToEtcd(ctx, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, key, str)
 	if err != nil {
 		return err
 	}
@@ -698,7 +694,7 @@ func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
 	if cli == nil {
 		return nil
 	}
-	return util.PutKVToEtcd(ctx, cli, keyOpDefaultRetryCnt, is.minStartTSPath,
+	return util.PutKVToEtcd(ctx, cli, serverinfo.KeyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
 }
@@ -709,7 +705,7 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	if cli == nil {
 		return
 	}
-	err := util.DeleteKeyFromEtcd(is.minStartTSPath, cli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(is.minStartTSPath, cli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
 	}
@@ -864,7 +860,7 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	}
 	info := is.getLocalServerInfo()
 	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
-	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
+	return util.PutKVToEtcd(ctx, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
 }
@@ -880,7 +876,7 @@ func (is *InfoSyncer) RemoveTopologyInfo() {
 		TopologyInformationPath,
 		net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))),
 	)
-	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove topology info failed", zap.Error(err))
 	}
@@ -960,7 +956,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 }
 
 func (is *InfoSyncer) getPrometheusAddrFromEtcd(k string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), keyOpDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), serverinfo.KeyOpDefaultTimeout)
 	resp, err := is.etcdCli.Get(ctx, k)
 	cancel()
 	if err != nil {
@@ -1400,11 +1396,11 @@ func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiP
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*TiProxyServerInfo)
-	for range keyOpDefaultRetryCnt {
+	for range serverinfo.KeyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}
-		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, serverinfo.KeyOpDefaultTimeout)
 		resp, err = is.etcdCli.Get(childCtx, TopologyTiProxy, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
@@ -1461,11 +1457,11 @@ func (is *InfoSyncer) getTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, err
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make([]*TiCDCInfo, 0)
-	for range keyOpDefaultRetryCnt {
+	for range serverinfo.KeyOpDefaultRetryCnt {
 		if ctx.Err() != nil {
 			return nil, errors.Trace(ctx.Err())
 		}
-		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, serverinfo.KeyOpDefaultTimeout)
 		resp, err = is.etcdCli.Get(childCtx, TopologyTiCDC, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
