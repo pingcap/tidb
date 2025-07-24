@@ -460,19 +460,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_ashanbrown_forbidigo",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/ashanbrown/forbidigo",
-        sha256 = "42476799732e399e46d47ced87090adb564f58c68097446296451cbae9e5580d",
-        strip_prefix = "github.com/ashanbrown/forbidigo@v1.6.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ashanbrown/forbidigo/com_github_ashanbrown_forbidigo-v1.6.0.zip",
-            "http://ats.apps.svc/gomod/github.com/ashanbrown/forbidigo/com_github_ashanbrown_forbidigo-v1.6.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ashanbrown/forbidigo/com_github_ashanbrown_forbidigo-v1.6.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ashanbrown/forbidigo/com_github_ashanbrown_forbidigo-v1.6.0.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_ashanbrown_forbidigo_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ashanbrown/forbidigo/v2",

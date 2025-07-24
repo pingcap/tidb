@@ -19,7 +19,7 @@ import (
 	"go/ast"
 	"strings"
 
-	"github.com/ashanbrown/forbidigo/forbidigo"
+	"github.com/ashanbrown/forbidigo/v2/forbidigo"
 	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
