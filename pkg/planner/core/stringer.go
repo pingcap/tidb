@@ -170,7 +170,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow, *physicalop.PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *logicalop.LogicalLimit, *physicalop.PhysicalLimit:
 		str = "Limit"

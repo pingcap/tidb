@@ -282,6 +282,9 @@ var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.Physical
 // CloneExpressionsForPlanCache is used to clone expressions for plan cache.
 var CloneExpressionsForPlanCache func(exprs, cloned []expression.Expression) []expression.Expression
 
+// CloneColumnsForPlanCache is used to clone columns for plan cache.
+var CloneColumnsForPlanCache func(cols, cloned []*expression.Column) []*expression.Column
+
 // ****************************************** optimize portal *********************************************
 
 // DoOptimize is to optimize a logical plan.

@@ -276,7 +276,6 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		TypeCtx: c.GetSessionVars().StmtCtx.TypeCtx(),
 		ErrCtx:  c.GetSessionVars().StmtCtx.ErrCtx(),
 
-		InPreparedPlanBuilding:   c.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
 		RegardNULLAsPoint:        c.GetSessionVars().RegardNULLAsPoint,
 		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
