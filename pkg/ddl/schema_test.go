@@ -718,5 +718,4 @@ func TestErrInWaitingUncommittedTxn(t *testing.T) {
 	tk1.MustExec("create database test_db")
 	tk1.MustExec("create table test_db.t(a int)")
 	tk1.MustGetErrMsg("alter schema test_db read only = 1", "[ddl:-1]DDL job rollback, error msg: mock error for check uncommitted txn")
-
 }
