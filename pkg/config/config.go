@@ -283,8 +283,8 @@ type Config struct {
 	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
 
 	// EnableZeroBackend is used to control the behavior of standby idle watcher.
-	// It's introduced to make gateway zero backend feature release more smooth.
-	// We should remove this config when the feature become stable.
+	// When it is enabled, the idle watcher will not wait for session migration
+	// and will not consider client interactive connections.
 	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 
 	// The following items are deprecated. We need to keep them here temporarily
