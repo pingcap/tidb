@@ -117,9 +117,7 @@ func GenJSONTableFromStats(
 		}
 		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
-		s := sctx.GetSessionVars()
-		err = s.SQLKiller.HandleSignal()
-		if err != nil {
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
 			return true
 		}
