@@ -7,9 +7,19 @@ go_test(
         "hash64_equals_test.go",
         "logical_mem_table_predicate_extractor_test.go",
         "logical_operator_test.go",
+<<<<<<< HEAD
+=======
+        "main_test.go",
+        "plan_execute_test.go",
+>>>>>>> a16aedeb9f1 (planner: fix expand operator shouldn't keep child keys && fix grouping function forget to encode their func meta (#62558))
     ],
+    data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 19,
+=======
+    shard_count = 38,
+>>>>>>> a16aedeb9f1 (planner: fix expand operator shouldn't keep child keys && fix grouping function forget to encode their func meta (#62558))
     deps = [
         "//pkg/domain",
         "//pkg/expression",
@@ -28,10 +38,14 @@ go_test(
         "//pkg/session",
         "//pkg/session/types",
         "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/hint",
         "//pkg/util/mock",
         "//pkg/util/set",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )
