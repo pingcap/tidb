@@ -49,7 +49,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
+const (
 	outOfRangeBetweenRate float64 = 100
 )
 
@@ -966,7 +966,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return 0
 	}
 
-	// oneValue assumes "one value qualifes", and is used as either an Upper & lower bound.
+	// oneValue assumes "one value qualifes", and is used as a lower bound.
 	oneValue := float64(0)
 	if histNDV > 0 {
 		oneValue = hg.NotNullCount() / max(float64(histNDV), outOfRangeBetweenRate) // avoid inaccurate selectivity caused by small NDV

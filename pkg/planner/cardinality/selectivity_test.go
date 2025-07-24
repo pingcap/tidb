@@ -1042,14 +1042,12 @@ func TestIssue39593(t *testing.T) {
 	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes, use range to reduce test flakiness
-	require.Less(t, count, float64(463))
-	require.Greater(t, count, float64(462))
+	require.InDelta(t, float64(462.6), count, float64(1))
 	statsTbl.RealtimeCount *= 10
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
-	require.Less(t, count, float64(3703))
-	require.Greater(t, count, float64(3702))
+	require.InDelta(t, float64(3702.6), count, float64(1))
 }
 
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
