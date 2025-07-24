@@ -48,54 +48,14 @@ const (
 
 // ActivateRequest is the request body for activating the tidb server.
 type ActivateRequest struct {
-	KeyspaceName   string          `json:"keyspace_name"`
-	AuditLog       *AuditLogConfig `json:"audit_log,omitempty"`
-	ExportID       string          `json:"export_id"`
-	MaxIdleSeconds uint            `json:"max_idle_seconds"`
-
-	// Worker Metadata
-	Role   string `json:"role"`
-	ExecID string `json:"exec_id"`
+	KeyspaceName   string `json:"keyspace_name"`
+	MaxIdleSeconds uint   `json:"max_idle_seconds"`
 
 	// analyze table
-	RunAutoAnalyze            bool `json:"run_auto_analyze"`
-	EnableAutoAnalyzeSysTable bool `json:"enable_auto_analyze-sys-table"`
-
-	// GCV2
-	SkipGCWorker      bool `json:"skip_gc_worker"`
-	EnableGCFastStart bool `json:"enable_gc_fast_start"`
-
-	// TTL
-	EnableRunTTLTask bool `json:"enable_run_ttl_task"`
+	RunAutoAnalyze bool `json:"run_auto_analyze"`
 
 	// DDL
 	TiDBEnableDDL bool `json:"tidb_enable_ddl"`
-
-	// serverless info
-	TenantID  string `json:"tenant_id"`
-	ProjectID string `json:"project_id"`
-	ClusterID string `json:"cluster_id"`
-}
-
-func (r *ActivateRequest) auditLogEnabled() bool {
-	if r.AuditLog == nil {
-		return false
-	}
-	return r.AuditLog.Enable
-}
-
-func (r *ActivateRequest) auditLogRedacted() bool {
-	if r.AuditLog == nil {
-		return false
-	}
-	return r.AuditLog.Redacted
-}
-
-// AuditLogConfig is the configuration about audit log when activating the tidb server.
-type AuditLogConfig struct {
-	Enable     bool   `json:"enable"`
-	EncryptKey string `json:"encrypt_key"`
-	Redacted   bool   `json:"redacted"`
 }
 
 // LoadKeyspaceController controls the tidb server to be in standby mode or activated.
@@ -154,12 +114,6 @@ func keyspaceChecker(next http.Handler) http.HandlerFunc {
 		}
 		next.ServeHTTP(w, r)
 	}
-}
-
-// LoadTiDBNormalRestartLog loads the tidb normal restart log file.
-func LoadTiDBNormalRestartLog() ([]byte, error) {
-	data, err := os.ReadFile(tidbNormalRestartLogPath)
-	return data, err
 }
 
 func loadTiDBNormalRestartInfoAndRemove() {
@@ -223,14 +177,6 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if req.AuditLog != nil && req.AuditLog.Enable {
-			if req.AuditLog.EncryptKey != "" && len(req.AuditLog.EncryptKey) != 32 {
-				logutil.BgLogger().Error("bad audit log encrypt key", zap.String("encrypt_key", req.AuditLog.EncryptKey))
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			logutil.BgLogger().Info("activate with audit log enabled", zap.String("keyspaceName", req.KeyspaceName), zap.Bool("redacted", req.AuditLog.Redacted))
-		}
 
 		mu.Lock()
 		switch {
@@ -247,11 +193,6 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 			mu.Unlock()
 			w.WriteHeader(http.StatusPreconditionFailed)
 			w.Write([]byte("server is not in standby mode"))
-			return
-		case activateRequest.auditLogEnabled() != req.auditLogEnabled() || activateRequest.auditLogRedacted() != req.auditLogRedacted():
-			mu.Unlock()
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("server audit log status has changed"))
 			return
 		}
 		// if client tries to activate with same keyspace name, wait for ready signal and return 200.
@@ -327,12 +268,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	defer mu.RUnlock()
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	if activateRequest.ExportID != "" {
-		fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s","export_id": "%s"}`,
-			state, activateRequest.KeyspaceName, activateRequest.ExportID)
-	} else {
-		fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s"}`, state, activateRequest.KeyspaceName)
-	}
+	fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s"}`, state, activateRequest.KeyspaceName)
 }
 
 var httpServer *http.Server
@@ -382,30 +318,9 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 
 	config.UpdateGlobal(func(c *config.Config) {
 		c.KeyspaceName = activateRequest.KeyspaceName
-		// if activateRequest.AuditLog != nil {
-		// 	c.AuditLog.Enable = activateRequest.AuditLog.Enable
-		// 	c.AuditLog.EncryptKey = activateRequest.AuditLog.EncryptKey
-		// 	c.AuditLog.Redacted = activateRequest.AuditLog.Redacted
-		// }
-		// // export mode
-		// c.ExportID = activateRequest.ExportID
 		if activateRequest.MaxIdleSeconds > 0 {
 			c.MaxIdleSeconds = activateRequest.MaxIdleSeconds
 		}
-
-		// Worker Meta
-		// if activateRequest.Role != "" {
-		// 	c.TiDBWorker.Role = activateRequest.Role
-		// }
-
-		// if activateRequest.ExecID != "" {
-		// 	c.TiDBWorker.ExecID = activateRequest.ExecID
-		// }
-
-		// // TTL config
-		// if activateRequest.EnableRunTTLTask {
-		// 	c.EnableRunTTLTask = activateRequest.EnableRunTTLTask
-		// }
 
 		// DDL config
 		if activateRequest.TiDBEnableDDL {
@@ -416,19 +331,6 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 		if activateRequest.RunAutoAnalyze {
 			c.Performance.RunAutoAnalyze = activateRequest.RunAutoAnalyze
 		}
-
-		// if activateRequest.EnableAutoAnalyzeSysTable {
-		// 	c.EnableAutoAnalyzeSysTable = activateRequest.EnableAutoAnalyzeSysTable
-		// }
-
-		// // GC V2 config
-		// if activateRequest.SkipGCWorker {
-		// 	c.SkipGCWorker = activateRequest.SkipGCWorker
-		// }
-
-		// if activateRequest.EnableGCFastStart {
-		// 	c.EnableGCFastStart = activateRequest.EnableGCFastStart
-		// }
 	})
 }
 
@@ -446,22 +348,5 @@ func (c *LoadKeyspaceController) EndStandby(err error) {
 }
 
 // OnServerShutdown is called when the server is going to shut down.
-// It will notify the tidb manager to the pod could be put back to the free cache.
 func (c *LoadKeyspaceController) OnServerShutdown(svr *server.Server) {
-	// if c.mgrCli == nil || svr.Health() || svr.GetForceShutdown() {
-	// 	return
-	// }
-
-	// exitReason, err := LoadTiDBNormalRestartLog()
-	// if err != nil && !os.IsNotExist(err) {
-	// 	logutil.BgLogger().Error("failed to load restart log", zap.Error(err))
-	// 	return
-	// }
-
-	// ctx, cancel := context.WithTimeout(context.Background(), tidbmanager.DefaultTimeout)
-	// defer cancel()
-	// err = c.mgrCli.Free(ctx, string(exitReason))
-	// if err != nil {
-	// 	logutil.BgLogger().Info("failed to report free", zap.Error(err))
-	// }
 }
