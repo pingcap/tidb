@@ -1221,10 +1221,8 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 				zap.Uint64("minSafePoint", state.TxnSafePoint),
 				zap.Uint64("newMinSafePoint", state.TxnSafePoint+1),
 			)
+			continue
 		}
-
-		pdCli.Close()
-		return nil, errors.Trace(err)
 	}
 	if !paused {
 		pdCli.Close()
