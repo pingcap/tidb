@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -243,6 +244,9 @@ type IndexReaderExecutor struct {
 	// If dummy flag is set, this is not a real IndexReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
+	GroupedRanges map[string][]*ranger.Range
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -305,24 +309,55 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 
+	// Ensure e.partRangeMap and GroupedRanges don't appear at the same time
+	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.GroupedRanges) > 0), "partRangeMap and GroupedRanges should not appear together")
+
+	// Build kvRanges considering both partitions and GroupedRanges
 	var kvRanges []kv.KeyRange
+
 	if len(e.partitions) > 0 {
+		// For partitioned table
 		for _, p := range e.partitions {
-			partRange := e.ranges
-			if pRange, ok := e.partRangeMap[p.GetPhysicalID()]; ok {
-				partRange = pRange
+			if len(e.GroupedRanges) > 0 {
+				// Each partition with each group forms a separate kvRange group
+				for _, groupRanges := range e.GroupedRanges {
+					kvRange, err := e.buildKeyRanges(e.dctx, groupRanges, p.GetPhysicalID())
+					if err != nil {
+						return err
+					}
+					kvRanges = append(kvRanges, kvRange...)
+				}
+			} else {
+				partRange := e.ranges
+				if pRange, ok := e.partRangeMap[p.GetPhysicalID()]; ok {
+					partRange = pRange
+				}
+				// Each partition forms a separate kvRange group
+				kvRange, err := e.buildKeyRanges(e.dctx, partRange, p.GetPhysicalID())
+				if err != nil {
+					return err
+				}
+				kvRanges = append(kvRanges, kvRange...)
 			}
-			kvRange, err := e.buildKeyRanges(e.dctx, partRange, p.GetPhysicalID())
+		}
+	} else {
+		// For non-partitioned table
+		if len(e.GroupedRanges) > 0 {
+			// Each group forms a separate kvRange group
+			for _, groupRanges := range e.GroupedRanges {
+				kvRange, err := e.buildKeyRanges(e.dctx, groupRanges, e.physicalTableID)
+				if err != nil {
+					return err
+				}
+				kvRanges = append(kvRanges, kvRange...)
+			}
+		} else {
+			// Single kvRange group
+			kvRanges, err = e.buildKeyRanges(e.dctx, e.ranges, e.physicalTableID)
 			if err != nil {
 				return err
 			}
-			kvRanges = append(kvRanges, kvRange...)
 		}
-	} else {
-		kvRanges, err = e.buildKeyRanges(e.dctx, e.ranges, e.physicalTableID)
-	}
-	if err != nil {
-		return err
 	}
 
 	return e.open(ctx, kvRanges)
@@ -377,8 +412,13 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
-	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
-	if e.byItems == nil || len(e.partitions) <= 1 {
+
+	// Determine if we need merge sort
+	needMergeSort := (len(e.byItems) > 0 && len(e.partitions) > 1) ||
+		(len(e.GroupedRanges) > 0 && len(kvRanges) > 1)
+
+	if !needMergeSort {
+		// Use single SelectResult when no merge sort is needed
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			return err
@@ -388,6 +428,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 			return err
 		}
 	} else {
+		// Use sortedSelectResults for merge sort
 		kvReqs := make([]*kv.Request, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			kvReq, err := e.buildKVReq([]kv.KeyRange{kvRange})

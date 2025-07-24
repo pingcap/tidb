@@ -4011,6 +4011,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		colLens:                    is.IdxColLens,
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
+		GroupedRanges:              is.GroupedRanges,
 	}
 
 	for _, col := range v.OutputColumns {
