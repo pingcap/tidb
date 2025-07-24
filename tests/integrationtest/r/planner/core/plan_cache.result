@@ -217,6 +217,7 @@ drop table if exists t;
 create table t (a int);
 insert into t values (1), (2), (3), (4);
 prepare st from 'select * from t where a!=? and a in (?, ?, ?)';
+prepare st1 from 'select * from t where a!=1 and a in (2, 3, 4)';
 set @a=1, @b=2, @c=3, @d=4;
 execute st using @a, @a, @a, @a;
 a
@@ -235,6 +236,11 @@ a
 4
 Level	Code	Message
 Warning	1105	skip prepared plan-cache: NE/INList simplification is triggered
+execute st1;
+a
+2
+3
+4
 CREATE TABLE UK_SIGNED_19384 (
 COL1 decimal(37,4) unsigned DEFAULT NULL COMMENT 'WITH DEFAULT',
 COL2 varchar(20) COLLATE utf8mb4_bin DEFAULT NULL,
