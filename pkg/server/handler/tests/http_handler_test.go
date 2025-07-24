@@ -1233,7 +1233,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
-	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
@@ -1549,8 +1549,8 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
 
-	ts.domain.InfoSyncer().Restart(ctx)
-	ts.domain.InfoSyncer().RestartTopology(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
 
 	testUpdateLabels := func() {
 		labels := map[string]string{}
@@ -1568,7 +1568,7 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		require.Equal(t, newLabels, labels)
 	}
 	testStoreTopology := func() {
-		require.NoError(t, ts.domain.InfoSyncer().StoreTopologyInfo(context.Background()))
+		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
 	}
 
 	done := make(chan struct{})

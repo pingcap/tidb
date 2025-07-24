@@ -75,7 +75,7 @@ func TestTopology(t *testing.T) {
 	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false, nil)
 	require.NoError(t, err)
 
-	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
+	err = info.ServerInfoSyncer().NewTopologySessionAndStoreServerInfo(ctx)
 	require.NoError(t, err)
 
 	topology, err := info.getTopologyFromEtcd(ctx)
@@ -85,7 +85,7 @@ func TestTopology(t *testing.T) {
 	v, ok := topology.Labels["foo"]
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
-	selfInfo := info.getLocalServerInfo()
+	selfInfo := info.ServerInfoSyncer().GetLocalServerInfo()
 	require.Equal(t, selfInfo.ToTopologyInfo(), *topology)
 
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, selfInfo.IP, selfInfo.Port)
@@ -107,7 +107,7 @@ func TestTopology(t *testing.T) {
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
 	require.Equal(t, int64(1282967700), topology.StartTimestamp)
-	require.Equal(t, info.getLocalServerInfo().ToTopologyInfo(), *topology)
+	require.Equal(t, info.ServerInfoSyncer().GetLocalServerInfo().ToTopologyInfo(), *topology)
 
 	// check ttl key
 	ttlExists, err := info.ttlKeyExists(ctx)
@@ -126,7 +126,7 @@ func TestTopology(t *testing.T) {
 }
 
 func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*serverinfo.TopologyInfo, error) {
-	info := is.getLocalServerInfo()
+	info := is.ServerInfoSyncer().GetLocalServerInfo()
 	key := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
@@ -147,7 +147,7 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*serverinfo.Topo
 }
 
 func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
-	info := is.getLocalServerInfo()
+	info := is.ServerInfoSyncer().GetLocalServerInfo()
 	key := fmt.Sprintf("%s/%s:%v/ttl", serverinfo.TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
