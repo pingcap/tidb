@@ -16,6 +16,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -1852,7 +1853,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
+		watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
 		duration = 10 * time.Minute
 	}
 
@@ -1862,26 +1863,51 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		}()
 		defer util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 
-		var count int
+		var (
+			closeChanCnt int
+			resp         clientv3.WatchResponse
+		)
 		for {
-			ok := true
+			var ok bool
 			select {
 			case <-do.exit:
 				return
-			case _, ok = <-watchCh:
+			case resp, ok = <-watchCh:
+				if !ok {
+					logutil.BgLogger().Error("load privilege loop watch channel closed")
+					watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
+					closeChanCnt++
+					if closeChanCnt > 10 {
+						time.Sleep(time.Duration(closeChanCnt) * time.Second)
+					}
+					continue
+				}
+				closeChanCnt = 0
+
+				// Skip the event from this TiDB-Server
+				eventCnt := len(resp.Events)
+				for _, event := range resp.Events {
+					if event.Kv != nil {
+						val := event.Kv.Value
+						if len(val) > 0 {
+							var tmp PrivilegeEvent
+							err := json.Unmarshal(val, &tmp)
+							if err != nil {
+								logutil.BgLogger().Warn("decode PrivilegeEvent unmarshal fail", zap.Error(err))
+								continue
+							}
+							if do.serverID != 0 && do.serverID == tmp.ServerID {
+								eventCnt--
+							}
+						}
+					}
+				}
+				if eventCnt == 0 {
+					continue
+				}
 			case <-time.After(duration):
 			}
-			if !ok {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
-				count++
-				if count > 10 {
-					time.Sleep(time.Duration(count) * time.Second)
-				}
-				continue
-			}
 
-			count = 0
 			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
@@ -2826,6 +2852,15 @@ const (
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
+// PrivilegeEvent is the message definition for NotifyUpdatePrivilege(), encoded in json.
+// In this v8.5 branch we only use ServerID. For afterward compatibility, we introduce
+// the complete structure in v9.0.0
+type PrivilegeEvent struct {
+	All      bool
+	ServerID uint64
+	UserList []string
+}
+
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege() error {
@@ -2833,8 +2868,12 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
-		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), privilegeKey, "")
+		event := PrivilegeEvent{ServerID: do.serverID}
+		data, err := json.Marshal(event)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, 5, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
