@@ -85,7 +85,6 @@ func (c *LoadKeyspaceController) OnServerCreated(svr *server.Server) {
 					SaveTidbNormalRestartInfo("connection idle for too long")
 					signal.TiDBExit(syscall.SIGTERM)
 				} else if (connCount == 0 || processCount == 0) && inTransCount == 0 && clientInteractiveCount == 0 {
-					svr.SetForceShutdown()
 					SaveTidbNormalRestartInfo("connection idle for too long")
 					signal.TiDBExit(syscall.SIGINT)
 				}

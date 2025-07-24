@@ -141,7 +141,6 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
 	health         *uatomic.Bool
-	forceShutdown  *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[any]struct{}
@@ -644,16 +643,6 @@ func (s *Server) closeListener() {
 	}
 	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
-}
-
-// SetForceShutdown sets the force shutdown flag.
-func (s *Server) SetForceShutdown() {
-	s.forceShutdown.Store(true)
-}
-
-// GetForceShutdown gets the force shutdown flag.
-func (s *Server) GetForceShutdown() bool {
-	return s.forceShutdown.Load()
 }
 
 // Close closes the server.

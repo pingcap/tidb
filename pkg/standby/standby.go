@@ -229,7 +229,6 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 	mux.HandleFunc(httpPathPrefix+"exit", keyspaceChecker(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logutil.BgLogger().Info("receiving exit request")
 		if svr != nil {
-			svr.SetForceShutdown()
 			SaveTidbNormalRestartInfo("received exit request")
 		}
 		w.WriteHeader(http.StatusOK)
