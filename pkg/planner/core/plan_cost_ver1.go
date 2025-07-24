@@ -942,7 +942,7 @@ func (p *PhysicalHashJoin) GetPlanCostVer1(taskType property.TaskType, option *o
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, _ bool, costFlag uint64) float64 {
-	aggFuncFactor := p.getAggFuncCostFactor(false)
+	aggFuncFactor := p.GetAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.SCtx().GetSessionVars()
 	if isRoot {
@@ -951,7 +951,7 @@ func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, _ bool, costFlag 
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
 	rowsPerGroup := inputRows / getCardinality(p, costFlag)
-	memoryCost := rowsPerGroup * cost.DistinctFactor * sessVars.GetMemoryFactor() * float64(p.numDistinctFunc())
+	memoryCost := rowsPerGroup * cost.DistinctFactor * sessVars.GetMemoryFactor() * float64(p.NumDistinctFunc())
 	return cpuCost + memoryCost
 }
 
@@ -974,8 +974,8 @@ func (p *PhysicalStreamAgg) GetPlanCostVer1(taskType property.TaskType, option *
 // GetCost computes the cost of hash aggregation considering CPU/memory.
 func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFlag uint64) float64 {
 	cardinality := getCardinality(p, costFlag)
-	numDistinctFunc := p.numDistinctFunc()
-	aggFuncFactor := p.getAggFuncCostFactor(isMPP)
+	numDistinctFunc := p.NumDistinctFunc()
+	aggFuncFactor := p.GetAggFuncCostFactor(isMPP)
 	var cpuCost float64
 	sessVars := p.SCtx().GetSessionVars()
 	if isRoot {

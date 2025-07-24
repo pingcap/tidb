@@ -3717,7 +3717,7 @@ func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 		}
 		return false
 	}
-	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
+	return physicalop.CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
 func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
@@ -3801,7 +3801,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
-			agg.MppRunMode = Mpp1Phase
+			agg.MppRunMode = physicalop.Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
 			if validMppAgg(agg) {
 				hashAggs = append(hashAggs, agg)
@@ -3823,7 +3823,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
-		agg.MppRunMode = Mpp2Phase
+		agg.MppRunMode = physicalop.Mpp2Phase
 		agg.MppPartitionCols = partitionCols
 		if validMppAgg(agg) {
 			hashAggs = append(hashAggs, agg)
@@ -3839,7 +3839,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
-			agg.MppRunMode = MppTiDB
+			agg.MppRunMode = physicalop.MppTiDB
 			hashAggs = append(hashAggs, agg)
 		}
 	} else if !hasFinalAgg {
@@ -3854,20 +3854,20 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		agg.SetSchema(la.Schema().Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
 			// mpp scalar mode means the data will be pass through to only one tiFlash node at last.
-			agg.MppRunMode = MppScalar
+			agg.MppRunMode = physicalop.MppScalar
 		} else {
-			agg.MppRunMode = MppTiDB
+			agg.MppRunMode = physicalop.MppTiDB
 		}
 		hashAggs = append(hashAggs, agg)
 	}
 
 	// handle MPP Agg hints
-	var preferMode AggMppRunMode
+	var preferMode physicalop.AggMppRunMode
 	var prefer bool
 	if la.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
-		preferMode, prefer = Mpp1Phase, true
+		preferMode, prefer = physicalop.Mpp1Phase, true
 	} else if la.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
-		preferMode, prefer = Mpp2Phase, true
+		preferMode, prefer = physicalop.Mpp2Phase, true
 	}
 	if prefer {
 		var preferPlans []base.PhysicalPlan

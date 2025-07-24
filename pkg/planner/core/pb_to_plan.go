@@ -223,9 +223,9 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
-		partialAgg = initStreamAggWithBase(baseAgg, b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForStream(b.sctx, &property.StatsInfo{}, 0, nil, &property.PhysicalProperty{})
 	} else {
-		partialAgg = InitHashAggWithBase(baseAgg, b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForHash(b.sctx, &property.StatsInfo{}, 0, nil, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }

@@ -538,7 +538,7 @@ func countStarRewrite(plan base.PhysicalPlan) {
 
 func countStarRewriteInternal(plan base.PhysicalPlan) {
 	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
-	var physicalAgg *basePhysicalAgg
+	var physicalAgg *physicalop.BasePhysicalAgg
 	switch x := plan.(type) {
 	case *PhysicalHashAgg:
 		physicalAgg = x.getPointer()

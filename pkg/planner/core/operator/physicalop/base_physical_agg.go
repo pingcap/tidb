@@ -15,8 +15,10 @@
 package physicalop
 
 import (
+	"fmt"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -120,7 +122,8 @@ func (p *BasePhysicalAgg) CloneWithSelf(newCtx base.PlanContext, newSelf base.Ph
 	return cloned, nil
 }
 
-func (p *BasePhysicalAgg) numDistinctFunc() (num int) {
+// NumDistinctFunc returns the number of distinct aggregation functions in BasePhysicalAgg.
+func (p *BasePhysicalAgg) NumDistinctFunc() (num int) {
 	for _, fun := range p.AggFuncs {
 		if fun.HasDistinct {
 			num++
@@ -129,7 +132,8 @@ func (p *BasePhysicalAgg) numDistinctFunc() (num int) {
 	return
 }
 
-func (p *BasePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
+// GetAggFuncCostFactor returns the cost factor of the aggregation functions.
+func (p *BasePhysicalAgg) GetAggFuncCostFactor(isMPP bool) (factor float64) {
 	factor = 0.0
 	for _, agg := range p.AggFuncs {
 		if fac, ok := cost.AggFuncFactor[agg.Name]; ok {
@@ -186,11 +190,11 @@ func (p *BasePhysicalAgg) MemoryUsage() (sum int64) {
 	return
 }
 
-// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg) end), in detail:
+// ConvertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg) end), in detail:
 // 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
 // 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg) end) and reuse the original schema of the final aggregation.
 // If there is no avg, nothing is changed and return nil.
-func (p *BasePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
+func (p *BasePhysicalAgg) ConvertAvgForMPP() *PhysicalProjection {
 	newSchema := expression.NewSchema()
 	newSchema.PKOrUK = p.Schema().PKOrUK
 	newSchema.NullableUK = p.Schema().NullableUK
@@ -259,7 +263,8 @@ func (p *BasePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	return proj
 }
 
-func (p *BasePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final base.PhysicalPlan) {
+// NewPartialAggregate creates a partial aggregation and a final aggregation for the BasePhysicalAgg.
+func (p *BasePhysicalAgg) NewPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final base.PhysicalPlan) {
 	// Check if this aggregation can push down.
 	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.Self
@@ -312,7 +317,8 @@ func (p *BasePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	return partialAgg, finalAgg
 }
 
-func (p *BasePhysicalAgg) scale3StageForDistinctAgg() (bool, expression.GroupingSets) {
+// Scale3StageForDistinctAgg returns true if this agg can use 3 stage for distinct aggregation.
+func (p *BasePhysicalAgg) Scale3StageForDistinctAgg() (bool, expression.GroupingSets) {
 	if p.canUse3Stage4SingleDistinctAgg() {
 		return true, nil
 	}
@@ -832,6 +838,80 @@ func BuildFinalModeAggregation(
 	if partialIsCop {
 		for _, f := range partial.AggFuncs {
 			f.Mode = aggregation.Partial1Mode
+		}
+	}
+	return
+}
+
+// ExplainInfo implements Plan interface.
+func (p *BasePhysicalAgg) ExplainInfo() string {
+	return p.explainInfo(false)
+}
+
+func (p *BasePhysicalAgg) explainInfo(normalized bool) string {
+	sortedExplainExpressionList := expression.SortedExplainExpressionList
+	if normalized {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
+			return expression.SortedExplainNormalizedExpressionList(exprs)
+		}
+	}
+
+	builder := &strings.Builder{}
+	if len(p.GroupByItems) > 0 {
+		builder.WriteString("group by:")
+		builder.Write(sortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
+		builder.WriteString(", ")
+	}
+	for i := range p.AggFuncs {
+		builder.WriteString("funcs:")
+		var colName string
+		if normalized {
+			colName = p.Schema().Columns[i].ExplainNormalizedInfo()
+		} else {
+			colName = p.Schema().Columns[i].ExplainInfo(p.SCtx().GetExprCtx().GetEvalCtx())
+		}
+		builder.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), p.AggFuncs[i], normalized))
+		builder.WriteString("->")
+		builder.WriteString(colName)
+		if i+1 < len(p.AggFuncs) {
+			builder.WriteString(", ")
+		}
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		fmt.Fprintf(builder, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	return builder.String()
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *BasePhysicalAgg) ExplainNormalizedInfo() string {
+	return p.explainInfo(true)
+}
+
+// ResolveIndices implements Plan interface.
+func (p *BasePhysicalAgg) ResolveIndices() (err error) {
+	err = p.PhysicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for _, aggFun := range p.AggFuncs {
+		for i, arg := range aggFun.Args {
+			aggFun.Args[i], err = arg.ResolveIndices(p.Children()[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+		for _, byItem := range aggFun.OrderByItems {
+			byItem.Expr, err = byItem.Expr.ResolveIndices(p.Children()[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	for i, item := range p.GroupByItems {
+		p.GroupByItems[i], err = item.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
 		}
 	}
 	return

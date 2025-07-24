@@ -18,7 +18,6 @@ import (
 	"math"
 	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -1566,7 +1564,7 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
 				return base.InvalidTask
 			}
-			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
+			partialAgg, finalAgg := p.NewPartialAggregate(storeType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -1626,7 +1624,7 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (divisor, con float64
 func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *MppTask) base.Task {
 	// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 	// only push down the original agg
-	proj := p.convertAvgForMPP()
+	proj := p.ConvertAvgForMPP()
 	attachPlan2Task(p.Self, mpp)
 	if proj != nil {
 		attachPlan2Task(proj, mpp)
@@ -1944,19 +1942,19 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		return base.InvalidTask
 	}
 	switch p.MppRunMode {
-	case Mpp1Phase:
+	case physicalop.Mpp1Phase:
 		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 		// only push down the original agg
-		proj := p.convertAvgForMPP()
+		proj := p.ConvertAvgForMPP()
 		attachPlan2Task(p, mpp)
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
 		return mpp
-	case Mpp2Phase:
+	case physicalop.Mpp2Phase:
 		// TODO: when partition property is matched by sub-plan, we actually needn't do extra an exchange and final agg.
-		proj := p.convertAvgForMPP()
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		proj := p.ConvertAvgForMPP()
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
 			return base.InvalidTask
 		}
@@ -1990,15 +1988,15 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			attachPlan2Task(proj, newMpp)
 		}
 		return newMpp
-	case MppTiDB:
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
+	case physicalop.MppTiDB:
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
 		t = mpp.ConvertToRootTask(p.SCtx())
 		attachPlan2Task(finalAgg, t)
 		return t
-	case MppScalar:
+	case physicalop.MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 		if !mpp.needEnforceExchanger(prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
@@ -2006,9 +2004,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 		// On the other hand: try to split the mppScalar agg into multi phases agg **down** to multi nodes since data already distributed across nodes.
 		// we have to check it before the content of p has been modified
-		canUse3StageAgg, groupingSets := p.scale3StageForDistinctAgg()
-		proj := p.convertAvgForMPP()
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		canUse3StageAgg, groupingSets := p.Scale3StageForDistinctAgg()
+		proj := p.ConvertAvgForMPP()
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
 			return base.InvalidTask
 		}
@@ -2076,7 +2074,7 @@ func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
 	if cop, ok := t.(*CopTask); ok {
 		if len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0 {
 			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			partialAgg, finalAgg := p.NewPartialAggregate(copTaskType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()

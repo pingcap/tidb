@@ -1798,20 +1798,11 @@ func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.Sta
 	for i, aggFunc := range la.AggFuncs {
 		newAggFuncs[i] = aggFunc.Clone()
 	}
-	baseAgg := physicalop.BasePhysicalAgg{
+	agg := physicalop.BasePhysicalAgg{
 		GroupByItems: newGbyItems,
 		AggFuncs:     newAggFuncs,
-	}
-	agg := InitHashAggWithBase(baseAgg, la.SCtx(), newStats, la.QueryBlockOffset(), prop)
-	return agg
-}
-
-func InitHashAggWithBase(base physicalop.BasePhysicalAgg, ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
-	p := &PhysicalHashAgg{base, ""}
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return p
+	}.InitForHash(la.SCtx(), newStats, la.QueryBlockOffset(), nil, prop)
+	return agg.(*PhysicalHashAgg)
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
@@ -1842,14 +1833,6 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 	}
 
 	return p.BasePhysicalAgg.MemoryUsage()
-}
-
-func initStreamAggWithBase(base physicalop.BasePhysicalAgg, ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalStreamAgg {
-	p := &PhysicalStreamAgg{base}
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return p
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
