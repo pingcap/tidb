@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -53,7 +53,7 @@ type LogicalPlan struct {
 	JobID             int64
 	Plan              importer.Plan
 	Stmt              string
-	EligibleInstances []*infosync.ServerInfo
+	EligibleInstances []*serverinfo.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
 
 	// summary for next step

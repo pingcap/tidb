@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -70,7 +70,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 			DisableTiKVImportMode: true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
 		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
@@ -227,7 +227,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			InImportInto:          true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
 		ChunkMap: map[int32][]importer.Chunk{
 			1: {{Path: "gs://test-load/1.csv"}},
 			2: {{Path: "gs://test-load/2.csv"}},

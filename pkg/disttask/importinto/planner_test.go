@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -44,7 +44,7 @@ func TestLogicalPlan(t *testing.T) {
 		JobID:             1,
 		Plan:              importer.Plan{},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
 		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
@@ -65,7 +65,7 @@ func TestToPhysicalPlan(t *testing.T) {
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		EligibleInstances: []*serverinfo.ServerInfo{{StaticInfo: serverinfo.StaticInfo{ID: "1"}}},
 		ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
