@@ -544,3 +544,27 @@ func TestGetAdjustedIndexBlockSize(t *testing.T) {
 	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB))
 	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
 }
+
+func TestGetAdjustedMergeSortOverlapThresholdAndMergeSortFileCountStep(t *testing.T) {
+	tests := []struct {
+		concurrency int
+		want        int64
+	}{
+		{1, 250},
+		{2, 500},
+		{4, 1000},
+		{6, 1500},
+		{8, 2000},
+		{16, 4000},
+		{17, 4000},
+		{32, 4000},
+	}
+	for _, tt := range tests {
+		if got := GetAdjustedMergeSortOverlapThreshold(tt.concurrency); got != tt.want {
+			t.Errorf("GetAdjustedMergeSortOverlapThreshold() = %v, want %v", got, tt.want)
+		}
+		if got := GetAdjustedMergeSortFileCountStep(tt.concurrency); got != int(tt.want) {
+			t.Errorf("GetAdjustedMergeSortFileCountStep() = %v, want %v", got, tt.want)
+		}
+	}
+}
