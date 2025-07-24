@@ -391,15 +391,34 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 	for i, check := range hintChecks {
 		// common path
 		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 		// fast path
 		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 	}
+}
+
+func TestTiDBValidateTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	// default is on
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set off
+	tk.MustExec("set global tidb_enable_ts_validation = off")
+	tk.MustQuery("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set on
+	tk.MustExec("set global tidb_enable_ts_validation = on")
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
 }

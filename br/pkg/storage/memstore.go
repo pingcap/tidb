@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -104,7 +105,7 @@ func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) er
 	if !path.IsAbs(name) {
 		return errors.Errorf("file name is not an absolute path: %s", name)
 	}
-	fileData := append([]byte{}, data...)
+	fileData := slices.Clone(data)
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
 	theFile, ok := s.dataStore[name]
@@ -135,7 +136,7 @@ func (s *MemStorage) ReadFile(ctx context.Context, name string) ([]byte, error) 
 		return nil, errors.Errorf("cannot find the file: %s", name)
 	}
 	fileData := theFile.GetData()
-	return append([]byte{}, fileData...), nil
+	return slices.Clone(fileData), nil
 }
 
 // FileExists return true if file exists.
@@ -352,7 +353,7 @@ func (w *memFileWriter) Close(ctx context.Context) error {
 	default:
 		// continue on
 	}
-	fileData := append([]byte{}, w.buf.Bytes()...)
+	fileData := slices.Clone(w.buf.Bytes())
 	w.file.Data.Store(&fileData)
 	w.isClosed.Store(true)
 	return nil

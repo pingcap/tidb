@@ -191,7 +191,7 @@ func TestBatchCreateTableArgs(t *testing.T) {
 	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion1, ActionCreateTables)))
 	args, err := GetBatchCreateTableArgs(j2)
 	require.NoError(t, err)
-	for i := 0; i < len(inArgs.Tables); i++ {
+	for i := range inArgs.Tables {
 		require.EqualValues(t, inArgs.Tables[i].TableInfo, args.Tables[i].TableInfo)
 		require.EqualValues(t, true, args.Tables[i].FKCheck)
 	}

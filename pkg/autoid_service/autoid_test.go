@@ -81,7 +81,7 @@ func TestConcurrent(t *testing.T) {
 	notify := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			<-notify

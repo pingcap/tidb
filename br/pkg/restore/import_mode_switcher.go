@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -198,6 +199,45 @@ func RestorePreWork(
 	}
 
 	return mgr.RemoveSchedulersWithConfig(ctx)
+}
+
+func FineGrainedRestorePreWork(
+	ctx context.Context,
+	mgr *conn.Mgr,
+	switcher *ImportModeSwitcher,
+	keyRange [][2]kv.Key,
+	isOnline bool,
+	switchToImport bool,
+) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
+	if isOnline {
+		return pdutil.Nop, nil, nil
+	}
+
+	if switchToImport {
+		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
+		err := switcher.GoSwitchToImportMode(ctx)
+		if err != nil {
+			return pdutil.Nop, nil, err
+		}
+	}
+
+	// pause config
+	originCfg, err := mgr.GetOriginPDConfig(ctx)
+	if err != nil {
+		return pdutil.Nop, nil, err
+	}
+
+	// pause schedulers
+	ruleID, waitPauseSchedulerDone, err := mgr.RemoveSchedulersOnRegion(ctx, keyRange)
+	if err != nil {
+		return pdutil.Nop, nil, err
+	}
+	newCfg := originCfg
+	newCfg.RuleID = ruleID
+
+	// handle undo
+	undo := mgr.MakeFineGrainedUndoFunction(newCfg, waitPauseSchedulerDone)
+	return undo, &originCfg, errors.Trace(err)
 }
 
 // RestorePostWork executes some post work after restore.

@@ -24,9 +24,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -67,14 +70,12 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -84,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/tikv/pd/client/errs"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -116,8 +118,9 @@ type ShowExec struct {
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
 
-	ImportJobID *int64
-	SQLOrDigest string // Used for SHOW PLAN FOR <SQL or Digest>
+	ImportJobID       *int64
+	DistributionJobID *int64
+	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
@@ -136,7 +139,7 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		iter := chunk.NewIterator4Chunk(e.result)
-		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
+		for colIdx := range e.Schema().Len() {
 			retType := e.Schema().Columns[colIdx].RetType
 			if !types.IsTypeVarchar(retType.GetType()) {
 				continue
@@ -289,6 +292,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowDistributionJobs:
+		return e.fetchShowDistributionJobs(ctx)
 	}
 	return nil
 }
@@ -378,9 +383,7 @@ func (e *ShowExec) fetchShowBind() error {
 
 func (e *ShowExec) fetchPlanForSQL() error {
 	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
-	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
-	currentDB := e.Ctx().GetSessionVars().CurrentDB
-	plans, err := bindingHandle.ShowPlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	plans, err := bindingHandle.ExplorePlansForSQL(e.Ctx().GetPlanCtx(), e.SQLOrDigest, false)
 	if err != nil {
 		return err
 	}
@@ -454,14 +457,14 @@ func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 
 // moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
 func moveInfoSchemaToFront(dbs []string) {
-	if len(dbs) > 0 && strings.EqualFold(dbs[0], filter.InformationSchemaName) {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], metadef.InformationSchemaName.O) {
 		return
 	}
 
-	i := sort.SearchStrings(dbs, filter.InformationSchemaName)
-	if i < len(dbs) && strings.EqualFold(dbs[i], filter.InformationSchemaName) {
+	i := sort.SearchStrings(dbs, metadef.InformationSchemaName.O)
+	if i < len(dbs) && strings.EqualFold(dbs[i], metadef.InformationSchemaName.O) {
 		copy(dbs[1:i+1], dbs[0:i])
-		dbs[0] = filter.InformationSchemaName
+		dbs[0] = metadef.InformationSchemaName.O
 	}
 }
 
@@ -542,7 +545,7 @@ func (e *ShowExec) getTableType(tb *model.TableInfo) string {
 		return "VIEW"
 	case tb.IsSequence():
 		return "SEQUENCE"
-	case util.IsSystemView(e.DBName.L):
+	case metadef.IsMemDB(e.DBName.L):
 		return "SYSTEM VIEW"
 	default:
 		return "BASE TABLE"
@@ -1253,8 +1256,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.InvertedInfo != nil {
-			fmt.Fprintf(buf, "  INVERTED INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			fmt.Fprintf(buf, "  COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
@@ -1277,6 +1282,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+		}
+
+		if idxInfo.InvertedInfo != nil {
+			fmt.Fprintf(buf, " USING INVERTED")
+		}
+		if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
@@ -2123,6 +2135,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	physicalIDs := []int64{}
+	partitionNames := make([]string, 0)
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2130,10 +2143,12 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 				return err
 			}
 			physicalIDs = append(physicalIDs, pid)
+			partitionNames = append(partitionNames, name.L)
 		}
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
+				partitionNames = append(partitionNames, p.Name.L)
 			}
 		}
 	} else {
@@ -2141,10 +2156,11 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 			return plannererrors.ErrPartitionClauseOnNonpartitioned
 		}
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
+		partitionNames = append(partitionNames, tb.Meta().Name.L)
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
-	for _, pid := range physicalIDs {
+	for idx, pid := range physicalIDs {
 		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
 		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
@@ -2152,9 +2168,9 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		e.fillDistributionsToChunk(partitionNames[idx], resp.RegionDistributions)
 		distributions = append(distributions, resp.RegionDistributions...)
 	}
-	e.fillDistributionsToChunk(distributions)
 	return nil
 }
 
@@ -2315,21 +2331,22 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillDistributionsToChunk(distributions []*pdHttp.RegionDistribution) {
+func (e *ShowExec) fillDistributionsToChunk(partitionName string, distributions []*pdHttp.RegionDistribution) {
 	for _, dis := range distributions {
-		e.result.AppendUint64(0, dis.StoreID)
-		e.result.AppendString(1, dis.EngineType)
-		e.result.AppendInt64(2, int64(dis.RegionLeaderCount))
-		e.result.AppendInt64(3, int64(dis.RegionPeerCount))
-		e.result.AppendUint64(4, dis.RegionWriteBytes)
-		e.result.AppendUint64(5, dis.RegionWriteKeys)
-		e.result.AppendUint64(6, dis.RegionWriteQuery)
-		e.result.AppendUint64(7, dis.RegionLeaderReadBytes)
-		e.result.AppendUint64(8, dis.RegionLeaderReadKeys)
-		e.result.AppendUint64(9, dis.RegionLeaderReadQuery)
-		e.result.AppendUint64(10, dis.RegionPeerReadBytes)
-		e.result.AppendUint64(11, dis.RegionPeerReadKeys)
-		e.result.AppendUint64(12, dis.RegionPeerReadQuery)
+		e.result.AppendString(0, partitionName)
+		e.result.AppendUint64(1, dis.StoreID)
+		e.result.AppendString(2, dis.EngineType)
+		e.result.AppendInt64(3, int64(dis.RegionLeaderCount))
+		e.result.AppendInt64(4, int64(dis.RegionPeerCount))
+		e.result.AppendUint64(5, dis.RegionWriteBytes)
+		e.result.AppendUint64(6, dis.RegionWriteKeys)
+		e.result.AppendUint64(7, dis.RegionWriteQuery)
+		e.result.AppendUint64(8, dis.RegionLeaderReadBytes)
+		e.result.AppendUint64(9, dis.RegionLeaderReadKeys)
+		e.result.AppendUint64(10, dis.RegionLeaderReadQuery)
+		e.result.AppendUint64(11, dis.RegionPeerReadBytes)
+		e.result.AppendUint64(12, dis.RegionPeerReadKeys)
+		e.result.AppendUint64(13, dis.RegionPeerReadQuery)
 	}
 }
 
@@ -2373,7 +2390,7 @@ func (e *ShowExec) fetchShowBuiltins() error {
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	sessionStates := &sessionstates.SessionStates{}
-	err := e.Ctx().EncodeSessionStates(ctx, e.Ctx(), sessionStates)
+	err := e.Ctx().EncodeStates(ctx, sessionStates)
 	if err != nil {
 		return err
 	}
@@ -2415,52 +2432,191 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 }
 
 // FillOneImportJobInfo is exported for testing.
-func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, importedRowCount int64) {
+func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
-	result.AppendString(1, info.Parameters.FileLocation)
-	result.AppendString(2, fullTableName)
-	result.AppendInt64(3, info.TableID)
-	result.AppendString(4, info.Step)
-	result.AppendString(5, info.Status)
-	result.AppendString(6, units.BytesSize(float64(info.SourceFileSize)))
-	if info.Summary != nil {
-		result.AppendUint64(7, info.Summary.ImportedRows)
-	} else if importedRowCount >= 0 {
-		result.AppendUint64(7, uint64(importedRowCount))
+	result.AppendNull(1) // group key, which will be filled in next PR
+	result.AppendString(2, info.Parameters.FileLocation)
+	result.AppendString(3, fullTableName)
+	result.AppendInt64(4, info.TableID)
+	result.AppendString(5, info.Step)
+	result.AppendString(6, info.Status)
+	result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
+
+	if runInfo != nil {
+		// running import job
+		result.AppendUint64(8, uint64(runInfo.ImportRows))
+	} else if info.Status == importer.JobStatusFinished {
+		// successful import job
+		result.AppendUint64(8, uint64(info.Summary.ImportedRows))
 	} else {
-		result.AppendNull(7)
+		// failed import job
+		result.AppendNull(8)
 	}
-	result.AppendString(8, info.ErrorMessage)
-	result.AppendTime(9, info.CreateTime)
+
+	result.AppendString(9, info.ErrorMessage)
+	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
-		result.AppendNull(10)
-	} else {
-		result.AppendTime(10, info.StartTime)
-	}
-	if info.EndTime.IsZero() {
 		result.AppendNull(11)
 	} else {
-		result.AppendTime(11, info.EndTime)
+		result.AppendTime(11, info.StartTime)
 	}
-	result.AppendString(12, info.CreatedBy)
+	if info.EndTime.IsZero() {
+		result.AppendNull(12)
+	} else {
+		result.AppendTime(12, info.EndTime)
+	}
+	result.AppendString(13, info.CreatedBy)
+
+	// For finished job, only keep the update time same as end time
+	// and fill other fields with null.
+	if runInfo == nil {
+		if info.EndTime.IsZero() {
+			result.AppendNull(14)
+		} else {
+			result.AppendTime(14, info.EndTime)
+		}
+		for i := 15; i < 21; i++ {
+			result.AppendNull(i)
+		}
+		return
+	}
+
+	result.AppendTime(14, runInfo.UpdateTime)
+	result.AppendString(15, proto.Step2Str(proto.ImportInto, runInfo.Step))
+	result.AppendString(16, runInfo.ProcessedSize())
+	result.AppendString(17, runInfo.TotalSize())
+	result.AppendString(18, runInfo.Percent())
+	speed, eta := runInfo.SpeedAndETA()
+	result.AppendString(19, speed)
+	result.AppendString(20, eta)
 }
 
-func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
-	var importedRowCount int64 = -1
-	if info.Summary == nil && info.Status == importer.JobStatusRunning {
-		// for running jobs, need get from distributed framework.
-		runInfo, err := importinto.GetRuntimeInfoForJob(ctx, info.ID)
+func handleImportJobInfo(
+	ctx context.Context, location *time.Location,
+	info *importer.JobInfo, result *chunk.Chunk,
+) error {
+	var (
+		runInfo *importinto.RuntimeInfo
+		err     error
+	)
+
+	if info.Status == importer.JobStatusRunning {
+		// need to get more info from distributed framework for running jobs
+		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, location, info.ID)
 		if err != nil {
 			return err
 		}
-		importedRowCount = int64(runInfo.ImportRows)
+		runInfo.StartTime = info.StartTime
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
 		}
+
+		failpoint.Inject("mockUpdateTime", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				ti := time.Now()
+				runInfo.StartTime = types.NewTime(types.FromGoTime(ti), mysql.TypeTimestamp, 0)
+				runInfo.UpdateTime = types.NewTime(types.FromGoTime(ti.Add(time.Duration(v)*time.Second)), mysql.TypeTimestamp, 0)
+			}
+		})
 	}
-	FillOneImportJobInfo(result, info, importedRowCount)
+	FillOneImportJobInfo(result, info, runInfo)
+	return nil
+}
+
+const balanceRangeScheduler = "balance-range-scheduler"
+
+func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
+	config, err := infosync.GetSchedulerConfig(ctx, balanceRangeScheduler)
+	if err != nil {
+		return err
+	}
+	configs, ok := config.([]any)
+	if !ok {
+		// it means that no any jobs
+		return nil
+	}
+	jobs := make([]map[string]any, 0, len(configs))
+	for _, cfg := range configs {
+		job, ok := cfg.(map[string]any)
+		if !ok {
+			return errs.ErrClientProtoUnmarshal.FastGenByArgs(cfg)
+		}
+		jobs = append(jobs, job)
+	}
+	if e.DistributionJobID != nil {
+		for _, job := range jobs {
+			jobID, ok := job["job-id"].(float64)
+			if ok && *e.DistributionJobID == int64(jobID) {
+				if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	} else {
+		for _, job := range jobs {
+			if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// fillDistributionJobToChunk fills the distribution job to the chunk
+func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) error {
+	// alias is {db_name}.{table_name}.{partition_name}
+	alias := strings.Split(job["alias"].(string), ".")
+	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
+	if len(alias) != 3 {
+		return errs.ErrClientProtoUnmarshal.FastGenByArgs(fmt.Sprintf("alias:%s is invalid", job["alias"].(string)))
+	}
+	result.AppendUint64(0, uint64(job["job-id"].(float64)))
+	result.AppendString(1, alias[0])
+	result.AppendString(2, alias[1])
+	// partition name maybe empty when the table is not partitioned
+	if alias[2] == "" {
+		result.AppendNull(3)
+	} else {
+		result.AppendString(3, alias[2])
+	}
+	result.AppendString(4, job["engine"].(string))
+	result.AppendString(5, job["rule"].(string))
+	result.AppendString(6, job["status"].(string))
+	timeout := uint64(job["timeout"].(float64))
+	result.AppendString(7, time.Duration(timeout).String())
+	if create, ok := job["create"]; ok {
+		createTime := &time.Time{}
+		err := createTime.UnmarshalText([]byte(create.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(8, types.NewTime(types.FromGoTime(*createTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(8)
+	}
+	if start, ok := job["start"]; ok {
+		startTime := &time.Time{}
+		err := startTime.UnmarshalText([]byte(start.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(9, types.NewTime(types.FromGoTime(*startTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(9)
+	}
+	if finish, ok := job["finish"]; ok {
+		finishedTime := &time.Time{}
+		err := finishedTime.UnmarshalText([]byte(finish.(string)))
+		if err != nil {
+			return err
+		}
+		result.AppendTime(10, types.NewTime(types.FromGoTime(*finishedTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(10)
+	}
 	return nil
 }
 
@@ -2469,9 +2625,11 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 // "Phase", "Status", "Source_File_Size", "Imported_Rows",
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
+	sctx := e.Ctx()
+
 	var hasSuperPriv bool
-	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
-		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
 	taskManager, err := fstorage.GetTaskManager()
@@ -2479,29 +2637,31 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	loc := sctx.GetSessionVars().Location()
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.GetSQLExecutor()
 			var err2 error
-			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
 			return err2
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(ctx, info, e.result)
+		return handleImportJobInfo(ctx, loc, info, e.result)
 	}
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
-		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err
 	}
 	for _, info := range infos {
-		if err2 := handleImportJobInfo(ctx, info, e.result); err2 != nil {
+		if err2 := handleImportJobInfo(ctx, loc, info, e.result); err2 != nil {
 			return err2
 		}
 	}

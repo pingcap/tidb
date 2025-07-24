@@ -37,7 +37,7 @@ func TestCancelWhileScan(t *testing.T) {
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, NOW() - INTERVAL 24 HOUR)", i))
 	}
 	testPhysicalTableCache, err := cache.NewPhysicalTable(ast.NewCIStr("test"), testTable.Meta(), ast.NewCIStr(""))
@@ -81,7 +81,7 @@ func TestCancelWhileScan(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			ttlTask.DoScan(ctx, delCh, dom.SysSessionPool())
+			ttlTask.DoScan(ctx, delCh, dom.AdvancedSysSessionPool())
 		}()
 
 		// randomly sleep for a while and cancel the scan

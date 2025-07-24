@@ -30,13 +30,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -59,13 +59,14 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
 	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +398,7 @@ select 7;`
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName3
 	})
-	for k := 0; k < 2; k++ {
+	for k := range 2 {
 		// k = 0 for normal files
 		// k = 1 for compressed files
 		var fileNames []string
@@ -844,11 +845,11 @@ func TestIssue54324(t *testing.T) {
 	defer os.Remove(f.Name()) // clean up
 
 	w := bufio.NewWriter(f)
-	for i := 0; i < 8191; i++ {
+	for range 8191 {
 		w.WriteByte('x')
 	}
 	w.WriteByte('\n')
-	for i := 0; i < 4096; i++ {
+	for range 4096 {
 		w.WriteByte('a')
 	}
 	require.NoError(t, w.Flush())

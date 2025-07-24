@@ -4,6 +4,7 @@ package logclient
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -11,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +20,8 @@ type LogSplitStrategy struct {
 	*split.BaseSplitStrategy
 	checkpointSkipMap        *LogFilesSkipMap
 	checkpointFileProgressFn func(uint64, uint64)
+
+	lastMemUsageUpdate time.Time
 }
 
 var _ split.SplitStrategy[*LogDataFileInfo] = &LogSplitStrategy{}
@@ -36,7 +40,7 @@ func NewLogSplitStrategy(
 	skipMap := NewLogFilesSkipMap()
 	if useCheckpoint {
 		t, err := logCheckpointMetaManager.LoadCheckpointData(
-			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
+			ctx, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) error {
 				for tableID, foffs := range off.Foffs {
 					// filter out the checkpoint data of dropped table
 					if _, exists := downstreamIdset[tableID]; exists {
@@ -45,6 +49,7 @@ func NewLogSplitStrategy(
 						}
 					}
 				}
+				return nil
 			})
 
 		if err != nil {
@@ -83,6 +88,8 @@ func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
 			},
 		})
 	}
+
+	ls.maybeUpdateMemUsage()
 }
 
 func (ls *LogSplitStrategy) ShouldSplit() bool {
@@ -105,4 +112,21 @@ func (ls *LogSplitStrategy) ShouldSkip(file *LogDataFileInfo) bool {
 		return true
 	}
 	return false
+}
+
+func (ls *LogSplitStrategy) maybeUpdateMemUsage() {
+	if time.Since(ls.lastMemUsageUpdate) < 30*time.Second {
+		return
+	}
+
+	ls.lastMemUsageUpdate = time.Now()
+	memUsed := 0
+	for _, hlp := range ls.TableSplitter {
+		hlp.Traverse(func(v split.Valued) bool {
+			memUsed += v.MemSize()
+			return true
+		})
+	}
+
+	metrics.KVSplitHelperMemUsage.Set(float64(memUsed))
 }

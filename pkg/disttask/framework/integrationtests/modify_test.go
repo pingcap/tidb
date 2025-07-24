@@ -128,7 +128,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		})
 		modifySyncCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -212,7 +212,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		task, err := handle.SubmitTask(c.Ctx, "k2-2", proto.TaskTypeExample, 3, "", 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, task.Concurrency)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
@@ -258,7 +258,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -312,7 +312,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		)
 		modifySyncCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -353,7 +353,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		})
 		modifySyncCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, theTask.Key)
@@ -384,7 +384,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		testModifyWhenSubtaskRun.Store(false)
 		modifyWaitCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
@@ -416,7 +416,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		testModifyWhenSubtaskRun.Store(false)
 		modifyWaitCh <- struct{}{}
 		// finish subtasks
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			subtaskCh <- struct{}{}
 		}
 		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)

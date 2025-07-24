@@ -428,7 +428,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 	} else {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d totColSize:%d", hg.ID, hg.NDV, hg.TotColSize))
 	}
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		strs = append(strs, hg.BucketToString(i, idxCols))
 	}
 	return strings.Join(strs, "\n")
@@ -561,19 +561,42 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
-// The input sctx is just for debug trace, you can pass nil safely if that's not needed.
+// The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
 func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) float64 {
-	lessCountA := hg.LessRowCount(sctx, a)
-	lessCountB := hg.LessRowCount(sctx, b)
+	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
+	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
 	rangeEst := lessCountB - lessCountA
 	lowEqual, _ := hg.EqualRowCount(sctx, a, false)
 	ndvAvg := hg.NotNullCount() / float64(hg.NDV)
 	// If values fall in the same bucket, we may underestimate the fractional result. So estimate the low value (a) as an equals, and
 	// estimate the high value as the default (because the input high value may be "larger" than the true high value). The range should
 	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
-	if rangeEst < math.Max(lowEqual, ndvAvg) && hg.NDV > 0 {
-		result := math.Min(lessCountB, hg.NotNullCount()-lessCountA)
-		return math.Min(result, lowEqual+ndvAvg)
+	if rangeEst < max(lowEqual, ndvAvg) && hg.NDV > 0 {
+		result := min(lessCountB, hg.NotNullCount()-lessCountA)
+		rangeEst = min(result, lowEqual+ndvAvg)
+	}
+	// LessCounts are equal only if no valid buckets or both values are out of range
+	isInValidBucket := lessCountA != lessCountB
+	// If values in the same bucket, use skewRatio to adjust the range estimate to account for potential skew.
+	if isInValidBucket && bktIndexA == bktIndexB {
+		// sctx may be nil for stats version 1
+		if sctx != nil {
+			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+			if skewRatio > 0 {
+				// Worst case skew is if the range includes all the rows in the bucket
+				skewEstimate := hg.Buckets[bktIndexA].Count
+				if bktIndexA > 0 {
+					skewEstimate -= hg.Buckets[bktIndexA-1].Count
+				}
+				// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
+				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
+					skewEstimate -= hg.Buckets[bktIndexA].Repeat
+				}
+				// Add a scaled ratio of the worst case skewed estimate to our regular estimate
+				return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
+			}
+		}
 	}
 	return rangeEst
 }
@@ -767,7 +790,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 	protoHg := &tipb.Histogram{
 		Ndv: hg.NDV,
 	}
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		bkt := &tipb.Bucket{
 			Count:      hg.Buckets[i].Count,
 			LowerBound: DeepSlice(hg.GetLower(i).GetBytes()),
@@ -863,7 +886,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rh.mergeBuckets(rh.Len() - 1)
 		rAvg *= 2
 	}
-	for i := 0; i < rh.Len(); i++ {
+	for i := range rh.Len() {
 		if statsVer >= Version2 {
 			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
 			continue
@@ -1151,7 +1174,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	// Set a limit on the frequency of boundary values to avoid extract values with low frequency.
 	limit := hg.NotNullCount() / float64(hg.Len())
 	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
-	for i := 0; i < hg.Bounds.NumRows(); i++ {
+	for i := range hg.Bounds.NumRows() {
 		data := hg.Bounds.GetRow(i).GetBytes(0)
 		prefixLens, err := GetIndexPrefixLens(data, numCols)
 		if err != nil {
@@ -1231,7 +1254,7 @@ func newBucket4Meging() *bucket4Merging {
 // Notice: Count in Histogram.Buckets is prefix sum but in bucket4Merging is not.
 func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 	buckets := make([]*bucket4Merging, 0, hg.Len())
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		b := newbucket4MergingForRecycle()
 		hg.LowerToDatum(i, b.lower)
 		hg.UpperToDatum(i, b.upper)
@@ -1413,10 +1436,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
 	// and as the number of buckets increases, these assumptions become weak,
 	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
-	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
-	if res.NDV > totNDV {
-		res.NDV = totNDV
-	}
+	res.NDV = min(int64(float64(res.NDV)*math.Pow(1.15, float64(len(buckets)-1))), totNDV)
 	return res, nil
 }
 
@@ -1443,6 +1463,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
+	// This only occurs when there are no histogram records in the histogram system table.
+	// It happens only to tables whose DDL events haven’t been processed yet and that have no indexes or keys,
+	// with the predicate column feature enabled.
+	if len(hists) == 0 {
+		return nil, nil
+	}
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1452,7 +1478,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			totCount += hist.Buckets[hist.Len()-1].Count
 		}
 	}
-
 	// If all the hist and the topn is empty, return a empty hist.
 	if bucketNumber+len(popedTopN) == 0 {
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
@@ -1666,7 +1691,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		leftMost.Copy(merged.lower)
 		globalBuckets = append(globalBuckets, merged)
 	}
-	for i := 0; i < len(buckets); i++ {
+	for i := range buckets {
 		releasebucket4MergingForRecycle(buckets[i])
 	}
 	// Because we merge backwards, we need to flip the slices.

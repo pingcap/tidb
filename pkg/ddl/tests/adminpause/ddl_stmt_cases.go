@@ -117,7 +117,7 @@ const dropIndexStmt string = alterTableDropPrefix + "index if exists idx_name;"
 const addVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " add vector index v_idx((VEC_COSINE_DISTANCE(vec))) USING HNSW;"
 const dropVectorIndexStmt string = "alter table " + adminPauseTestTableWithVec + " drop index if exists v_idx;"
 
-const addColumnarStmt string = "alter table " + adminPauseTestTableWithVec + " add columnar index c_idx(age);"
+const addColumnarStmt string = "alter table " + adminPauseTestTableWithVec + " add columnar index c_idx(age) using inverted;"
 const dropColumnarStmt string = "alter table " + adminPauseTestTableWithVec + " drop index if exists c_idx;"
 
 var indexDDLStmtCase = [...]StmtCase{

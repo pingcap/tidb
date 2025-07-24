@@ -17,6 +17,8 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -421,7 +423,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][8])
 	serverInfo, err := infosync.GetServerInfo()
 	require.NoError(t, err)
-	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	addr := net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
 	require.Equal(t, addr, rows[0][9])
 	require.Equal(t, "<nil>", rows[0][10])
 

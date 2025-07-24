@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -117,8 +116,8 @@ func getJobMetaFromTable(
 	se *sess.Session,
 	jobID int64,
 ) (*model.Job, error) {
-	sql := fmt.Sprintf("select job_meta from mysql.%s where job_id = %s",
-		ddl.JobTable, strconv.FormatInt(jobID, 10))
+	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %s",
+		strconv.FormatInt(jobID, 10))
 	rows, err := se.Execute(ctx, sql, "get_job_by_id")
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -144,8 +143,8 @@ func updateJobMeta2Table(
 	if err != nil {
 		return err
 	}
-	sql := fmt.Sprintf("update mysql.%s set job_meta = %s where job_id = %d",
-		ddl.JobTable, util.WrapKey2String(b), job.ID)
+	sql := fmt.Sprintf("update mysql.tidb_ddl_job set job_meta = %s where job_id = %d",
+		util.WrapKey2String(b), job.ID)
 	_, err = se.Execute(ctx, sql, "update_job")
 	return errors.Trace(err)
 }
@@ -160,7 +159,7 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 ) (err error) {
 	ns := sess.NewSession(sessCtx)
 	var job *model.Job
-	for tryN := uint(0); tryN < alterDDLJobMaxRetryCnt; tryN++ {
+	for range alterDDLJobMaxRetryCnt {
 		if err = ns.Begin(ctx); err != nil {
 			continue
 		}
@@ -170,7 +169,7 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 		}
 		if !job.IsAlterable() {
 			return fmt.Errorf("unsupported DDL operation: %s. "+
-				"Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
+				"Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue

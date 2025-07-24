@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -137,7 +136,7 @@ func indexJoinPathNewMutableRange(
 	ranges []*ranger.Range,
 	path *util.AccessPath) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs) {
+	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs...) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
 			ranges:        ranges,
@@ -633,37 +632,30 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 }
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
-func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty,
-	opt *optimizetrace.PhysicalOptimizeOp, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
 	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
-	innerTSCopTask := buildDataSource2TableScanByIndexJoinProp(ds, prop)
-	if !innerTSCopTask.Invalid() {
-		planCounter.Dec(1)
-		if planCounter.Empty() {
-			// planCounter is counted to end, just return this one.
-			return innerTSCopTask, 1, nil
-		}
+	//
+	// here we build TableScan(TS) and IndexScan(IS) separately according to different index join prop is for we couldn't decide
+	// which one as the copTask here is better, some more possible upper attached operator cost should be
+	// considered, besides the row count, double reader cost for index lookup should also be considered as
+	// a whole, so we leave the cost compare for index join itself just like what it was before.
+	var innerCopTask base.Task
+	if prop.IndexJoinProp.TableRangeScan {
+		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
+	} else {
+		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	}
-	innerISCopTask := buildDataSource2IndexScanByIndexJoinProp(ds, prop)
-	if !innerISCopTask.Invalid() {
-		planCounter.Dec(1)
-		if planCounter.Empty() {
-			// planCounter is counted to end, just return this one.
-			return innerISCopTask, 1, nil
-		}
+	if innerCopTask.Invalid() {
+		return base.InvalidTask, 0, nil
 	}
-	// if we can see the both, compare the cost.
-	leftIsBetter, err := compareTaskCost(innerTSCopTask, innerISCopTask, opt)
-	if err != nil {
-		return base.InvalidTask, 0, err
+	planCounter.Dec(1)
+	if prop.TaskTp == property.RootTaskType {
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
 	}
-	if leftIsBetter {
-		return innerTSCopTask, 1, nil
-	}
-	return innerISCopTask, 1, nil
+	return innerCopTask, 1, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds

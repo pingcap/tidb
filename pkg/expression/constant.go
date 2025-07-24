@@ -197,6 +197,7 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
 	con := *c
+	con.RetType = c.RetType.Clone()
 	if c.ParamMarker != nil {
 		con.ParamMarker = &ParamMarker{order: c.ParamMarker.order}
 	}

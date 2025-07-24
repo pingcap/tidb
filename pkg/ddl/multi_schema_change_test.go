@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -799,6 +801,50 @@ func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestMultiSchemaChangePollJobCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+	runOneJobCounter := 0
+	pollJobCounter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+		runOneJobCounter++
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePollDDLJob", func() {
+		pollJobCounter++
+	})
+	// Should not test reorg DDL because the result can be unstable.
+	tk.MustExec("alter table t add column b int,  modify column a bigint, add column c char(10);")
+	require.Equal(t, 29, runOneJobCounter)
+	require.Equal(t, 9, pollJobCounter)
+}
+
+func TestMultiSchemaChangeMDLView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	unistoreMDLView := session.CreateTiDBMDLView
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_processlist", "processlist")
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_tidb_trx", "tidb_trx")
+	tk.MustExec(unistoreMDLView)
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add column b int, add column c int;")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select count(*) from mysql.tidb_mdl_view;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
 }
 
 type cancelOnceHook struct {

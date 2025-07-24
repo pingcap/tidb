@@ -13,12 +13,11 @@ go_test(
     timeout = "short",
     srcs = ["async_load_test.go"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         ":asyncload",
         "//pkg/parser/ast",
         "//pkg/testkit",
-        "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
     ],
 )

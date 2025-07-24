@@ -107,7 +107,7 @@ func (p *BasePhysicalPlan) GetPlanCostVer1(taskType property.TaskType, option *o
 
 // GetPlanCostVer2 implements the base.PhysicalPlan.<1st> interface.
 // which calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *BasePhysicalPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+func (p *BasePhysicalPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	if p.PlanCostInit && !costusage.HasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}

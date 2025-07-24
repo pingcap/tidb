@@ -18,6 +18,8 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -73,7 +76,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
 		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
@@ -139,10 +141,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(pctx)
-		defer debugtrace.LeaveContextCommon(pctx)
-	}
 
 	if !sessVars.InRestrictedSQL && (vardef.RestrictedReadOnly.Load() || vardef.VarTiDBSuperReadOnly.Load()) {
 		allowed, err := allowInReadOnlyMode(pctx, node.Node)
@@ -154,6 +152,98 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 	}
 
+	defer func() {
+		if retErr == nil {
+			// Override the resource group if the hint is set.
+			// resource group name is case-insensitive. so we need to convert it to lower case.
+			lowerRgName := strings.ToLower(sessVars.StmtCtx.StmtHints.ResourceGroup)
+			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+				if vardef.EnableResourceControl.Load() {
+					hasPriv := true
+					// only check dynamic privilege when strict-mode is enabled.
+					if vardef.EnableResourceControlStrictMode.Load() {
+						checker := privilege.GetPrivilegeManager(sctx)
+						if checker != nil {
+							hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
+							hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
+							hasPriv = hasRgAdminPriv || hasRgUserPriv
+						}
+					}
+					if hasPriv {
+						sessVars.StmtCtx.ResourceGroupName = lowerRgName
+						// if we are in a txn, should update the txn resource name to let the txn
+						// commit with the hint resource group.
+						if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+							kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
+						}
+					} else {
+						err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
+						sessVars.StmtCtx.AppendWarning(err)
+					}
+				} else {
+					err := infoschema.ErrResourceGroupSupportDisabled
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+			}
+
+			// Handle SetVars hints for cached plans.
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+			}
+		}
+	}()
+
+	// Handle the execute statement.  This calls into the prepared plan cache.
+	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
+		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
+		return p, names, err
+	}
+
+	// Call into the non-prepared plan cache.
+	if stmtNode, isStmtNode := node.Node.(ast.StmtNode); sessVars.EnableNonPreparedPlanCache && isStmtNode {
+		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			return cachedPlan, names, nil
+		}
+	}
+
+	return optimizeNoCache(ctx, sctx, node, is)
+}
+
+func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	pctx := sctx.GetPlanCtx()
+	sessVars := sctx.GetSessionVars()
+
+	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(pctx)
+		defer debugtrace.LeaveContextCommon(pctx)
+	}
+
+	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker(ctx, is),
+		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
+	sessVars.StmtCtx.StmtHints = originStmtHints
+	for _, warn := range warns {
+		sessVars.StmtCtx.AppendWarning(warn)
+	}
+
+	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+		oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
+		if err != nil {
+			sessVars.StmtCtx.AppendWarning(err)
+		}
+		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+	}
+
+	// XXX: this should be handled after any bindings are setup.
 	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
@@ -166,65 +256,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 			}
 		}()
-	}
-
-	// handle the execute statement
-	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
-		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
-		return p, names, err
-	}
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
-		setVarHintChecker, hypoIndexChecker(ctx, is),
-		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
-	sessVars.StmtCtx.StmtHints = originStmtHints
-	for _, warn := range warns {
-		sessVars.StmtCtx.AppendWarning(warn)
-	}
-
-	defer func() {
-		// Override the resource group if the hint is set.
-		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
-			if vardef.EnableResourceControl.Load() {
-				hasPriv := true
-				// only check dynamic privilege when strict-mode is enabled.
-				if vardef.EnableResourceControlStrictMode.Load() {
-					checker := privilege.GetPrivilegeManager(sctx)
-					if checker != nil {
-						hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
-						hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
-						hasPriv = hasRgAdminPriv || hasRgUserPriv
-					}
-				}
-				if hasPriv {
-					sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
-					// if we are in a txn, should update the txn resource name to let the txn
-					// commit with the hint resource group.
-					if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
-						kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
-					}
-				} else {
-					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
-					sessVars.StmtCtx.AppendWarning(err)
-				}
-			} else {
-				err := infoschema.ErrResourceGroupSupportDisabled
-				sessVars.StmtCtx.AppendWarning(err)
-			}
-		}
-	}()
-
-	warns = warns[:0]
-	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
-		if err != nil {
-			sessVars.StmtCtx.AppendWarning(err)
-		}
-		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
-	}
-	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
@@ -251,19 +282,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		node = node.CloneWithNewNode(stmtNode)
 	}
 
-	// try to get Plan from the NonPrepared Plan Cache
-	if sessVars.EnableNonPreparedPlanCache &&
-		isStmtNode &&
-		!useBinding { // TODO: support binding
-		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ok {
-			return cachedPlan, names, nil
-		}
-	}
-
 	var (
 		names                      types.NameSlice
 		bestPlan, bestPlanFromBind base.Plan
@@ -273,6 +291,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	if useBinding {
 		var bindStmtHints hint.StmtHints
 		originHints := hint.CollectHint(stmtNode)
+		var warns []error
 		if binding != nil && binding.IsBindingEnabled() {
 			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 				core.DebugTraceTryBinding(pctx, binding.Hint)
@@ -282,14 +301,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
-			// update session var by hint /set_var/
+
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 				if err != nil {
 					sessVars.StmtCtx.AppendWarning(err)
 				}
 				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
+
 			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
@@ -311,7 +331,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
-			if len(tableHints) > 0 {
+			if originStmtHints.QueryHasHints {
 				sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
@@ -587,7 +607,7 @@ func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tb
 // queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
 func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
 	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return 0, err
 	}
@@ -598,7 +618,7 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 }
 
-func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
+func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
 	ret := &core.PreprocessorReturn{}
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(
@@ -612,7 +632,7 @@ func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest stri
 		return "", err
 	}
 
-	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return "", err
 	}
@@ -621,12 +641,84 @@ func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest stri
 	return digest.String(), nil
 }
 
+func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error) {
+	sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(true)
+	defer sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(false)
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		core.WithPreprocessorReturn(ret),
+		core.InitTxnContextProvider,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for varName := range sctx.GetSessionVars().RelevantOptVars {
+		varNames = append(varNames, varName)
+	}
+	sort.Strings(varNames)
+
+	for fixID := range sctx.GetSessionVars().RelevantOptFixes {
+		fixIDs = append(fixIDs, fixID)
+	}
+	sort.Slice(fixIDs, func(i, j int) bool {
+		return fixIDs[i] < fixIDs[j]
+	})
+	return
+}
+
+func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error) {
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	if err = core.Preprocess(context.Background(), sctx, nodeW,
+		core.WithPreprocessorReturn(ret), core.InitTxnContextProvider,
+	); err != nil {
+		return "", "", nil, err
+	}
+
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return "", "", nil, err
+	}
+	flat := core.FlattenPhysicalPlan(p, false)
+	_, digest := core.NormalizeFlatPlan(flat)
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true // ignore operatorID to make the output simpler
+	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil)
+	hints := core.GenHintsFromFlatPlan(flat)
+
+	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil
+}
+
+func planIDFunc(plan any) (planID int, ok bool) {
+	if p, ok := plan.(base.Plan); ok {
+		return p.ID(), true
+	}
+	return 0, false
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
+	core.OptimizeAstNodeNoCache = optimizeNoCache
 	core.IsReadOnly = IsReadOnly
 	indexadvisor.QueryPlanCostHook = queryPlanCost
 	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
-		return domain.GetDomain(sctx).BindingHandle()
+		dom := domain.GetDomain(sctx)
+		if dom == nil {
+			return nil
+		}
+		return dom.BindingHandle()
 	}
-	bindinfo.PlanDigestFunc = planDigestFunc
+	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
+	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
+	bindinfo.GenBriefPlanWithSCtx = genBriefPlanWithSCtx
+	stmtctx.PlanIDFunc = planIDFunc
 }

@@ -76,7 +76,7 @@ func TestGc(t *testing.T) {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeString),
 	}
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		rf.Column.FieldType = *tps[i]
@@ -122,7 +122,7 @@ func TestRegionSplitInfo(t *testing.T) {
 		types.NewFieldType(mysql.TypeString),
 		types.NewFieldType(mysql.TypeString),
 	}
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		rf.Column.FieldType = *tps[i]

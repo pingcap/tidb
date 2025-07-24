@@ -383,7 +383,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 		children := t.mu.children[label]
 		for i, child := range children {
 			if child == oldChild {
-				children = append(children[:i], children[i+1:]...)
+				children = slices.Delete(children, i, i+1)
 				if len(children) > 0 {
 					t.mu.children[label] = children
 				} else {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -131,7 +132,7 @@ func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
 	c.TaskMgr = taskManager
 	c.MockCtrl = ctrl
 
-	for i := 0; i < nodeNum; i++ {
+	for range nodeNum {
 		c.ScaleOutBy(c.getNodeID(), false)
 	}
 	c.electIfNeeded()
@@ -160,7 +161,7 @@ func (c *TestDXFContext) recycleNodeID(id string) {
 
 // ScaleOut scales out a tidb node, and elect owner if required.
 func (c *TestDXFContext) ScaleOut(nodeNum int) {
-	for i := 0; i < nodeNum; i++ {
+	for range nodeNum {
 		c.ScaleOutBy(c.getNodeID(), false)
 	}
 	c.electIfNeeded()
@@ -208,7 +209,7 @@ func (c *TestDXFContext) updateLiveExecIDs() {
 
 // ScaleIn scales in some last added tidb nodes, elect new owner if required.
 func (c *TestDXFContext) ScaleIn(nodeNum int) {
-	for i := 0; i < nodeNum; i++ {
+	for range nodeNum {
 		c.mu.RLock()
 		if len(c.mu.nodes) == 0 {
 			c.mu.RUnlock()
@@ -231,7 +232,7 @@ func (c *TestDXFContext) ScaleInBy(id string) {
 		return
 	}
 	node := c.mu.nodes[idx]
-	c.mu.nodes = append(c.mu.nodes[:idx], c.mu.nodes[idx+1:]...)
+	c.mu.nodes = slices.Delete(c.mu.nodes, idx, idx+1)
 	c.mu.nodeIndices = make(map[string]int, len(c.mu.nodes))
 	c.mu.ownerIndices = make(map[string]int, len(c.mu.nodes))
 	for i, n := range c.mu.nodes {
@@ -315,7 +316,7 @@ func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
 		limit = len(c.mu.nodes)
 	}
 	ids := make(map[string]struct{}, limit)
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		ids[cloneSlice[i].id] = struct{}{}
 	}
 	return ids

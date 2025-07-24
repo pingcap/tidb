@@ -189,31 +189,35 @@ func TestSlowLogFormat(t *testing.T) {
 		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
 	}
 
+	processTimeStats := execdetails.TaskTimeStats{
+		AvgTime:    time.Second,
+		P90Time:    time.Second * 2,
+		MaxAddress: "10.6.131.78",
+		MaxTime:    time.Second * 3,
+	}
+	waitTimeStats := execdetails.TaskTimeStats{
+		AvgTime:    time.Millisecond * 10,
+		P90Time:    time.Millisecond * 20,
+		MaxTime:    time.Millisecond * 30,
+		MaxAddress: "10.6.131.79",
+	}
 	copTasks := &execdetails.CopTasksDetails{
-		NumCopTasks:       10,
-		AvgProcessTime:    time.Second,
-		P90ProcessTime:    time.Second * 2,
-		MaxProcessAddress: "10.6.131.78",
-		MaxProcessTime:    time.Second * 3,
-		AvgWaitTime:       time.Millisecond * 10,
-		P90WaitTime:       time.Millisecond * 20,
-		MaxWaitTime:       time.Millisecond * 30,
-		MaxWaitAddress:    "10.6.131.79",
-		MaxBackoffTime:    make(map[string]time.Duration),
-		AvgBackoffTime:    make(map[string]time.Duration),
-		P90BackoffTime:    make(map[string]time.Duration),
-		TotBackoffTime:    make(map[string]time.Duration),
-		TotBackoffTimes:   make(map[string]int),
-		MaxBackoffAddress: make(map[string]string),
+		NumCopTasks:         10,
+		ProcessTimeStats:    processTimeStats,
+		WaitTimeStats:       waitTimeStats,
+		BackoffTimeStatsMap: make(map[string]execdetails.TaskTimeStats),
+		TotBackoffTimes:     make(map[string]int),
 	}
 
 	backoffs := []string{"rpcTiKV", "rpcPD", "regionMiss"}
 	for _, backoff := range backoffs {
-		copTasks.MaxBackoffTime[backoff] = time.Millisecond * 200
-		copTasks.MaxBackoffAddress[backoff] = "127.0.0.1"
-		copTasks.AvgBackoffTime[backoff] = time.Millisecond * 200
-		copTasks.P90BackoffTime[backoff] = time.Millisecond * 200
-		copTasks.TotBackoffTime[backoff] = time.Millisecond * 200
+		copTasks.BackoffTimeStatsMap[backoff] = execdetails.TaskTimeStats{
+			MaxTime:    time.Millisecond * 200,
+			MaxAddress: "127.0.0.1",
+			AvgTime:    time.Millisecond * 200,
+			P90Time:    time.Millisecond * 200,
+			TotTime:    time.Millisecond * 200,
+		}
 		copTasks.TotBackoffTimes[backoff] = 200
 	}
 
@@ -494,7 +498,7 @@ func TestGetReuseChunk(t *testing.T) {
 	chk1 = sessVars.GetChunkAllocator().Alloc(fieldTypes, initCap, initCap)
 	require.NotNil(t, chk1)
 	chunkReuseMap[chk1] = struct{}{}
-	for i := 0; i < chk1.NumCols(); i++ {
+	for i := range chk1.NumCols() {
 		columnReuseMap[chk1.Column(i)] = struct{}{}
 	}
 	require.True(t, sessVars.GetUseChunkAlloc())
@@ -504,7 +508,7 @@ func TestGetReuseChunk(t *testing.T) {
 	require.NotNil(t, chkres1)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
-	for i := 0; i < chkres1.NumCols(); i++ {
+	for i := range chkres1.NumCols() {
 		_, exist := columnReuseMap[chkres1.Column(i)]
 		require.True(t, exist)
 	}

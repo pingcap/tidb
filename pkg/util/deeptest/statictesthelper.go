@@ -142,7 +142,7 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 		for i := range valA.NumField() {
 			h.assertDeepClonedEqual(t, valA.Field(i), valB.Field(i), path+"."+valA.Type().Field(i).Name)
 		}
-	case reflect.Ptr:
+	case reflect.Ptr, reflect.UnsafePointer:
 		if valA.IsNil() && valB.IsNil() {
 			return
 		}

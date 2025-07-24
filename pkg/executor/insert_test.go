@@ -273,15 +273,15 @@ func TestAllocateContinuousRowID(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		idx := i
 		wg.Run(func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				k := strconv.Itoa(idx*100 + j)
 				sql := "insert into t1(a,b) values (" + k + ", 2)"
-				for t := 0; t < 20; t++ {
+				for range 20 {
 					sql += ",(" + k + ",2)"
 				}
 				tk.MustExec(sql)
@@ -516,7 +516,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		newTk.MustExec("use test")
 		newTk.MustExec("begin")
-		for i := 0; i < loops; i++ {
+		for range loops {
 			newTk.MustExec("insert temp_test value(0)")
 			newTk.MustExec("insert temp_test value(0), (0)")
 		}
@@ -525,7 +525,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk.MustExec("commit")
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		wg.Run(insertFunc)
 	}
 	wg.Wait()
@@ -720,4 +720,40 @@ func TestInsertLargeRow(t *testing.T) {
 	// the unistore arena blocksize is 8MB (8388608 bytes), so Unistore cannot handle larger rows than that!
 	// since a row cannot span multiple arena blocks.
 	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "unistore lock entry too big")
+}
+
+func TestInsertDuplicateToGeneratedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+		CREATE TABLE tmv (
+  			J1 json,
+			J2 json GENERATED ALWAYS AS (j1) VIRTUAL,
+  			UNIQUE KEY i1 ((cast(j1 as signed array))),
+  			KEY i2 ((cast(j2 as signed array))))`)
+	tk.MustExec("insert into tmv set j1 = '[1]'")
+	tk.MustExec("insert ignore into tmv set j1 = '[1]' on duplicate key update j1 = '[2]'")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table tmv;")
+	}
+
+	tk.MustExec(`
+		CREATE TABLE ttime (
+			id int primary key,
+			t1 datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			t2 datetime GENERATED ALWAYS AS (date_add(t1, interval 1 day)) VIRTUAL,
+			t3 datetime GENERATED ALWAYS AS (date_add(t2, interval 1 day)) VIRTUAL,
+			t4 datetime GENERATED ALWAYS AS (date_sub(t2, interval 10 MINUTE)) VIRTUAL,
+			UNIQUE KEY i1 (t1),
+			UNIQUE KEY i2 (t2),
+			UNIQUE KEY i3 (id, t3),
+			KEY i4 (t4))`)
+	tk.MustExec(`insert into ttime set id = 1, t1 = "2011-12-20 17:15:50"`)
+	tk.MustExec("insert into ttime set id = 1 on duplicate key update id = 2")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table ttime;")
+	}
 }

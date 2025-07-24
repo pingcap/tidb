@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -319,7 +320,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
-		for i := 0; i < len(rows); i++ {
+		for i := range rows {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
@@ -521,7 +522,7 @@ func TestIssue60047(t *testing.T) {
 	partition p2 values less than ('90'));`)
 
 	// initialize the data.
-	for i := 0; i < 90; i++ {
+	for i := range 90 {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
 	}
 
@@ -633,7 +634,8 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	tk2.MustExec("alter table t2 add index idx2(c2)")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 
 	prepareFn()
 	tk.MustExec("truncate table t1")
@@ -649,7 +651,8 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, ".*8028.*Information schema is changed during the execution of the statement.*", err.Error())
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 }
 
 func TestSnapshotVersion(t *testing.T) {
@@ -730,37 +733,37 @@ func TestSchemaValidator(t *testing.T) {
 	require.NoError(t, err)
 
 	ts := ver.Ver
-	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	_, res := dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultSucc, res)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
 
 	err = dom.Reload()
 	require.Error(t, err)
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	_, res = dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultSucc, res)
 	time.Sleep(dbTestLease)
 
 	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	ts = ver.Ver
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultUnknown, res)
+	_, res = dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultUnknown, res)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
 	err = dom.Reload()
 	require.NoError(t, err)
 
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	_, res = dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultSucc, res)
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	is := dom.InfoSchema()
-	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil, true)
+	schemaChecker := domain.NewSchemaChecker(dom.GetSchemaValidator(), is.SchemaMetaVersion(), nil, true)
 	// Make sure it will retry one time and doesn't take a long time.
 	domain.SchemaOutOfDateRetryTimes.Store(1)
 	domain.SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)
-	dom.SchemaValidator.Stop()
+	dom.GetSchemaValidator().Stop()
 	_, err = schemaChecker.Check(uint64(123456))
 	require.EqualError(t, err, domain.ErrInfoSchemaExpired.Error())
 }
@@ -1204,27 +1207,31 @@ func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
 
-	job := model.Job{
-		ID:        1,
-		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{},
+	for _, useCloudStorage := range []bool{true, false} {
+		job := model.Job{
+			ID:   1,
+			Type: model.ActionAddIndex,
+			ReorgMeta: &model.DDLReorgMeta{
+				UseCloudStorage: useCloudStorage,
+			},
+		}
+		job.ReorgMeta.Concurrency.Store(4)
+		job.ReorgMeta.BatchSize.Store(128)
+		insertMockJob2Table(tk, &job)
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
+		j := getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 8, j.ReorgMeta.GetConcurrency())
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 256, j.ReorgMeta.GetBatchSize())
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 16, j.ReorgMeta.GetConcurrency())
+		require.Equal(t, 512, j.ReorgMeta.GetBatchSize())
+		deleteJobMetaByID(tk, job.ID)
 	}
-	job.ReorgMeta.Concurrency.Store(4)
-	job.ReorgMeta.BatchSize.Store(128)
-	insertMockJob2Table(tk, &job)
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
-	j := getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, 8, j.ReorgMeta.GetConcurrency())
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, 256, j.ReorgMeta.GetBatchSize())
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, 16, j.ReorgMeta.GetConcurrency())
-	require.Equal(t, 512, j.ReorgMeta.GetBatchSize())
-	deleteJobMetaByID(tk, job.ID)
 }
 
 func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
@@ -1275,21 +1282,7 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
-	deleteJobMetaByID(tk, 1)
-
-	job = model.Job{
-		ID:   1,
-		Type: model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{
-			IsDistReorg:     true,
-			UseCloudStorage: true,
-		},
-	}
-	insertMockJob2Table(tk, &job)
-	// unsupported job type
-	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 }
 
@@ -1320,7 +1313,7 @@ func TestGetAllTableInfos(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	for i := 0; i < 113; i++ {
+	for i := range 113 {
 		tk.MustExec(fmt.Sprintf("create database test%d", i))
 		tk.MustExec(fmt.Sprintf("use test%d", i))
 		tk.MustExec("create table t1 (a int)")
@@ -1358,4 +1351,18 @@ func TestGetAllTableInfos(t *testing.T) {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
 		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
+}
+
+func TestGetVersionFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	// Simulate the failure of getting the current version twice.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)")
+
+	tk.MustExec("alter table t add column b int")
 }

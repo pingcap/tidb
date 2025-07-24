@@ -15,45 +15,91 @@
 package bindinfo_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
-func TestShowPlanForSQLBasic(t *testing.T) {
+func TestGenPlanWithSCtx(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key(a), key(b))`)
+
+	p := parser.New()
+	sctx := tk.Session()
+	sctx.GetSessionVars().CostModelVersion = 2
+	check := func(sql, expectedHint, expectedPlan string) {
+		p.Reset()
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		planDigest, planHint, planText, err := bindinfo.GenBriefPlanWithSCtx(sctx, stmt)
+		require.NoError(t, err)
+		require.True(t, len(planDigest) > 0)
+		require.True(t, strings.Contains(planHint, expectedHint))
+		planOperators := make([]string, 0, len(planText))
+		for _, row := range planText {
+			planOperators = append(planOperators, row[0])
+		}
+		require.True(t, strings.Contains(strings.Join(planOperators, ","), expectedPlan))
+	}
+	check("select count(1) from t1 where a=1",
+		"stream_agg", "StreamAgg")
+
+	sctx.GetSessionVars().StreamAggCostFactor = 10000
+	check("select count(1) from t1 where a=1",
+		"hash_agg", "HashAgg")
+	sctx.GetSessionVars().StreamAggCostFactor = 1
+
+	check("select * from t1, t2 where t1.a=t2.a and t2.b=1",
+		"inl_hash_join", "IndexHashJoin")
+
+	sctx.GetSessionVars().IndexJoinCostFactor = 100000
+	sctx.GetSessionVars().HashJoinCostFactor = 100000
+	check("select * from t1, t2 where t1.a=t2.a and t2.b=1",
+		"merge_join", `MergeJoin`)
+}
+
+func TestExplainExploreBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec(`create table t (a int, b int, c varchar(10), key(a))`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b=1"`).Rows()) == 0)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b=1`).Rows()) == 1)
 	tk.MustExec(`create global binding using select a from t where b=1`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b=1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "SELECT a FROM t WHERE b=1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "SELECT a FROM t WHERE b= 1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "     SELECT  a FROM test.t WHERE b= 1"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "23109784b802bcef5398dd81d3b1c5b79200c257c101a5b9f90758206f3d09ed"`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b=1`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore SELECT a FROM t WHERE b=1`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore SELECT a FROM t WHERE b= 1`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore      SELECT  a FROM test.t WHERE b= 1`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore "23109784b802bcef5398dd81d3b1c5b79200c257c101a5b9f90758206f3d09ed"`).Rows()) >= 1)
 
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1, 2, 3)"`).Rows()) == 0)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1, 2, 3)`).Rows()) == 1)
 	tk.MustExec(`create global binding using select a from t where b in (1, 2, 3)`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1, 2, 3)"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1, 2)"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where b in (1)"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "SELECT a from t WHere b in (1)"`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1, 2, 3)`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1, 2)`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where b in (1)`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore SELECT a from t WHere b in (1)`).Rows()) == 2)
 
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = ''"`).Rows()) == 0)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = ''`).Rows()) == 1)
 	tk.MustExec(`create global binding using select a from t where c = ''`)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = ''"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = '123'"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = '\"'"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = '              '"`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for 'select a from t where c = ""'`).Rows()) == 1)
-	require.True(t, len(tk.MustQuery(`show plan for 'select a from t where c = "\'"'`).Rows()) == 1)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = ''`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = '123'`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = '\"'`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = '              '`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = ""`).Rows()) == 2)
+	require.True(t, len(tk.MustQuery(`explain explore select a from t where c = "\'"`).Rows()) == 2)
 
-	tk.MustExecToErr("show plan for 'xxx'", "")
-	tk.MustExecToErr("show plan for 'SELECT A FROM'", "")
+	tk.MustExecToErr("explain explore 'xxx'", "")
+	tk.MustExecToErr("explain explore SELECT A FROM", "")
 }
 
 func TestIsSimplePointPlan(t *testing.T) {
@@ -81,69 +127,139 @@ func TestIsSimplePointPlan(t *testing.T) {
 	require.False(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         HashJoin    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
         └─Point_Get_5   root    1       table:t, handle:2               0       time:143.2µs, open:1.71µs, close:5.92µs, loops:1, Get:{num_rpc:1, total_time:40µs}      N/A             N/A`))
+	require.False(t, bindinfo.IsSimplePointPlan(``))
+	require.False(t, bindinfo.IsSimplePointPlan(`  \n   `))
 }
 
-func TestShowPlanRecommendation(t *testing.T) {
-	pointPlan := `       id  task    estRows operator info  actRows execution info  memory          disk
-        Projection_4    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
-        └─Point_Get_5   root    1       table:t, handle:2               0       time:143.2µs, open:1.71µs, close:5.92µs, loops:1, Get:{num_rpc:1, total_time:40µs}      N/A             N/A`
-	batchPointPlan := `id                      task    estRows operator info                                           actRows execution info                                                                                                                    memory          disk
-        Projection_4            root    3.00    plus(test.t.a, 1)->Column#3                             0       time:218.3µs, open:14.5µs, close:9.79µs, loops:1, Concurrency:OFF                                                                 145 Bytes       N/A
-        └─Batch_Point_Get_5     root    3.00    table:t, handle:[1 2 3], keep order:false, desc:false   0       time:201.1µs, open:3.83µs, close:6.46µs, loops:1, BatchGet:{num_rpc:2, total_time:65.7µs}, rpc_errors:{epoch_not_match:1} N/A             N/A   `
-	nonPointPlan := `       id                      task            estRows operator info                           actRows execution info memory          disk
-        TableReader_5           root            10000   data:TableFullScan_4                    0       time:456.3µs, open:141µs, close:6.79µs, loops:1, cop_task: {num: 1, max: 241.3µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 91.5µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:203.9µs}}      182 Bytes       N/A
-        └─TableFullScan_4       cop[tikv]       10000   table:t, keep order:false, stats:pseudo 0       tikv_task:{time:155.2µs, loops:0}                                                                                                                                                                                                         N/A             N/A `
+func TestRelevantOptVarsAndFixes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, c varchar(10), key(a), key(b))`)
+	tk.MustExec(`create table t2 (a int, b int, c varchar(10), key(a), key(b))`)
 
-	// Test rule 1
-	p1 := &bindinfo.BindingPlanInfo{
-		Plan:                 nonPointPlan,
-		AvgLatency:           100,
-		ExecTimes:            100,
-		AvgScanRows:          100,
-		AvgReturnedRows:      100,
-		LatencyPerReturnRow:  100,
-		ScanRowsPerReturnRow: 100,
+	var input []string
+	var output []struct {
+		Vars  string
+		Fixes string
 	}
-	p2 := &bindinfo.BindingPlanInfo{
-		Plan:                 pointPlan,
-		AvgLatency:           100,
-		ExecTimes:            100,
-		AvgScanRows:          100,
-		AvgReturnedRows:      100,
-		LatencyPerReturnRow:  100,
-		ScanRowsPerReturnRow: 100,
+	bindingAutoSuiteData.LoadTestCases(t, &input, &output)
+	p := parser.New()
+	for i, sql := range input {
+		p.Reset()
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		vars, fixes, err := bindinfo.RecordRelevantOptVarsAndFixes(tk.Session(), stmt)
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].Vars = fmt.Sprintf("%v", vars)
+			output[i].Fixes = fmt.Sprintf("%v", fixes)
+		})
+		require.Equal(t, fmt.Sprintf("%v", vars), output[i].Vars)
+		require.Equal(t, fmt.Sprintf("%v", fixes), output[i].Fixes)
+	}
+}
+
+func TestExplainExploreInStmtStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustQuery(`explain explore select count(1) from t where a=1`)
+	rs := tk.MustQuery("select digest_text, sample_user from information_schema.tidb_statements_stats where digest_text = 'select count ( ? ) from `t` where `a` = ?'").Rows()
+	require.True(t, len(rs) > 0)
+	require.True(t, rs[0][1].(string) != "") // user name is not empty
+}
+
+func TestExplainExploreAnalyze(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`insert into t values (1, 2), (2, 3), (3, 4), (4, 5)`)
+
+	checkExecInfo := func(sql string, hasExecInfo bool) {
+		rs := tk.MustQuery(sql).Rows()
+		for _, row := range rs {
+			latency := row[4].(string)
+			execTimes := row[5].(string)
+			retRows := row[7].(string)
+			if !hasExecInfo {
+				require.Equal(t, latency, "0")
+				require.Equal(t, execTimes, "0")
+				require.Equal(t, retRows, "0")
+			} else {
+				require.NotEqual(t, latency, "0")
+				require.NotEqual(t, execTimes, "0")
+				require.NotEqual(t, retRows, "0")
+			}
+		}
 	}
 
-	bindinfo.FillRecommendation([]*bindinfo.BindingPlanInfo{p1, p2})
-	require.Equal(t, p2.Recommend, "YES (rule-based)")
-	require.Equal(t, p2.Reason, "Simple PointGet or BatchPointGet is the best plan")
-	p2.Recommend, p2.Reason = "", ""
+	checkExecInfo(`explain explore select * from t where a=1`, false)
+	checkExecInfo(`explain explore analyze select * from t where a=1`, true)
+	checkExecInfo(`explain explore select * from t where b<10`, false)
+	checkExecInfo(`explain explore analyze select * from t where b<10`, true)
+	checkExecInfo(`explain explore select count(1) from t where b<10`, false)
+	checkExecInfo(`explain explore analyze select count(1) from t where b<10`, true)
+}
 
-	p1.Plan, p2.Plan = batchPointPlan, nonPointPlan
-	bindinfo.FillRecommendation([]*bindinfo.BindingPlanInfo{p1, p2})
-	require.Equal(t, p1.Recommend, "YES (rule-based)")
-	require.Equal(t, p1.Reason, "Simple PointGet or BatchPointGet is the best plan")
-	p1.Reason, p1.Recommend = "", ""
+func TestExplainExploreVerifyAndBind(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`insert into t values (1, 2), (2, 3), (3, 4), (4, 5)`)
 
-	// Test rule 2
-	p1.Plan, p2.Plan = nonPointPlan, nonPointPlan
-	p2.ScanRowsPerReturnRow = 30
-	bindinfo.FillRecommendation([]*bindinfo.BindingPlanInfo{p1, p2})
-	require.Equal(t, p2.Recommend, "YES (rule-based)")
-	require.Equal(t, p2.Reason, "Plan's scan_rows_per_returned_row is 50% better than others'")
-	p2.ScanRowsPerReturnRow = 100
-	p2.Recommend, p2.Reason = "", ""
+	tk.MustQuery(`select * from t`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	require.True(t, len(tk.MustQuery(`show global bindings`).Rows()) == 0) // no binding
 
-	// Test rule 3
-	p1.AvgLatency = 30
-	p1.AvgScanRows = 30
-	p1.LatencyPerReturnRow = 30
-	bindinfo.FillRecommendation([]*bindinfo.BindingPlanInfo{p1, p2})
-	require.Equal(t, p1.Recommend, "YES (rule-based)")
-	require.Equal(t, p1.Reason, "Plan's latency, scan_rows and latency_per_returned_row are 50% better than others'")
-	p1.Reason, p1.Recommend = "", ""
+	rs := tk.MustQuery(`explain explore select * from t`).Rows()
+	runStmt := rs[0][12].(string)     // explain analyze <plan_digest>
+	bindingStmt := rs[0][13].(string) // create global binding from history using plan digest <plan_digest>
 
-	p1.AvgLatency = 60
-	bindinfo.FillRecommendation([]*bindinfo.BindingPlanInfo{p1, p2})
-	require.Equal(t, p1.Recommend, "")
+	require.True(t, strings.HasPrefix(runStmt, "EXPLAIN ANALYZE"))
+	require.True(t, strings.HasPrefix(bindingStmt, "CREATE GLOBAL BINDING"))
+
+	rs = tk.MustQuery(runStmt).Rows()
+	require.True(t, strings.Contains(rs[0][0].(string), "TableReader")) // table scan and no error
+
+	tk.MustExec(bindingStmt)
+	tk.MustQuery(`select * from t`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	require.True(t, len(tk.MustQuery(`show global bindings`).Rows()) == 1)
+}
+
+func TestPlanGeneration(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
+	tk.MustExec(`create table t1 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t3 (a int, b int, c int, key(a), key(b))`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan [][]string
+	}
+	bindingAutoSuiteData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		rows := tk.MustQuery(sql).Rows()
+		for rowID, row := range rows {
+			plan := strings.Split(strings.Replace(row[2].(string), "\t", "  ", -1), "\n")
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				if len(output[i].Plan) < rowID {
+					output[i].Plan[rowID] = plan
+				} else {
+					output[i].Plan = append(output[i].Plan, plan)
+				}
+			})
+			require.Equal(t, output[i].Plan[rowID], plan)
+		}
+	}
 }

@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -189,9 +189,9 @@ func TestTwoStates(t *testing.T) {
 		execCases: cnt,
 		sqlInfos:  make([]*sqlInfo, 4),
 	}
-	for i := 0; i < len(testInfo.sqlInfos); i++ {
+	for i := range testInfo.sqlInfos {
 		sqlInfo := &sqlInfo{cases: make([]*stateCase, cnt)}
-		for j := 0; j < cnt; j++ {
+		for j := range cnt {
 			sqlInfo.cases[j] = new(stateCase)
 		}
 		testInfo.sqlInfos[i] = sqlInfo
@@ -280,7 +280,7 @@ func TestTwoStates(t *testing.T) {
 }
 
 type stateCase struct {
-	session            sessiontypes.Session
+	session            sessionapi.Session
 	rawStmt            ast.StmtNode
 	stmt               sqlexec.Statement
 	expectedExecErr    string
@@ -331,7 +331,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 	for _, sqlInfo := range t.sqlInfos {
 		seVars := sqlInfo.cases[0].session.GetSessionVars()
 		charset, collation := seVars.GetCharsetInfo()
-		for j := 0; j < t.execCases; j++ {
+		for j := range t.execCases {
 			sqlInfo.cases[j].rawStmt, err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
 			if err != nil {
 				return errors.Trace(err)

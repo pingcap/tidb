@@ -57,7 +57,7 @@ func (r *recordSet) Fields() []*resolve.ResultField {
 
 func (r *recordSet) setFields(tps ...uint8) {
 	r.fields = make([]*resolve.ResultField, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		rf.Column.FieldType = *types.NewFieldType(tps[i])
@@ -81,10 +81,8 @@ func (r *recordSet) getNext() []types.Datum {
 func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	row := r.getNext()
-	if row != nil {
-		for i := 0; i < len(row); i++ {
-			req.AppendDatum(i, &row[i])
-		}
+	for i := range row {
+		req.AppendDatum(i, &row[i])
 	}
 	return nil
 }
@@ -523,7 +521,7 @@ func SubTestBuild() func(*testing.T) {
 		require.Equal(t, 0.0, count)
 		count, _ = col.EqualRowCount(nil, types.NewIntDatum(200000000), false)
 		require.Equal(t, 0.0, count)
-		count = col.BetweenRowCount(nil, types.NewIntDatum(3000), types.NewIntDatum(3500))
+		count = col.BetweenRowCount(ctx, types.NewIntDatum(3000), types.NewIntDatum(3500))
 		require.Equal(t, 4994, int(count))
 		count = col.LessRowCount(nil, types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
@@ -549,7 +547,7 @@ func SubTestBuild() func(*testing.T) {
 		require.Equal(t, 90010, int(count))
 		count = colv2.GreaterRowCount(types.NewIntDatum(200000000))
 		require.Equal(t, 0.0, count)
-		count = colv2.BetweenRowCount(nil, types.NewIntDatum(3000), types.NewIntDatum(3500))
+		count = colv2.BetweenRowCount(ctx, types.NewIntDatum(3000), types.NewIntDatum(3500))
 		require.Equal(t, 5001, int(count))
 		count = colv2.LessRowCount(nil, types.NewIntDatum(1))
 		require.Equal(t, 0, int(count))
@@ -581,9 +579,9 @@ func SubTestBuild() func(*testing.T) {
 		require.Equal(t, 1, int(count))
 		count = col.LessRowCount(nil, encodeKey(types.NewIntDatum(20000)))
 		require.Equal(t, 19999, int(count))
-		count = col.BetweenRowCount(nil, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
+		count = col.BetweenRowCount(ctx, encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
 		require.Equal(t, 4999, int(count))
-		count = col.BetweenRowCount(nil, encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
+		count = col.BetweenRowCount(ctx, encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
 		require.Equal(t, 0, int(count))
 		count = col.LessRowCount(nil, encodeKey(types.NewIntDatum(0)))
 		require.Equal(t, 0, int(count))
@@ -598,7 +596,7 @@ func SubTestBuild() func(*testing.T) {
 		require.Equal(t, 1, int(count))
 		count = col.LessRowCount(nil, types.NewIntDatum(20000))
 		require.Equal(t, 20000, int(count))
-		count = col.BetweenRowCount(nil, types.NewIntDatum(30000), types.NewIntDatum(35000))
+		count = col.BetweenRowCount(ctx, types.NewIntDatum(30000), types.NewIntDatum(35000))
 		require.Equal(t, 5000, int(count))
 		count = col.GreaterRowCount(types.NewIntDatum(1001))
 		require.Equal(t, 98998, int(count))
@@ -637,16 +635,15 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 }
 
 func TestPruneTopN(t *testing.T) {
-	var topnIn, topnOut []TopNMeta
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
 	// case 1
-	topnIn = []TopNMeta{{[]byte{1}, 100_000}}
+	topnIn := []TopNMeta{{[]byte{1}, 100_000}}
 	totalNDV = 2
 	nullCnt = 0
 	sampleRows = 100_010
 	totalRows = 500_050
-	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	topnOut := pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
 	require.Equal(t, topnIn, topnOut)
 
 	// case 2
@@ -665,7 +662,7 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 3
 	topnIn = nil
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 10_000})
 	}
 	totalNDV = 100
@@ -689,7 +686,7 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 5 - test pruning of value=1
 	topnIn = nil
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 90})
 	}
 	topnPruned := topnIn

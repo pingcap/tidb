@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,19 +32,41 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+func TestMySQLDBTables(t *testing.T) {
+	testTableBasicInfoSlice(t, tablesInSystemDatabase)
+	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
+	for _, v := range ddlTableVersionTables {
+		for _, tbl := range v.tables {
+			reservedIDs = append(reservedIDs, tbl.ID)
+		}
+	}
+	for _, tbl := range tablesInSystemDatabase {
+		reservedIDs = append(reservedIDs, tbl.ID)
+	}
+	for _, db := range systemDatabases {
+		reservedIDs = append(reservedIDs, db.ID)
+	}
+	slices.Sort(reservedIDs)
+	require.IsIncreasing(t, reservedIDs, "used IDs should be in increasing order")
+	require.Greater(t, reservedIDs[0], metadef.ReservedGlobalIDLowerBound, "reserved ID should be greater than ReservedGlobalIDLowerBound")
+	require.LessOrEqual(t, reservedIDs[len(reservedIDs)-1], metadef.ReservedGlobalIDUpperBound, "reserved ID should be less than or equal to ReservedGlobalIDUpperBound")
+}
 
 // This test file have many problem.
 // 1. Please use testkit to create dom, session and store.
@@ -162,21 +185,18 @@ func TestBootstrapWithError(t *testing.T) {
 		se.tblctx = tblsession.NewMutateContext(se)
 		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
+		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
-		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-		require.NoError(t, err)
-		err = InitMDLTable(store)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.BackfillTableVersion)
-		require.NoError(t, err)
-		err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+		err := InitDDLTables(store)
 		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
 		se.dom = dom
+		se.infoCache = dom.InfoCache()
+		se.schemaValidator = dom.GetSchemaValidator()
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -254,7 +274,7 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
 	// downgrade `mDDLTableVersion`
-	m.SetDDLTables(meta.MDLTableVersion)
+	m.SetDDLTableVersion(meta.MDLTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_background_subtask")
 	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
@@ -286,7 +306,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.DDLNotifierTableVersion)
 
 	// downgrade DDL table version
-	m.SetDDLTables(meta.BackfillTableVersion)
+	m.SetDDLTableVersion(meta.BackfillTableVersion)
 	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -301,7 +321,7 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 	dom.Close()
 }
 
-func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
+func revertVersionAndVariables(t *testing.T, se sessionapi.Session, ver int) {
 	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
@@ -327,7 +347,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, 0, req.NumRows())
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	se1 := CreateSessionAndSetID(t, store)
@@ -374,7 +394,7 @@ func TestUpgrade(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	ver, err = getBootstrapVersion(se2)
@@ -395,7 +415,7 @@ func TestUpgrade(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	rowCnt := req.NumRows()
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		jobType := req.GetRow(i).GetString(3) // get job type.
 		// Should not use multi-schema change in bootstrap DDL because the job arguments may be changed.
 		require.False(t, strings.Contains(jobType, "multi-schema"))
@@ -1119,7 +1139,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -1415,7 +1435,7 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 }
 
 func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -1530,7 +1550,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s sessiontypes.Session) {
+	resetTo139 := func(s sessionapi.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMutator(txn)
@@ -2008,7 +2028,7 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 	dom.Close()
 }
@@ -2055,7 +2075,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 }
 
@@ -2247,12 +2267,13 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV210)
+
+	newSe := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(newSe)
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	seV210.(*session).dom = dom
-	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
+	r := MustExecToRecodeSet(t, newSe, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -2321,6 +2342,20 @@ func TestTiDBUpgradeToVer212(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 	// the columns are changed automatically
 	MustExec(t, seCurVer, "select sample_sql, start_time, plan_digest from mysql.tidb_runaway_queries")
+}
+
+func TestIssue61890(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	s1 := CreateSessionAndSetID(t, store)
+	MustExec(t, s1, "drop table mysql.global_variables")
+	MustExec(t, s1, "create table mysql.global_variables(`VARIABLE_NAME` varchar(64) NOT NULL PRIMARY KEY clustered, `VARIABLE_VALUE` varchar(16383) DEFAULT NULL)")
+
+	s2 := CreateSessionAndSetID(t, store)
+	initGlobalVariableIfNotExists(s2, vardef.TiDBEnableINLJoinInnerMultiPattern, vardef.Off)
+
+	dom.Close()
 }
 
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
@@ -2500,50 +2535,6 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 	require.Equal(t, 1, chk.NumRows())
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
-}
-
-// testExampleAFunc is a example func for TestGetFuncName
-func testExampleAFunc(s sessiontypes.Session, i int64) {}
-
-// testExampleBFunc is a example func for TestGetFuncName
-func testExampleBFunc(s sessiontypes.Session, i int64) {}
-
-func TestGetFuncName(t *testing.T) {
-	// Test case 1: Pass a valid function
-	t.Run("Valid function", func(t *testing.T) {
-		name, err := getFunctionName(testExampleAFunc)
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-		if name != "testExampleAFunc" {
-			t.Errorf("Expected function name 'testExampleAFunc', got: %s", name)
-		}
-	})
-
-	// Test case 2: Pass another valid function
-	t.Run("Another valid function", func(t *testing.T) {
-		name, err := getFunctionName(testExampleBFunc)
-		if err != nil {
-			t.Fatalf("Expected no error, got: %v", err)
-		}
-		if name != "testExampleBFunc" {
-			t.Errorf("Expected function name 'testExampleBFunc', got: %s", name)
-		}
-	})
-
-	// Test case 3: Pass nil as the function
-	t.Run("Nil function", func(t *testing.T) {
-		name, err := getFunctionName(nil)
-		if err == nil {
-			t.Fatalf("Expected an error, got nil")
-		}
-		if name != "" {
-			t.Errorf("Expected empty function name, got: %s", name)
-		}
-		if err.Error() != "function is nil" {
-			t.Errorf("Expected error 'function is nil', got: %v", err)
-		}
-	})
 }
 
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {

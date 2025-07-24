@@ -15,13 +15,17 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -34,17 +38,82 @@ var (
 	_ base.Task = &CopTask{}
 )
 
+type simpleWarnings struct {
+	warnings []*context.SQLWarn
+}
+
+// WarningCount returns the number of warnings.
+func (s *simpleWarnings) WarningCount() int {
+	return len(s.warnings)
+}
+
+// Copy implemented the simple warnings copy to avoid use the same warnings slice for different task instance.
+func (s *simpleWarnings) Copy(src *simpleWarnings) {
+	warnings := make([]*context.SQLWarn, 0, len(src.warnings))
+	warnings = append(warnings, src.warnings...)
+	s.warnings = warnings
+}
+
+// CopyFrom copy the warnings from src to s.
+func (s *simpleWarnings) CopyFrom(src ...*simpleWarnings) {
+	if src == nil {
+		return
+	}
+	length := 0
+	for _, one := range src {
+		if one == nil {
+			continue
+		}
+		length += one.WarningCount()
+	}
+	s.warnings = make([]*context.SQLWarn, 0, length)
+	for _, one := range src {
+		if one == nil {
+			continue
+		}
+		s.warnings = append(s.warnings, one.warnings...)
+	}
+}
+
+// AppendWarning appends a warning to the warnings slice.
+func (s *simpleWarnings) AppendWarning(warn error) {
+	if len(s.warnings) < math.MaxUint16 {
+		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelWarning, Err: warn})
+	}
+}
+
+// AppendNote appends a note to the warnings slice.
+func (s *simpleWarnings) AppendNote(note error) {
+	if len(s.warnings) < math.MaxUint16 {
+		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelNote, Err: note})
+	}
+}
+
+// GetWarnings returns the internal all stored warnings.
+func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
+	// we just reuse and reorganize pointer of warning elem across different level's
+	// task warnings slice to avoid copy them totally leading mem cost.
+	// when best task is finished and final warnings is determined, we should convert
+	// pointer to struct to append it to session context.
+	warnings := make([]context.SQLWarn, 0, len(s.warnings))
+	for _, w := range s.warnings {
+		warnings = append(warnings, *w)
+	}
+	return warnings
+}
+
 // ************************************* RootTask Start ******************************************
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type RootTask struct {
-	p       base.PhysicalPlan
-	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
-	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
+	p base.PhysicalPlan
 
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
+	warnings simpleWarnings
 }
 
 // GetPlan returns the root task's plan.
@@ -57,28 +126,26 @@ func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
 }
 
-// IsEmpty indicates whether root task is empty.
-func (t *RootTask) IsEmpty() bool {
-	return t.isEmpty
-}
-
-// SetEmpty set the root task as empty.
-func (t *RootTask) SetEmpty(x bool) {
-	t.isEmpty = x
-}
-
 // Copy implements Task interface.
 func (t *RootTask) Copy() base.Task {
-	return &RootTask{
+	nt := &RootTask{
 		p: t.p,
 
 		// when copying, just copy it out.
 		IndexJoinInfo: t.IndexJoinInfo,
 	}
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// because different task instance should have different warning slice.
+	nt.warnings.Copy(&t.warnings)
+	return nt
 }
 
 // ConvertToRootTask implements Task interface.
 func (t *RootTask) ConvertToRootTask(_ base.PlanContext) base.Task {
+	// root -> root, only copy another one instance.
+	// *p: a new pointer to pointer current task's physic plan
+	// warnings: a new slice to store current task-bound(p-bound) warnings.
+	// *indexInfo: a new pointer to inherit the index join info upward if necessary.
 	return t.Copy().(*RootTask)
 }
 
@@ -109,6 +176,11 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 	return sum
 }
 
+// AppendWarning appends a warning
+func (t *RootTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
+}
+
 // ************************************* RootTask End ******************************************
 
 // ************************************* MPPTask Start ******************************************
@@ -136,6 +208,9 @@ type MppTask struct {
 	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
 	rootTaskConds []expression.Expression
 	tblColHists   *statistics.HistColl
+
+	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
+	warnings simpleWarnings
 }
 
 // Count implements Task interface.
@@ -146,6 +221,9 @@ func (t *MppTask) Count() float64 {
 // Copy implements Task interface.
 func (t *MppTask) Copy() base.Task {
 	nt := *t
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// cause different task instance should have different warning slice.
+	nt.warnings.Copy(&t.warnings)
 	return &nt
 }
 
@@ -177,8 +255,20 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 	return
 }
 
+// AppendWarning appends a warning
+func (t *MppTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
+}
+
 // ConvertToRootTaskImpl implements Task interface.
-func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
+func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
+	defer func() {
+		// mppTask should inherit the indexJoinInfo upward.
+		// because mpp task bottom doesn't form the indexJoin related cop task.
+		if t.warnings.WarningCount() > 0 {
+			rt.warnings.CopyFrom(&t.warnings)
+		}
+	}()
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
 	sender := PhysicalExchangeSender{
@@ -192,14 +282,14 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
 	collectPartitionInfosFromMPPPlan(p, t.p)
-	rt := &RootTask{}
+	rt = &RootTask{}
 	rt.SetPlan(p)
 
 	if len(t.rootTaskConds) > 0 {
 		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
 		// so this Selection will be executed in TiDB.
 		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
+		_, isSelection := t.p.(*physicalop.PhysicalSelection)
 		if isSelection {
 			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
 		}
@@ -215,8 +305,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
-		sel.fromDataSource = true
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
+		sel.FromDataSource = true
 		sel.SetChildren(rt.GetPlan())
 		rt.SetPlan(sel)
 	}
@@ -269,6 +359,14 @@ type CopTask struct {
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// warnings passed through different task copy attached with more upper operator specific warnings. (not concurrent safe)
+	warnings simpleWarnings
+}
+
+// AppendWarning appends a warning
+func (t *CopTask) AppendWarning(err error) {
+	t.warnings.AppendWarning(err)
 }
 
 // Invalid implements Task interface.
@@ -287,6 +385,9 @@ func (t *CopTask) Count() float64 {
 // Copy implements Task interface.
 func (t *CopTask) Copy() base.Task {
 	nt := *t
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// cause different task instance should have different warning slice.
+	nt.warnings.Copy(&t.warnings)
 	return &nt
 }
 
@@ -348,6 +449,9 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			// return indexJoinInfo upward, when copTask is converted to rootTask.
 			rt.IndexJoinInfo = t.IndexJoinInfo
 		}
+		if t.warnings.WarningCount() > 0 {
+			rt.warnings.CopyFrom(&t.warnings)
+		}
 	}()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
@@ -358,17 +462,12 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if t.tablePlan != nil {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
-		prevSchema := ts.schema.Clone()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+		prevSchema := ts.Schema().Clone()
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add a projection to make sure not to output extract columns.
 			t.needExtraProj = true
@@ -385,11 +484,10 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			KeepOrder:          t.keepOrder,
 		}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
-		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
@@ -407,12 +505,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	} else {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalHashJoin)
-				tp = join.Children()[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{
@@ -436,7 +529,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}
 
 		if t.needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)

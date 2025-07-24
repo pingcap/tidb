@@ -64,7 +64,7 @@ func getConstructorList(t types.Type, ignoreFields map[string]struct{}) []string
 		}
 	}
 	var ctors []string
-	for i := 0; i < structTyp.NumFields(); i++ {
+	for i := range structTyp.NumFields() {
 		field := structTyp.Field(i)
 		named, ok := field.Type().(*types.Named)
 		if !ok {

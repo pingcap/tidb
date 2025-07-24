@@ -827,7 +827,7 @@ func testCallProxyMethod(
 		actualRets = callMethod(args)
 	})
 	require.Equal(t, inuse, se.internal.Inuse())
-	for i := 0; i < len(actualRets); i++ {
+	for i := range actualRets {
 		if i < len(actualRets)-1 {
 			require.Nil(t, actualRets[i], fmt.Sprintf("%d: %v", i, actualRets[i]))
 		} else {
@@ -1331,7 +1331,7 @@ func TestSessionThreadUnsafeOperations(t *testing.T) {
 				require.Equal(t, uint64(1), se.internal.inUse)
 				require.Equal(t, uint64(1), se.internal.unsafe)
 				// other operations should return errors
-				for j := 0; j < 3; j++ {
+				for j := range 3 {
 					next := i + j
 					if next >= len(operations) {
 						next = len(operations) - 1

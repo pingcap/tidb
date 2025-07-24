@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -529,10 +530,8 @@ func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	for _, v := range mysql.StaticGlobalOnlyPrivs {
-		if v == priv.Priv {
-			return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
-		}
+	if slices.Contains(mysql.StaticGlobalOnlyPrivs, priv.Priv) {
+		return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 	}
 
 	dbName := e.Level.DBName

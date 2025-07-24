@@ -23,26 +23,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-// A plan is dataAccesser means it can access underlying data.
-// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
-// ExplainInfo = AccessObject + OperatorInfo
-type dataAccesser interface {
-
-	// AccessObject return plan's `table`, `partition` and `index`.
-	AccessObject() base.AccessObject
-
-	// OperatorInfo return other operator information to be explained.
-	OperatorInfo(normalized bool) string
-}
-
-type partitionAccesser interface {
-	accessObject(base.PlanContext) base.AccessObject
-}
 
 // DynamicPartitionAccessObject represents the partitions accessed by the children of this operator.
 // It's mainly used in dynamic pruning mode.
@@ -119,93 +104,6 @@ func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 	}
 }
 
-// IndexAccess represents the index accessed by an operator.
-type IndexAccess struct {
-	Name             string
-	Cols             []string
-	IsClusteredIndex bool
-}
-
-// ToPB turns itself into a protobuf message.
-func (a *IndexAccess) ToPB() *tipb.IndexAccess {
-	if a == nil {
-		return nil
-	}
-	return &tipb.IndexAccess{
-		Name:             a.Name,
-		Cols:             a.Cols,
-		IsClusteredIndex: a.IsClusteredIndex,
-	}
-}
-
-// ScanAccessObject represents the access to a table.
-// It may also represent the access to indexes and partitions of a table.
-type ScanAccessObject struct {
-	Database   string
-	Table      string
-	Indexes    []IndexAccess
-	Partitions []string
-}
-
-// NormalizedString implements AccessObject.
-func (s *ScanAccessObject) NormalizedString() string {
-	var b strings.Builder
-	if len(s.Table) > 0 {
-		b.WriteString("table:" + s.Table)
-	}
-	if len(s.Partitions) > 0 {
-		b.WriteString(", partition:?")
-	}
-	for _, index := range s.Indexes {
-		if index.IsClusteredIndex {
-			b.WriteString(", clustered index:")
-		} else {
-			b.WriteString(", index:")
-		}
-		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ", ") + ")")
-	}
-	return b.String()
-}
-
-func (s *ScanAccessObject) String() string {
-	var b strings.Builder
-	if len(s.Table) > 0 {
-		b.WriteString("table:" + s.Table)
-	}
-	if len(s.Partitions) > 0 {
-		b.WriteString(", partition:" + strings.Join(s.Partitions, ","))
-	}
-	for _, index := range s.Indexes {
-		if index.IsClusteredIndex {
-			b.WriteString(", clustered index:")
-		} else {
-			b.WriteString(", index:")
-		}
-		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ", ") + ")")
-	}
-	return b.String()
-}
-
-// SetIntoPB implements AccessObject.
-func (s *ScanAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
-	if s == nil || pb == nil {
-		return
-	}
-	pbObj := tipb.ScanAccessObject{
-		Database:   s.Database,
-		Table:      s.Table,
-		Partitions: s.Partitions,
-	}
-	for i := range s.Indexes {
-		pbObj.Indexes = append(pbObj.Indexes, s.Indexes[i].ToPB())
-	}
-	pb.AccessObjects = []*tipb.AccessObject{
-		{
-			AccessObject: &tipb.AccessObject_ScanObject{ScanObject: &pbObj},
-		},
-	}
-}
-
 // OtherAccessObject represents other kinds of access.
 type OtherAccessObject string
 
@@ -233,9 +131,9 @@ func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	}
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
-	res := &ScanAccessObject{
+	res := &access.ScanAccessObject{
 		Database: p.DBName.O,
 	}
 	tblName := p.Table.Name.O
@@ -251,7 +149,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 		}
 	}
 	if len(p.Index.Columns) > 0 {
-		index := IndexAccess{
+		index := access.IndexAccess{
 			Name: p.Index.Name.O,
 		}
 		for _, idxCol := range p.Index.Columns {
@@ -261,14 +159,14 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 				index.Cols = append(index.Cols, idxCol.Name.O)
 			}
 		}
-		res.Indexes = []IndexAccess{index}
+		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
 }
 
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (p *PhysicalTableScan) AccessObject() base.AccessObject {
-	res := &ScanAccessObject{
+	res := &access.ScanAccessObject{
 		Database: p.DBName.O,
 	}
 	tblName := p.Table.Name.O
@@ -283,33 +181,31 @@ func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 			res.Partitions = []string{partitionName}
 		}
 	}
-	if p.AnnIndexExtra != nil {
-		index := IndexAccess{
-			Name: p.AnnIndexExtra.IndexInfo.Name.O,
-		}
-		for _, idxCol := range p.AnnIndexExtra.IndexInfo.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
+	if len(p.UsedColumnarIndexes) > 0 {
+		res.Indexes = make([]access.IndexAccess, 0, len(p.UsedColumnarIndexes))
+		for _, idx := range p.UsedColumnarIndexes {
+			if idx == nil || idx.IndexInfo == nil {
+				continue
 			}
+			index := access.IndexAccess{
+				Name: idx.IndexInfo.Name.O,
+			}
+			for _, idxCol := range idx.IndexInfo.Columns {
+				if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+					index.Cols = append(index.Cols, tblCol.GeneratedExprString)
+				} else {
+					index.Cols = append(index.Cols, idxCol.Name.O)
+				}
+			}
+			res.Indexes = append(res.Indexes, index)
 		}
-		res.Indexes = []IndexAccess{index}
 	}
 	return res
 }
 
-// AccessObject implements dataAccesser interface.
-func (p *PhysicalMemTable) AccessObject() base.AccessObject {
-	return &ScanAccessObject{
-		Database: p.DBName.O,
-		Table:    p.Table.Name.O,
-	}
-}
-
-// AccessObject implements dataAccesser interface.
+// AccessObject implements DataAccesser interface.
 func (p *PointGetPlan) AccessObject() base.AccessObject {
-	res := &ScanAccessObject{
+	res := &access.ScanAccessObject{
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
@@ -324,7 +220,7 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 		}
 	}
 	if p.IndexInfo != nil {
-		index := IndexAccess{
+		index := access.IndexAccess{
 			Name:             p.IndexInfo.Name.O,
 			IsClusteredIndex: p.IndexInfo.Primary && p.TblInfo.IsCommonHandle,
 		}
@@ -335,14 +231,14 @@ func (p *PointGetPlan) AccessObject() base.AccessObject {
 				index.Cols = append(index.Cols, idxCol.Name.O)
 			}
 		}
-		res.Indexes = []IndexAccess{index}
+		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
 }
 
-// AccessObject implements physicalScan interface.
+// AccessObject implements DataAccesser interface.
 func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
-	res := &ScanAccessObject{
+	res := &access.ScanAccessObject{
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
@@ -361,7 +257,7 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 		}
 	}
 	if p.IndexInfo != nil {
-		index := IndexAccess{
+		index := access.IndexAccess{
 			Name:             p.IndexInfo.Name.O,
 			IsClusteredIndex: p.IndexInfo.Primary && p.TblInfo.IsCommonHandle,
 		}
@@ -372,7 +268,7 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 				index.Cols = append(index.Cols, idxCol.Name.O)
 			}
 		}
-		res.Indexes = []IndexAccess{index}
+		res.Indexes = []access.IndexAccess{index}
 	}
 	return res
 }
@@ -418,7 +314,8 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	return res
 }
 
-func (p *PhysicalTableReader) accessObject(sctx base.PlanContext) base.AccessObject {
+// AccessObject implements PartitionAccesser interface.
+func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -487,15 +384,18 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 	return DynamicPartitionAccessObjects{res}
 }
 
-func (p *PhysicalIndexReader) accessObject(sctx base.PlanContext) base.AccessObject {
+// AccessObject implements PartitionAccesser interface.
+func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
-func (p *PhysicalIndexLookUpReader) accessObject(sctx base.PlanContext) base.AccessObject {
+// AccessObject implements PartitionAccesser interface.
+func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
-func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.AccessObject {
+// AccessObject implements PartitionAccesser interface.
+func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -511,7 +411,7 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.Acce
 	return DynamicPartitionAccessObjects{res}
 }
 
-// AccessObject implements physicalScan interface.
+// AccessObject implements DataAccesser interface.
 func (p *PhysicalCTE) AccessObject() base.AccessObject {
 	if p.cteName == p.cteAsName {
 		return OtherAccessObject(fmt.Sprintf("CTE:%s", p.cteName.L))

@@ -97,7 +97,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 						}
 
 						otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
-						for j := 0; j < int(singleKeyNum); j++ {
+						for j := range int(singleKeyNum) {
 							rightCol0Datums = append(rightCol0Datums, i)
 							if j < int(otherConditionSuccessNum) {
 								rightCol1Datums = append(rightCol1Datums, int64(0))
@@ -111,7 +111,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 							expectResultChunk.AppendInt64(1, 1)
 						}
 
-						for j := 0; j < int(singleKeyNum); j++ {
+						for range int(singleKeyNum) {
 							rightCol0Datums = append(rightCol0Datums, i)
 							rightCol1Datums = append(rightCol1Datums, int64(1))
 						}
@@ -131,7 +131,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 					canOtherConditionSuccess := rand.Int31n(10) < 5
 					if canOtherConditionSuccess {
 						otherConditionSuccessNum := rand.Int31n(singleKeyNum) + 1
-						for j := 0; j < int(singleKeyNum); j++ {
+						for j := range int(singleKeyNum) {
 							leftCol0Datums = append(leftCol0Datums, i)
 							if j < int(otherConditionSuccessNum) {
 								leftCol1Datums = append(leftCol1Datums, int64(1))
@@ -148,7 +148,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 							}
 						}
 					} else {
-						for j := 0; j < int(singleKeyNum); j++ {
+						for range int(singleKeyNum) {
 							leftCol0Datums = append(leftCol0Datums, i)
 							leftCol1Datums = append(leftCol1Datums, int64(0))
 							if isAntiSemiJoin {
@@ -165,26 +165,26 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 				leftSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
 				rightSingleKeyNum := rand.Int31n(2*maxChunkSizeInTest) + 1
 
-				for j := 0; j < int(leftSingleKeyNum); j++ {
+				for range int(leftSingleKeyNum) {
 					leftCol0Datums = append(leftCol0Datums, i)
 					leftCol1Datums = append(leftCol1Datums, int64(0))
 				}
 
 				if i%2 == 0 {
-					for j := 0; j < int(rightSingleKeyNum); j++ {
+					for range int(rightSingleKeyNum) {
 						rightCol0Datums = append(rightCol0Datums, i)
 						rightCol1Datums = append(rightCol1Datums, int64(0))
 					}
 
 					if !isAntiSemiJoin {
-						for j := 0; j < int(leftSingleKeyNum); j++ {
+						for range int(leftSingleKeyNum) {
 							expectResultChunk.AppendInt64(0, i)
 							expectResultChunk.AppendInt64(1, 0)
 						}
 					}
 				} else {
 					if isAntiSemiJoin {
-						for j := 0; j < int(leftSingleKeyNum); j++ {
+						for range int(leftSingleKeyNum) {
 							expectResultChunk.AppendInt64(0, i)
 							expectResultChunk.AppendInt64(1, 0)
 						}
@@ -259,7 +259,7 @@ func buildSemiDataSourceAndExpectResult(ctx sessionctx.Context, leftCols []*expr
 		expectResult = sortRows([]*chunk.Chunk{expectResultChunk}, semiJoinRetTypes)
 	} else {
 		resultRowNum := expectResultChunk.NumRows()
-		for i := 0; i < resultRowNum; i++ {
+		for i := range resultRowNum {
 			expectResult = append(expectResult, expectResultChunk.GetRow(i))
 		}
 	}

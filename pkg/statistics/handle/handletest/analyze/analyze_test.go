@@ -82,7 +82,7 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
 	buf1 := bytes.NewBufferString("insert into " + tblName + " values (0)")
 	buf2 := bytes.NewBufferString("insert into " + tblName + " values (100000)")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		buf1.WriteString(fmt.Sprintf(", (%v)", 2))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100002))
 		buf1.WriteString(fmt.Sprintf(", (%v)", 1))
@@ -114,7 +114,7 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 		buf1.WriteString(fmt.Sprintf(", (%v)", i))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
 	}
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		buf1.WriteString(fmt.Sprintf(", (%v)", 0))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100000))
 	}

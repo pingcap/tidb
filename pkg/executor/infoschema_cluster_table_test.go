@@ -365,6 +365,9 @@ func TestTikvRegionStatus(t *testing.T) {
 		"1 test test_t2 1 p_a 1 p1",
 		"1 test test_t2 1 p_b 0 <nil>",
 	))
+
+	// Run the query to ensure virtual schemas are excluded and expect no rows to be returned
+	tk.MustQuery(`SELECT DB_NAME FROM information_schema.TIKV_REGION_STATUS WHERE DB_NAME IN ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA')`).Check(testkit.Rows())
 }
 
 func TestTableStorageStats(t *testing.T) {
@@ -406,7 +409,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 59
+	result := 60
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

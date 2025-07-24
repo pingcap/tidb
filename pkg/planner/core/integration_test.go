@@ -76,7 +76,7 @@ func TestAggPushDownEngine(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
@@ -193,9 +193,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 	// case 1: range partition
 	// 1.1.1 test between castIntAsReal(int) and real
 	tk.MustQuery(`explain select * from t where a between "123" and "199";`).Check(
-		testkit.Rows("TableReader_7 8000.00 root partition:p2 data:Selection_6",
-			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123), le(cast(test.t.a, double BINARY), 199)",
-			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		testkit.Rows("TableReader_8 8000.00 root partition:p2 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123), le(cast(test.t.a, double BINARY), 199)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -205,9 +205,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 
 	// 1.1.2 test between castIntAsReal(int) and real
 	tk.MustQuery(`explain select * from t where a between "123.12" and "199.99";`).Check(
-		testkit.Rows("TableReader_7 8000.00 root partition:p2 data:Selection_6",
-			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 199.99)",
-			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		testkit.Rows("TableReader_8 8000.00 root partition:p2 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 199.99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -217,9 +217,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 
 	// 1.1.3 test between castIntAsReal(int) and real
 	tk.MustQuery(`explain select * from t where a between "ddd" and "99";`).Check(
-		testkit.Rows("TableReader_7 8000.00 root partition:p1 data:Selection_6",
-			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 99)",
-			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		testkit.Rows("TableReader_8 8000.00 root partition:p1 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -229,9 +229,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 
 	// 1.1.4 test between castIntAsReal(int) and real
 	tk.MustQuery(`explain select * from t where a between "123.12" and cast("199.99" as decimal);`).Check(
-		testkit.Rows("TableReader_7 8000.00 root partition:p2,pm data:Selection_6",
-			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 200)",
-			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		testkit.Rows("TableReader_8 8000.00 root partition:p2,pm data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 200)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -241,9 +241,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 
 	// 1.2.1 test between castIntAsDecimal(int) and decimal
 	tk.MustQuery(`explain select * from t where a between 123.12 and 199.99;`).Check(
-		testkit.Rows("TableReader_7 8000.00 root partition:p2 data:Selection_6",
-			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, decimal(10,0) BINARY), 123.12), le(cast(test.t.a, decimal(10,0) BINARY), 199.99)",
-			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		testkit.Rows("TableReader_8 8000.00 root partition:p2 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, decimal(10,0) BINARY), 123.12), le(cast(test.t.a, decimal(10,0) BINARY), 199.99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -259,13 +259,13 @@ func TestCast4PartitionPruning(t *testing.T) {
 	tk.MustExec("insert into t_ts values('2024-11-30 00:00:00'), ('2024-12-01 00:00:00'), ('2024-12-02 00:00:00')")
 	tk.MustQuery("select * from t_ts where report_updated = '2024-12-01 00:00:00'").Check(testkit.Rows("2024-12-01 00:00:00"))
 	tk.MustQuery("explain select * from t_ts where report_updated = 20241201").Check(testkit.Rows(
-		"TableReader_7 10.00 root partition:p2 data:Selection_6",
-		"└─Selection_6 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
+		"TableReader_8 10.00 root partition:p2 data:Selection_7",
+		"└─Selection_7 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
 	tk.MustQuery("explain select * from t_ts where report_updated = '2024-12-01 00:00:00'").Check(testkit.Rows(
-		"TableReader_7 10.00 root partition:p2 data:Selection_6",
-		"└─Selection_6 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00.000000)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
+		"TableReader_8 10.00 root partition:p2 data:Selection_7",
+		"└─Selection_7 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00.000000)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
 	rs := tk.MustQuery("explain select * from t_ts where report_updated > unix_timestamp('2008-05-01 00:00:00')").Rows()
 	require.Equal(t, rs[0][3], "partition:all")
 	//MysQL explain:
@@ -280,9 +280,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 	tk.MustExec(`insert into t_hash values(1, 1), (10, 10), (26, 26)`)
 	tk.MustQuery(`select * from t_hash where a = '1'`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`explain select * from t_hash where a = '1'`).Check(testkit.Rows(
-		"TableReader_7 10.00 root partition:p1 data:Selection_6",
-		"└─Selection_6 10.00 cop[tikv]  eq(test.t_hash.a, 1)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_hash keep order:false, stats:pseudo"))
+		"TableReader_8 10.00 root partition:p1 data:Selection_7",
+		"└─Selection_7 10.00 cop[tikv]  eq(test.t_hash.a, 1)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_hash keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+--------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table  | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -302,9 +302,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 	// 4.1.1 test between castIntAsReal(int) and real
 	tk.MustQuery(`select * from t_range_col where a between '100' and '199';`).Check(testkit.Rows("100 100"))
 	tk.MustQuery(`explain select * from t_range_col where a between '100' and '199'`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root partition:p_200 data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 100), le(cast(test.t_range_col.a, double BINARY), 199)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+		"TableReader_8 8000.00 root partition:p_200 data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 100), le(cast(test.t_range_col.a, double BINARY), 199)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table       | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -315,9 +315,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 	// 4.1.2 test between castIntAsReal(int) and real
 	tk.MustQuery(`select * from t_range_col where a between "ddd" and "199";`).Sort().Check(testkit.Rows("1 1", "100 100"))
 	tk.MustQuery(`explain select * from t where a between "ddd" and "199";`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root partition:p1,p2 data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 199)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"TableReader_8 8000.00 root partition:p1,p2 data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 199)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table       | partitions  | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -328,9 +328,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 	// 4.1.3 test between castIntAsReal(int) and real
 	tk.MustQuery(`select * from t_range_col where a between "23.12" and "199.99";`).Check(testkit.Rows("100 100"))
 	tk.MustQuery(`explain select * from t_range_col where a between "23.12" and "199.99";`).Check(
-		testkit.Rows("TableReader_7 8000.00 root partition:p_100,p_200 data:Selection_6",
-			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 23.12), le(cast(test.t_range_col.a, double BINARY), 199.99)",
-			"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+		testkit.Rows("TableReader_8 8000.00 root partition:p_100,p_200 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 23.12), le(cast(test.t_range_col.a, double BINARY), 199.99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table       | partitions  | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -341,9 +341,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 	// 4.1.4 test between castIntAsReal(int) and real
 	tk.MustQuery(`select * from t_range_col where a between "23.12" and cast("199.99" as decimal);`).Sort().Check(testkit.Rows("100 100", "200 200"))
 	tk.MustQuery(`explain select * from t where a between "23.12" and cast("199.99" as decimal);`).Check(
-		testkit.Rows("TableReader_7 8000.00 root partition:all data:Selection_6",
-			"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 23.12), le(cast(test.t.a, double BINARY), 200)",
-			"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		testkit.Rows("TableReader_8 8000.00 root partition:all data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 23.12), le(cast(test.t.a, double BINARY), 200)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------------+-------------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table       | partitions        | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -354,9 +354,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 	// 4.2.1 test between castIntAsDecimal(int) and decimal
 	tk.MustQuery(`select * from t_range_col where a between 100.00 and 199.99;`).Check(testkit.Rows("100 100"))
 	tk.MustQuery(`explain select * from t_range_col where a between 100.00 and 199.99`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root partition:p_200 data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, decimal(10,0) BINARY), 100.00), le(cast(test.t_range_col.a, decimal(10,0) BINARY), 199.99)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+		"TableReader_8 8000.00 root partition:p_200 data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, decimal(10,0) BINARY), 100.00), le(cast(test.t_range_col.a, decimal(10,0) BINARY), 199.99)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table       | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -377,9 +377,9 @@ func TestCast4PartitionPruning(t *testing.T) {
 		"111 1", "222 1", "333 1", "444 1"))
 	// all partitions are visited, because `a` col's collation is utf8mb4_bin, while constant's collation is binary.
 	tk.MustQuery(`explain select * from t_range_col_v2 where a between 111 and 444;`).Check(testkit.Rows(
-		"TableReader_7 8000.00 root partition:all data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  ge(cast(test.t_range_col_v2.a, double BINARY), 111), le(cast(test.t_range_col_v2.a, double BINARY), 444)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t_range_col_v2 keep order:false, stats:pseudo"))
+		"TableReader_8 8000.00 root partition:all data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col_v2.a, double BINARY), 111), le(cast(test.t_range_col_v2.a, double BINARY), 444)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col_v2 keep order:false, stats:pseudo"))
 	// MySQL explain:
 	//+----+-------------+----------------+------------+------+---------------+------+---------+------+------+----------+-------------+
 	//| id | select_type | table          | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
@@ -490,17 +490,17 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 	rows := [][]any{
 		{"Projection_15", "root", "test.t1.b"},
-		{"└─Apply_17", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
-		{"  ├─TableReader_20(Build)", "root", "data:Selection_19"},
-		{"  │ └─Selection_19", "cop[tikv]", "not(isnull(test.t1.b))"},
-		{"  │   └─TableFullScan_18", "cop[tikv]", "keep order:false, stats:pseudo"},
-		{"  └─Selection_21(Probe)", "root", "not(isnull(Column#7))"},
-		{"    └─StreamAgg_23", "root", "funcs:min(test.t2.b)->Column#7"},
-		{"      └─TopN_24", "root", "test.t2.b, offset:0, count:1"},
-		{"        └─TableReader_32", "root", "data:TopN_31"},
-		{"          └─TopN_31", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-		{"            └─Selection_30", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-		{"              └─TableFullScan_29", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"└─Apply_19", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
+		{"  ├─TableReader_22(Build)", "root", "data:Selection_21"},
+		{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
+		{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"  └─Selection_23(Probe)", "root", "not(isnull(Column#7))"},
+		{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#7"},
+		{"      └─TopN_31", "root", "test.t2.b, offset:0, count:1"},
+		{"        └─TableReader_41", "root", "data:TopN_40"},
+		{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+		{"            └─Selection_39", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+		{"              └─TableFullScan_38", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 	tk.MustExec("insert t1 values ('A', 1);")
@@ -1028,7 +1028,7 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			tk.MustExec("drop table if exists t")
 			switch i {
 			case 0:
@@ -1176,7 +1176,7 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec(`create table t32157(
   process_code varchar(8) NOT NULL,
   ctrl_class varchar(2) NOT NULL,
@@ -1430,7 +1430,6 @@ func TestIssue36194(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// create virtual tiflash replica.
@@ -1448,7 +1447,7 @@ func TestIssue36194(t *testing.T) {
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
 		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
-		"        └─TableFullScan 125.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"))
+		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
 }
 
 func TestGetFormatPushDownToTiFlash(t *testing.T) {
@@ -1477,7 +1476,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json);")
 	tk.MustExec("insert into t values(null);")
@@ -2181,17 +2180,17 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tikv.
 	rows := [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_13", "root", "data:TableFullScan_12"},
-		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tikv.
 	rows = [][]any{
 		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
-		{"└─TableReader_5", "root", "data:TableFullScan_4"},
-		{"  └─TableFullScan_4", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
 	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
@@ -2199,9 +2198,9 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// Selection to tikv.
 	rows = [][]any{
-		{"Selection_7", "root", "gt(test.t.c2, 1)"},
-		{"└─TableReader_6", "root", "data:TableFullScan_5"},
-		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"Selection_8", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 
@@ -2217,11 +2216,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tiflash.
 	rows = [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_15", "root", "data:TableFullScan_14"},
-		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tiflash.
 	rows = [][]any{
@@ -2321,8 +2320,8 @@ func TestIssue46556(t *testing.T) {
 		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
 			`├─Projection(Build) 0.00 root  <nil>->Column#5`,
 			`│ └─TableDual 0.00 root  rows:0`,
-			`└─TableReader(Probe) 7992.00 root  data:Selection`,
-			`  └─Selection 7992.00 cop[tikv]  like(test.t0.c0, test.t0.c0, 92), not(isnull(test.t0.c0))`,
+			`└─TableReader(Probe) 9990.00 root  data:Selection`,
+			`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
 			`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
 }
 
@@ -2331,10 +2330,12 @@ func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("use test")
+
+	tk.MustExec("create database special")
+	tk.MustExec("use special")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
-	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';").Sort().Rows()
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'special' and STMT_TYPE = 'Select';").Sort().Rows()
 	plan := rawRows[0][0].(string)
 	rows := strings.Split(plan, "\n")
 	rows = rows[1:]
@@ -2445,12 +2446,12 @@ func TestIssue54213(t *testing.T) {
   c bigint(20) ,
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
-	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
-			"└─Limit_12 0.10 root  offset:0, count:100",
-			"  └─IndexReader_16 0.10 root  index:Limit_15",
-			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
-			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+		testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit 1.00 root  offset:0, count:100",
+			"  └─IndexReader 1.25 root  index:Limit",
+			"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
 func TestIssue54870(t *testing.T) {
@@ -2547,6 +2548,73 @@ func TestIssue58829(t *testing.T) {
 	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
 }
 
+func TestIssue61669(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`
+CREATE TABLE B (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  RCRD_NO varchar(20) NOT NULL,
+  FILE_NO varchar(20) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  MDL_DT date DEFAULT NULL,
+  TS varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  MDL_NO varchar(50) DEFAULT NULL,
+  TXN_NO varchar(90) DEFAULT NULL,
+  SCR_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  PRIMARY KEY (ROW_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, DT, MDL_DT, TS, LD),
+  KEY IDX2_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, MDL_DT, SCR_NO, TXN_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXNDTL (FILE_NO, BSTPRTFL_NO),
+  KEY IDX_ETF_FLR_PRCHRDMP_TXN_FIX (MDL_NO, BSTPRTFL_NO, MDL_DT),
+  UNIQUE UI_ETF_FLR_PRCHRDMP_TXN_DTLTB (RCRD_NO),
+  KEY IDX3_ETF_FLR_PRCHRDMP_TXN_DTL (DT)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 2085290754;`)
+	tk.MustExec(`
+CREATE TABLE A (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  TEMP_NO varchar(20) NOT NULL,
+  VCHR_TPCD varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  CASH_RPLC_AMT decimal(19, 2) DEFAULT NULL,
+  PCSG_BTNO_NO varchar(20) DEFAULT NULL,
+  KEY INX_TEMP_NO (TEMP_NO),
+  PRIMARY KEY (ROW_NO),
+  KEY idx2_ETF_FNDTA_SALE_PA (PCSG_BTNO_NO, DT, VCHR_TPCD)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
+	tk.MustExec(`set tidb_opt_index_join_build_v2=off`)
+	r := tk.MustQuery(`
+explain SELECT *
+FROM A A
+JOIN
+    (SELECT CASH_RPLC_AMT,
+         S.BSTPRTFL_NO
+    FROM
+        (SELECT BSTPRTFL_NO,
+         SUM(CASE
+            WHEN LD IN ('03') THEN
+            DAM
+            ELSE 0 END) AS CASH_RPLC_AMT
+        FROM
+            (SELECT B.LD,
+         SUM(B.DAM) DAM,
+         B.BSTPRTFL_NO
+            FROM B B
+            GROUP BY  B.LD, B.BSTPRTFL_NO) ff
+            GROUP BY  BSTPRTFL_NO) S ) f
+            ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
+    WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
+	require.True(t, len(r.Rows()) > 0) // no error
+}
+
 func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2568,14 +2636,14 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_24", "root", "MppVersion: 3, data:ExchangeSender_23"},
-		{"└─ExchangeSender_23", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"TableReader_25", "root", "MppVersion: 3, data:ExchangeSender_24"},
+		{"└─ExchangeSender_24", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_8", "mpp[tiflash]", "Column#10->Column#15, Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, stream_count: 8"},
-		{"    └─Window_22", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#10, count(test.t.v)->Column#11, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#12, min(test.t.v)->Column#13, max(test.t.v)->Column#14 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
-		{"      └─Sort_14", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
-		{"        └─ExchangeReceiver_13", "mpp[tiflash]", "stream_count: 8"},
-		{"          └─ExchangeSender_12", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
-		{"            └─TableFullScan_11", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+		{"    └─Window_23", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#10, count(test.t.v)->Column#11, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#12, min(test.t.v)->Column#13, max(test.t.v)->Column#14 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+		{"      └─Sort_15", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
+		{"        └─ExchangeReceiver_14", "mpp[tiflash]", "stream_count: 8"},
+		{"          └─ExchangeSender_13", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
+		{"            └─TableFullScan_12", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 }

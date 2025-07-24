@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -312,9 +313,20 @@ func TestAdminWorkloadRepo(t *testing.T) {
 		return len(res) >= 1
 	}, time.Minute, time.Second)
 
+	// Validate that user will out Super can not execute admin command.
+	tk.MustExec(`CREATE USER 'testcheck'@'localhost';`)
+	checkTk := testkit.NewTestKit(t, store)
+	require.NoError(t, checkTk.Session().Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil, nil))
+	checkTk.MustExecToErr("admin create workload snapshot")
+
+	// Add super to testcheck you and retry command.
+	tk.MustExec("grant super on *.* to 'testcheck'@'localhost'")
+	checkTk.MustExec("admin create workload snapshot")
+
 	// disable the worker and it will fail
 	tk.MustExec("set @@global.tidb_workload_repository_dest=''")
 	tk.MustExecToErr("admin create workload snapshot")
+	checkTk.MustExecToErr("admin create workload snapshot")
 }
 
 func getRows(t *testing.T, tk *testkit.TestKit, cnt int, maxSecs int, query string) [][]any {
@@ -568,7 +580,7 @@ func validatePartitionsMatchExpected(ctx context.Context, t *testing.T,
 		ep[generatePartitionName(p.AddDate(0, 0, 1))] = struct{}{}
 	}
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 	require.NoError(t, err)
 	tbInfo := tbSchema.Meta()
@@ -634,15 +646,15 @@ func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
 	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.False(t, firstTestFails == checkTableExistsByIS(ctx, is, tbl.destTable, now))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.NoError(t, createPartition(ctx, is, tbl, sess, now))
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, expectedParts))
 
-	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is = sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.True(t, checkTableExistsByIS(ctx, is, tbl.destTable, now))
 }
 
@@ -711,7 +723,7 @@ func validatePartitionDrop(ctx context.Context, now time.Time, t *testing.T,
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
 
-	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	err := dropOldPartition(ctx, is, tbl, now, retention, sess)
 	if shouldErr {
 		require.Error(t, err)
@@ -879,8 +891,8 @@ func TestOwnerRandomDown(t *testing.T) {
 	testNum := 9
 
 	ctx, _, dom, addr := setupDomainAndContext(t)
-	var workers []*worker
-	for i := 0; i < workerNum; i++ {
+	workers := make([]*worker, 0, workerNum)
+	for i := range workerNum {
 		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
 		wrk.samplingInterval = 6000
 		workers = append(workers, wrk)
@@ -910,7 +922,7 @@ func TestOwnerRandomDown(t *testing.T) {
 	}, time.Minute, 100*time.Millisecond)
 
 	// let us randomly stop the owner
-	for j := 0; j < testNum; j++ {
+	for j := range testNum {
 		var err error
 		prevSnapID := uint64(0)
 		breakOwnerIdx := -1

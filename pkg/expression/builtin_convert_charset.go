@@ -121,7 +121,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(ctx EvalContext, input *chunk
 	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	result.ReserveString(n)
 	encodedBuf := &bytes.Buffer{}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -221,7 +221,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 	enc := charset.FindEncoding(b.tp.GetCharset())
 	encodedBuf := &bytes.Buffer{}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue

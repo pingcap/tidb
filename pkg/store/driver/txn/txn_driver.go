@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -430,6 +431,9 @@ func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockC
 // TODO: Update the methods' signatures in client-go to avoid this adaptor functions.
 // TODO: Rename aggressive locking in client-go to fair locking.
 func (txn *tikvTxn) StartFairLocking() error {
+	if kerneltype.IsNextGen() {
+		return kv.ErrNotImplemented.GenWithStackByArgs()
+	}
 	txn.KVTxn.StartAggressiveLocking()
 	return nil
 }

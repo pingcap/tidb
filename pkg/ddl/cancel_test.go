@@ -74,10 +74,19 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop index v_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add vector index v_idx_2((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	{"alter table t drop index v_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add vector index v_idx_3((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	{"alter table t drop index v_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add vector index v_idx_4((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
+	// Drop full text index
+	{"alter table t drop index fts_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add fulltext index fts_idx_2(ctxt)"}},
+	{"alter table t drop index fts_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add fulltext index fts_idx_3(ctxt)"}},
+	{"alter table t drop index fts_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add fulltext index fts_idx_4(ctxt)"}},
 	// Add vector index
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateNone, true, false, nil},
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateDeleteOnly, true, true, nil},
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateWriteOnly, true, true, nil},
+	// Add full text index
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateNone, true, false, nil},
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add fulltext index fts_idx_x(ctxt)", false, model.StatePublic, false, true, nil},
 	// Add columnar index
 	{"alter table t add columnar index c_idx(c1) USING INVERTED", true, model.StateNone, true, false, nil},
 	{"alter table t add columnar index c_idx(c2) USING INVERTED", true, model.StateDeleteOnly, true, true, nil},
@@ -257,7 +266,7 @@ func TestCancelVariousJobs(t *testing.T) {
 		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1)
+		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1), ctxt TEXT
 	);`)
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 

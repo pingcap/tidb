@@ -340,6 +340,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(
+	jobCtx *jobContext,
 	reorgInfo *reorgInfo,
 	tblInfo *model.TableInfo,
 	reorgFn func() error,
@@ -381,7 +382,13 @@ func (w *worker) runReorgJob(
 		})
 	}
 
-	updateProcessTicker := time.NewTicker(5 * time.Second)
+	updateProgressInverval := 5 * time.Second
+	failpoint.Inject("updateProgressIntervalInMs", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			updateProgressInverval = time.Duration(v) * time.Millisecond
+		}
+	})
+	updateProcessTicker := time.NewTicker(updateProgressInverval)
 	defer updateProcessTicker.Stop()
 	for {
 		select {
@@ -393,6 +400,7 @@ func (w *worker) runReorgJob(
 				logutil.DDLLogger().Warn("owner ts mismatch, return timeout error and retry",
 					zap.Int64("prevTS", res.ownerTS),
 					zap.Int64("curTS", curTS))
+				jobCtx.reorgTimeoutOccurred = true
 				return dbterror.ErrWaitReorgTimeout
 			}
 			// Since job is cancelled，we don't care about its partial counts.
@@ -404,9 +412,13 @@ func (w *worker) runReorgJob(
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			if err != nil {
-				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+				logutil.DDLLogger().Warn("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+				logutil.DDLLogger().Info("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount))
 			}
 
 			// Update a job's warnings.
@@ -428,6 +440,8 @@ func (w *worker) runReorgJob(
 			w.mergeWarningsIntoJob(job)
 
 			rc.resetWarnings()
+			jobCtx.reorgTimeoutOccurred = true
+			return dbterror.ErrWaitReorgTimeout
 		}
 	}
 }
@@ -964,6 +978,19 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }
 
 func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {

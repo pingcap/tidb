@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
@@ -47,6 +48,9 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 		}
 		// update table info and schema version
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	default:
 		job.State = model.JobStateCancelled

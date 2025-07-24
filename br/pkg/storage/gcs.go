@@ -8,6 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/url"
 	"os"
 	"path"
@@ -15,6 +16,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -171,10 +173,16 @@ func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // DeleteFiles delete the files in storage.
+// If the file does not exist, we will ignore it.
 func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
 		if err != nil {
+			// some real-TiKV test also delete objects, so we ignore the error if
+			// the object does not exist
+			if goerrors.Is(err, storage.ErrObjectNotExist) {
+				continue
+			}
 			return err
 		}
 	}
@@ -339,10 +347,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
-	partSize := int64(gcsMinimumChunkSize)
-	if wo.PartSize > partSize {
-		partSize = wo.PartSize
-	}
+	partSize := max(wo.PartSize, int64(gcsMinimumChunkSize))
 	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -596,6 +601,12 @@ type gcsObjectReader struct {
 
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
+	failpoint.Inject("GCSReadUnexpectedEOF", func(n failpoint.Value) {
+		if r.prefetchSize > 0 && r.pos > 0 && rand.Intn(2) == 0 {
+			log.Info("ingest error in gcs reader read")
+			failpoint.Return(n.(int), io.ErrUnexpectedEOF)
+		}
+	})
 	if r.reader == nil {
 		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)

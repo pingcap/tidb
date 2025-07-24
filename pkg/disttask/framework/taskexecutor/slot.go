@@ -77,7 +77,7 @@ func (sm *slotManager) free(taskID int64) {
 		return
 	}
 	sm.available.Add(int32(sm.executorTasks[index].Concurrency))
-	sm.executorTasks = append(sm.executorTasks[:index], sm.executorTasks[index+1:]...)
+	sm.executorTasks = slices.Delete(sm.executorTasks, index, index+1)
 
 	delete(sm.taskID2Index, taskID)
 	for index, slotInfo := range sm.executorTasks {

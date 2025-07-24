@@ -29,6 +29,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -465,7 +466,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?)", i)
 	}
 
@@ -548,7 +549,7 @@ func TestShardRowIDBits(t *testing.T) {
 
 	// Test shard_row_id_bits with auto_increment column
 	tk.MustExec("create table auto (a int, b int auto_increment unique) shard_row_id_bits = 15")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into auto(a) values (?)", i)
 	}
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("auto"))
@@ -598,7 +599,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key clustered auto_random(15), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
 	allHandles := extractAllHandles()
@@ -661,7 +662,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 
 	// Test signed/unsigned types.
 	tk.MustExec("create table t (a bigint primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
 	for _, h := range extractAllHandles() {
@@ -671,7 +672,7 @@ func TestAutoRandomBitsData(t *testing.T) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a bigint unsigned primary key auto_random(10), b int)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t (b) values(?)", i)
 	}
 	signBitUnused := true
@@ -685,15 +686,15 @@ func TestAutoRandomBitsData(t *testing.T) {
 	// Test rename table does not affect incremental part of auto_random ID.
 	tk.MustExec("create database test_auto_random_bits_rename;")
 	tk.MustExec("create table t (a bigint auto_random primary key);")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t values ();")
 	}
 	tk.MustExec("alter table t rename to test_auto_random_bits_rename.t1;")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into test_auto_random_bits_rename.t1 values ();")
 	}
 	tk.MustExec("alter table test_auto_random_bits_rename.t1 rename to t;")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t values ();")
 	}
 	uniqueHandles := make(map[int64]struct{})
@@ -919,8 +920,8 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 }
 
 func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
-	prev := domain.LoadSchemaDiffVersionGapThreshold
-	domain.LoadSchemaDiffVersionGapThreshold = 0
+	prev := issyncer.LoadSchemaDiffVersionGapThreshold
+	issyncer.LoadSchemaDiffVersionGapThreshold = 0
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -928,7 +929,7 @@ func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
 	tk.MustExec("drop table test.forcereload")
 	dom.Reload()
 
-	domain.LoadSchemaDiffVersionGapThreshold = prev
+	issyncer.LoadSchemaDiffVersionGapThreshold = prev
 }
 
 func TestRenameWithSmallAutoIDStep(t *testing.T) {

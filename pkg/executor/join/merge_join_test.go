@@ -144,7 +144,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 				}
 				var buf bytes.Buffer
 				buf.WriteString(fmt.Sprintf("insert into %v values ", tableName))
-				for j := 0; j < n; j++ {
+				for j := range n {
 					if j > 0 {
 						buf.WriteString(", ")
 					}
@@ -264,7 +264,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 				}
 				var buf bytes.Buffer
 				buf.WriteString(fmt.Sprintf("insert into %v values ", tableName))
-				for j := 0; j < n; j++ {
+				for j := range n {
 					if j > 0 {
 						buf.WriteString(", ")
 					}

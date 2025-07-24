@@ -174,7 +174,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	recordCount := 1000
-	for i := 0; i < recordCount; i++ {
+	for i := range recordCount {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("create index idx_t on t(c2)")

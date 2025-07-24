@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -165,7 +166,7 @@ func (b *digestBiMapImpl) Del(sqlDigest string) {
 	for i := range digestList { // remove sqlDigest from this list
 		if digestList[i] == sqlDigest {
 			// Deleting binding is a low-frequently operation, so the O(n) performance is enough.
-			digestList = append(digestList[:i], digestList[i+1:]...)
+			digestList = slices.Delete(digestList, i, i+1)
 			break
 		}
 	}

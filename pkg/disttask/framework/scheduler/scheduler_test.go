@@ -70,7 +70,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			switch task.Step {
 			case proto.StepInit:
-				for i := 0; i < subtaskCnt; i++ {
+				for range subtaskCnt {
 					metas = append(metas, []byte{'1'})
 				}
 				logutil.BgLogger().Info("progress step init")
@@ -214,7 +214,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
-	for i := 0; i < taskCnt; i++ {
+	for i := range taskCnt {
 		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, "background", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
@@ -274,7 +274,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			require.NoError(t, err)
 		}
 	} else if isPauseAndResume {
-		for i := 0; i < taskCnt; i++ {
+		for i := range taskCnt {
 			found, err := mgr.PauseTask(ctx, fmt.Sprintf("%d", i))
 			require.True(t, found)
 			require.NoError(t, err)
@@ -286,7 +286,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			}
 		}
 		checkGetTaskState(proto.TaskStatePaused)
-		for i := 0; i < taskCnt; i++ {
+		for i := range taskCnt {
 			found, err := mgr.ResumeTask(ctx, fmt.Sprintf("%d", i))
 			require.True(t, found)
 			require.NoError(t, err)
@@ -428,7 +428,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
 	waitChannels := make(map[string](chan struct{}))
-	for i := 0; i < len(concurrencies); i++ {
+	for i := range concurrencies {
 		waitChannels[fmt.Sprintf("key/%d", i)] = make(chan struct{})
 	}
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
@@ -459,7 +459,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 			return mockScheduler
 		},
 	)
-	for i := 0; i < len(concurrencies); i++ {
+	for i := range concurrencies {
 		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], "", 0, proto.ExtraParams{}, []byte("{}"))
 		require.NoError(t, err)
 	}

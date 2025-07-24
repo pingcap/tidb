@@ -88,7 +88,7 @@ func groupConcatMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chun
 	memDeltas = make([]int64, 0)
 	buffer := new(bytes.Buffer)
 	valBuffer := new(bytes.Buffer)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		valBuffer.Reset()
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -99,7 +99,7 @@ func groupConcatMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chun
 		if i != 0 {
 			buffer.WriteString(separator)
 		}
-		for j := 0; j < len(dataType); j++ {
+		for j := range dataType {
 			curVal := row.GetString(j)
 			valBuffer.WriteString(curVal)
 		}
@@ -115,7 +115,7 @@ func groupConcatMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chun
 
 func groupConcatOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		buffer := new(bytes.Buffer)
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -123,7 +123,7 @@ func groupConcatOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk 
 			continue
 		}
 		oldMemSize := buffer.Cap()
-		for j := 0; j < len(dataType); j++ {
+		for j := range dataType {
 			curVal := row.GetString(j)
 			buffer.WriteString(curVal)
 		}
@@ -143,7 +143,7 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcC
 	buffer := new(bytes.Buffer)
 	valsBuf := new(bytes.Buffer)
 	var encodeBytesBuffer []byte
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, int64(0))
@@ -152,7 +152,7 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcC
 		valsBuf.Reset()
 		oldMemSize := buffer.Cap() + valsBuf.Cap() + cap(encodeBytesBuffer)
 		encodeBytesBuffer = encodeBytesBuffer[:0]
-		for j := 0; j < len(dataType); j++ {
+		for j := range dataType {
 			curVal := row.GetString(j)
 			encodeBytesBuffer = codec.EncodeBytes(encodeBytesBuffer, hack.Slice(curVal))
 			valsBuf.WriteString(curVal)
@@ -179,7 +179,7 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcC
 func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	var encodeBytesBuffer []byte
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		valsBuf := new(bytes.Buffer)
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -189,7 +189,7 @@ func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context,
 		valsBuf.Reset()
 		encodeBytesBuffer = encodeBytesBuffer[:0]
 		oldMemSize := valsBuf.Cap() + cap(encodeBytesBuffer)
-		for j := 0; j < len(dataType); j++ {
+		for j := range dataType {
 			curVal := row.GetString(j)
 			encodeBytesBuffer = codec.EncodeBytes(encodeBytesBuffer, hack.Slice(curVal))
 			valsBuf.WriteString(curVal)

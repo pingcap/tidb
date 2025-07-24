@@ -69,6 +69,22 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "exptostd": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "pkg/bindinfo/": "bindinfo code",
+      "pkg/meta/": "meta code",
+      "pkg/owner/": "owner code",
+      "pkg/planner/": "planner code",
+      "pkg/statistics/": "pkg/statistics/ code",
+      "pkg/ttl/": "ttl code",
+      "pkg/util/": "util code"
+    }
+  },
   "printexpression": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -354,13 +370,6 @@
       ".*_test\\.go$": "ignore test code",
       ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet cgo code"
-    },
-    "only_files": {
-      "pkg/util/": "util code",
-      "pkg/workloadlearning": "workloadlearning code",
-      "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
-      "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
-      "pkg/planner/funcdep": "pkg/planner/funcdep code"
     }
   },
   "inspect": {

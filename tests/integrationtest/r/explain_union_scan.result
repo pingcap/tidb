@@ -16,13 +16,14 @@ id	estRows	task	access object	operator info
 Limit	10.00	root		offset:0, count:10
 └─HashJoin	10.00	root		left outer join, left side:Limit, equal:[eq(explain_union_scan.city.province_id, explain_union_scan.city.province_id)]
   ├─Limit(Build)	10.00	root		offset:0, count:10
-  │ └─IndexJoin	10.00	root		inner join, inner:UnionScan, outer key:explain_union_scan.city.id, inner key:explain_union_scan.city.id, equal cond:eq(explain_union_scan.city.id, explain_union_scan.city.id)
+  │ └─MergeJoin	10.00	root		inner join, left key:explain_union_scan.city.id, right key:explain_union_scan.city.id
   │   ├─UnionScan(Build)	10.00	root		
-  │   │ └─TableReader	10.00	root		data:TableFullScan
-  │   │   └─TableFullScan	10.00	cop[tikv]	table:t2	keep order:false
+  │   │ └─IndexLookUp	10.00	root		
+  │   │   ├─IndexFullScan(Build)	10.00	cop[tikv]	table:t2, index:PRIMARY(id)	keep order:true
+  │   │   └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t2	keep order:false
   │   └─UnionScan(Probe)	10.00	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
   │     └─IndexLookUp	10.00	root		
-  │       ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(explain_union_scan.city.id, explain_union_scan.city.id)], keep order:false
+  │       ├─IndexFullScan(Build)	10.00	cop[tikv]	table:t1, index:PRIMARY(id)	keep order:true
   │       └─Selection(Probe)	10.00	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
   │         └─TableRowIDScan	10.00	cop[tikv]	table:t1	keep order:false
   └─UnionScan(Probe)	536284.00	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100), not(isnull(explain_union_scan.city.province_id))

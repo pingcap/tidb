@@ -198,7 +198,7 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.WorkerWg.Add(1)
 	go e.newOuterWorker(resultCh, innerCh, initBatchSize).run(workerCtx, e.WorkerWg)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		innerWorker := e.newInnerWorker(innerCh)
 		e.WorkerWg.Add(1)
 		go innerWorker.run(workerCtx, e.WorkerWg)
@@ -473,7 +473,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		task.outerMatch = make([][]bool, task.outerResult.NumChunks())
 		var err error
 		exprCtx := ow.ctx.GetExprCtx()
-		for i := 0; i < numChks; i++ {
+		for i := range numChks {
 			chk := task.outerResult.GetChunk(i)
 			outerMatch := make([]bool, 0, chk.NumRows())
 			task.memTracker.Consume(int64(cap(outerMatch)))
@@ -575,10 +575,10 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 	}
 	lookUpContents := make([]*IndexJoinLookUpContent, 0, task.outerResult.Len())
 	keyBuf := make([]byte, 0, 64)
-	for chkIdx := 0; chkIdx < task.outerResult.NumChunks(); chkIdx++ {
+	for chkIdx := range task.outerResult.NumChunks() {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
@@ -697,7 +697,7 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*IndexJoinLoo
 }
 
 func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum, ctors []collate.Collator) int {
-	for idx := 0; idx < len(left); idx++ {
+	for idx := range left {
 		cmp, err := left[idx].Compare(sc.TypeCtx(), &right[idx], ctors[idx])
 		// We only compare rows with the same type, no error to return.
 		terror.Log(err)
@@ -758,9 +758,9 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 	}
 	keyBuf := make([]byte, 0, 64)
 	valBuf := make([]byte, 8)
-	for i := 0; i < task.innerResult.NumChunks(); i++ {
+	for i := range task.innerResult.NumChunks() {
 		chk := task.innerResult.GetChunk(i)
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			innerRow := chk.GetRow(j)
 			if iw.hasNullInJoinKey(innerRow) {
 				continue
@@ -785,12 +785,7 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 }
 
 func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
-	for _, ordinal := range iw.HashCols {
-		if row.IsNull(ordinal) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(iw.HashCols, row.IsNull)
 }
 
 // Close implements the Executor interface.

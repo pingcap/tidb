@@ -452,7 +452,7 @@ func TestFullRefreshTimers(t *testing.T) {
 	runtime.initCtx()
 
 	timers := make([]*api.TimerRecord, 7)
-	for i := 0; i < len(timers); i++ {
+	for i := range timers {
 		timer := newTestTimer(fmt.Sprintf("t%d", i), "1m", time.Now())
 		procStatus := procIdle
 		if i == 2 || i == 4 {
@@ -516,7 +516,7 @@ func TestBatchHandlerWatchResponses(t *testing.T) {
 	runtime.partialRefreshTimerCounter = partialRefreshCounter
 
 	timers := make([]*api.TimerRecord, 7)
-	for i := 0; i < len(timers); i++ {
+	for i := range timers {
 		timer := newTestTimer(fmt.Sprintf("t%d", i), "1m", time.Now())
 		procStatus := procIdle
 		if i == 2 {
@@ -623,7 +623,7 @@ func TestCloseWaitingCloseTimers(t *testing.T) {
 	require.False(t, runtime.tryCloseTriggeringTimers())
 
 	timers := make([]*api.TimerRecord, 5)
-	for i := 0; i < len(timers); i++ {
+	for i := range timers {
 		timer := newTestTimer(fmt.Sprintf("t%d", i), "1m", time.Now())
 		timer.EventStatus = api.SchedEventTrigger
 		timer.EventStart = time.Now()

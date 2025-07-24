@@ -170,7 +170,7 @@ func TestGCS(t *testing.T) {
 
 	// test 1003 files
 	var totalSize int64 = 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		err = stg.WriteFile(ctx, fmt.Sprintf("f%d", i), []byte("data"))
 		require.NoError(t, err)
 	}
@@ -188,7 +188,7 @@ func TestGCS(t *testing.T) {
 	require.True(t, ok)
 	_, ok = filesSet["key2"]
 	require.True(t, ok)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, ok = filesSet[fmt.Sprintf("f%d", i)]
 		require.True(t, ok)
 	}
@@ -426,7 +426,8 @@ func TestNewGCSStorage(t *testing.T) {
 	}
 }
 
-func TestReadRange(t *testing.T) {
+func createGCSStore(t *testing.T) *GCSStorage {
+	t.Helper()
 	require.True(t, intest.InTest)
 	ctx := context.Background()
 
@@ -451,9 +452,18 @@ func TestReadRange(t *testing.T) {
 		HTTPClient:       server.HTTPClient(),
 	})
 	require.NoError(t, err)
+	return stg
+}
+
+func TestReadRange(t *testing.T) {
+	require.True(t, intest.InTest)
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
 
 	filename := "key"
-	err = stg.WriteFile(ctx, filename, []byte("0123456789"))
+	err := stg.WriteFile(ctx, filename, []byte("0123456789"))
 	require.NoError(t, err)
 
 	start := int64(2)
@@ -516,13 +526,13 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum := 1000
 	filenames := make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManySmallFiles/%d", i)
 	}
 	fileSize := 1024
 	data := make([]byte, fileSize)
 	eg := &errgroup.Group{}
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)
@@ -549,12 +559,12 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum = 30
 	filenames = make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManyLargeFiles/%d", i)
 	}
 	fileSize = 100 * 1024 * 1024
 	data = make([]byte, fileSize)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)
@@ -606,4 +616,16 @@ func TestCtxUsage(t *testing.T) {
 	_, err = stg.FileExists(ctx, "key")
 	// before the fix, it's context canceled error
 	require.ErrorContains(t, err, "invalid_request")
+}
+
+func TestDeleteFiles(t *testing.T) {
+	ctx := context.Background()
+
+	stg := createGCSStore(t)
+	defer stg.Close()
+
+	filename := "key"
+	err := stg.WriteFile(ctx, filename, []byte("0123456789"))
+	require.NoError(t, err)
+	require.NoError(t, stg.DeleteFiles(ctx, []string{filename, "not-exist-file"}))
 }
