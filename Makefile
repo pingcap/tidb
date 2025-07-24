@@ -63,17 +63,6 @@ check-static: ## Run static code analysis checks
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
-.PHONY: check-ddl
-check-ddl: tools/bin/golangci-lint
-	@MERGE_BASE=$$(git status | awk '/HEAD detached/ {print $$NF}'); \
-	if [ "$$MERGE_BASE" != "origin/master" ]; then \
-		echo "Skipping check-ddl: not on master branch $$MERGE_BASE"; \
-	else \
-		GO111MODULE=on CGO_ENABLED=1 ./tools/bin/golangci-lint run -v pkg/ddl \
-			--config pkg/ddl/.golangci.yml \
-			--new-from-merge-base=$$MERGE_BASE; \
-	fi
-
 .PHONY: check-file-perm
 check-file-perm:
 	@echo "check file permission"

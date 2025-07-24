@@ -582,8 +582,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		partitions = tblInfo.GetPartitionInfo().Definitions
 	}
 	var scatterScope string
-	val, ok := job.GetSessionVars(vardef.TiDBScatterRegion)
-	if ok {
+	if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
 	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, scatterScope)

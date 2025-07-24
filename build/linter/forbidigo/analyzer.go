@@ -19,12 +19,13 @@ import (
 	"go/ast"
 	"strings"
 
-	"github.com/ashanbrown/forbidigo/forbidigo"
+	"github.com/ashanbrown/forbidigo/v2/forbidigo"
+	"github.com/golangci/golangci-lint/v2/pkg/fsutils"
 	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
-var lc = &LineCache{}
+var lc = fsutils.NewLineCache(fsutils.NewFileCache())
 
 // Analyzer is the analyzer struct of gofmt.
 var Analyzer = &analysis.Analyzer{
@@ -36,7 +37,6 @@ var Analyzer = &analysis.Analyzer{
 var (
 	patterns = []string{`{
 		p: "sessionctx.Context.GetSessionVars",
-		pkg: ^github.com/pingcap/tidb/pkg/ddl$,
 		msg: "Please check if the usage of GetSessionVars is appropriate,\n
 		      you can add //nolint:forbidigo to ignore this check if necessary."
 	}`}
