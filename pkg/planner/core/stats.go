@@ -110,6 +110,132 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 	return is.StatsInfo(), true, nil
 }
 
+// pruneIndexesByAccessConds prunes indexes based on access conditions.
+// It removes indexes that have the same columns as other indexes in accessConds but with fewer or equal accessConds,
+// unless the index has len(accessConds) > 1 and there's no other index with fewer tableFilters, or the index is a singleScan.
+// Indexes with len(accessConds) == 0 are only kept if they are singleScan.
+// Table paths are always kept.
+func pruneIndexesByAccessConds(ds *logicalop.DataSource) {
+	if len(ds.AllPossibleAccessPaths) <= 1 {
+		return
+	}
+
+	// Group paths by their access condition columns
+	pathGroups := make(map[string][]*util.AccessPath)
+
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.IsTablePath() {
+			continue
+		}
+
+		// Create a key based on the columns in accessConds
+		accessCols := make([]int64, 0, len(path.AccessConds))
+		for _, cond := range path.AccessConds {
+			cols := expression.ExtractColumns(cond)
+			for _, col := range cols {
+				accessCols = append(accessCols, col.UniqueID)
+			}
+		}
+
+		// Sort to ensure consistent key generation regardless of column order
+		slices.Sort(accessCols)
+
+		// Create key from sorted column IDs
+		var keyBuilder strings.Builder
+		for i, colID := range accessCols {
+			if i > 0 {
+				keyBuilder.WriteString(",")
+			}
+			keyBuilder.WriteString(strconv.FormatInt(colID, 10))
+		}
+		key := keyBuilder.String()
+
+		pathGroups[key] = append(pathGroups[key], path)
+	}
+
+	// For each group, determine which paths to keep
+	pathsToRemove := make(map[*util.AccessPath]bool)
+
+	for _, paths := range pathGroups {
+		if len(paths) <= 1 {
+			continue
+		}
+
+		// Sort paths by number of access conditions (descending) and then by number of table filters (ascending)
+		slices.SortFunc(paths, func(a, b *util.AccessPath) int {
+			// First sort by number of access conditions (descending)
+			if len(a.AccessConds) != len(b.AccessConds) {
+				return len(b.AccessConds) - len(a.AccessConds)
+			}
+			// Then sort by number of table filters (ascending)
+			return len(a.TableFilters) - len(b.TableFilters)
+		})
+
+		// For each path, check if it should be pruned
+		for i, path := range paths {
+			shouldKeep := false
+
+			// Check if this path has the maximum number of access conditions in this group
+			if i == 0 {
+				// This is the best path, keep it
+				shouldKeep = true
+			} else {
+				// Check if there's another index with greater len(accessConds) that contains the same columns
+				hasBetterIndex := false
+				for j := range i {
+					if len(paths[j].AccessConds) > len(path.AccessConds) {
+						hasBetterIndex = true
+						break
+					}
+				}
+
+				if !hasBetterIndex {
+					// No better index found, check special cases
+
+					// Special case 1: Keep if len(accessConds) > 1 and there's no other index with fewer tableFilters
+					if len(path.AccessConds) > 1 {
+						hasBetterPath := false
+						for j := range i {
+							if len(paths[j].TableFilters) < len(path.TableFilters) {
+								hasBetterPath = true
+								break
+							}
+						}
+						if !hasBetterPath {
+							shouldKeep = true
+						}
+					}
+
+					// Special case 2: Keep if it's a singleScan
+					if !shouldKeep && path.IsSingleScan {
+						shouldKeep = true
+					}
+
+					// Special case 3: Keep if len(accessConds) == 0 and it's a singleScan
+					if !shouldKeep && len(path.AccessConds) == 0 && path.IsSingleScan {
+						shouldKeep = true
+					}
+				}
+			}
+
+			if !shouldKeep {
+				pathsToRemove[path] = true
+			}
+		}
+	}
+
+	// Remove the marked paths
+	if len(pathsToRemove) > 0 {
+		newPaths := make([]*util.AccessPath, 0, len(ds.AllPossibleAccessPaths)-len(pathsToRemove))
+		for _, path := range ds.AllPossibleAccessPaths {
+			if !pathsToRemove[path] {
+				newPaths = append(newPaths, path)
+			}
+		}
+		ds.AllPossibleAccessPaths = newPaths
+	}
+}
+
 func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, error) {
 	ds := lp.(*logicalop.DataSource)
 	if ds.StatsInfo() != nil {
@@ -143,6 +269,10 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 			return nil, false, err
 		}
 	}
+
+	// Prune indexes based on access conditions
+	pruneIndexesByAccessConds(ds)
+
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
 	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
