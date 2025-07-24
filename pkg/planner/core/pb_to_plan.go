@@ -216,16 +216,16 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 		return nil, errors.Trace(err)
 	}
 	schema := b.buildAggSchema(aggFuncs, groupBys)
-	baseAgg := basePhysicalAgg{
+	baseAgg := physicalop.BasePhysicalAgg{
 		AggFuncs:     aggFuncs,
 		GroupByItems: groupBys,
 	}
 	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = initStreamAggWithBase(baseAgg, b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	} else {
-		partialAgg = baseAgg.initForHash(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = InitHashAggWithBase(baseAgg, b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }

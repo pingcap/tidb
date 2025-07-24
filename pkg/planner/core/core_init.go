@@ -91,6 +91,9 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalProjection = getPlanCostVer14PhysicalProjection
 	utilfuncp.GetPlanCostVer24PhysicalProjection = getPlanCostVer24PhysicalProjection
 	utilfuncp.ResolveIndices4PhysicalProjection = resolveIndices4PhysicalProjection
+	// for physical aggregation.
+	utilfuncp.InitForHash = initForHash
+	utilfuncp.InitForStream = initForStream
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost

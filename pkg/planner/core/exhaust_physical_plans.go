@@ -2014,11 +2014,10 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 		copy(newGbyItems, la.GroupByItems)
 		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
 		copy(newAggFuncs, la.AggFuncs)
-		streamAgg := basePhysicalAgg{
+		streamAgg := physicalop.BasePhysicalAgg{
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
-		}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), prop)
-		streamAgg.SetSchema(la.Schema().Clone())
+		}.InitForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), la.Schema().Clone(), prop)
 		// change to keep order for index scan and dsCopTask
 		if dsCopTask.indexPlan != nil {
 			// get the index scan from dsCopTask.indexPlan
@@ -3610,11 +3609,10 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
 		copy(newAggFuncs, la.AggFuncs)
 
-		agg := basePhysicalAgg{
+		agg := physicalop.BasePhysicalAgg{
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
-		}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), copiedChildProperty)
-		agg.SetSchema(la.Schema().Clone())
+		}.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
 		enforcedAggs = append(enforcedAggs, agg)
 	}
 	return enforcedAggs
@@ -3680,11 +3678,10 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
 			copy(newAggFuncs, la.AggFuncs)
 
-			agg := basePhysicalAgg{
+			agg := physicalop.BasePhysicalAgg{
 				GroupByItems: newGbyItems,
 				AggFuncs:     newAggFuncs,
-			}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), copiedChildProperty)
-			agg.SetSchema(la.Schema().Clone())
+			}.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
 			streamAggs = append(streamAggs, agg)
 		}
 	}

@@ -368,22 +368,20 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
-	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
+	baseAgg := physicalop.BasePhysicalAgg{
 		AggFuncs:     aggDescs,
 		GroupByItems: []expression.Expression{col, cst},
-	}}
-	streamAgg = streamAgg.initForStream(ctx, stats, 0)
+	}
+	streamAgg := initStreamAggWithBase(baseAgg, ctx, stats, 0)
 	streamAgg.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &PhysicalHashAgg{
-		basePhysicalAgg: basePhysicalAgg{
-			AggFuncs:     aggDescs,
-			GroupByItems: []expression.Expression{col, cst},
-		},
+	baseAgg = physicalop.BasePhysicalAgg{
+		AggFuncs:     aggDescs,
+		GroupByItems: []expression.Expression{col, cst},
 	}
-	hashAgg = hashAgg.initForHash(ctx, stats, 0)
+	hashAgg := InitHashAggWithBase(baseAgg, ctx, stats, 0)
 	hashAgg.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 

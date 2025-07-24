@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -1755,157 +1754,25 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 	return
 }
 
-// AggMppRunMode defines the running mode of aggregation in MPP
-type AggMppRunMode int
-
-const (
-	// NoMpp means the default value which does not run in MPP
-	NoMpp AggMppRunMode = iota
-	// Mpp1Phase runs only 1 phase but requires its child's partition property
-	Mpp1Phase
-	// Mpp2Phase runs partial agg + final agg with hash partition
-	Mpp2Phase
-	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
-	MppTiDB
-	// MppScalar also has 2 phases. The second phase runs in a single task.
-	MppScalar
-)
-
-type basePhysicalAgg struct {
-	physicalop.PhysicalSchemaProducer
-
-	AggFuncs         []*aggregation.AggFuncDesc
-	GroupByItems     []expression.Expression
-	MppRunMode       AggMppRunMode
-	MppPartitionCols []*property.MPPPartitionColumn
-}
-
-func (p *basePhysicalAgg) IsFinalAgg() bool {
-	if len(p.AggFuncs) > 0 {
-		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
-	cloned := new(basePhysicalAgg)
-	base, ok := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, newSelf)
-	if !ok {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *base
-	for _, aggDesc := range p.AggFuncs {
-		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
-	}
-	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
-	cloned.MppRunMode = p.MppRunMode
-	for _, p := range p.MppPartitionCols {
-		cloned.MppPartitionCols = append(cloned.MppPartitionCols, p.Clone())
-	}
-	return cloned, true
-}
-
-func (p *basePhysicalAgg) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, error) {
-	cloned := new(basePhysicalAgg)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, newSelf)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	for _, aggDesc := range p.AggFuncs {
-		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
-	}
-	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
-	return cloned, nil
-}
-
-func (p *basePhysicalAgg) numDistinctFunc() (num int) {
-	for _, fun := range p.AggFuncs {
-		if fun.HasDistinct {
-			num++
-		}
-	}
-	return
-}
-
-func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
-	factor = 0.0
-	for _, agg := range p.AggFuncs {
-		if fac, ok := cost.AggFuncFactor[agg.Name]; ok {
-			factor += fac
-		} else {
-			factor += cost.AggFuncFactor["default"]
-		}
-	}
-	if factor == 0 {
-		if isMPP {
-			// The default factor 1.0 will lead to 1-phase agg in pseudo stats settings.
-			// But in mpp cases, 2-phase is more usual. So we change this factor.
-			// TODO: This is still a little tricky and might cause regression. We should
-			// calibrate these factors and polish our cost model in the future.
-			factor = cost.AggFuncFactor[ast.AggFuncFirstRow]
-		} else {
-			factor = 1.0
-		}
-	}
-	return
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.GroupByItems)+len(p.AggFuncs))
-	for _, expr := range p.GroupByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
-	for _, fun := range p.AggFuncs {
-		for _, arg := range fun.Args {
-			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
-		}
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of basePhysicalAgg
-func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt
-
-	for _, agg := range p.AggFuncs {
-		sum += agg.MemoryUsage()
-	}
-	for _, expr := range p.GroupByItems {
-		sum += expr.MemoryUsage()
-	}
-	for _, mppCol := range p.MppPartitionCols {
-		sum += mppCol.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
-	basePhysicalAgg
+	physicalop.BasePhysicalAgg
 	tiflashPreAggMode string
 }
 
-func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
-	return &p.basePhysicalAgg
+func (p *PhysicalHashAgg) getPointer() *physicalop.BasePhysicalAgg {
+	return &p.BasePhysicalAgg
 }
 
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalAgg.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalAgg.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalAgg = *base
+	cloned.BasePhysicalAgg = *base
 	cloned.tiflashPreAggMode = p.tiflashPreAggMode
 	return cloned, nil
 }
@@ -1916,7 +1783,7 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return p.basePhysicalAgg.MemoryUsage()
+	return p.BasePhysicalAgg.MemoryUsage()
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
@@ -1931,31 +1798,40 @@ func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.Sta
 	for i, aggFunc := range la.AggFuncs {
 		newAggFuncs[i] = aggFunc.Clone()
 	}
-	agg := basePhysicalAgg{
+	baseAgg := physicalop.BasePhysicalAgg{
 		GroupByItems: newGbyItems,
 		AggFuncs:     newAggFuncs,
-	}.initForHash(la.SCtx(), newStats, la.QueryBlockOffset(), prop)
+	}
+	agg := InitHashAggWithBase(baseAgg, la.SCtx(), newStats, la.QueryBlockOffset(), prop)
 	return agg
+}
+
+func InitHashAggWithBase(base physicalop.BasePhysicalAgg, ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
+	p := &PhysicalHashAgg{base, ""}
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
+	p.SetChildrenReqProps(props)
+	p.SetStats(stats)
+	return p
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
-	basePhysicalAgg
+	physicalop.BasePhysicalAgg
 }
 
-func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
-	return &p.basePhysicalAgg
+func (p *PhysicalStreamAgg) getPointer() *physicalop.BasePhysicalAgg {
+	return &p.BasePhysicalAgg
 }
 
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalStreamAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalStreamAgg)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalAgg.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalAgg.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalAgg = *base
+	cloned.BasePhysicalAgg = *base
 	return cloned, nil
 }
 
@@ -1965,7 +1841,15 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return p.basePhysicalAgg.MemoryUsage()
+	return p.BasePhysicalAgg.MemoryUsage()
+}
+
+func initStreamAggWithBase(base physicalop.BasePhysicalAgg, ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalStreamAgg {
+	p := &PhysicalStreamAgg{base}
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, p, offset)
+	p.SetChildrenReqProps(props)
+	p.SetStats(stats)
+	return p
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
