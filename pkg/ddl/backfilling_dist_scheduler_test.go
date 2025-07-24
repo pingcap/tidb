@@ -293,7 +293,7 @@ func createAddIndexTask(t *testing.T,
 	useGlobalSort bool) (*proto.Task, *fakestorage.Server) {
 	var (
 		gcsHost = "127.0.0.1"
-		gcsPort = uint16(4443)
+		gcsPort = uint16(4447)
 		// for fake gcs server, we must use this endpoint format
 		// NOTE: must end with '/'
 		gcsEndpointFormat = "http://%s:%d/storage/v1/"
