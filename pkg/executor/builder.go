@@ -4192,6 +4192,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
+		GroupedRanges:              is.GroupedRanges,
 	}
 
 	if v.ExtraHandleCol != nil {

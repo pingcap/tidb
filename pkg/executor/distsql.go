@@ -507,6 +507,8 @@ type IndexLookUpExecutor struct {
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
 	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
+	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
+	GroupedRanges map[string][]*ranger.Range
 
 	// All fields above are immutable.
 
@@ -611,10 +613,25 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	if e.partitionTableMode {
 		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
 		for _, p := range e.prunedPartitions {
+			physicalID := p.GetPhysicalID()
+			if len(e.GroupedRanges) > 0 {
+				for _, groupRanges := range e.GroupedRanges {
+					var kvRange *kv.KeyRanges
+					if e.index.ID == -1 {
+						kvRange, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, groupRanges)
+					} else {
+						kvRange, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, groupRanges, e.memTracker, nil)
+					}
+					if err != nil {
+						return err
+					}
+					e.partitionKVRanges = append(e.partitionKVRanges, kvRange.FirstPartitionRange())
+				}
+				continue
+			}
 			// TODO: prune and adjust e.ranges for each partition again, since not all e.ranges are suitable for all e.prunedPartitions.
 			// For example, a table partitioned by range(a), and p0=(1, 10), p1=(11, 20), for the condition "(a>1 and a<10) or (a>11 and a<20)",
 			// the first range is only suitable to p0 and the second is to p1, but now we'll also build kvRange for range0+p1 and range1+p0.
-			physicalID := p.GetPhysicalID()
 			ranges := e.ranges
 			if e.partitionRangeMap != nil && e.partitionRangeMap[physicalID] != nil {
 				ranges = e.partitionRangeMap[physicalID]
@@ -631,6 +648,23 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			e.partitionKVRanges = append(e.partitionKVRanges, kvRange.FirstPartitionRange())
 		}
 	} else {
+		if len(e.GroupedRanges) > 0 {
+			e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.GroupedRanges))
+			for _, groupRanges := range e.GroupedRanges {
+				physicalID := getPhysicalTableID(e.table)
+				var kvRanges *kv.KeyRanges
+				if e.index.ID == -1 {
+					kvRanges, err = distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, groupRanges)
+				} else {
+					kvRanges, err = distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, e.index.ID, groupRanges, e.memTracker, nil)
+				}
+				if err != nil {
+					return err
+				}
+				e.partitionKVRanges = append(e.partitionKVRanges, kvRanges.FirstPartitionRange())
+			}
+			return nil
+		}
 		physicalID := getPhysicalTableID(e.table)
 		var kvRanges *kv.KeyRanges
 		if e.index.ID == -1 {
@@ -759,13 +793,14 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 
+	// if it's partition mode, or GroupedRanges is not empty, we need to use partitionKVRanges
 	kvRanges := [][]kv.KeyRange{e.kvRanges}
-	if e.partitionTableMode {
+	if e.partitionTableMode || len(e.GroupedRanges) > 0 {
 		kvRanges = e.partitionKVRanges
 	}
 	// When len(kvrange) = 1, no sorting is required,
 	// so remove byItems and non-necessary output columns
-	if len(kvRanges) == 1 {
+	if len(kvRanges) == 1 && len(e.GroupedRanges) == 0 {
 		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
 		e.byItems = nil
 	}
@@ -839,7 +874,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			results = append(results, result)
 		}
-		if len(results) > 1 && len(e.byItems) != 0 {
+		if (len(results) > 1 && len(e.byItems) != 0) || (len(e.GroupedRanges) > 0 && len(results) > 1) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
