@@ -143,7 +143,6 @@ func getSplitIdxPhysicalKeysFromValueList(
 ) ([][]byte, error) {
 	destKeys = getSplitIdxPhysicalStartAndOtherIdxKeys(tblInfo, idxInfo, physicalID, destKeys)
 	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
-	//nolint:forbidigo
 	ss := sctx.GetSessionVars()
 	sc := ss.StmtCtx
 	for _, v := range splitDatum {
@@ -408,8 +407,7 @@ func waitScatterRegionFinish(
 			// In this case, we should return 2 Regions, instead of 0, have finished scattering.
 			remainMillisecond = 50
 		default:
-			s := sctx.GetSessionVars()
-			remainMillisecond = int((s.GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
+			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
 		err := store.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)

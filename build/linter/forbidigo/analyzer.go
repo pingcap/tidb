@@ -15,7 +15,6 @@
 package forbidigo
 
 import (
-	"errors"
 	"fmt"
 	"go/ast"
 	"strings"
@@ -25,7 +24,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
-var lc = newLineCache()
+var lc = &LineCache{}
 
 // Analyzer is the analyzer struct of gofmt.
 var Analyzer = &analysis.Analyzer{
@@ -34,39 +33,20 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-type listVar struct {
-	values *[]string
-}
-
-func (v *listVar) Set(value string) error {
-	*v.values = append(*v.values, value)
-	if value == "" {
-		return errors.New("value cannot be empty")
-	}
-	return nil
-}
-
-func (v *listVar) String() string {
-	return ""
-}
-
 var (
-	patterns        = []string{`sessionctx.Context.GetSessionVars`}
-	includeExamples bool
-	analyzeTypes    bool
+	patterns = []string{`{
+		p: "sessionctx.Context.GetSessionVars",
+		pkg: ^github.com/pingcap/tidb/pkg/ddl$,
+		msg: "Please check if the usage of GetSessionVars is appropriate,\n
+		      you can add //nolint:forbidigo to ignore this check if necessary."
+	}`}
 )
-
-func init() {
-	Analyzer.Flags.Var(&listVar{values: &patterns}, "p", "pattern")
-	Analyzer.Flags.BoolVar(&includeExamples, "examples", false, "check godoc examples")
-	Analyzer.Flags.BoolVar(&analyzeTypes, "analyze_types", true, `when set, expressions get expanded instead of matching the literal source code`)
-}
 
 func run(pass *analysis.Pass) (any, error) {
 	linter, err := forbidigo.NewLinter(patterns,
 		forbidigo.OptionIgnorePermitDirectives(true),
-		forbidigo.OptionExcludeGodocExamples(!includeExamples),
-		forbidigo.OptionAnalyzeTypes(analyzeTypes),
+		forbidigo.OptionExcludeGodocExamples(false),
+		forbidigo.OptionAnalyzeTypes(true),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure linter: %w", err)
@@ -75,10 +55,7 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		nodes = append(nodes, f)
 	}
-	config := forbidigo.RunConfig{Fset: pass.Fset, DebugLog: nil}
-	if analyzeTypes {
-		config.TypesInfo = pass.TypesInfo
-	}
+	config := forbidigo.RunConfig{Fset: pass.Fset, DebugLog: nil, TypesInfo: pass.TypesInfo}
 	issues, err := linter.RunWithConfig(config, nodes...)
 	if err != nil {
 		return nil, err
@@ -89,17 +66,27 @@ func run(pass *analysis.Pass) (any, error) {
 
 func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 	// Because go doesn't support negative lookahead assertion,
-	// so we add some allowed usage here.
+	// that is, filter out some vaild usages like GetSessionVars().Stmt by regex,
+	// we add some allowed usages here and do the filtering by opening the file.
 	whiteLists := []string{
-		"StmtCtx", "TimeZone", "Location", "SQLMode", "GetSplitRegionTimeout",
-		"CDCWriteSource", "SetInTxn", "DiskFull", "DefaultCollationForUTF8MB4",
-		"BuildParserConfig",
+		"SQLMode",               // used for model.Job
+		"CDCWriteSource",        // used for model.Job
+		"StmtCtx",               // GetSessionVars().StmtCtx
+		"TimeZone",              // GetSessionVars().TimeZone
+		"Location",              // GetSessionVars().Location()
+		"GetSplitRegionTimeout", // GetSessionVars().GetSplitRegionTimeout()
+		"SetInTxn",              // GetSessionVars().SetInTxn(true)
+		"BuildParserConfig",     // GetSessionVars().BuildParserConfig()
+		"DiskFull",
+		"DefaultCollationForUTF8MB4",
+		"RowEncoder",
+		"SetStatusFlag",
 	}
 
 	for _, i := range issues {
 		skip := false
+		// Copied from golanglint-ci
 		if s, err := lc.GetLine(i.Position().Filename, i.Position().Line); err == nil {
-			fmt.Print("s =", s)
 			for _, whiteList := range whiteLists {
 				if strings.Contains(s, whiteList) {
 					skip = true
@@ -108,15 +95,13 @@ func reportIssues(pass *analysis.Pass, issues []forbidigo.Issue) {
 			}
 		}
 
-		if skip {
-			continue
+		if !skip {
+			pass.Report(analysis.Diagnostic{
+				Pos:      i.Pos(),
+				Message:  i.Details(),
+				Category: "restriction",
+			})
 		}
-		diag := analysis.Diagnostic{
-			Pos:      i.Pos(),
-			Message:  i.Details(),
-			Category: "restriction",
-		}
-		pass.Report(diag)
 	}
 }
 

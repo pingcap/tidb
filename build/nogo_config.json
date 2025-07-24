@@ -309,9 +309,8 @@
     "exclude_files": {
       "pkg/ddl/job_submitter.go": "ignore job_submitter code",
       "pkg/ddl/executor.go": "ignore executor code",
-      "pkg/ddl/session/session.go": "ignore session code",
-      "pkg/ddl/session/session_pool.go": "ignore session_pool code",
-      "pkg/ddl/schematracker/*.go": "ignore schematracker",
+      "pkg/ddl/session/.*.go": "ignore session code",
+      "pkg/ddl/schematracker/.*.go": "ignore schematracker",
       ".*test\\.go$": "ignore test files",
       "pkg/parser/": "parser/*.go code",
       "external/": "no need to vet third party code",
@@ -324,9 +323,6 @@
       "_cgo_gotypes.go": "skip _cgo_gotypes.go",
       "_cgo_imports.go": "skip _cgo_imports.go",
       ".*.cgo1.go": "skip cgo1.go"
-    },
-    "only_files": {
-      "pkg/ddl/": "only for ddl code"
     }
   },
   "gci": {

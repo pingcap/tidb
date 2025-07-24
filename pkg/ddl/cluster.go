@@ -157,7 +157,7 @@ func setGlobalSysVarFromBool(ctx context.Context, sess sessionctx.Context, name 
 		sv = vardef.Off
 	}
 
-	//nolint: forbidigo
+	//nolint:forbidigo
 	return sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(ctx, name, sv)
 }
 

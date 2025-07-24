@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,47 +21,16 @@ import (
 	"sync"
 )
 
-type fileCache struct {
-	files sync.Map
-}
-
-func (fc *fileCache) GetFileBytes(filePath string) ([]byte, error) {
-	cachedBytes, ok := fc.files.Load(filePath)
-	if ok {
-		return cachedBytes.([]byte), nil
-	}
-
-	fileBytes, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("can't read file %s: %w", filePath, err)
-	}
-
-	fc.files.Store(filePath, fileBytes)
-	return fileBytes, nil
-}
-
 type fileLinesCache [][]byte
 
 // LineCache is a cache for file lines.
 type LineCache struct {
-	files     sync.Map
-	fileCache *fileCache
-}
-
-func newLineCache() *LineCache {
-	return &LineCache{
-		fileCache: &fileCache{},
-	}
+	files sync.Map
 }
 
 // GetLine returns the index1-th (1-based index) line from the file on filePath
 func (lc *LineCache) GetLine(filePath string, index1 int) (string, error) {
-	if index1 == 0 { // some linters, e.g. gosec can do it: it really means first line
-		index1 = 1
-	}
-
-	const index1To0Offset = -1
-	rawLine, err := lc.getRawLine(filePath, index1+index1To0Offset)
+	rawLine, err := lc.getRawLine(filePath, index1-1)
 	if err != nil {
 		return "", err
 	}
@@ -92,9 +61,9 @@ func (lc *LineCache) getFileCache(filePath string) (fileLinesCache, error) {
 		return loadedFc.(fileLinesCache), nil
 	}
 
-	fileBytes, err := lc.fileCache.GetFileBytes(filePath)
+	fileBytes, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("can't get file %s bytes from cache: %w", filePath, err)
+		return nil, fmt.Errorf("can't read file %s: %w", filePath, err)
 	}
 
 	fc := bytes.Split(fileBytes, []byte("\n"))

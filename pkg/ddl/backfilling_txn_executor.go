@@ -238,7 +238,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
-		uv := usedSessCtx.GetSessionVars() //nolint: forbidigo
+		uv := usedSessCtx.GetSessionVars() //nolint:forbidigo
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone

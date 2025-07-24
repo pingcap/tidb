@@ -567,7 +567,7 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 }
 
 func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	sessVars := ctx.GetSessionVars() //nolint: forbidigo
+	sessVars := ctx.GetSessionVars() //nolint:forbidigo
 	if sessVars.PlacementMode == vardef.PlacementModeIgnore && removeTablePlacement(tbInfo) {
 		sessVars.StmtCtx.AppendNote(
 			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", vardef.PlacementModeIgnore),
