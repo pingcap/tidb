@@ -37,6 +37,7 @@ var Analyzer = &analysis.Analyzer{
 var (
 	patterns = []string{`{
 		p: "sessionctx.Context.GetSessionVars",
+		pkg: "github.com/pingcap/tidb/pkg/ddl",
 		msg: "Please check if the usage of GetSessionVars is appropriate,\n
 		      you can add //nolint:forbidigo to ignore this check if necessary."
 	}`}
