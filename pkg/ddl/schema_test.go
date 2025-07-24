@@ -702,7 +702,7 @@ func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
 		return len(txnIDs) == 1
 	}, 5*time.Second, 100*time.Millisecond)
 
-	//conn1.Close()
+	conn1.Close()
 	wg.Wait()
 }
 
