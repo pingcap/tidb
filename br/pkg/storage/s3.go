@@ -199,7 +199,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3, rawURL string) error {
 	}
 	// In some cases, we need to set ForcePathStyle to false.
 	// Refer to: https://rclone.org/s3/#s3-force-path-style
-	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" || useVirtualHostStyleForAWSS3(options, rawURL) ||
+	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
 		options.UseAccelerateEndpoint {
 		options.ForcePathStyle = false
 	}
