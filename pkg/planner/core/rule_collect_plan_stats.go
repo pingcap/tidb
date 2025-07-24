@@ -41,7 +41,7 @@ type CollectPredicateColumnsPoint struct{}
 // Optimize implements LogicalOptRule.<0th> interface.
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL, "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
+	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL || plan.SCtx().GetSessionVars().InternalSQLUseUserTable, "CollectPredicateColumnsPoint should not be called in restricted SQL mode")
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	syncLoadEnabled := syncWait > 0
 	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
@@ -224,7 +224,7 @@ type SyncWaitStatsLoadPoint struct{}
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (SyncWaitStatsLoadPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL, "SyncWaitStatsLoadPoint should not be called in restricted SQL mode")
+	intest.Assert(!plan.SCtx().GetSessionVars().InRestrictedSQL || plan.SCtx().GetSessionVars().InternalSQLUseUserTable, "SyncWaitStatsLoadPoint should not be called in restricted SQL mode")
 	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
 		return plan, planChanged, nil
 	}

@@ -391,6 +391,7 @@ func TestNewScanSession(t *testing.T) {
 					// NewScanSession should override @@dist_sql_scan_concurrency and @@tidb_enable_paging
 					require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
 					require.False(t, se.GetSessionVars().EnablePaging)
+					require.True(t, se.GetSessionVars().InternalSQLUseUserTable)
 					// restore should restore the session variables
 					restore()
 				} else {
@@ -402,6 +403,7 @@ func TestNewScanSession(t *testing.T) {
 				// Not matter returns an error or not, the session should be closed
 				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
 				require.True(t, se.GetSessionVars().EnablePaging)
+				require.False(t, se.GetSessionVars().InternalSQLUseUserTable)
 				return nil
 			}))
 			require.True(t, called)
