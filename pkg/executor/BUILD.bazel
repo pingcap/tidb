@@ -364,6 +364,7 @@ go_test(
         "partition_table_test.go",
         "pkdb_duty_separation_test.go",
         "pkdb_error_related_test.go",
+        "pkdb_infoschema_reader_test.go",
         "pkdb_label_security_test.go",
         "pkdb_procedure_test.go",
         "pkdb_set_test.go",
