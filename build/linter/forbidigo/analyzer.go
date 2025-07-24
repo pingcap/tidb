@@ -55,7 +55,10 @@ func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		nodes = append(nodes, f)
 	}
-	config := forbidigo.RunConfig{Fset: pass.Fset, DebugLog: nil, TypesInfo: pass.TypesInfo}
+	debugLog := func(format string, args ...any) {
+		fmt.Printf(format+"\n", args...)
+	}
+	config := forbidigo.RunConfig{Fset: pass.Fset, DebugLog: debugLog, TypesInfo: pass.TypesInfo}
 	issues, err := linter.RunWithConfig(config, nodes...)
 	if err != nil {
 		return nil, err
