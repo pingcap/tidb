@@ -205,6 +205,11 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		job.SchemaState = model.StatePendingReadOnly
 	case model.StatePendingReadOnly:
 		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, w.sess, job.Query, dbInfo.ID, trxTableName)
+		failpoint.Inject("mockCheckUncommittedTxnError", func() {
+			if err == nil {
+				err = errors.New("mock error for check uncommitted txn")
+			}
+		})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -221,10 +226,11 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 					delete(uncommittedTxn, txnID)
 					continue
 				}
-				logutil.BgLogger().Info("uncommitted txn", zap.Int64("txn ID", txnID))
+				logutil.BgLogger().Info("uncommitted txn block read only ddl", zap.Int64("txn ID", txnID))
 				break
 			}
 			time.Sleep(300 * time.Millisecond)
+			failpoint.InjectCall("checkUncommittedTxns", uncommittedTxn)
 		}
 
 		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
