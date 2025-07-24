@@ -318,8 +318,8 @@ func main() {
 		mainErrHandler = func(err error) {
 			if err != nil {
 				standbyController.EndStandby(err)
-				terror.MustNil(err)
 			}
+			terror.MustNil(err)
 		}
 		// need to validate config again in case of config change via standby
 		mainErrHandler(config.GetGlobalConfig().Valid())
@@ -328,12 +328,12 @@ func main() {
 	signal.SetupUSR1Handler()
 	registerStores()
 	err := metricsutil.RegisterMetrics()
-	terror.MustNil(err)
+	mainErrHandler(err)
 
 	if vardef.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
-		terror.MustNil(err)
+		mainErrHandler(err)
 		checkTempStorageQuota()
 	}
 	setupLog()
@@ -342,7 +342,7 @@ func main() {
 	setupStmtSummary()
 
 	err = cpuprofile.StartCPUProfiler()
-	terror.MustNil(err)
+	mainErrHandler(err)
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
 		err = tiflashcompute.InitGlobalTopoFetcher(
@@ -350,7 +350,7 @@ func main() {
 			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
 			config.GetGlobalConfig().AutoScalerClusterID,
 			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
-		terror.MustNil(err)
+		mainErrHandler(err)
 	}
 
 	// Enable failpoints in tikv/client-go if the test API is enabled.
@@ -393,7 +393,7 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL(keyspace.GetKeyspaceNameBytesBySettings(), svr)
-	terror.MustNil(svr.Run(dom))
+	mainErrHandler(svr.Run(dom))
 	<-exited
 	syncLog()
 }
