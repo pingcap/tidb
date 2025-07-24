@@ -3193,7 +3193,7 @@ func (m *MemArbitrator) AtMemRisk() bool {
 	return m.atMemRisk()
 }
 
-// AtMemRisk checks if the memory is under risk
+// AtOOMRisk checks if the memory is under risk
 func (m *MemArbitrator) AtOOMRisk() bool {
 	return m.heapController.memRisk.oomRisk
 }

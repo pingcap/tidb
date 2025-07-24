@@ -270,7 +270,6 @@ func newResourcePoolWithLimit(name string, limiit, allocAlignSize int64) *Resour
 }
 
 func TestMemoryAllocationEdgeCases(t *testing.T) {
-
 	m := NewResourcePoolDefault("test", 1e9)
 	m.Start(nil, (1e9))
 
@@ -446,7 +445,6 @@ func getPoolUsed(
 }
 
 func TestResourcePoolTree(t *testing.T) {
-
 	export := func(p *ResourcePool) string {
 		var pools []ResourcePoolState
 		_ = p.Traverse(func(pool ResourcePoolState) error {
@@ -490,7 +488,6 @@ func TestResourcePoolTree(t *testing.T) {
 }
 
 func TestResourcePoolUsedFromReserved(t *testing.T) {
-
 	root := genPool("root", nil)
 	const usedBytes = int64(1 << 10)
 	child := getPoolUsed(t, "child", root, usedBytes, 2*usedBytes)
