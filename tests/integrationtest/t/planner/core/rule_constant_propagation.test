@@ -43,4 +43,12 @@ create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
 explain select * from (select * from (select t.id+1 as id1, t.name from t, (select * from s where s.id>1) s1 where t.id=s1.id ) tmp order by id1) a union (select tmp.* from (select * from t where t.id <3) tmp left join s on tmp.id=s.id); -- match twice;
 
-
+create table t1(id int, value int);
+create table t2(id int, value int);
+INSERT INTO t1 (id, value) VALUES (10, 0),(20, 0),(30, 0);
+INSERT INTO t2 (id, value) VALUES (10, 100), (10, 200), (10, 300), (20, 400), (30, 500);
+explain format='brief' update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+select * from t1;
+select * from t2;
+drop table if exists t1, t2;
