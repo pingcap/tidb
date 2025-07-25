@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -965,7 +966,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
 		case ast.TableOptionEngineAttribute:
-			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
+			if kerneltype.IsClassic() {
+				return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
+			}
+			if err := handleEngineAttributeForCreateTable(op.StrValue, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
