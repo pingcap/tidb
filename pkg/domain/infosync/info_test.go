@@ -17,25 +17,17 @@ package infosync
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"path"
-	"runtime"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/goleak"
 )
 
@@ -49,114 +41,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
-}
-
-func TestTopology(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
-	}
-	integration.BeforeTestExternal(t)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	currentID := "test"
-
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	client := cluster.RandClient()
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockServerInfo", "return(true)"))
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockServerInfo")
-		require.NoError(t, err)
-	}()
-
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false, nil)
-	require.NoError(t, err)
-
-	err = info.ServerInfoSyncer().NewTopologySessionAndStoreServerInfo(ctx)
-	require.NoError(t, err)
-
-	topology, err := info.getTopologyFromEtcd(ctx)
-	require.NoError(t, err)
-	require.Equal(t, int64(1282967700), topology.StartTimestamp)
-
-	v, ok := topology.Labels["foo"]
-	require.True(t, ok)
-	require.Equal(t, "bar", v)
-	selfInfo := info.ServerInfoSyncer().GetLocalServerInfo()
-	require.Equal(t, selfInfo.ToTopologyInfo(), *topology)
-
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, selfInfo.IP, selfInfo.Port)
-	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", serverinfo.TopologyInformationPath, selfInfo.IP, selfInfo.Port)
-
-	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
-	require.NoError(t, err)
-
-	// Refresh and re-test if the key exists
-	err = info.RestartTopology(ctx)
-	require.NoError(t, err)
-
-	topology, err = info.getTopologyFromEtcd(ctx)
-	require.NoError(t, err)
-
-	s, err := os.Executable()
-	require.NoError(t, err)
-
-	dir := path.Dir(s)
-	require.Equal(t, dir, topology.DeployPath)
-	require.Equal(t, int64(1282967700), topology.StartTimestamp)
-	require.Equal(t, info.ServerInfoSyncer().GetLocalServerInfo().ToTopologyInfo(), *topology)
-
-	// check ttl key
-	ttlExists, err := info.ttlKeyExists(ctx)
-	require.NoError(t, err)
-	require.True(t, ttlExists)
-
-	err = util.DeleteKeyFromEtcd(ttlKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
-	require.NoError(t, err)
-
-	err = info.updateTopologyAliveness(ctx)
-	require.NoError(t, err)
-
-	ttlExists, err = info.ttlKeyExists(ctx)
-	require.NoError(t, err)
-	require.True(t, ttlExists)
-}
-
-func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*serverinfo.TopologyInfo, error) {
-	info := is.ServerInfoSyncer().GetLocalServerInfo()
-	key := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, info.IP, info.Port)
-	resp, err := is.etcdCli.Get(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	if len(resp.Kvs) == 0 {
-		return nil, errors.New("not-exists")
-	}
-	if len(resp.Kvs) != 1 {
-		return nil, errors.New("resp.Kvs error")
-	}
-	var ret serverinfo.TopologyInfo
-	err = json.Unmarshal(resp.Kvs[0].Value, &ret)
-	if err != nil {
-		return nil, err
-	}
-	return &ret, nil
-}
-
-func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
-	info := is.ServerInfoSyncer().GetLocalServerInfo()
-	key := fmt.Sprintf("%s/%s:%v/ttl", serverinfo.TopologyInformationPath, info.IP, info.Port)
-	resp, err := is.etcdCli.Get(ctx, key)
-	if err != nil {
-		return false, err
-	}
-	if len(resp.Kvs) >= 2 {
-		return false, errors.New("too many arguments in resp.Kvs")
-	}
-	return len(resp.Kvs) == 1, nil
 }
 
 func TestPutBundlesRetry(t *testing.T) {

@@ -343,6 +343,7 @@ func (s *Syncer) RestartTopology(ctx context.Context) error {
 	return s.NewTopologySessionAndStoreServerInfo(ctx)
 }
 
+// TopologySyncLoop syncs the topology information periodically.
 func (s *Syncer) TopologySyncLoop(exitCh chan struct{}) {
 	defer tidbutil.Recover(metrics.LabelDomain, "topologySyncerKeeper", nil, false)
 	ticker := time.NewTicker(TopologyTimeToRefresh)
