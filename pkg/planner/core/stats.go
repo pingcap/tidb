@@ -134,6 +134,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
+	maxEqOrIn, numTabFilters, numIdxFilters := 0, 0, 0
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -142,6 +143,25 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		if err != nil {
 			return nil, false, err
 		}
+		if path.EqOrInCondCount > maxEqOrIn {
+			// If we've found a new maxEqOrIn, reset the filter counts
+			maxEqOrIn = path.EqOrInCondCount
+			numTabFilters = len(path.TableFilters)
+			numIdxFilters = len(path.IndexFilters)
+		} else if path.EqOrInCondCount == maxEqOrIn {
+			// Record the filters of the path with the least filters.
+			if (len(path.AccessConds) > maxEqOrIn && numTabFilters >= len(path.TableFilters)) ||
+				(len(path.AccessConds) == maxEqOrIn && numTabFilters > len(path.TableFilters)) {
+				numTabFilters = len(path.TableFilters)
+				numIdxFilters = len(path.IndexFilters)
+			}
+		}
+	}
+
+	// Prune indexes that have the same prefix as other indexes with the same eqOrInCondCount,
+	// but where the other index also has a higher eqOrInCondCount
+	if maxEqOrIn > 1 || len(ds.AllPossibleAccessPaths) > 20 {
+		ds.AllPossibleAccessPaths = pruneIndexesByPrefixAndEqOrInCondCount(ds.AllPossibleAccessPaths, maxEqOrIn, numTabFilters, numIdxFilters)
 	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
@@ -717,6 +737,126 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		}
 	}
 	return nil
+}
+
+// pruneIndexesByPrefixAndEqOrInCondCount prunes indexes that have the same prefix as other indexes
+// with the same eqOrInCondCount, but where the other index also has a higher eqOrInCondCount.
+func pruneIndexesByPrefixAndEqOrInCondCount(paths []*util.AccessPath, maxEqOrIn, numTabFilters, numIdxFilters int) []*util.AccessPath {
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	// Early optimization: Check for perfect covering indexes
+	// If there's an index with maxEqOrIn and no filters, it's optimal
+	if numTabFilters == 0 && numIdxFilters == 0 {
+		var perfectCoveringIndexes []*util.AccessPath
+		var forcedIndexes []*util.AccessPath
+		var tablePaths []*util.AccessPath
+
+		for _, path := range paths {
+			if path.IsTablePath() {
+				tablePaths = append(tablePaths, path)
+				continue
+			}
+			if path.Forced {
+				forcedIndexes = append(forcedIndexes, path)
+				continue
+			}
+			// Check if this is a perfect covering index
+			if path.EqOrInCondCount == maxEqOrIn &&
+				len(path.TableFilters) == 0 &&
+				len(path.IndexFilters) == 0 {
+				perfectCoveringIndexes = append(perfectCoveringIndexes, path)
+			}
+		}
+
+		// If we have perfect covering indexes, return only them plus forced indexes and table paths
+		if len(perfectCoveringIndexes) > 0 {
+			result := make([]*util.AccessPath, 0, len(tablePaths)+len(forcedIndexes)+len(perfectCoveringIndexes))
+			result = append(result, tablePaths...)
+			result = append(result, forcedIndexes...)
+			result = append(result, perfectCoveringIndexes...)
+			return result
+		}
+	}
+
+	// Helper function to check if one index is a prefix of another
+	// This supports both same order and different sequence of columns
+	isIndexPrefix := func(idx1, idx2 *model.IndexInfo, minEq int) bool {
+		if minEq == 0 {
+			return false
+		}
+
+		// Check if the first minEq columns of idx1 are contained in idx2
+		// This handles both same order and different sequence cases
+		for i := 0; i < minEq && i < len(idx1.Columns); i++ {
+			found := false
+			for j := range len(idx2.Columns) {
+				if idx1.Columns[i].Name.L == idx2.Columns[j].Name.L {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Group paths by eqOrInCondCount
+	pathsByEqOrInCount := make(map[int][]*util.AccessPath)
+	for _, path := range paths {
+		if path.IsTablePath() {
+			continue // Skip table paths (including PK)
+		}
+		eqOrInCount := path.EqOrInCondCount
+		pathsByEqOrInCount[eqOrInCount] = append(pathsByEqOrInCount[eqOrInCount], path)
+	}
+
+	// For each eqOrInCondCount, check if there are indexes with higher eqOrInCondCount
+	// that have the same prefix as indexes in the current group
+	pathsToRemove := make(map[*util.AccessPath]bool)
+
+	for currentEqOrInCount, currentPaths := range pathsByEqOrInCount {
+		// Check if there are any indexes with higher eqOrInCondCount that have the same prefix
+		for higherEqOrInCount, higherPaths := range pathsByEqOrInCount {
+			if higherEqOrInCount <= currentEqOrInCount {
+				continue
+			}
+			for _, currentPath := range currentPaths {
+				for _, higherPath := range higherPaths {
+					if currentPath.Forced {
+						continue
+					}
+					if currentPath.EqOrInCondCount == maxEqOrIn &&
+						!(len(currentPath.TableFilters) > numTabFilters || len(currentPath.IndexFilters) > numIdxFilters) {
+						continue // Don't prune if the current index has max eqOrInCondCount and least filters
+					}
+					// Don't prune if the current index is a single scan and the higher index is not
+					// Single scan indexes can avoid table lookups, so they should be preserved
+					if currentPath.EqOrInCondCount > 1 && currentPath.IsSingleScan && !higherPath.IsSingleScan {
+						continue
+					}
+					if isIndexPrefix(currentPath.Index, higherPath.Index, min(currentPath.EqOrInCondCount, higherPath.EqOrInCondCount)) {
+						// The current index is a prefix of the higher index, and the higher index
+						// has more eqOrIn conditions, so we can prune the current index
+						pathsToRemove[currentPath] = true
+					}
+				}
+			}
+		}
+	}
+
+	// Remove the pruned paths
+	result := make([]*util.AccessPath, 0, len(paths))
+	for _, path := range paths {
+		if !pathsToRemove[path] {
+			result = append(result, path)
+		}
+	}
+
+	return result
 }
 
 // loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
