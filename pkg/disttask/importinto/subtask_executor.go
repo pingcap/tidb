@@ -183,9 +183,12 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 }
 
 func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManager, taskMeta *TaskMeta) error {
-	task, err2 := taskManager.GetTaskByID(ctx, taskMeta.JobID)
-	if err2 != nil {
-		return err2
+	task, err := taskManager.GetTaskByID(ctx, taskMeta.JobID)
+	if err != nil {
+		return err
+	}
+	if err := taskManager.ModifyTaskByID(ctx, taskMeta.JobID, &proto.ModifyParam{PrevState: task.State}); err != nil {
+		return err
 	}
 	taskMeta.ResetTableMode = true
 	if err := updateMeta(task, taskMeta); err != nil {
