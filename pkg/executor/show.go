@@ -120,7 +120,6 @@ type ShowExec struct {
 
 	ImportJobID       *int64
 	DistributionJobID *int64
-	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
@@ -264,8 +263,6 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBind()
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
-	case ast.ShowPlanForSQL:
-		return e.fetchPlanForSQL()
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -377,35 +374,6 @@ func (e *ShowExec) fetchShowBind() error {
 			hint.SQLDigest,
 			hint.PlanDigest,
 		})
-	}
-	return nil
-}
-
-func (e *ShowExec) fetchPlanForSQL() error {
-	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
-	plans, err := bindingHandle.ExplorePlansForSQL(e.Ctx().GetPlanCtx(), e.SQLOrDigest, false)
-	if err != nil {
-		return err
-	}
-	for _, p := range plans {
-		hintStr, err := p.Binding.Hint.Restore()
-		if err != nil {
-			return err
-		}
-
-		e.appendRow([]any{
-			p.Binding.OriginalSQL,
-			hintStr,
-			p.Plan,
-			p.PlanDigest,
-			p.AvgLatency,
-			float64(p.ExecTimes),
-			p.AvgScanRows,
-			p.AvgReturnedRows,
-			p.LatencyPerReturnRow,
-			p.ScanRowsPerReturnRow,
-			p.Recommend,
-			p.Reason})
 	}
 	return nil
 }

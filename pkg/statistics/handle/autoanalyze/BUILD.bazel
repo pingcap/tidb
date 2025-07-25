@@ -45,6 +45,7 @@ go_test(
         ":autoanalyze",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",

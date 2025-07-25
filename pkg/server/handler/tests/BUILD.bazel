@@ -17,6 +17,7 @@ go_test(
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/executor/mppcoordmanager",
         "//pkg/infoschema",
         "//pkg/kv",
