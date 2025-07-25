@@ -520,6 +520,10 @@ func TestImportActions(t *testing.T) {
 			expectSQL: "CANCEL IMPORT JOB 123",
 		},
 		{
+			sourceSQL: "alter import job 1 thread = 8",
+			expectSQL: "ALTER IMPORT JOB 1 thread = 8",
+		},
+		{
 			sourceSQL: "show import jobs",
 			expectSQL: "SHOW IMPORT JOBS",
 		},

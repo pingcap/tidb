@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -261,4 +262,26 @@ func (mgr *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
 		)
 		return err
 	})
+}
+
+// GetImportTaskIDByJobID returns the task ID by job ID.
+func (mgr *TaskManager) GetImportTaskIDByJobID(ctx context.Context, jobID int64) (int64, error) {
+	var taskID int64
+	taskKey := fmt.Sprintf("%s/%d", proto.ImportInto, jobID)
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		rows, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select id from mysql.tidb_global_task where task_key = %?`, taskKey)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return errors.Errorf("no import into task found for job id %d", jobID)
+		}
+		taskID = rows[0].GetInt64(0)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return taskID, nil
 }

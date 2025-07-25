@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -67,6 +68,7 @@ type importStepExecutor struct {
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
+	op           atomic.Pointer[encodeAndSortOperator]
 	indicesGenKV map[int64]genKVIndex
 }
 
@@ -177,6 +179,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
 	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	s.op.Store(op)
+	defer s.op.Store(nil)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -291,12 +295,55 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
+func (*importStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (s *importStepExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	currOp := s.op.Load()
+	if currOp == nil {
+		s.logger.Info("ResourceModified called but no subtask running")
+		return errors.Errorf("no subtask running")
+	}
+	target := int32(newResource.CPU.Capacity())
+	if target != currOp.GetWorkerPoolSize() {
+		s.logger.Info("ResourceModified: tuning worker pool size",
+			zap.String("step", "importStepExecutor"),
+			zap.Int32("old", currOp.GetWorkerPoolSize()),
+			zap.Int32("new", target))
+		currOp.TuneWorkerPoolSize(target, true)
+	}
+
+	// update the memory size limit and block size.
+	oldDataKVMemSizePerCon := s.dataKVMemSizePerCon
+	oldPerIndexKVMemSizePerCon := s.perIndexKVMemSizePerCon
+	oldDataBlockSize := s.dataBlockSize
+	oldIndexBlockSize := s.indexBlockSize
+
+	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(newResource, s.tableImporter.Plan)
+	s.dataBlockSize = getAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
+	s.indexBlockSize = getAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
+
+	s.logger.Info("ResourceModified: updated memory and block size",
+		zap.Uint64("old-data-kv-mem-size", oldDataKVMemSizePerCon),
+		zap.Uint64("new-data-kv-mem-size", s.dataKVMemSizePerCon),
+		zap.Uint64("old-index-kv-mem-size", oldPerIndexKVMemSizePerCon),
+		zap.Uint64("new-index-kv-mem-size", s.perIndexKVMemSizePerCon),
+		zap.Int("old-data-block-size", oldDataBlockSize),
+		zap.Int("new-data-block-size", s.dataBlockSize),
+		zap.Int("old-index-block-size", oldIndexBlockSize),
+		zap.Int("new-index-block-size", s.indexBlockSize),
+	)
+	return nil
+}
+
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
 	controller *importer.LoadDataController
+	mergeOp    atomic.Pointer[external.MergeOperator]
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
 	subtaskSortedKVMeta *external.SortedKVMeta
@@ -382,6 +429,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		false,
 		onDup,
 	)
+	m.mergeOp.Store(op)
+	defer m.mergeOp.Store(nil)
 
 	if err = external.MergeOverlappingFiles(
 		opCtx,
@@ -424,6 +473,38 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	return nil
 }
 
+func (*mergeSortStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (m *mergeSortStepExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	currOp := m.mergeOp.Load()
+	if currOp == nil {
+		m.logger.Info("ResourceModified called but no subtask running")
+		return errors.Errorf("no subtask running")
+	}
+	target := int32(newResource.CPU.Capacity())
+	if target != currOp.GetWorkerPoolSize() {
+		m.logger.Info("ResourceModified: tuning worker pool size",
+			zap.String("step", "mergeSortStepExecutor"),
+			zap.Int32("old", currOp.GetWorkerPoolSize()),
+			zap.Int32("new", target))
+		currOp.TuneWorkerPoolSize(target, true)
+	}
+	oldDataKVPartSize := m.dataKVPartSize
+	oldIndexKVPartSize := m.indexKVPartSize
+	dataKVMem, indexKVMem := getWriterMemorySizeLimit(newResource, &m.taskMeta.Plan)
+	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMem*uint64(external.MaxMergingFilesPerThread)/10000))
+	m.indexKVPartSize = max(external.MinUploadPartSize, int64(indexKVMem*uint64(external.MaxMergingFilesPerThread)/10000))
+	m.logger.Info("ResourceModified: updated part sizes",
+		zap.Int64("old-data-kv-part-size", oldDataKVPartSize),
+		zap.Int64("new-data-kv-part-size", m.dataKVPartSize),
+		zap.Int64("old-index-kv-part-size", oldIndexKVPartSize),
+		zap.Int64("new-index-kv-part-size", m.indexKVPartSize),
+	)
+	return nil
+}
+
 func getOnDupForKVGroup(indicesGenKV map[int64]genKVIndex, kvGroup string) (common.OnDuplicateKey, error) {
 	if kvGroup == dataKVGroup {
 		return common.OnDuplicateKeyRecord, nil
@@ -453,6 +534,8 @@ type writeAndIngestStepExecutor struct {
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
+
+	engine atomic.Pointer[external.Engine]
 
 	indicesGenKV map[int64]genKVIndex
 }
@@ -522,6 +605,12 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
+	eng := localBackend.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	e.engine.Store(eng)
+	defer e.engine.Store(nil)
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
@@ -570,6 +659,46 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
+func (e *writeAndIngestStepExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
+	newTaskMeta := &TaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if newTaskMeta.Plan.MaxWriteSpeed != e.taskMeta.Plan.MaxWriteSpeed {
+		oldSpeed := e.taskMeta.Plan.MaxWriteSpeed
+		newSpeed := newTaskMeta.Plan.MaxWriteSpeed
+		e.logger.Info("TaskMetaModified: updating MaxWriteSpeed",
+			zap.String("step", "writeAndIngestStepExecutor"),
+			zap.Int64("old-max-write-speed", int64(oldSpeed)),
+			zap.Int64("new-max-write-speed", int64(newSpeed)),
+		)
+		e.tableImporter.Backend().UpdateWriteSpeedLimit(int(newSpeed))
+		e.taskMeta.Plan.MaxWriteSpeed = newSpeed
+	}
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	eng := e.engine.Load()
+	if eng == nil {
+		e.logger.Info("ResourceModified called but no subtask running")
+		return errors.Errorf("no subtask running")
+	}
+
+	newConcurrency := int(newResource.CPU.Capacity())
+	newMem := newResource.Mem.Capacity()
+	if err := eng.UpdateResource(ctx, newConcurrency, newMem); err != nil {
+		return err
+	}
+	e.logger.Info("ResourceModified: updated engine resource",
+		zap.String("step", "writeAndIngestStepExecutor"),
+		zap.Int("new-concurrency", newConcurrency),
+		zap.Int64("new-mem", newMem),
+	)
+	e.tableImporter.Backend().SetConcurrency(newConcurrency)
+	return nil
+}
+
 type postProcessStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	taskID   int64
@@ -605,6 +734,14 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 		time.Sleep(5 * time.Second)
 	})
 	return postProcess(ctx, p.store, p.taskMeta, &stepMeta, logger)
+}
+
+func (*postProcessStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (*postProcessStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
+	return nil
 }
 
 type importExecutor struct {
