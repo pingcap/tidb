@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -166,6 +167,7 @@ func NewImportScheduler(
 func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
 	return &importScheduler{
 		GlobalSort: globalSort,
+		taskKS:     tidb.GetGlobalKeyspaceName(),
 	}
 }
 
@@ -272,13 +274,20 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
-) (
-	resSubtaskMeta [][]byte, err error) {
+) (resSubtaskMeta [][]byte, err error) {
+	nodeCnt := len(execIDs)
+	if kerneltype.IsNextGen() {
+		// in nextgen, node resource are scaled out automatically, we only consider
+		// the max allowed node for the task, and ignore how many node currently
+		// available.
+		nodeCnt = task.MaxNodeCount
+	}
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
+		zap.Int("node-count", nodeCnt),
 	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
@@ -363,8 +372,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(execIDs),
+		ExecuteNodesCnt:      nodeCnt,
 		Store:                sch.store,
+		ThreadCnt:            task.Concurrency,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {

@@ -577,15 +577,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		}
 	})
 
-	var partitions []model.PartitionDefinition
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		partitions = tblInfo.GetPartitionInfo().Definitions
-	}
 	var scatterScope string
 	if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
-	preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, partitions, scatterScope)
+	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {

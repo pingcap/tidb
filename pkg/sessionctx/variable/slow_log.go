@@ -23,8 +23,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/tikv/client-go/v2/util"
@@ -199,6 +202,34 @@ type JSONSQLWarnForSlowLog struct {
 	IsExtra bool `json:",omitempty"`
 }
 
+func extractMsgFromSQLWarn(sqlWarn *contextutil.SQLWarn) string {
+	// Currently, this function is only used in collectWarningsForSlowLog.
+	// collectWarningsForSlowLog can make sure SQLWarn is not nil so no need to add a nil check here.
+	warn := errors.Cause(sqlWarn.Err)
+	if x, ok := warn.(*terror.Error); ok && x != nil {
+		sqlErr := terror.ToSQLError(x)
+		return sqlErr.Message
+	}
+	return warn.Error()
+}
+
+// CollectWarningsForSlowLog collects warnings from the statement context and formats them for slow log output.
+func CollectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []JSONSQLWarnForSlowLog {
+	warnings := stmtCtx.GetWarnings()
+	extraWarnings := stmtCtx.GetExtraWarnings()
+	res := make([]JSONSQLWarnForSlowLog, len(warnings)+len(extraWarnings))
+	for i := range warnings {
+		res[i].Level = warnings[i].Level
+		res[i].Message = extractMsgFromSQLWarn(&warnings[i])
+	}
+	for i := range extraWarnings {
+		res[len(warnings)+i].Level = extraWarnings[i].Level
+		res[len(warnings)+i].Message = extractMsgFromSQLWarn(&extraWarnings[i])
+		res[len(warnings)+i].IsExtra = true
+	}
+	return res
+}
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -213,34 +244,37 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *execdetails.CopTasksDetails
-	ExecDetail        execdetails.ExecDetails
-	MemMax            int64
-	DiskMax           int64
 	Succ              bool
+	IsExplicitTxn     bool
+	IsWriteCacheTable bool
+	IsSyncStatsFailed bool
 	Prepared          bool
-	PlanFromCache     bool
-	PlanFromBinding   bool
-	HasMoreResults    bool
-	PrevStmt          string
-	Plan              string
-	PlanDigest        string
-	BinaryPlan        string
+	// plan information
+	PlanFromCache   bool
+	PlanFromBinding bool
+	HasMoreResults  bool
+	PrevStmt        string
+	Plan            string
+	PlanDigest      string
+	BinaryPlan      string
+	// execution detail information
+	UsedStats         *stmtctx.UsedStatsInfo
+	CopTasks          *execdetails.CopTasksDetails
 	RewriteInfo       RewritePhaseInfo
-	KVExecDetail      *util.ExecDetails
 	WriteSQLRespTotal time.Duration
+	KVExecDetail      *util.ExecDetails
+	ExecDetail        execdetails.ExecDetails
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
 	ResultRows        int64
-	IsExplicitTxn     bool
-	IsWriteCacheTable bool
-	UsedStats         *stmtctx.UsedStatsInfo
-	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
+	// resource information
 	ResourceGroupName string
 	RRU               float64
 	WRU               float64
 	WaitRUDuration    time.Duration
+	MemMax            int64
+	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
 }
 
@@ -359,40 +393,31 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 			}
 			slices.Sort(backoffs)
 
-			if logItems.CopTasks.NumCopTasks == 1 {
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
-					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
-					SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
-					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
-					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
+			taskNum := logItems.CopTasks.NumCopTasks
+			buf.WriteString(SlowLogRowPrefixStr +
+				logItems.CopTasks.ProcessTimeStats.String(taskNum, SlowLogSpaceMarkStr, SlowLogCopProcAvg, SlowLogCopProcP90, SlowLogCopProcMax, SlowLogCopProcAddr) + "\n")
+			buf.WriteString(SlowLogRowPrefixStr +
+				logItems.CopTasks.WaitTimeStats.String(taskNum, SlowLogSpaceMarkStr, SlowLogCopWaitAvg, SlowLogCopWaitP90, SlowLogCopWaitMax, SlowLogCopWaitAddr) + "\n")
+
+			if taskNum == 1 {
 				for _, backoff := range backoffs {
 					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
 					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v\n",
 						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
-						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.BackoffTimeStatsMap[backoff].TotTime.Seconds(),
 					))
 				}
 			} else {
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
-					SlowLogCopProcP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90ProcessTime.Seconds(),
-					SlowLogCopProcMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessTime.Seconds(),
-					SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
-					SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
-					SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
-					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
 				for _, backoff := range backoffs {
 					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
+					backoffTimeStats := logItems.CopTasks.BackoffTimeStatsMap[backoff]
 					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v %v%v%v %v%v%v\n",
 						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
-						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
-						backoffPrefix+"max_time", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffTime[backoff].Seconds(),
-						backoffPrefix+"max_addr", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffAddress[backoff],
-						backoffPrefix+"avg_time", SlowLogSpaceMarkStr, logItems.CopTasks.AvgBackoffTime[backoff].Seconds(),
-						backoffPrefix+"p90_time", SlowLogSpaceMarkStr, logItems.CopTasks.P90BackoffTime[backoff].Seconds(),
+						backoffPrefix+"total_time", SlowLogSpaceMarkStr, backoffTimeStats.TotTime.Seconds(),
+						backoffPrefix+"max_time", SlowLogSpaceMarkStr, backoffTimeStats.MaxTime.Seconds(),
+						backoffPrefix+"max_addr", SlowLogSpaceMarkStr, backoffTimeStats.MaxAddress,
+						backoffPrefix+"avg_time", SlowLogSpaceMarkStr, backoffTimeStats.AvgTime.Seconds(),
+						backoffPrefix+"p90_time", SlowLogSpaceMarkStr, backoffTimeStats.P90Time.Seconds(),
 					))
 				}
 			}

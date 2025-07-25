@@ -3648,13 +3648,13 @@ def go_deps():
         name = "com_github_grafana_pyroscope_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/grafana/pyroscope-go",
-        sha256 = "cfb937666678331da6317a45d2794108f8763c22a3a548466a73ddec135fbb20",
-        strip_prefix = "github.com/grafana/pyroscope-go@v1.2.3",
+        sha256 = "dca06f5f9123ff846277d92994e1957b7b61312b942c7cefeea319fd613e15db",
+        strip_prefix = "github.com/grafana/pyroscope-go@v1.2.4",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
-            "http://ats.apps.svc/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.3.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.4.zip",
+            "http://ats.apps.svc/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.4.zip",
         ],
     )
     go_repository(

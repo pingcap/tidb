@@ -58,7 +58,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	sel = sel.Init(ctx, stats, 0)
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}
 	proj = proj.Init(ctx, stats, 0)
 	proj.SetSchema(schema)
 

@@ -617,11 +617,18 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
-	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+	p.MaxEngineSize = getDefMaxEngineSize()
 	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
 
 	v := defaultCharacterSet
 	p.Charset = &v
+}
+
+func getDefMaxEngineSize() config.ByteSize {
+	if kerneltype.IsNextGen() {
+		return config.DefaultBatchSize
+	}
+	return config.ByteSize(defaultMaxEngineSize)
 }
 
 func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
