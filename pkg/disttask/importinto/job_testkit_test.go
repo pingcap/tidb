@@ -324,7 +324,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
 	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(5)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(100)")
 
 	// Encode step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
@@ -356,7 +356,7 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(500)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(1)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	checkShowInfo("ingest", "500B", "1kB", "50", "1B/s", "00:08:20", 50)
 

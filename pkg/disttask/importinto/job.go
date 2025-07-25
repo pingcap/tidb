@@ -160,8 +160,8 @@ type RuntimeInfo struct {
 	ErrorMsg   string
 
 	Step       proto.Step
-	StartTime  types.Time
 	UpdateTime types.Time
+	Speed      int64
 	Processed  int64
 	Total      int64
 }
@@ -197,29 +197,23 @@ func FormatSecondAsTime(sec int64) string {
 
 // SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
 func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
-	s := int64(0)
-	duration := types.TimestampDiff("SECOND", ri.StartTime, ri.UpdateTime)
-	if duration > 0 && ri.Processed > 0 {
-		s = ri.Processed / duration
-	}
-
 	remainTime := notAvailable
-	if s > 0 && ri.Total > 0 {
-		remainSecond := max((ri.Total-ri.Processed)/s, 0)
+	if ri.Speed > 0 && ri.Total > 0 {
+		remainSecond := max((ri.Total-ri.Processed)/ri.Speed, 0)
 		remainTime = FormatSecondAsTime(remainSecond)
 	}
 
-	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
+	return fmt.Sprintf("%s/s", units.HumanSize(float64(ri.Speed))), remainTime
 }
 
 // TotalSize returns the total size of the current step in human-readable format.
 func (ri *RuntimeInfo) TotalSize() string {
-	return units.HumanSize(float64(ri.Total))
+	return units.BytesSize(float64(ri.Total))
 }
 
 // ProcessedSize returns the processed size of the current step in human-readable format.
 func (ri *RuntimeInfo) ProcessedSize() string {
-	return units.HumanSize(float64(ri.Processed))
+	return units.BytesSize(float64(ri.Processed))
 }
 
 // convertToMySQLTime converts go time to MySQL time with the specified location.
@@ -284,11 +278,15 @@ func GetRuntimeInfoForJob(
 		return nil, err
 	}
 
+	ri.Speed = 0
 	for _, s := range summaries {
 		ri.Processed += s.Bytes.Load()
 		ri.ImportRows += s.RowCnt.Load()
 		if s.UpdateTime.After(latestTime) {
 			latestTime = s.UpdateTime
+		}
+		if s.State == proto.SubtaskStateRunning {
+			ri.Speed += s.Speed
 		}
 	}
 

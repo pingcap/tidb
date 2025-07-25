@@ -70,12 +70,38 @@ type SubtaskSummary struct {
 	RowCnt     atomic.Int64 `json:"row_count,omitempty"`
 	Bytes      atomic.Int64 `json:"bytes,omitempty"`
 	UpdateTime time.Time    `json:"update_time,omitempty"`
+
+	Speed     int64       `json:"speed,omitempty"`
+	lastBytes []int64     `json:"-"`
+	lastTimes []time.Time `json:"-"`
+
+	// State is only filled when reading from the subtask table by GetAllSubtaskSummaryByStep.
+	State proto.SubtaskState `json:"-"`
+}
+
+// Update updates the summary with the current time.
+// It also updates the current speed based on the last 10 updates.
+func (s *SubtaskSummary) Update() {
+	s.UpdateTime = time.Now()
+	s.lastBytes = append(s.lastBytes, 0)
+	s.lastTimes = append(s.lastTimes, s.UpdateTime)
+	if len(s.lastBytes) > 10 {
+		s.lastBytes = s.lastBytes[1:]
+		s.lastTimes = s.lastTimes[1:]
+	}
+	if len(s.lastBytes) > 1 {
+		s.Speed = int64(float64(s.lastBytes[len(s.lastBytes)-1]-s.lastBytes[0]) /
+			(s.lastTimes[len(s.lastTimes)-1].Sub(s.lastTimes[0]).Seconds()))
+	}
 }
 
 // Reset resets the summary to the given row count and bytes.
 func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
 	s.Bytes.Store(0)
+	s.lastBytes = s.lastBytes[:0]
+	s.lastTimes = s.lastTimes[:0]
+	s.Update()
 }
 
 // Collector is the interface for collecting subtask metrics.
