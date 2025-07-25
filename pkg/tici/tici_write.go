@@ -143,8 +143,8 @@ func (w *DataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Logger)
 	return nil
 }
 
-// GetCloudStoragePath requests the S3 path for a baseline shard upload and stores it in the struct.
-func (w *DataWriter) GetCloudStoragePath(
+// FetchCloudStoragePath requests the S3 path for a baseline shard upload and stores it in the struct.
+func (w *DataWriter) FetchCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) (string, error) {
@@ -482,9 +482,9 @@ func (g *DataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
 	return nil
 }
 
-// GetCloudStoragePath runs GetCloudStoragePath for all writers.
+// FetchCloudStoragePath runs FetchCloudStoragePath for all writers.
 // Sets the s3Path for each writer, returns the first error encountered.
-func (g *DataWriterGroup) GetCloudStoragePath(
+func (g *DataWriterGroup) FetchCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) error {
@@ -492,7 +492,7 @@ func (g *DataWriterGroup) GetCloudStoragePath(
 		return nil
 	}
 	for _, w := range g.writers {
-		_, err := w.GetCloudStoragePath(ctx, lowerBound, upperBound)
+		_, err := w.FetchCloudStoragePath(ctx, lowerBound, upperBound)
 		if err != nil {
 			return err
 		}

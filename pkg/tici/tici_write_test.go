@@ -239,11 +239,11 @@ func TestTiCIDataWriterGroup_InitTICIFileWriters_NotWritable(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestTiCIDataWriterGroup_GetCloudStoragePath_NotWritable(t *testing.T) {
+func TestTiCIDataWriterGroup_FetchCloudStoragePath_NotWritable(t *testing.T) {
 	ctx := context.Background()
 	group := &DataWriterGroup{}
 	group.writable.Store(false)
-	err := group.GetCloudStoragePath(ctx, nil, nil)
+	err := group.FetchCloudStoragePath(ctx, nil, nil)
 	assert.NoError(t, err)
 }
 

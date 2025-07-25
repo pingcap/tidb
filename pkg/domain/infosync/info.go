@@ -1638,33 +1638,3 @@ func (is *InfoSyncer) setDynamicServerInfo(ds *DynamicServerInfo) {
 	}
 	is.info.Store(newInfo)
 }
-
-// GetCloudStoragePath requests the S3 path from TiCI Meta Service for a baseline shard upload.
-func GetCloudStoragePath(
-	ctx context.Context,
-	tblInfo *model.TableInfo,
-	indexInfo *model.IndexInfo,
-	schemaName string,
-	lowerBound, upperBound []byte,
-) (string, error) {
-	ticiManager, err := tici.NewTiCIManager("0.0.0.0", "50061")
-	if err != nil {
-		return "", err
-	}
-	defer ticiManager.Conn.Close()
-	return ticiManager.GetCloudStoragePath(ctx, tblInfo, indexInfo, schemaName, lowerBound, upperBound)
-}
-
-// MarkTableUploadFinished notifies TiCI Meta Service that the whole table/index upload is finished.
-func MarkTableUploadFinished(
-	ctx context.Context,
-	tableID int64,
-	indexID int64,
-) error {
-	ticiManager, err := tici.NewTiCIManager("0.0.0.0", "50061")
-	if err != nil {
-		return err
-	}
-	defer ticiManager.Conn.Close()
-	return ticiManager.MarkTableUploadFinished(ctx, tableID, indexID)
-}
