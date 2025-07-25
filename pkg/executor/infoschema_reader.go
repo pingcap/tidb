@@ -239,6 +239,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlanCache(ctx, sctx, true)
 		case infoschema.TableKeyspaceMeta:
 			err = e.setDataForKeyspaceMeta(sctx)
+		case infoschema.TableSchemataExtensions:
+			err = e.setDataFromSchemataExtensions(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -4119,6 +4121,38 @@ func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err
 	}
 	row[2] = types.NewJSONDatum(bj)
 	e.rows = [][]types.Datum{row}
+	return
+}
+
+func (e *memtableRetriever) setDataFromSchemataExtensions(ctx sessionctx.Context) (err error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaSchemataExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaSchemataExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
+		return nil
+	}
+	schemas := ex.ListSchemas(e.is)
+	rows := make([][]types.Datum, 0, len(schemas))
+
+	for _, schemaName := range schemas {
+		schema, _ := e.is.SchemaByName(schemaName)
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // CATALOG_NAME
+			schema.Name.O,         // SCHEMA_NAME
+		)
+		// todo:
+		//if schema.ReadOnly {
+		//	record = append(record, types.NewStringDatum("READ ONLY=1"))
+		//}
+		rows = append(rows, record)
+		e.recordMemoryConsume(record)
+	}
+	e.rows = rows
 	return
 }
 
