@@ -157,8 +157,14 @@ type Parser interface {
 	// TODO: replace pos with a new structure to specify position offset and rows offset
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
-	// ScannedPos always returns the current file reader pointer's location
+
+	// ScannedPos always returns the current file reader pointer's location.
+	// It's used to track the progress of the reader.
 	ScannedPos() (int64, error)
+	// SetScannedPos sets the current file reader pointer's location.
+	// It's only needed for lightning parquet import.
+	SetScannedPos(pos int64)
+
 	Close() error
 	ReadRow() error
 	LastRow() Row
@@ -222,6 +228,9 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 func (parser *blockParser) ScannedPos() (int64, error) {
 	return parser.reader.Seek(0, io.SeekCurrent)
 }
+
+// SetScannedPos does nothing
+func (*blockParser) SetScannedPos(_ int64) {}
 
 // Pos returns the current file offset.
 // Attention: for compressed sql/csv files, pos is the position in uncompressed files
