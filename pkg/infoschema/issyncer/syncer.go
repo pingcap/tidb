@@ -61,6 +61,7 @@ func init() {
 // Syncer is the main structure for syncing the info schema.
 type Syncer struct {
 	m           syncutil.Mutex
+	btreeMu     sync.Mutex // Added to guard infoSchemaV2 btree mutations.
 	store       kv.Storage
 	schemaLease time.Duration
 	// Note: If you no longer need the session, you must call Destroy to release it.
@@ -444,7 +445,11 @@ func (s *Syncer) Reload() error {
 	}
 	// lease renew, so it must be executed despite it is cache or not
 	s.schemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
+
+	// Ensure setTable/btreeSet is not concurrently accessed
+	s.btreeMu.Lock()
 	s.postReload(oldSchemaVersion, is.SchemaMetaVersion(), changes)
+	s.btreeMu.Unlock()
 
 	return nil
 }
