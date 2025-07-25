@@ -181,47 +181,47 @@ func TestDAGPlanTopN(t *testing.T) {
 }
 
 func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	_, err = se.Execute(context.Background(), "use test")
-	require.NoError(t, err)
-
-	var input []string
-	var output []struct {
-		SQL   string
-		Best  string
-		Hints string
-	}
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	for i, tt := range input {
-		comment := fmt.Sprintf("input: %s", tt)
-		stmt, err := p.ParseOneStmt(tt, "", "")
-		require.NoError(t, err, comment)
-		nodeW := resolve.NewNodeW(stmt)
-		err = core.Preprocess(context.Background(), se, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		se, err := session.CreateSession4Test(testKit.Session().GetStore())
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), se, nodeW, is)
+		_, err = se.Execute(context.Background(), "use test")
 		require.NoError(t, err)
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Best = core.ToString(p)
-			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
-		})
-		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
-		hints := core.GenHintsFromPhysicalPlan(p)
 
-		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p, false)
-		newHints := core.GenHintsFromFlatPlan(flat)
-		assertSameHints(t, hints, newHints)
+		var input []string
+		var output []struct {
+			SQL   string
+			Best  string
+			Hints string
+		}
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		p := parser.New()
+		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		for i, tt := range input {
+			comment := fmt.Sprintf("input: %s", tt)
+			stmt, err := p.ParseOneStmt(tt, "", "")
+			require.NoError(t, err, comment)
+			nodeW := resolve.NewNodeW(stmt)
+			err = core.Preprocess(context.Background(), se, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+			require.NoError(t, err)
+			p, _, err := planner.Optimize(context.TODO(), se, nodeW, is)
+			require.NoError(t, err)
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Best = core.ToString(p)
+				output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
+			})
+			require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+			hints := core.GenHintsFromPhysicalPlan(p)
 
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), fmt.Sprintf("input: %s", tt))
-	}
+			// test the new genHints code
+			flat := core.FlattenPhysicalPlan(p, false)
+			newHints := core.GenHintsFromFlatPlan(flat)
+			assertSameHints(t, hints, newHints)
+
+			require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), fmt.Sprintf("input: %s", tt))
+		}
+	})
 }
 
 func TestDAGPlanBuilderUnion(t *testing.T) {
