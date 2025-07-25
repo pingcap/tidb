@@ -229,10 +229,9 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	tk1.Session().ExecuteInternal(ctx, "commit")
 
 	// test for disable transaction local latch
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TxnLocalLatches.Enabled = false
-	})
+	})()
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 9")
 

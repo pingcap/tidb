@@ -90,10 +90,9 @@ func TestChangeMaxIndexLength(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
-	})
+	})()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii")
@@ -838,10 +837,9 @@ func TestTableLocksDisable(t *testing.T) {
 	tk.MustExec("create table t1 (a int)")
 
 	// Test for disable table lock config.
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = false
-	})
+	})()
 
 	tk.MustExec("lock tables t1 write")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))

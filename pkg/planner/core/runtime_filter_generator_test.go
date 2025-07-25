@@ -35,10 +35,9 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.Level = "debug"
-	})
+	})()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (k1 int)")
