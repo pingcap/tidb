@@ -326,7 +326,7 @@ const (
 	// TiDBOptRiskEqSkewRatio controls the amount of skew is applied to equal predicate estimation when a value is not found in TopN/buckets.
 	TiDBOptRiskEqSkewRatio = "tidb_opt_risk_eq_skew_ratio"
 
-	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket.
+	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket or outside the histogram bucket range.
 	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
 
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
@@ -1404,7 +1404,7 @@ const (
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiFlashHashJoinVersion               = joinversion.TiFlashHashJoinVersionDefVal
 	DefTiDBEnableTiFlashPipelineMode        = true
-	DefTiDBMPPStoreFailTTL                  = "60s"
+	DefTiDBMPPStoreFailTTL                  = "0s"
 	DefTiDBTxnMode                          = PessimisticTxnMode
 	DefTiDBRowFormatV1                      = 1
 	DefTiDBRowFormatV2                      = 2

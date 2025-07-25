@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -675,6 +676,10 @@ func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr)
 	if len(names) == 0 {
 		return true
 	}
+	// partIdx can be -1 more to check issue #62458
+	if pi == nil || idx < 0 || idx >= len(pi.Definitions) {
+		return false
+	}
 	s := pi.Definitions[idx].Name.L
 	for _, name := range names {
 		if s == name.L {
@@ -954,8 +959,8 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 				return nil
 			}
 			if fp.IsTableDual {
-				tableDual := PhysicalTableDual{}
-				tableDual.names = fp.outputNames
+				tableDual := physicalop.PhysicalTableDual{}
+				tableDual.SetOutputNames(fp.outputNames)
 				tableDual.SetSchema(fp.Schema())
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
@@ -2022,9 +2027,9 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 	pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.outputNames)
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
@@ -2153,9 +2158,9 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	}
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.outputNames)
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1431,38 +1432,38 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	require.NoError(t, err)
 	ddlID := do.DDL().GetID()
 	// check the result for upgrade show
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s0": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           ddlID,
 				IP:           "127.0.0.1",
 				Port:         4000,
 				JSONServerID: 0,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver",
 					GitHash: "hash",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           "ID2",
 				IP:           "127.0.0.1",
 				Port:         4002,
 				JSONServerID: 2,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver2",
 					GitHash: "hash2",
 				},
 			},
 		},
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           "ID1",
 				IP:           "127.0.0.1",
 				Port:         4001,
 				JSONServerID: 1,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver",
 					GitHash: "hash",
 				},

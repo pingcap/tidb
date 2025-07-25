@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "serverinfo",
+    srcs = ["info.go"],
+    importpath = "github.com/pingcap/tidb/pkg/domain/serverinfo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/mysql",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

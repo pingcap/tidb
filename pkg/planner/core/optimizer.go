@@ -853,7 +853,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *physicalop.PhysicalSelection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *PhysicalExchangeReceiver:
@@ -952,15 +952,15 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
-		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
-			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
+		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
+			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
 			// The core logic of this method:
 			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
 			newParents := make([]base.PhysicalPlan, len(probeParents), len(probeParents)+1)
 			copy(newParents, probeParents)
 			newParents = append(newParents, plan)
-			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
+			propagateProbeParents(plan.Children()[join.GetInnerChildIdx()], newParents)
 		}
 	case *PhysicalTableReader:
 		propagateProbeParents(x.tablePlan, probeParents)
@@ -1182,7 +1182,7 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 		x, ok := p.(*physicalop.PhysicalUnionAll)
 		if ok {
 			for _, child := range x.Children() {
-				if proj, ok := child.(*PhysicalProjection); ok {
+				if proj, ok := child.(*physicalop.PhysicalProjection); ok {
 					proj.AvoidColumnEvaluator = true
 				}
 			}
@@ -1197,7 +1197,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
 	var physLock *PhysicalLock
-	var unionScan *PhysicalUnionScan
+	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
 			return false
@@ -1209,7 +1209,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			batchPointGet = x
 		case *PhysicalLock:
 			physLock = x
-		case *PhysicalUnionScan:
+		case *physicalop.PhysicalUnionScan:
 			unionScan = x
 		}
 		return true
