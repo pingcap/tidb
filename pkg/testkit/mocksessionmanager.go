@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -36,7 +36,7 @@ type MockSessionManager struct {
 	SerID    uint64
 	TxnInfo  []*txninfo.TxnInfo
 	Dom      *domain.Domain
-	Conn     map[uint64]sessiontypes.Session
+	Conn     map[uint64]sessionapi.Session
 	mu       sync.Mutex
 	ConAttrs map[uint64]map[string]string
 

@@ -97,6 +97,58 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 	}
 }
 
+// RunTestUnderCascadesWithDomain run the basic test body among two different planner mode.
+func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
+	options := []struct {
+		name string
+		opt  TestOption
+	}{
+		{"off", WithCascades(false)},
+		{"on", WithCascades(true)},
+	}
+	// get func name
+	pc, _, _, ok := runtime.Caller(1)
+	require.True(t, ok)
+	details := runtime.FuncForPC(pc)
+	funcNameIdx := strings.LastIndex(details.Name(), ".")
+	funcName := details.Name()[funcNameIdx+1:]
+	// iter the options
+	for _, val := range options {
+		t.Run(val.name, func(t *testing.T) {
+			store, do := CreateMockStoreAndDomain(t)
+			tk := NewTestKit(t, store)
+			val.opt(tk)
+			testFunc(t, tk, do, val.name, funcName)
+		})
+	}
+}
+
+// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body among two different planner modes. It can be used to set schema lease and store options.
+func RunTestUnderCascadesAndDomainWithSchemaLease(t *testing.T, lease time.Duration, opts []mockstore.MockTiKVStoreOption, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
+	options := []struct {
+		name string
+		opt  TestOption
+	}{
+		{"off", WithCascades(false)},
+		{"on", WithCascades(true)},
+	}
+	// get func name
+	pc, _, _, ok := runtime.Caller(1)
+	require.True(t, ok)
+	details := runtime.FuncForPC(pc)
+	funcNameIdx := strings.LastIndex(details.Name(), ".")
+	funcName := details.Name()[funcNameIdx+1:]
+	// iter the options
+	for _, val := range options {
+		t.Run(val.name, func(t *testing.T) {
+			store, do := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
+			tk := NewTestKit(t, store)
+			val.opt(tk)
+			testFunc(t, tk, do, val.name, funcName)
+		})
+	}
+}
+
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
 	if *WithTiKV != "" {
@@ -266,6 +318,9 @@ func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Du
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	if kerneltype.IsNextGen() {
+		updateConfigForNextgen(t)
+	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom := bootstrap(t, store, 500*time.Millisecond)
@@ -282,10 +337,12 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 
 var keyspaceIDAlloc atomic.Int32
 
-// CreateNextgenMockStoreAndDomain return a new mock kv.Storage and *domain.Domain
-// for nextgen.
-func CreateNextgenMockStoreAndDomain(t testing.TB, ks string, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
-	intest.Assert(kerneltype.IsNextGen(), "CreateNextgenMockStoreAndDomain should only be used in nextgen kernel tests")
+// CreateMockStoreAndDomainForKS return a new mock kv.Storage and *domain.Domain
+// some keyspace.
+// this function is mainly for cross keyspace test, so normally you should use
+// CreateMockStoreAndDomain instead,
+func CreateMockStoreAndDomainForKS(t testing.TB, ks string, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	intest.Assert(kerneltype.IsNextGen(), "CreateMockStoreAndDomainForKS should only be used in nextgen kernel tests")
 
 	bak := *config.GetGlobalConfig()
 	t.Cleanup(func() {
@@ -349,6 +406,9 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 
 // CreateMockStoreWithSchemaLease return a new mock kv.Storage.
 func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
+	if kerneltype.IsNextGen() {
+		updateConfigForNextgen(t)
+	}
 	store, _ := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
 	return schematracker.UnwrapStorage(store)
 }
@@ -372,4 +432,18 @@ func SetTiFlashReplica(t testing.TB, dom *domain.Domain, dbName, tableName strin
 		Count:     1,
 		Available: true,
 	}
+}
+
+func updateConfigForNextgen(t testing.TB) {
+	t.Helper()
+	// in nextgen, SYSTEM ks must be bootstrapped first, to make UT easier, we
+	// always run them inside SYSTEM keyspace, if your test requires bootstrapping
+	// multiple keyspace, you should use CreateMockStoreAndDomainForKS instead.
+	bak := *config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&bak)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = keyspace.System
+	})
 }

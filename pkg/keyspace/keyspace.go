@@ -96,3 +96,9 @@ func WrapZapcoreWithKeyspace() zap.Option {
 func IsRunningOnUser() bool {
 	return kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() != System
 }
+
+// IsRunningOnSystem return true if we are on nextgen, and keyspace of current
+// instance is the system keyspace.
+func IsRunningOnSystem() bool {
+	return kerneltype.IsNextGen() && config.GetGlobalKeyspaceName() == System
+}

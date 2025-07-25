@@ -829,7 +829,7 @@ func TestMultiSchemaChangeMDLView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	unistoreMDLView := session.CreateMDLView
+	unistoreMDLView := session.CreateTiDBMDLView
 	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_processlist", "processlist")
 	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_tidb_trx", "tidb_trx")
 	tk.MustExec(unistoreMDLView)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -41,16 +42,19 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
 type readIndexStepExecutor struct {
 	taskexecutor.BaseStepExecutor
-	d       *ddl
-	job     *model.Job
-	indexes []*model.IndexInfo
-	ptbl    table.PhysicalTable
-	jc      *ReorgContext
+	store    kv.Storage
+	etcdCli  *clientv3.Client
+	sessPool *sess.Pool
+	job      *model.Job
+	indexes  []*model.IndexInfo
+	ptbl     table.PhysicalTable
+	jc       *ReorgContext
 
 	avgRowSize      int
 	cloudStorageURI string
@@ -72,7 +76,9 @@ type readIndexSummary struct {
 }
 
 func newReadIndexExecutor(
-	d *ddl,
+	store kv.Storage,
+	sessPool *sess.Pool,
+	etcdCli *clientv3.Client,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
@@ -81,7 +87,9 @@ func newReadIndexExecutor(
 	avgRowSize int,
 ) (*readIndexStepExecutor, error) {
 	return &readIndexStepExecutor{
-		d:               d,
+		store:           store,
+		etcdCli:         etcdCli,
+		sessPool:        sessPool,
 		job:             job,
 		indexes:         indexes,
 		ptbl:            ptbl,
@@ -100,7 +108,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
 			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 		}
-		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.store, r.job, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -141,8 +149,8 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	concurrency int,
 ) error {
 	// TODO(tangenta): support checkpoint manager that interact with subtask table.
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
-		WithImportDistributedLock(r.d.etcdCli, sm.TS).
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.store, r.job).
+		WithImportDistributedLock(r.etcdCli, sm.TS).
 		Build(r.backendCfg, r.backend)
 	if err != nil {
 		return err
@@ -186,7 +194,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return err
 	}
 
-	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx)
 	defer cancel()
 	r.Reset()
 
@@ -306,11 +314,11 @@ func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 		tbl = parTbl.GetPartition(pid)
 		if len(sm.RowStart) == 0 {
 			// Handle upgrade compatibility
-			currentVer, err1 := getValidCurrentVersion(r.d.store)
+			currentVer, err1 := getValidCurrentVersion(r.store)
 			if err1 != nil {
 				return nil, nil, nil, errors.Trace(err1)
 			}
-			start, end, err = getTableRange(r.jc, r.d.store, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
+			start, end, err = getTableRange(r.jc, r.store, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
 			if err != nil {
 				logutil.DDLLogger().Error("get table range error",
 					zap.Error(err))
@@ -334,7 +342,6 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	if err != nil {
 		return nil, err
 	}
-	d := r.d
 	indexIDs := make([]int64, 0, len(r.indexes))
 	uniques := make([]bool, 0, len(r.indexes))
 	var idxNames strings.Builder
@@ -357,8 +364,8 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 	rowCntCollector := newDistTaskRowCntCollector(r.SubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
-		d.store,
-		d.sessPool,
+		r.store,
+		r.sessPool,
 		backendCtx,
 		engines,
 		r.job.ID,
@@ -385,7 +392,6 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		return nil, err
 	}
 
-	d := r.d
 	onClose := func(summary *external.WriterSummary) {
 		sum, _ := r.subtaskSummary.Load(subtaskID)
 		s := sum.(*readIndexSummary)
@@ -408,9 +414,9 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	rowCntCollector := newDistTaskRowCntCollector(r.SubtaskSummary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
-		d.store,
+		r.store,
 		r.cloudStorageURI,
-		r.d.sessPool,
+		r.sessPool,
 		taskID,
 		subtaskID,
 		tbl,

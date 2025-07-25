@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 //go:generate go run ../../generator/hash64_equals/hash64_equals_generator.go -- hash64_equals_generated.go
@@ -83,24 +83,26 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	return false
 }
 
-func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+// AddSelection adds a LogicalSelection to the given LogicalPlan.
+func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
 	}
-	exprCtx := p.SCtx().GetExprCtx()
-	conditions = expression.PropagateConstant(exprCtx, conditions...)
+	conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), conditions, true)
+	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
+	if dual, ok := child.(*LogicalTableDual); ok && dual.RowCount == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
 	// Return table dual when filter is constant false or null.
 	dual := Conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
 		AppendTableDualTraceStep(child, dual, conditions, opt)
-		return
-	}
-
-	conditions = constraint.DeleteTrueExprs(exprCtx, p.SCtx().GetSessionVars().StmtCtx, conditions)
-	if len(conditions) == 0 {
-		p.Children()[chIdx] = child
 		return
 	}
 	selection := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.QueryBlockOffset())
@@ -215,6 +217,7 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 }
 
 // CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
+// Deprecated: don't depend on subtree based push check, use prop based `CanSelfBeingPushedToCopImpl` instead.
 func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	ret := true

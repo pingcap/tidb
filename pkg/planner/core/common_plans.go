@@ -1288,12 +1288,12 @@ func getOperatorInfo(p base.Plan) (estRows, estCost, costFormula, accessObject, 
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 
-	if plan, ok := p.(dataAccesser); ok {
+	if plan, ok := p.(base.DataAccesser); ok {
 		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
-		if pa, ok := p.(partitionAccesser); ok && sctx != nil {
-			accessObject = pa.accessObject(sctx).String()
+		if pa, ok := p.(base.PartitionAccesser); ok && sctx != nil {
+			accessObject = pa.AccessObject(sctx).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}
@@ -1445,20 +1445,20 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 	}
 
 	// Operator info
-	if plan, ok := fop.Origin.(dataAccesser); ok {
+	if plan, ok := fop.Origin.(base.DataAccesser); ok {
 		out.OperatorInfo = plan.OperatorInfo(false)
 	} else {
 		out.OperatorInfo = fop.Origin.ExplainInfo()
 	}
 	// Access object
 	switch p := fop.Origin.(type) {
-	case dataAccesser:
+	case base.DataAccesser:
 		ao := p.AccessObject()
 		if ao != nil {
 			ao.SetIntoPB(out)
 		}
-	case partitionAccesser:
-		ao := p.accessObject(explainCtx)
+	case base.PartitionAccesser:
+		ao := p.AccessObject(explainCtx)
 		if ao != nil {
 			ao.SetIntoPB(out)
 		}
@@ -1546,7 +1546,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	}
 
 	// check plan
-	if proj, ok := p.(*PhysicalProjection); ok {
+	if proj, ok := p.(*physicalop.PhysicalProjection); ok {
 		p = proj.Children()[0]
 	}
 
