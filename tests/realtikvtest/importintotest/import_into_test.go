@@ -1340,7 +1340,7 @@ func (s *mockGCSSuite) TestTableMode() {
 		Content: content,
 	})
 	s.prepareAndUseDB("import_into")
-	createTableSQL := "create table table_mode (id int primary key, fk int);"
+	createTableSQL := "create table import_into.table_mode (id int primary key, fk int);"
 	s.tk.MustExec(createTableSQL)
 	loadDataSQL := fmt.Sprintf(`IMPORT INTO import_into.table_mode
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
