@@ -355,8 +355,8 @@ func BuildHistAndTopN(
 			curCnt++
 			continue
 		}
-		sampleNDV++
 		// case 2, meet a different value: counting for the "current" is complete
+		sampleNDV++
 		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
 		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
 			cur, curCnt = sampleBytes, 1
