@@ -879,7 +879,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			copy(rNames[commonLen+1:j+1], rNames[commonLen:j])
 			rNames[commonLen] = name
 
-			for _, fieldName := range []*types.FieldName{lName, rNames[j]} {
+			for _, fieldName := range []*types.FieldName{lNames[commonLen], rNames[commonLen]} {
 				colName := &ast.ColumnName{
 					Name:   fieldName.OrigColName,
 					Table:  fieldName.OrigTblName,

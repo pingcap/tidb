@@ -2510,3 +2510,26 @@ func TestColumnPrivilege4Views(t *testing.T) {
 	userTk.MustQuery(`SELECT * FROM test.v5`)
 	userTk.MustQuery(`SELECT * FROM test.v6`)
 }
+
+func TestColumnPrivilege4TraceAndExplain(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'testuser'@'localhost';`)
+	tk.MustExec(`CREATE TABLE test.t (a INT, b INT, c INT);`)
+	userTk := testkit.NewTestKit(t, store)
+	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	traceSQL := "TRACE SELECT * FROM test.t"
+	explainSQL := "EXPLAIN SELECT a,b,c FROM test.t"
+	grantSQL := "GRANT SELECT(%s) ON test.t TO 'testuser'@'localhost';"
+
+	for _, colName := range []string{"a", "b", "c"} {
+		userTk.MustQuery(traceSQL).CheckContain("session.RollbackTxn")
+		userTk.MustGetErrCode(explainSQL, mysql.ErrColumnaccessDenied)
+		tk.MustExec(fmt.Sprintf(grantSQL, colName))
+	}
+
+	userTk.MustQuery(traceSQL).CheckNotContain("session.RollbackTxn")
+	userTk.MustQuery(explainSQL)
+}
