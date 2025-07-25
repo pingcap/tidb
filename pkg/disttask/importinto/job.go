@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -278,14 +279,16 @@ func GetRuntimeInfoForJob(
 		return nil, err
 	}
 
+	currentTime := time.Now().In(location)
+
 	ri.Speed = 0
 	for _, s := range summaries {
 		ri.Processed += s.Bytes.Load()
 		ri.ImportRows += s.RowCnt.Load()
-		if s.UpdateTime.After(latestTime) {
-			latestTime = s.UpdateTime
-		}
-		if s.State == proto.SubtaskStateRunning {
+
+		gap := currentTime.Sub(s.UpdateTime.In(location))
+		if s.State == proto.SubtaskStateRunning &&
+			(gap > 0 && gap < taskexecutor.UpdateSubtaskSummaryInterval) {
 			ri.Speed += s.Speed
 		}
 	}
