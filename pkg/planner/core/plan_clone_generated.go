@@ -88,11 +88,11 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalStreamAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalStreamAgg)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalAgg.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalAgg.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalAgg = *basePlan
+	cloned.BasePhysicalAgg = *basePlan
 	return cloned, true
 }
 
@@ -100,11 +100,11 @@ func (op *PhysicalStreamAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalHashAgg)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalAgg.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalAgg.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalAgg = *basePlan
+	cloned.BasePhysicalAgg = *basePlan
 	return cloned, true
 }
 

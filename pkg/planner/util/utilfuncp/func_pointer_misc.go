@@ -261,6 +261,14 @@ var GetPlanCostVer24PhysicalProjection func(pp base.PhysicalPlan, taskType prope
 // Attach2Task4PhysicalProjection will be called by PhysicalProjection in physicalOp pkg.
 var Attach2Task4PhysicalProjection func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// InitForHash will be called by BasePhysicalAgg in physicalOp pkg.
+var InitForHash func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
+	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
+
+// InitForStream will be called by BasePhysicalAgg in physicalOp pkg.
+var InitForStream func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
+	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.

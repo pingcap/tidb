@@ -132,26 +132,25 @@ func (p PhysicalMergeJoin) Init(ctx base.PlanContext, stats *property.StatsInfo,
 	return &p
 }
 
-// Init initializes basePhysicalAgg.
-func (base basePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *basePhysicalAgg {
-	base.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, &base, offset)
-	base.SetStats(stats)
-	return &base
-}
-
-func (base basePhysicalAgg) initForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
-	p := &PhysicalHashAgg{base, ""}
+func initForHash(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
+	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	baseAgg := pp.(*physicalop.BasePhysicalAgg)
+	p := &PhysicalHashAgg{*baseAgg, ""}
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
+	p.SetSchema(schema)
 	return p
 }
 
-func (base basePhysicalAgg) initForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalStreamAgg {
-	p := &PhysicalStreamAgg{base}
+func initForStream(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
+	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	baseAgg := pp.(*physicalop.BasePhysicalAgg)
+	p := &PhysicalStreamAgg{*baseAgg}
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
+	p.SetSchema(schema)
 	return p
 }
 

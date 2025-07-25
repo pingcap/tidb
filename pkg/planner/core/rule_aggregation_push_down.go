@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -364,7 +365,7 @@ func (a *AggregationPushDownSolver) makeNewAgg(ctx base.PlanContext, aggFuncs []
 }
 
 func (*AggregationPushDownSolver) splitPartialAgg(agg *logicalop.LogicalAggregation) (pushedAgg *logicalop.LogicalAggregation) {
-	partial, final, _ := BuildFinalModeAggregation(agg.SCtx(), &AggInfo{
+	partial, final, _ := physicalop.BuildFinalModeAggregation(agg.SCtx(), &physicalop.AggInfo{
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
 		Schema:       agg.Schema(),
