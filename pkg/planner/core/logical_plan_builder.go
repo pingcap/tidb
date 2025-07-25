@@ -4930,7 +4930,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaPartitionsExtractor()
 		case infoschema.TableStatistics:
 			p.Extractor = NewInfoSchemaStatisticsExtractor()
-		case infoschema.TableSchemata:
+		case infoschema.TableSchemata, infoschema.TableSchemataExtensions:
 			p.Extractor = NewInfoSchemaSchemataExtractor()
 		case infoschema.TableSequences:
 			p.Extractor = NewInfoSchemaSequenceExtractor()
