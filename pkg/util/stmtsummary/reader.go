@@ -373,6 +373,8 @@ const (
 	SumUnpackedBytesReceivedTiFlashTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
 	SumUnpackedBytesSentTiFlashCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
 	SumUnpackedBytesReceiveTiFlashCrossZoneStr = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_CROSS_ZONE"
+	StorageKVStr                               = "STORAGE_KV"
+	StorageMPPStr                              = "STORAGE_MPP"
 )
 
 // Column names for the statement stats table, including columns that have been
@@ -959,5 +961,11 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	UnpackedBytesReceiveTiFlashCrossZoneStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.UnpackedBytesReceivedTiFlashCrossZone
+	},
+	StorageKVStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.storageKV
+	},
+	StorageMPPStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.storageMPP
 	},
 }
