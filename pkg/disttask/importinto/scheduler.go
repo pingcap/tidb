@@ -498,8 +498,22 @@ func (sch *importScheduler) updateCurrentTask(task *proto.Task) {
 }
 
 // ModifyMeta implements scheduler.Extension interface.
-func (*importScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
-	return oldMeta, nil
+func (*importScheduler) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
+	taskMeta := &TaskMeta{}
+	if err := json.Unmarshal(oldMeta, taskMeta); err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, m := range modifies {
+		switch m.Type {
+		case proto.ModifyConcurrency:
+			taskMeta.Plan.ThreadCnt = int(m.To)
+		case proto.ModifyMaxWriteSpeed:
+			taskMeta.Plan.MaxWriteSpeed = config.ByteSize(m.To)
+		default:
+			logutil.BgLogger().Warn("invalid modify type", zap.Stringer("type", m.Type))
+		}
+	}
+	return json.Marshal(taskMeta)
 }
 
 // nolint:deadcode

@@ -734,3 +734,26 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
 }
+
+func TestBuildAlterImportJobPlan(t *testing.T) {
+	parser := parser.New()
+	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	ctx := context.TODO()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+
+	stmt, err := parser.ParseOneStmt("alter import job 1 thread = 8", "", "")
+	require.NoError(t, err)
+	p, err := builder.Build(ctx, stmt)
+	require.NoError(t, err)
+	plan, ok := p.(*AlterImportJob)
+	require.True(t, ok)
+	require.Equal(t, int64(1), plan.JobID)
+	require.Len(t, plan.Options, 1)
+	require.Equal(t, AlterImportJobThread, plan.Options[0].Name)
+	cons, ok := plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, int64(8), cons.Value.GetInt64())
+}

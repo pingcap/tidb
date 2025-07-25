@@ -248,6 +248,14 @@ func (e *collectConflictsStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
+func (*collectConflictsStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (*collectConflictsStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
+	return nil
+}
+
 type collectConflictResult struct {
 	count    int64
 	size     int64

@@ -170,6 +170,14 @@ func (e *conflictResolutionStepExecutor) Cleanup(_ context.Context) (err error) 
 	return e.tableImporter.Close()
 }
 
+func (*conflictResolutionStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (*conflictResolutionStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
+	return nil
+}
+
 type conflictKVDeleter struct {
 	keysCh chan []tidbkv.Key
 	store  tidbkv.Storage

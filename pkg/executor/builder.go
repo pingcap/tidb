@@ -220,6 +220,8 @@ func (b *executorBuilder) build(p plannercore.Plan) exec.Executor {
 		return b.buildPauseDDLJobs(v)
 	case *plannercore.ResumeDDLJobs:
 		return b.buildResumeDDLJobs(v)
+	case *plannercore.AlterImportJob:
+		return b.buildAlterImportJob(v)
 	case *plannercore.ShowNextRowID:
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
@@ -349,6 +351,15 @@ func (b *executorBuilder) buildResumeDDLJobs(v *plannercore.ResumeDDLJobs) exec.
 			jobIDs:       v.JobIDs,
 			execute:      ddl.ResumeJobs,
 		},
+	}
+	return e
+}
+
+func (b *executorBuilder) buildAlterImportJob(v *plannercore.AlterImportJob) exec.Executor {
+	e := &AlterImportJobExec{
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		jobID:        v.JobID,
+		AlterOpts:    v.Options,
 	}
 	return e
 }

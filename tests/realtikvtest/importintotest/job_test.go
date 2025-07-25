@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -656,4 +657,42 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 		s.NoError(err2)
 		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 1*time.Second)
+}
+
+func (s *mockGCSSuite) TestAlterImportJob() {
+	s.cleanupSysTables()
+	s.prepareAndUseDB("test_alter_job")
+	s.tk.MustExec(`CREATE TABLE t (i INT PRIMARY KEY);`)
+	s.server.CreateObject(fakestorage.Object{ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-alter-job", Name: "t.csv"}, Content: []byte("1")})
+
+	syncCh := make(chan struct{})
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted", func() { close(syncCh) })
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t FROM 'gs://test-alter-job/t.csv?endpoint=%s' with detached, thread=1`, gcsEndpoint)).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	<-syncCh
+	s.tk.MustExec(fmt.Sprintf("alter import job %d thread = 8", jobID))
+
+	rows := s.tk.MustQuery(fmt.Sprintf("select parameters from mysql.tidb_import_jobs where id=%d", jobID)).Rows()
+	s.Len(rows, 1)
+	s.Contains(rows[0][0], "8")
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	s.Require().Eventually(func() bool {
+		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		if err2 != nil {
+			return false
+		}
+		var meta importinto.TaskMeta
+		if err2 = json.Unmarshal(task.Meta, &meta); err2 != nil {
+			return false
+		}
+		return meta.Plan.ThreadCnt == 8 && task.State == proto.TaskStateSucceed
+	}, maxWaitTime, time.Second)
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
 }

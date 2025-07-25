@@ -57,6 +57,7 @@ go_library(
         "merge_join.go",
         "metrics_reader.go",
         "mpp_gather.go",
+        "operate_import_jobs.go",
         "opt_rule_blacklist.go",
         "parallel_apply.go",
         "pipelined_window.go",

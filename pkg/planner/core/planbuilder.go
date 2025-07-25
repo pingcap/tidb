@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -551,6 +552,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
+	case *ast.AlterImportJobStmt:
+		return b.buildAlterImportJob(ctx, x)
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.SavepointStmt, *ast.ReleaseSavepointStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
@@ -5437,4 +5440,97 @@ func extractPatternLikeOrIlikeName(patternLike *ast.PatternLikeOrIlikeExpr) stri
 		return v.GetString()
 	}
 	return ""
+}
+
+func checkAlterImportJobOptValue(opt *AlterImportJobOpt) error {
+	switch opt.Name {
+	case AlterImportJobThread:
+		thread, err := GetThreadOrBatchSizeFromImportExpression(opt)
+		if err != nil {
+			return err
+		}
+		maxThread := variable.MaxConfigurableConcurrency
+		if thread < 1 || thread > int64(maxThread) {
+			return errors.Errorf(
+				"the value %v for %s is out of range [1, %v] for your "+
+					"current tidb setup",
+				thread, opt.Name, maxThread,
+			)
+		}
+	case AlterImportJobMaxWriteSpeed:
+		speed, err := GetMaxWriteSpeedFromImportExpression(opt)
+		if err != nil {
+			return err
+		}
+		if speed < 0 {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
+	return nil
+}
+
+func (b *PlanBuilder) buildAlterImportJob(ctx context.Context, as *ast.AlterImportJobStmt) (Plan, error) {
+	var err error
+	options := make([]*AlterImportJobOpt, 0, len(as.AlterJobOptions))
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	for _, opt := range as.AlterJobOptions {
+		hasValue, ok := allowedAlterImportJobParams[opt.Name]
+		if !ok {
+			return nil, exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(opt.Name, "alter import job")
+		}
+		if hasValue && opt.Value == nil || !hasValue && opt.Value != nil {
+			return nil, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+
+		for _, existingOpt := range options {
+			if existingOpt.Name == opt.Name {
+				return nil, exeerrors.ErrDuplicateOption.FastGenByArgs(opt.Name)
+			}
+		}
+		importOpt := AlterImportJobOpt{Name: opt.Name}
+		if opt.Value != nil {
+			importOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err = checkAlterImportJobOptValue(&importOpt); err != nil {
+			return nil, err
+		}
+		options = append(options, &importOpt)
+	}
+	p := &AlterImportJob{
+		JobID:   as.JobID,
+		Options: options,
+	}
+	return p, nil
+}
+
+// GetThreadOrBatchSizeFromImportExpression gets numeric value from import job option.
+func GetThreadOrBatchSizeFromImportExpression(opt *AlterImportJobOpt) (int64, error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETInt:
+		return v.Value.GetInt64(), nil
+	default:
+		return 0, fmt.Errorf("the value for %s is invalid, only integer is allowed", opt.Name)
+	}
+}
+
+// GetMaxWriteSpeedFromImportExpression gets numeric max_write_speed from import job option.
+func GetMaxWriteSpeedFromImportExpression(opt *AlterImportJobOpt) (int64, error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETString:
+		speedStr := v.Value.GetString()
+		speed, err := units.RAMInBytes(speedStr)
+		if err != nil {
+			return 0, errors.Annotate(err, "parse max_write_speed value error")
+		}
+		return speed, nil
+	case types.ETInt:
+		return v.Value.GetInt64(), nil
+	default:
+		return 0, fmt.Errorf("the value %v for %s is invalid", v.Value.GetValue(), opt.Name)
+	}
 }
