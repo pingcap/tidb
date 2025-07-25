@@ -1178,7 +1178,9 @@ func (local *Backend) ImportEngine(
 		e = localEngine
 	}
 
-	tici.SetTiCIDataWriterGroupWritable(ctx, local.ticiWriteGroup, engineUUID, engineID)
+	if local.ticiWriteGroup != nil {
+		tici.SetTiCIDataWriterGroupWritable(ctx, local.ticiWriteGroup, engineUUID, engineID)
+	}
 
 	lfTotalSize, lfLength := e.KVStatistics()
 	if lfTotalSize == 0 {
