@@ -223,6 +223,14 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 					continue
 				}
 
+				// Lock the corresponding row keys so that it doesn't modify the index KVs
+				// that are changing by a pessimistic transaction.
+				rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), idxRecord.handle)
+				err := txn.LockKeys(context.Background(), new(kv.LockCtx), rowKey)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
 				originIdxKey := w.originIdxKeys[i]
 				if idxRecord.delete {
 					err = txn.GetMemBuffer().Delete(originIdxKey)
