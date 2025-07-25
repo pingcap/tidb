@@ -327,6 +327,10 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
+<<<<<<< HEAD
+=======
+	TryCopLiteWorker           *atomic.Uint32
+>>>>>>> de2b7ac0418 (executor: tiny optimize index-lookup query performance by reuse lite-cop-worker. (#58586))
 }
 
 // ReqTypes.
