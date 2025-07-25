@@ -246,11 +246,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
+	require.Equal(t, 4.7, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
-	require.Equal(t, 7.2, count)
+	require.Equal(t, 4.7, count)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
@@ -259,7 +259,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 7.0, count)
+	require.Equal(t, 4.5, count)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -464,6 +464,7 @@ func TestSelectivity(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(t, err)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.3")
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
@@ -485,11 +486,12 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.017832647462277088,
+			selectivity:              0.018017832647462276,
 			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
+<<<<<<< HEAD
 			selectivity:              0.00617283950,
 			selectivityAfterIncrease: 0.006378600823045267,
 		},
@@ -497,6 +499,15 @@ func TestSelectivity(t *testing.T) {
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
 			selectivity:              0.01234567901,
 			selectivityAfterIncrease: 0.012551440329218106,
+=======
+			selectivity:              0.006358024691358024,
+			selectivityAfterIncrease: 0.01117283950617284,
+		},
+		{
+			exprs:                    "a >= 1 and c >= 1 and a < 2",
+			selectivity:              0.012530864197530862,
+			selectivityAfterIncrease: 0.01734567901234568,
+>>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -505,13 +516,18 @@ func TestSelectivity(t *testing.T) {
 		},
 		{
 			exprs:                    "b > 1",
-			selectivity:              0.9629629629629629,
+			selectivity:              0.9729629629629629,
 			selectivityAfterIncrease: 1,
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
+<<<<<<< HEAD
 			selectivity:              5.870830440255832e-05,
 			selectivityAfterIncrease: 0.005411522633744856,
+=======
+			selectivity:              0.001851851851851852,
+			selectivityAfterIncrease: 0.125425,
+>>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
 		},
 		{
 			exprs:                    longExpr,
@@ -1019,13 +1035,13 @@ func TestIssue39593(t *testing.T) {
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
 	count, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
-	// estimated row count without any changes
-	require.Equal(t, float64(360), count)
+	// estimated row count without any changes, use range to reduce test flakiness
+	require.InDelta(t, float64(462.6), count, float64(1))
 	statsTbl.RealtimeCount *= 10
 	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
-	// estimated row count after mock modify on the table
-	require.Equal(t, float64(3600), count)
+	// estimated row count after mock modify on the table, use range to reduce test flakiness
+	require.InDelta(t, float64(3702.6), count, float64(1))
 }
 
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
@@ -1571,9 +1587,15 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	insufficientCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 
+<<<<<<< HEAD
 	// Should be close to baseline since heuristic didn't trigger
 	require.InDelta(t, baselineCount, insufficientCount, baselineCount*0.5,
 		"Count should be similar when insufficient new rows are added")
+=======
+func TestRiskRangeSkewRatioWithinBucket(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+>>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
 
 	// Test Case 2: Sufficient new rows (should trigger heuristic)
 	// Insert more rows to reach threshold (need 50+ total new rows)
@@ -1589,6 +1611,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 
 	enhancedCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
+<<<<<<< HEAD
 
 	// Should be much higher due to heuristic
 	require.InDelta(t, 100.09, enhancedCount, 0.1, "Enhanced count should be approximately 100.09")
@@ -1609,4 +1632,78 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
 	}
+=======
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
+	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err3)
+	// Result of count3 should be larger because the risk ratio is higher
+	require.Less(t, count2, count3)
+	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
+	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = 0.5")
+	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err4)
+	require.Less(t, count2, count4)
+	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
+	// variable and be less than count3.
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
+	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	require.NoError(t, err4)
+	require.Less(t, count4, count3)
+	// Reset global variable to default.
+	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = default")
+}
+
+func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, key idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	for i := 1; i <= 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t select a from t where a = %d", i))
+	}
+	//Ensure that there are values in the histogram buckets
+	testKit.MustExec("analyze table t with 0 topn")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(table.Meta())
+	sctx := testKit.Session()
+	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
+
+	// Increase RealTimeCount and ModifyCount to simulate changes to dataset
+	RealTimeCount := statsTbl.RealtimeCount * 10
+	ModifyCount := RealTimeCount * 2
+
+	// Search for range outside of histogram buckets
+	test, _ := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), int64(0), int64(0), false)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
+	count, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	require.NoError(t, err)
+	require.Less(t, test, count)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
+	count2, err2 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	require.NoError(t, err2)
+	// Result of count2 should be larger than count because the risk ratio is higher
+	require.Less(t, count, count2)
+	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
+	count3, err3 := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(12, 15), RealTimeCount, ModifyCount, false)
+	require.NoError(t, err3)
+	// Result of count3 should be larger because the risk ratio is higher
+	require.Less(t, count2, count3)
+>>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
 }

@@ -59,7 +59,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 33,
+=======
+    shard_count = 35,
+>>>>>>> 433b3710fab (planner: use addedRows for out of range and add skew risk ratio (#62363))
     deps = [
         "//pkg/config",
         "//pkg/domain",
