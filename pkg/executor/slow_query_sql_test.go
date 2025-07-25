@@ -469,6 +469,12 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	}()
 	tk.MustExec("use test")
 
+	// Query that doesn't read from any storage engines
+	tk.MustExec("select 1")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query = 'select 1;'").
+		Check(testkit.Rows("0 0"))
+
 	// Query that only reads from TiKV
 	tk.MustExec("create table t_tikv (a int)")
 	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")

@@ -1141,6 +1141,11 @@ func TestStorageEnginesInStmtSummary(t *testing.T) {
 	tk := newTestKitWithRoot(t, store)
 	tk.MustExec("use test")
 
+	// Query that doesn't read from any storage engines
+	tk.MustExec("select 1")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary where query_sample_text = 'select 1'").
+		Check(testkit.Rows("0 0"))
+
 	// Query that only reads from TiKV
 	tk.MustExec("create table t_tikv (a int)")
 	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
