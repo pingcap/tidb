@@ -32,13 +32,19 @@ import (
 )
 
 type kvStore struct {
-	store       *tikv.KVStore
-	mppStoreCnt *mppStoreCnt
+	store          *tikv.KVStore
+	mppStoreCnt    *mppStoreCnt
+	TiCIShardCache *TiCIShardCache
 }
 
 // GetRegionCache returns the region cache instance.
 func (s *kvStore) GetRegionCache() *RegionCache {
 	return &RegionCache{s.store.GetRegionCache()}
+}
+
+// GetTiCIShardCache returns the TiCIShardCache instance.
+func (s *kvStore) GetTiCIShardCache() *TiCIShardCache {
+	return s.TiCIShardCache
 }
 
 // CheckVisibility checks if it is safe to read using given ts.
@@ -92,9 +98,14 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 		return nil, errors.Trace(err)
 	}
 
+	ticiClient, err := NewTiCIShardCacheClient()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	/* #nosec G404 */
 	return &Store{
-		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}},
+		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient)},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 		numcpu:          runtime.GOMAXPROCS(0),
@@ -105,6 +116,9 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 func (s *Store) Close() {
 	if s.coprCache != nil {
 		s.coprCache.cache.Close()
+	}
+	if s.TiCIShardCache != nil {
+		s.TiCIShardCache.client.Close()
 	}
 }
 

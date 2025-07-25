@@ -614,6 +614,13 @@ type Request struct {
 	ConnID uint64
 	// ConnAlias stores the session connection alias.
 	ConnAlias string
+	// FullText
+	FullText     bool
+	FullTextInfo struct {
+		TableID    int64
+		IndexID    int64
+		ExecutorID string
+	}
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.

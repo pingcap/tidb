@@ -115,6 +115,7 @@ const (
 	ActionModifyEngineAttribute  ActionType = 74
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
+	ActionAddFullTextIndex       ActionType = 77
 )
 
 // ActionMap is the map of DDL ActionType to string.
