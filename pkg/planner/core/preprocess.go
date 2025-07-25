@@ -1938,10 +1938,20 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			if !p.sctx.GetSessionVars().InTxn() {
 				txnManager := sessiontxn.GetTxnManager(p.sctx)
-				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
-					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
-					Provider: staleread.NewStalenessTxnContextProvider(p.sctx, p.LastSnapshotTS, p.InfoSchema),
+				var newTxnRequest *sessiontxn.EnterNewTxnRequest
+				sessVars := p.sctx.GetSessionVars()
+				if !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+					newTxnRequest = &sessiontxn.EnterNewTxnRequest{
+						Type:        sessiontxn.EnterNewTxnWithBeginStmt,
+						StaleReadTS: p.LastSnapshotTS,
+					}
+				} else {
+					newTxnRequest = &sessiontxn.EnterNewTxnRequest{
+						Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+						Provider: staleread.NewStalenessTxnContextProvider(p.sctx, p.LastSnapshotTS, p.InfoSchema),
+					}
 				}
+
 				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
 					return err
 				}
