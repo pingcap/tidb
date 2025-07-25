@@ -433,3 +433,20 @@ select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
 collation(_utf8mb4'@a' collate utf8mb4_general_ci)
 utf8mb4_general_ci
 set @@session.default_collation_for_utf8mb4=default;
+drop table if exists table_3_utf8_undef, table_7_utf8_undef;
+create table table_3_utf8_undef (`col_char(20)_key_signed` char(20));
+insert into table_3_utf8_undef values ('1');
+insert into table_3_utf8_undef values ('3');
+insert into table_3_utf8_undef values (' ');
+insert into table_3_utf8_undef values ('w');
+create table table_7_utf8_undef (`col_double_key_signed` double);
+insert into table_7_utf8_undef values (0.0001);
+insert into table_7_utf8_undef values (0);
+insert into table_7_utf8_undef values (2);
+insert into table_7_utf8_undef values (-1);
+SELECT `col_double_key_signed`  FROM `table_7_utf8_undef`  WHERE( (-col_double_key_signed) <=ANY(SELECT `col_char(20)_key_signed` FROM `table_3_utf8_undef`)) ;
+col_double_key_signed
+0.0001
+0
+2
+-1
