@@ -1902,6 +1902,8 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 
 			// We need to add this lock to make sure pessimistic transaction can realize this operation.
 			// For the normal pessimistic transaction, it's ok. But if async commit is used, it may lead to inconsistent data and index.
+			// TODO: For global index, lock the correct key?! Currently it locks the partition (phyTblID) and the handle or actual key?
+			// but should really lock the table's ID + key col(s)
 			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
@@ -2306,16 +2308,35 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		return 0, nil, nil, nil
 	}
 
-	// During data copying, copy data from partitions to be dropped
-	nextPartitionDefs := pi.DroppingDefinitions
+	// This will be used in multiple different scenarios/ALTER TABLE:
+	// ADD INDEX - no change in partitions, just use pi.Definitions (1)
+	// REORGANIZE PARTITION - copy data from partitions to be dropped (2)
+	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
+	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
+	// (i.e. pi.Definitions - pi.DroppingDefinitions)
+	var pid int64
+	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
-		// During index re-creation, process data from partitions to be added
-		nextPartitionDefs = pi.AddingDefinitions
+		// case 1, 3 or 4
+		if len(pi.AddingDefinitions) == 0 {
+			// case 1
+			// Simply AddIndex, without any partitions added or dropped!
+			pid, err = findNextPartitionID(currPhysicalTableID, pi.Definitions)
+		} else {
+			// case 3 (or if not found AddingDefinitions; 4)
+			// check if recreating Global Index (during Reorg Partition)
+			pid, err = findNextPartitionID(currPhysicalTableID, pi.AddingDefinitions)
+			if err != nil {
+				// case 4
+				// Not a partition in the AddingDefinitions, so it must be an existing
+				// non-touched partition, i.e. recreating Global Index for the non-touched partitions
+				pid, err = findNextNonTouchedPartitionID(currPhysicalTableID, pi)
+			}
+		}
+	} else {
+		// case 2
+		pid, err = findNextPartitionID(currPhysicalTableID, pi.DroppingDefinitions)
 	}
-	if len(nextPartitionDefs) == 0 {
-		nextPartitionDefs = pi.Definitions
-	}
-	pid, err := findNextPartitionID(currPhysicalTableID, nextPartitionDefs)
 	if err != nil {
 		// Fatal error, should not run here.
 		logutil.DDLLogger().Error("find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
@@ -2394,6 +2415,24 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 		}
 	}
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
+}
+
+func findNextNonTouchedPartitionID(currPartitionID int64, pi *model.PartitionInfo) (int64, error) {
+	pid, err := findNextPartitionID(currPartitionID, pi.Definitions)
+	if err != nil {
+		return 0, err
+	}
+	if pid == 0 {
+		return 0, nil
+	}
+	for _, notFoundErr := findNextPartitionID(pid, pi.DroppingDefinitions); notFoundErr == nil; {
+		// This can be optimized, but it is not frequently called, so keeping as-is
+		pid, err = findNextPartitionID(pid, pi.Definitions)
+		if pid == 0 {
+			break
+		}
+	}
+	return pid, err
 }
 
 // AllocateIndexID allocates an index ID from TableInfo.
