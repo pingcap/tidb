@@ -262,7 +262,6 @@ type StatementContext struct {
 	ExplainFormat          string
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
 	contextutil.PlanCacheTracker

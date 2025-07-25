@@ -244,6 +244,23 @@ var Attach2Task4PhysicalUnionScan func(pp base.PhysicalPlan, tasks ...base.Task)
 // ResolveIndices4PhysicalUnionScan will be called by PhysicalUnionScan in physicalOp pkg.
 var ResolveIndices4PhysicalUnionScan func(pp base.PhysicalPlan) (err error)
 
+// ResolveIndices4PhysicalProjection will be called by PhysicalProjection in physicalOp pkg.
+var ResolveIndices4PhysicalProjection func(pp base.PhysicalPlan) (err error)
+
+// GetCost4PhysicalProjection will be called by PhysicalProjection in physicalOp pkg.
+var GetCost4PhysicalProjection func(pp base.PhysicalPlan, count float64) float64
+
+// GetPlanCostVer14PhysicalProjection will be called by PhysicalProjection in physicalOp pkg.
+var GetPlanCostVer14PhysicalProjection func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalProjection will be called by PhysicalProjection in physicalOp pkg.
+var GetPlanCostVer24PhysicalProjection func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalProjection will be called by PhysicalProjection in physicalOp pkg.
+var Attach2Task4PhysicalProjection func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -264,6 +281,9 @@ var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.Physical
 
 // CloneExpressionsForPlanCache is used to clone expressions for plan cache.
 var CloneExpressionsForPlanCache func(exprs, cloned []expression.Expression) []expression.Expression
+
+// CloneColumnsForPlanCache is used to clone columns for plan cache.
+var CloneColumnsForPlanCache func(cols, cloned []*expression.Column) []*expression.Column
 
 // ****************************************** optimize portal *********************************************
 
