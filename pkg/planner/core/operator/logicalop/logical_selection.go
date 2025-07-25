@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
@@ -96,7 +95,7 @@ func (p *LogicalSelection) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	exprCtx := p.SCtx().GetExprCtx()
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	predicates = constraint.DeleteTrueExprs(exprCtx, stmtCtx, predicates)
@@ -108,7 +107,11 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	var originConditions []expression.Expression
 	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
 	originConditions = canBePushDown
-	retConditions, child = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	var err error
+	retConditions, child, err = p.Children()[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	retConditions = append(retConditions, canNotBePushDown...)
 	sctx := p.SCtx()
 	if len(retConditions) > 0 {
@@ -117,13 +120,13 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 		dual := Conds2TableDual(p, p.Conditions)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, p.Conditions, opt)
-			return nil, dual
+			return nil, dual, nil
 		}
-		return nil, p
+		return nil, p, nil
 	}
 	p.Conditions = p.Conditions[:0]
 	appendSelectionPredicatePushDownTraceStep(p, originConditions, opt)
-	return nil, child
+	return nil, child, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
@@ -328,13 +331,6 @@ func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 }
 
 // *************************** end implementation of logicalPlan interface ***************************
-
-// CanPushDown is utility function to check whether we can push down Selection to TiKV or TiFlash
-func (p *LogicalSelection) CanPushDown(storeTp kv.StoreType) bool {
-	return !expression.ContainVirtualColumn(p.Conditions) &&
-		p.CanPushToCop(storeTp) &&
-		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
-}
 
 func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotBePushDown []expression.Expression) {
 	canBePushDown = make([]expression.Expression, 0, len(filters))

@@ -276,7 +276,6 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		TypeCtx: c.GetSessionVars().StmtCtx.TypeCtx(),
 		ErrCtx:  c.GetSessionVars().StmtCtx.ErrCtx(),
 
-		InPreparedPlanBuilding:   c.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
 		RegardNULLAsPoint:        c.GetSessionVars().RegardNULLAsPoint,
 		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
@@ -372,6 +371,11 @@ func (c *Context) GetSQLServer() sqlsvrapi.Server {
 	return c.dom.(sqlsvrapi.Server)
 }
 
+// IsCrossKS implements sessionctx.Context IsCrossKS interface.
+func (*Context) IsCrossKS() bool {
+	return false
+}
+
 // GetSchemaValidator implements sessionctx.Context GetSchemaValidator interface.
 func (c *Context) GetSchemaValidator() validatorapi.Validator {
 	return c.schValidator
@@ -381,6 +385,9 @@ func (c *Context) GetSchemaValidator() validatorapi.Validator {
 func (*Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
+
+// BuiltinFunctionUsageInc implements sessionctx.Context.
+func (*Context) BuiltinFunctionUsageInc(_ string) {}
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, error) {
@@ -597,13 +604,13 @@ func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
 }
 
-// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
-func (*Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// EncodeStates implements the sessionapi.Session interface
+func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 
-// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
-func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// DecodeStates implements the sessionapi.Session interface
+func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 

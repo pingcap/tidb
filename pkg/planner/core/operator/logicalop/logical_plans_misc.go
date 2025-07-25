@@ -83,13 +83,18 @@ func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	return false
 }
 
-func addSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+// AddSelection adds a LogicalSelection to the given LogicalPlan.
+func AddSelection(p base.LogicalPlan, child base.LogicalPlan, conditions []expression.Expression, chIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
 	}
 	conditions = utilfuncp.ApplyPredicateSimplification(p.SCtx(), conditions, true)
 	if len(conditions) == 0 {
+		p.Children()[chIdx] = child
+		return
+	}
+	if dual, ok := child.(*LogicalTableDual); ok && dual.RowCount == 0 {
 		p.Children()[chIdx] = child
 		return
 	}
@@ -212,6 +217,7 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 }
 
 // CanPushToCopImpl checks whether the logical plan can be pushed to coprocessor.
+// Deprecated: don't depend on subtree based push check, use prop based `CanSelfBeingPushedToCopImpl` instead.
 func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 	p := lp.GetBaseLogicalPlan().(*BaseLogicalPlan)
 	ret := true

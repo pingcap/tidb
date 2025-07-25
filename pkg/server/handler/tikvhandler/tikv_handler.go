@@ -38,18 +38,21 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -767,7 +770,7 @@ type SchemaTableStorage struct {
 }
 
 func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *ast.CIStr, table *ast.CIStr) (messages []*SchemaTableStorage, err error) {
-	var s sessiontypes.Session
+	var s sessionapi.Session
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
 	}
@@ -1493,7 +1496,7 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// 		`for id in [frameRange.firstTableID,frameRange.endTableID]`
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, dbName := range schema.AllSchemaNames() {
-		if util.IsMemDB(dbName.L) {
+		if metadef.IsMemDB(dbName.L) {
 			continue
 		}
 		tables, err := schema.SchemaTableInfos(context.Background(), dbName)
@@ -1716,7 +1719,7 @@ type ServerInfo struct {
 	IsOwner  bool `json:"is_owner"`
 	MaxProcs int  `json:"max_procs"`
 	GOGC     int  `json:"gogc"`
-	*infosync.ServerInfo
+	*serverinfo.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1742,11 +1745,11 @@ func (h ServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 
 // ClusterServerInfo is used to report cluster servers info when do http request.
 type ClusterServerInfo struct {
-	ServersNum                   int                             `json:"servers_num,omitempty"`
-	OwnerID                      string                          `json:"owner_id"`
-	IsAllServerVersionConsistent bool                            `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []infosync.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*infosync.ServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                               `json:"servers_num,omitempty"`
+	OwnerID                      string                            `json:"owner_id"`
+	IsAllServerVersionConsistent bool                              `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []serverinfo.VersionInfo          `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*serverinfo.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1772,14 +1775,14 @@ func (h AllServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) 
 		log.Error("failed to get owner id", zap.Error(err))
 		return
 	}
-	allVersionsMap := map[infosync.ServerVersionInfo]struct{}{}
-	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[serverinfo.VersionInfo]struct{}{}
+	allVersions := make([]serverinfo.VersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
-		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+		if _, ok := allVersionsMap[v.VersionInfo]; ok {
 			continue
 		}
-		allVersionsMap[v.ServerVersionInfo] = struct{}{}
-		allVersions = append(allVersions, v.ServerVersionInfo)
+		allVersionsMap[v.VersionInfo] = struct{}{}
+		allVersions = append(allVersions, v.VersionInfo)
 	}
 	clusterInfo := ClusterServerInfo{
 		ServersNum: len(allServersInfo),
@@ -2021,4 +2024,145 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	handler.WriteData(w, config.GetGlobalConfig().Labels)
+}
+
+// IngestParam is the type for lightning ingest parameters.
+type IngestParam string
+
+const (
+	// IngestParamMaxBatchSplitRanges is the parameter for lightning max_batch_split_ranges.
+	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
+	// IngestParamMaxSplitRangesPerSec is the parameter for lightning max_split_ranges_per_sec.
+	IngestParamMaxSplitRangesPerSec IngestParam = "max_split_ranges_per_sec"
+	// IngestParamMaxInflight is the parameter for lightning max_inflight.
+	IngestParamMaxInflight IngestParam = "max_inflight"
+	// IngestParamMaxPerSecond is the parameter for lightning max_per_second.
+	IngestParamMaxPerSecond IngestParam = "max_per_second"
+)
+
+// IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_inflight.
+type IngestConcurrencyHandler struct {
+	*handler.TikvHandlerTool
+	param IngestParam
+}
+
+// NewIngestConcurrencyHandler creates a new IngestConcurrencyHandler.
+func NewIngestConcurrencyHandler(tool *handler.TikvHandlerTool, param IngestParam) IngestConcurrencyHandler {
+	return IngestConcurrencyHandler{tool, param}
+}
+
+// ServeHTTP handles request of lightning max_batch_split_ranges.
+func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var getter func(*meta.Mutator) (float64, bool, error)
+	var setter func(*meta.Mutator, float64) error
+	var updateGlobal func(v float64) float64
+	switch h.param {
+	case IngestParamMaxBatchSplitRanges:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxBatchSplitRanges()
+			return float64(v), isNull, err
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxBatchSplitRanges(int(value))
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxBatchSplitRanges.Load()
+			intV := int(v)
+			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			return float64(*old)
+		}
+	case IngestParamMaxSplitRangesPerSec:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			return m.GetIngestMaxSplitRangesPerSec()
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxSplitRangesPerSec(value)
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxSplitRangesPerSec.Load()
+			local.CurrentMaxSplitRangesPerSec.Store(&v)
+			return *old
+		}
+	case IngestParamMaxPerSecond:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			return m.GetIngestMaxPerSec()
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxPerSec(value)
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestPerSec.Load()
+			local.CurrentMaxIngestPerSec.Store(&v)
+			return *old
+		}
+	case IngestParamMaxInflight:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxInflight()
+			return float64(v), isNull, err
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxInflight(int(value))
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestInflight.Load()
+			intV := int(v)
+			local.CurrentMaxIngestInflight.Store(&intV)
+			return float64(*old)
+		}
+	default:
+		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
+	}
+	switch req.Method {
+	case http.MethodGet:
+		var respValue float64
+		var respIsNull bool
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			var getErr error
+			respValue, respIsNull, getErr = getter(m)
+			return getErr
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+
+		data := map[string]any{
+			"value":   respValue,
+			"is_null": respIsNull,
+		}
+		handler.WriteData(w, data)
+	case http.MethodPost:
+		var payload struct {
+			Value float64 `json:"value"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		newValue := payload.Value
+		if newValue < 0 {
+			handler.WriteError(w, errors.New("value must be >= 0"))
+			return
+		}
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			return setter(m, newValue)
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		oldVal := updateGlobal(newValue)
+		logutil.BgLogger().Info("set ingest concurrency",
+			zap.String("param", string(h.param)),
+			zap.Float64("oldValue", oldVal),
+			zap.Float64("newValue", newValue))
+		handler.WriteData(w, map[string]string{"message": "success"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		handler.WriteError(w, errors.New("method not allowed"))
+	}
 }

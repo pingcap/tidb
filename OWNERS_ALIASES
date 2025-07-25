@@ -119,6 +119,11 @@ aliases:
     - henrybw
     - wddevries
     - King-Dylan
+  sig-approvers-metrics: # approvers for metrics module
+    - XuHuaiyu
+    - zimulala
+    - yibin87
+    - nolouch
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013

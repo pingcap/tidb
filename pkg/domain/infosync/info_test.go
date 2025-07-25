@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -85,10 +86,10 @@ func TestTopology(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
 	selfInfo := info.getLocalServerInfo()
-	require.Equal(t, selfInfo.asTopologyInfo(), *topology)
+	require.Equal(t, selfInfo.ToTopologyInfo(), *topology)
 
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
-	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, selfInfo.IP, selfInfo.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", serverinfo.TopologyInformationPath, selfInfo.IP, selfInfo.Port)
 
 	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
@@ -106,7 +107,7 @@ func TestTopology(t *testing.T) {
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
 	require.Equal(t, int64(1282967700), topology.StartTimestamp)
-	require.Equal(t, info.getLocalServerInfo().asTopologyInfo(), *topology)
+	require.Equal(t, info.getLocalServerInfo().ToTopologyInfo(), *topology)
 
 	// check ttl key
 	ttlExists, err := info.ttlKeyExists(ctx)
@@ -124,9 +125,9 @@ func TestTopology(t *testing.T) {
 	require.True(t, ttlExists)
 }
 
-func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
+func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*serverinfo.TopologyInfo, error) {
 	info := is.getLocalServerInfo()
-	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.IP, info.Port)
+	key := fmt.Sprintf("%s/%s:%v/info", serverinfo.TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return nil, err
@@ -137,7 +138,7 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, e
 	if len(resp.Kvs) != 1 {
 		return nil, errors.New("resp.Kvs error")
 	}
-	var ret TopologyInfo
+	var ret serverinfo.TopologyInfo
 	err = json.Unmarshal(resp.Kvs[0].Value, &ret)
 	if err != nil {
 		return nil, err
@@ -147,7 +148,7 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, e
 
 func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 	info := is.getLocalServerInfo()
-	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.IP, info.Port)
+	key := fmt.Sprintf("%s/%s:%v/ttl", serverinfo.TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return false, err
@@ -286,9 +287,9 @@ func TestTiFlashManager(t *testing.T) {
 }
 
 func TestInfoSyncerMarshal(t *testing.T) {
-	info := &ServerInfo{
-		StaticServerInfo: StaticServerInfo{
-			ServerVersionInfo: ServerVersionInfo{
+	info := &serverinfo.ServerInfo{
+		StaticInfo: serverinfo.StaticInfo{
+			VersionInfo: serverinfo.VersionInfo{
 				Version: "8.8.8",
 				GitHash: "123456",
 			},
@@ -301,7 +302,7 @@ func TestInfoSyncerMarshal(t *testing.T) {
 			ServerIDGetter: func() uint64 { return 0 },
 			JSONServerID:   1,
 		},
-		DynamicServerInfo: DynamicServerInfo{
+		DynamicInfo: serverinfo.DynamicInfo{
 			Labels: map[string]string{"zone": "ap-northeast-1a"},
 		},
 	}
@@ -310,7 +311,7 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, data, []byte(`{"version":"8.8.8","git_hash":"123456",`+
 		`"ddl_id":"tidb1","ip":"127.0.0.1","listening_port":4000,"status_port":10080,"lease":"1s","start_timestamp":10000,`+
 		`"server_id":1,"labels":{"zone":"ap-northeast-1a"}}`))
-	var decodeInfo *ServerInfo
+	var decodeInfo *serverinfo.ServerInfo
 	err = json.Unmarshal(data, &decodeInfo)
 	require.NoError(t, err)
 	require.Nil(t, decodeInfo.ServerIDGetter)

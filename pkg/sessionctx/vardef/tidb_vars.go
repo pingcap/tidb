@@ -326,6 +326,9 @@ const (
 	// TiDBOptRiskEqSkewRatio controls the amount of skew is applied to equal predicate estimation when a value is not found in TopN/buckets.
 	TiDBOptRiskEqSkewRatio = "tidb_opt_risk_eq_skew_ratio"
 
+	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket or outside the histogram bucket range.
+	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
+
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// TiDBOptCopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1327,6 +1330,7 @@ const (
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0
+	DefOptRiskRangeSkewRatio                = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
@@ -1400,7 +1404,7 @@ const (
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiFlashHashJoinVersion               = joinversion.TiFlashHashJoinVersionDefVal
 	DefTiDBEnableTiFlashPipelineMode        = true
-	DefTiDBMPPStoreFailTTL                  = "60s"
+	DefTiDBMPPStoreFailTTL                  = "0s"
 	DefTiDBTxnMode                          = PessimisticTxnMode
 	DefTiDBRowFormatV1                      = 1
 	DefTiDBRowFormatV2                      = 2
@@ -1453,7 +1457,7 @@ const (
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
 	DefTiDBPointGetCache                    = false
-	DefTiDBEnableTelemetry                  = false
+	DefTiDBEnableTelemetry                  = true
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false

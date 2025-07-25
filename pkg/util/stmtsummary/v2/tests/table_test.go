@@ -542,20 +542,13 @@ func TestPlanCacheUnqualified2(t *testing.T) {
     from information_schema.statements_summary where digest_text like '%select%from%t_apply_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t1` where `t1` . `a` > ( select `a` from `t_apply_unqualified_test` where `t1` . `b` > `t_apply_unqualified_test` . `b` ) 1 1 PhysicalApply plan is un-cacheable"))
 
-	// queries containing ignore_plan_cache or set_var hints
+	// queries containing ignore_plan_cache hints
 	tk.MustExec(`create table t_ignore_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select /*+ ignore_plan_cache() */ * from t_ignore_unqualified_test'`)
 	tk.MustExec(`execute st`)
 	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_ignore_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t_ignore_unqualified_test` 1 1 ignore plan cache by hint"))
-
-	tk.MustExec(`create table t_setvar_unqualified_test (a int, b int)`)
-	tk.MustExec(`prepare st from 'select /*+ set_var(max_execution_time=10000) */ * from t_setvar_unqualified_test'`)
-	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
-    from information_schema.statements_summary where digest_text like '%select%from%t_setvar_unqualified_test%'`).Sort().Check(testkit.Rows(
-		"select * from `t_setvar_unqualified_test` 1 1 SET_VAR is used in the SQL"))
 
 	// queries containing non-deterministic functions
 	tk.MustExec(`create table t_non_deterministic_1_unqualified_test (a int, b int)`)

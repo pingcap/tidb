@@ -44,6 +44,7 @@ found you are one of the users but not listed here:
 - [nooncall/shazam](https://github.com/nooncall/shazam)
 - [bytebase/bytebase](https://github.com/bytebase/bytebase)
 - [kyleconroy/sqlc](https://github.com/kyleconroy/sqlc)
+- [block/spirit](https://github.com/block/spirit)
 
 ## Contributing
 

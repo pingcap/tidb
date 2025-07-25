@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -57,16 +58,19 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -88,8 +92,8 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -108,6 +112,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -125,6 +130,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -134,6 +140,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -143,13 +150,13 @@ func init() {
 		return CreateSession(ctx.GetStore())
 	}
 	executor.CloseSession = func(ctx sessionctx.Context) {
-		if se, ok := ctx.(types.Session); ok {
+		if se, ok := ctx.(sessionapi.Session); ok {
 			se.Close()
 		}
 	}
 }
 
-var _ types.Session = (*session)(nil)
+var _ sessionapi.Session = (*session)(nil)
 
 type stmtRecord struct {
 	st      sqlexec.Statement
@@ -190,7 +197,9 @@ type session struct {
 
 	// dom is *domain.Domain, use `any` to avoid import cycle.
 	// cross keyspace session doesn't have domain set.
-	dom             any
+	dom any
+	// we cannot compare dom == nil, as dom is untyped, golang will always return false.
+	crossKS         bool
 	schemaValidator validatorapi.Validator
 	infoCache       *infoschema.InfoCache
 	store           kv.Storage
@@ -217,6 +226,13 @@ type session struct {
 
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *indexusage.SessionIndexUsageCollector
+
+	functionUsageMu struct {
+		syncutil.RWMutex
+		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	}
+	// allowed when tikv disk full happened.
+	diskFullOpt kvrpcpb.DiskFullOpt
 
 	// StmtStats is used to count various indicators of each SQL in this session
 	// at each point in time. These data will be periodically taken away by the
@@ -932,7 +948,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
-		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
+		s.sessionVars.StmtCtx.MergeExecDetails(commitDetail)
 	}
 
 	if err == nil && s.txn.lastCommitTS > 0 {
@@ -951,6 +967,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	// record the TTLInsertRows in the metric
 	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
+	metrics.DDLCommitTempIndexWrite(s.sessionVars.ConnectionID)
 
 	failpoint.Inject("keepHistory", func(val failpoint.Value) {
 		if val.(bool) {
@@ -978,6 +995,7 @@ func (s *session) RollbackTxn(ctx context.Context) {
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	s.sessionVars.SetInTxn(false)
 	sessiontxn.GetTxnManager(s).OnTxnEnd()
+	metrics.DDLRollbackTempIndexWrite(s.sessionVars.ConnectionID)
 }
 
 // setLastTxnInfoBeforeTxnEnd sets the @@last_txn_info variable before commit/rollback the transaction.
@@ -1803,7 +1821,7 @@ func (s *session) DisableSandBoxMode() {
 }
 
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
-func ParseWithParams4Test(ctx context.Context, s types.Session,
+func ParseWithParams4Test(ctx context.Context, s sessionapi.Session,
 	sql string, args ...any) (ast.StmtNode, error) {
 	return s.(*session).ParseWithParams(ctx, sql, args)
 }
@@ -1831,9 +1849,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 
 	startTime := time.Now()
 	metrics.SessionRestrictedSQLCounter.Inc()
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
-	ctx = context.WithValue(ctx, tikvutil.RUDetailsCtxKey, tikvutil.NewRUDetails())
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)
@@ -1860,7 +1876,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 }
 
 // ExecRestrictedStmt4Test wrapper `(s *session) ExecRestrictedStmt` for test.
-func ExecRestrictedStmt4Test(ctx context.Context, s types.Session,
+func ExecRestrictedStmt4Test(ctx context.Context, s sessionapi.Session,
 	stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*resolve.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -2010,8 +2026,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		defer pprof.SetGoroutineLabels(ctx)
 		startTime := time.Now()
 		metrics.SessionRestrictedSQLCounter.Inc()
-		ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-		ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
+		ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 		rs, err := se.ExecuteInternalStmt(ctx, stmt)
 		if err != nil {
 			se.sessionVars.StmtCtx.AppendError(err)
@@ -2215,6 +2230,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 		return recordSet, err
 	}
+	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
+		telemetry.CurrentExecuteCount.Inc()
+		tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+		if tiFlashPushDown {
+			telemetry.CurrentTiFlashPushDownCount.Inc()
+		}
+		if tiFlashExchangePushDown {
+			telemetry.CurrentTiFlashExchangePushDownCount.Inc()
+		}
+	}
 	return recordSet, nil
 }
 
@@ -2348,6 +2373,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 	}
 
+	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
@@ -2604,6 +2630,7 @@ func (s *session) Close() {
 	if s.idxUsageCollector != nil {
 		s.idxUsageCollector.Flush()
 	}
+	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
 		bindValue.(bindinfo.SessionBindingHandle).Close()
@@ -2648,6 +2675,12 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	sc := vars.StmtCtx
 
 	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+		// cross ks session does not have domain.
+		dom := s.GetDomain().(*domain.Domain)
+		var rgCtl *rmclient.ResourceGroupsController
+		if dom != nil {
+			rgCtl = dom.ResourceGroupsController()
+		}
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -2692,6 +2725,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ResourceGroupName:             sc.ResourceGroupName,
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
+			RUConsumptionReporter:         rgCtl,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
 
@@ -2725,7 +2759,6 @@ func (s *session) GetRangerCtx() *rangerctx.RangerContext {
 			TypeCtx: s.GetSessionVars().StmtCtx.TypeCtx(),
 			ErrCtx:  s.GetSessionVars().StmtCtx.ErrCtx(),
 
-			InPreparedPlanBuilding:   s.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
 			RegardNULLAsPoint:        s.GetSessionVars().RegardNULLAsPoint,
 			OptPrefixIndexSingleScan: s.GetSessionVars().OptPrefixIndexSingleScan,
 			OptimizerFixControl:      s.GetSessionVars().OptimizerFixControl,
@@ -3150,7 +3183,7 @@ func (s *session) ReportUsageStats() {
 }
 
 // CreateSession4Test creates a new session environment for test.
-func CreateSession4Test(store kv.Storage) (types.Session, error) {
+func CreateSession4Test(store kv.Storage) (sessionapi.Session, error) {
 	se, err := CreateSession4TestWithOpt(store, nil)
 	if err == nil {
 		// Cover both chunk rpc encoding and default encoding.
@@ -3170,7 +3203,7 @@ type Opt struct {
 }
 
 // CreateSession4TestWithOpt creates a new session environment for test.
-func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
+func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (sessionapi.Session, error) {
 	s, err := CreateSessionWithOpt(store, opt)
 	if err == nil {
 		// initialize session variables for test.
@@ -3185,13 +3218,13 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (types.Session, error
 }
 
 // CreateSession creates a new session environment.
-func CreateSession(store kv.Storage) (types.Session, error) {
+func CreateSession(store kv.Storage) (sessionapi.Session, error) {
 	return CreateSessionWithOpt(store, nil)
 }
 
 // CreateSessionWithOpt creates a new session environment with option.
 // Use default option if opt is nil.
-func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
+func CreateSessionWithOpt(store kv.Storage, opt *Opt) (sessionapi.Session, error) {
 	do, err := domap.Get(store)
 	if err != nil {
 		return nil, err
@@ -3240,83 +3273,114 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
-type tableBasicInfo struct {
-	SQL string
-	id  int64
+// DatabaseBasicInfo contains the basic information of a database.
+type DatabaseBasicInfo struct {
+	ID     int64
+	Name   string
+	Tables []TableBasicInfo
+}
+
+// TableBasicInfo contains the basic information of a table used in DDL.
+type TableBasicInfo struct {
+	ID   int64
+	Name string
+	SQL  string
+}
+
+type versionedDDLTables struct {
+	ver    meta.DDLTableVersion
+	tables []TableBasicInfo
 }
 
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
-	DDLJobTables = []tableBasicInfo{
-		{ddl.JobTableSQL, ddl.JobTableID},
-		{ddl.ReorgTableSQL, ddl.ReorgTableID},
-		{ddl.HistoryTableSQL, ddl.HistoryTableID},
+	DDLJobTables = []TableBasicInfo{
+		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: ddl.JobTableSQL},
+		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: ddl.ReorgTableSQL},
+		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: ddl.HistoryTableSQL},
+	}
+	// MDLTables is a list of tables definitions used for metadata lock.
+	MDLTables = []TableBasicInfo{
+		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: ddl.MDLTableSQL},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
-	BackfillTables = []tableBasicInfo{
-		{ddl.BackgroundSubtaskTableSQL, ddl.BackgroundSubtaskTableID},
-		{ddl.BackgroundSubtaskHistoryTableSQL, ddl.BackgroundSubtaskHistoryTableID},
+	BackfillTables = []TableBasicInfo{
+		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: ddl.BackgroundSubtaskTableSQL},
+		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: ddl.BackgroundSubtaskHistoryTableSQL},
 	}
-	mdlTable = `create table mysql.tidb_mdl_info(
-		job_id BIGINT NOT NULL PRIMARY KEY,
-		version BIGINT NOT NULL,
-		table_ids text(65535),
-		owner_id varchar(64) NOT NULL DEFAULT ''
-	);`
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
 	// It only contains the notifier table.
 	// Put it here to reuse a unified initialization function and make it easier to find.
-	DDLNotifierTables = []tableBasicInfo{
-		{ddl.NotifierTableSQL, ddl.NotifierTableID},
+	DDLNotifierTables = []TableBasicInfo{
+		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: ddl.NotifierTableSQL},
+	}
+
+	ddlTableVersionTables = []versionedDDLTables{
+		{ver: meta.BaseDDLTableVersion, tables: DDLJobTables},
+		{ver: meta.MDLTableVersion, tables: MDLTables},
+		{ver: meta.BackfillTableVersion, tables: BackfillTables},
+		{ver: meta.DDLNotifierTableVersion, tables: DDLNotifierTables},
 	}
 )
 
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
 		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), vardef.DefWaitSplitRegionTimeout*time.Second)
-		var regionIDs []uint64
+		defer cancel()
+		keys := make([][]byte, 0, len(tableIDs))
 		for _, id := range tableIDs {
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, vardef.DefTiDBScatterRegion))
+			keys = append(keys, tablecodec.GenTablePrefix(id))
 		}
-		if vardef.DefTiDBScatterRegion != vardef.ScatterOff {
-			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+		gid := ddl.GlobalScatterGroupID
+		// tables created through DDL during bootstrap also don't scatter, we keep
+		// the same behavior here.
+		_, err := s.SplitRegions(ctxWithTimeout, keys, false, &gid)
+		if err != nil {
+			// It will be automatically split by TiKV later.
+			logutil.BgLogger().Warn("split table region failed", zap.Error(err))
 		}
-		cancel()
 	}
 }
 
-// InitDDLJobTables creates system tables that DDL uses. Because CREATE TABLE is
+// InitDDLTables creates system tables that DDL uses. Because CREATE TABLE is
 // also a DDL, we must directly modify KV data to create these tables.
-func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
-	targetTables := DDLJobTables
-	if targetVer == meta.BackfillTableVersion {
-		targetTables = BackfillTables
-	}
-	if targetVer == meta.DDLNotifierTableVersion {
-		targetTables = DDLNotifierTables
-	}
-	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+func InitDDLTables(store kv.Storage) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
-		tableVer, err := t.CheckDDLTableVersion()
-		if err != nil || tableVer >= targetVer {
+		currVer, err := t.GetDDLTableVersion()
+		if err != nil {
 			return errors.Trace(err)
 		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
 		}
-		if err = createAndSplitTables(store, t, dbID, targetTables); err != nil {
-			return err
+
+		largestVer := currVer
+		for _, vt := range ddlTableVersionTables {
+			if currVer >= vt.ver {
+				continue
+			}
+			logutil.BgLogger().Info("init DDL tables", zap.Int("currVer", int(currVer)),
+				zap.Int("targetVer", int(vt.ver)))
+			largestVer = max(largestVer, vt.ver)
+			if err = createAndSplitTables(store, t, dbID, vt.tables); err != nil {
+				return err
+			}
 		}
-		return t.SetDDLTables(targetVer)
+		if largestVer > currVer {
+			return t.SetDDLTableVersion(largestVer)
+		}
+		return nil
 	})
 }
 
-func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []tableBasicInfo) error {
+func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []TableBasicInfo) error {
 	tableIDs := make([]int64, 0, len(tables))
 	for _, tbl := range tables {
-		tableIDs = append(tableIDs, tbl.id)
+		tableIDs = append(tableIDs, tbl.ID)
 	}
 	splitAndScatterTable(store, tableIDs)
 	p := parser.New()
@@ -3325,12 +3389,17 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
+		// bootstrap session set sessionctx.Initing = true, and uses None SQL mode,
+		// we also use it here.
+		evalCtx := exprstatic.NewEvalContext(exprstatic.WithSQLMode(mysql.ModeNone))
+		exprCtx := exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
+		mbCtx := metabuild.NewContext(metabuild.WithExprCtx(exprCtx))
+		tblInfo, err := ddl.BuildTableInfoFromAST(mbCtx, stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		tblInfo.State = model.StatePublic
-		tblInfo.ID = tbl.id
+		tblInfo.ID = tbl.ID
 		tblInfo.UpdateTS = t.StartTS
 		err = t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
@@ -3338,40 +3407,6 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		}
 	}
 	return nil
-}
-
-// InitMDLTable is to create tidb_mdl_info, which is used for metadata lock.
-func InitMDLTable(store kv.Storage) error {
-	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		ver, err := t.CheckDDLTableVersion()
-		if err != nil || ver >= meta.MDLTableVersion {
-			return errors.Trace(err)
-		}
-		dbID, err := t.CreateMySQLDatabaseIfNotExists()
-		if err != nil {
-			return err
-		}
-		splitAndScatterTable(store, []int64{ddl.MDLTableID})
-		p := parser.New()
-		stmt, err := p.ParseOneStmt(mdlTable, "", "")
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tblInfo.State = model.StatePublic
-		tblInfo.ID = ddl.MDLTableID
-		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		return t.SetDDLTables(meta.MDLTableVersion)
-	})
 }
 
 // InitMDLVariableForBootstrap initializes the metadata lock variable.
@@ -3505,19 +3540,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
-	err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
-	if err != nil {
-		return nil, err
+	if kerneltype.IsNextGen() {
+		if err := bootstrapSchemas(store); err != nil {
+			return nil, err
+		}
 	}
-	err = InitMDLTable(store)
-	if err != nil {
-		return nil, err
-	}
-	err = InitDDLJobTables(store, meta.BackfillTableVersion)
-	if err != nil {
-		return nil, err
-	}
-	err = InitDDLJobTables(store, meta.DDLNotifierTableVersion)
+	err := InitDDLTables(store)
 	if err != nil {
 		return nil, err
 	}
@@ -3528,6 +3556,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, ver)
 	} else {
+		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
 		err = InitMDLVariable(store)
 		if err != nil {
 			return nil, err
@@ -3634,6 +3663,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	err = executor.LoadOptRuleBlacklist(ctx, ses[5])
 	if err != nil {
 		return nil, err
+	}
+
+	if config.GetGlobalConfig().EnableTelemetry {
+		// There is no way to turn telemetry on with global variable `tidb_enable_telemetry`
+		// when it is disabled in config. See IsTelemetryEnabled function in telemetry/telemetry.go
+		go func() {
+			dom.TelemetryLoop(ses[5])
+		}()
 	}
 
 	planReplayerWorkerCnt := config.GetGlobalConfig().Performance.PlanReplayerDumpWorkerConcurrency
@@ -3750,7 +3787,12 @@ func getStartMode(ver int64) ddl.StartMode {
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, ver int64) {
 	startMode := getStartMode(ver)
-
+	startTime := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("bootstrap cluster finished",
+			zap.String("bootMode", string(startMode)),
+			zap.Duration("cost", time.Since(startTime)))
+	}()
 	if startMode == ddl.Upgrade {
 		// TODO at this time domain must not be created, else it will register server
 		// info, and cause deadlock, we need to make sure this in a clear way
@@ -3861,7 +3903,7 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, er
 	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
-	return createSessionWithOpt(store, nil, dom.GetSchemaValidator(), infoCache, nil)
+	return createSessionWithOpt(store, nil, isvalidator.NewNoop(), infoCache, nil)
 }
 
 func createSessionWithOpt(
@@ -3876,8 +3918,10 @@ func createSessionWithOpt(
 		// we don't set dom for cross keyspace access.
 		ddlOwnerMgr = dom.DDL().OwnerManager()
 	}
+	crossKS := dom == nil
 	s := &session{
 		dom:                   dom,
+		crossKS:               crossKS,
 		schemaValidator:       schemaValidator,
 		infoCache:             infoCache,
 		store:                 store,
@@ -3892,6 +3936,7 @@ func createSessionWithOpt(
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tblsession.NewMutateContext(s)
 
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
 	}
@@ -4113,7 +4158,7 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommit(ctx)
 	if commitDetail != nil {
-		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
+		s.GetSessionVars().StmtCtx.MergeExecDetails(commitDetail)
 	}
 	if err != nil {
 		return err
@@ -4393,6 +4438,10 @@ func (s *session) GetSQLServer() sqlsvrapi.Server {
 	return s.dom.(sqlsvrapi.Server)
 }
 
+func (s *session) IsCrossKS() bool {
+	return s.crossKS
+}
+
 func (s *session) GetSchemaValidator() validatorapi.Validator {
 	return s.schemaValidator
 }
@@ -4405,6 +4454,114 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 	// Set snapshot does not affect the witness of the local temporary table.
 	// The session always see the latest temporary tables.
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is), nil
+}
+
+func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
+	if es.Ti == nil {
+		return
+	}
+	if s.isInternal() {
+		return
+	}
+
+	ti := es.Ti
+	if ti.UseRecursive {
+		session_metrics.TelemetryCTEUsageRecurCTE.Inc()
+	} else if ti.UseNonRecursive {
+		session_metrics.TelemetryCTEUsageNonRecurCTE.Inc()
+	} else {
+		session_metrics.TelemetryCTEUsageNotCTE.Inc()
+	}
+
+	if ti.UseIndexMerge {
+		session_metrics.TelemetryIndexMerge.Inc()
+	}
+
+	if ti.UseMultiSchemaChange {
+		session_metrics.TelemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.UseFlashbackToCluster {
+		session_metrics.TelemetryFlashbackClusterUsage.Inc()
+	}
+
+	if ti.UseExchangePartition {
+		session_metrics.TelemetryExchangePartitionUsage.Inc()
+	}
+
+	if ti.PartitionTelemetry != nil {
+		if ti.PartitionTelemetry.UseTablePartition {
+			session_metrics.TelemetryTablePartitionUsage.Inc()
+			session_metrics.TelemetryTablePartitionMaxPartitionsUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
+		}
+		if ti.PartitionTelemetry.UseTablePartitionList {
+			session_metrics.TelemetryTablePartitionListUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRange {
+			session_metrics.TelemetryTablePartitionRangeUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionHash {
+			session_metrics.TelemetryTablePartitionHashUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
+			session_metrics.TelemetryTablePartitionRangeColumnsUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt1 {
+			session_metrics.TelemetryTablePartitionRangeColumnsGt1Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt2 {
+			session_metrics.TelemetryTablePartitionRangeColumnsGt2Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumnsGt3 {
+			session_metrics.TelemetryTablePartitionRangeColumnsGt3Usage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionListColumns {
+			session_metrics.TelemetryTablePartitionListColumnsUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseCreateIntervalPartition {
+			session_metrics.TelemetryTablePartitionCreateIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseAddIntervalPartition {
+			session_metrics.TelemetryTablePartitionAddIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseDropIntervalPartition {
+			session_metrics.TelemetryTablePartitionDropIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseCompactTablePartition {
+			session_metrics.TelemetryTableCompactPartitionUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseReorganizePartition {
+			session_metrics.TelemetryReorganizePartitionUsage.Inc()
+		}
+	}
+
+	if ti.AccountLockTelemetry != nil {
+		session_metrics.TelemetryLockUserUsage.Add(float64(ti.AccountLockTelemetry.LockUser))
+		session_metrics.TelemetryUnlockUserUsage.Add(float64(ti.AccountLockTelemetry.UnlockUser))
+		session_metrics.TelemetryCreateOrAlterUserUsage.Add(float64(ti.AccountLockTelemetry.CreateOrAlterUser))
+	}
+
+	if ti.UseTableLookUp.Load() && s.sessionVars.StoreBatchSize > 0 {
+		session_metrics.TelemetryStoreBatchedUsage.Inc()
+	}
+}
+
+// GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
+func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
+	replica := make(map[string]uint32)
+	s.functionUsageMu.RLock()
+	defer s.functionUsageMu.RUnlock()
+	for key, value := range s.functionUsageMu.builtinFunctionUsage {
+		replica[key] = value
+	}
+	return replica
+}
+
+// BuiltinFunctionUsageInc increase the counting of the builtin function usage
+func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+	s.functionUsageMu.Lock()
+	defer s.functionUsageMu.Unlock()
+	s.functionUsageMu.builtinFunctionUsage.Inc(scalarFuncSigName)
 }
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {
@@ -4433,9 +4590,8 @@ func (s *session) SetMemoryFootprintChangeHook() {
 	s.txn.SetMemoryFootprintChangeHook(hook)
 }
 
-// EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (s *session) EncodeSessionStates(ctx context.Context,
-	_ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (s *session) EncodeStates(ctx context.Context,
+	sessionStates *sessionstates.SessionStates) error {
 	// Transaction status is hard to encode, so we do not support it.
 	s.txn.mu.Lock()
 	valid := s.txn.Valid()
@@ -4524,9 +4680,8 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 	return nil
 }
 
-// DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (s *session) DecodeSessionStates(ctx context.Context,
-	_ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (s *session) DecodeStates(ctx context.Context,
+	sessionStates *sessionstates.SessionStates) error {
 	// Decode prepared statements and sql bindings.
 	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
@@ -4725,7 +4880,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s types.Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
+func RemoveLockDDLJobs(s sessionapi.Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
 	sv := s.GetSessionVars()
 	if sv.InRestrictedSQL {
 		return

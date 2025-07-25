@@ -199,7 +199,7 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
 	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
@@ -280,6 +280,7 @@ type LogicalPlan interface {
 	RollBackTaskMap(TS uint64)
 
 	// CanPushToCop check if we might push this plan to a specific store.
+	// Deprecated: don't depend subtree based push check, see CanSelfBeingPushedToCopImpl based op-self push check.
 	CanPushToCop(store kv.StoreType) bool
 
 	// ExtractFD derive the FDSet from the tree bottom up.
