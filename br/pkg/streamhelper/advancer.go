@@ -479,8 +479,10 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
 	cp := newCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
-		log.Warn("failed to update global checkpoint: stale",
-			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
+		if cp.TS != 0 {
+			log.Warn("failed to update global checkpoint: stale",
+				zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
+		}
 		return false
 	}
 	// Need resolve lock for different range and same TS
