@@ -2475,8 +2475,6 @@ func handleImportJobInfo(
 		if err != nil {
 			return err
 		}
-		// UpdateTime is updated when the job is switching to the next step
-		runInfo.StartTime = info.UpdateTime
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
@@ -2484,9 +2482,8 @@ func handleImportJobInfo(
 
 		failpoint.Inject("mockUpdateTime", func(val failpoint.Value) {
 			if v, ok := val.(int); ok {
-				ti := time.Now()
-				runInfo.StartTime = types.NewTime(types.FromGoTime(ti), mysql.TypeTimestamp, 0)
-				runInfo.UpdateTime = types.NewTime(types.FromGoTime(ti.Add(time.Duration(v)*time.Second)), mysql.TypeTimestamp, 0)
+				runInfo.UpdateTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
+				runInfo.Speed = int64(v)
 			}
 		})
 	}
