@@ -15,9 +15,15 @@
 package external
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,4 +128,81 @@ func TestSplitDataFiles(t *testing.T) {
 		allPaths[38:47], allPaths[47:56], allPaths[56:65], allPaths[65:74],
 		allPaths[74:83], allPaths[83:92], allPaths[92:101],
 	}, splitDataFiles(allPaths[:101], 8))
+}
+
+func TestMergeOperator(t *testing.T) {
+	oldMaxMergingFilesPerThread := MaxMergingFilesPerThread
+	MaxMergingFilesPerThread = 2
+	defer func() {
+		MaxMergingFilesPerThread = oldMaxMergingFilesPerThread
+	}()
+
+	// test different error cause
+	testcases := []struct {
+		failpointValue string
+		expectError    error
+	}{
+		{
+			failpointValue: "return(0)",
+			expectError:    nil,
+		},
+		{
+			failpointValue: "return(1)",
+			expectError:    errors.Errorf("mock error in mergeOverlappingFilesInternal"),
+		},
+		{
+			failpointValue: "return(2)",
+			expectError:    errors.Errorf("panic occurred during merge sort operator"),
+		},
+		{
+			failpointValue: "return(3)",
+			expectError:    context.DeadlineExceeded,
+		},
+	}
+
+	for _, tc := range testcases {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/lightning/backend/external/mergeOverlappingFilesInternal",
+			tc.failpointValue,
+		)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+		opCtx, _ := operator.NewContext(ctx)
+
+		op := NewMergeOperator(
+			opCtx,
+			nil,
+			0,
+			"",
+			0,
+			nil,
+			1,
+			false,
+			common.OnDuplicateKeyIgnore,
+		)
+
+		datas := []string{
+			"/tmp/1",
+			"/tmp/2",
+			"/tmp/3",
+			"/tmp/4",
+			"/tmp/5",
+			"/tmp/6",
+		}
+
+		err := MergeOverlappingFiles(
+			opCtx,
+			datas,
+			1,
+			op,
+		)
+
+		if tc.expectError != nil {
+			require.True(t, errors.ErrorEqual(err, tc.expectError))
+		} else {
+			require.NoError(t, err)
+		}
+
+		cancel()
+	}
 }

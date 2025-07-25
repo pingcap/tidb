@@ -16,16 +16,19 @@ package external
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -214,32 +217,6 @@ func TestSplit(t *testing.T) {
 	}
 }
 
-func TestGetAdjustedConcurrency(t *testing.T) {
-	genFiles := func(n int) []string {
-		files := make([]string, 0, n)
-		for i := 0; i < n; i++ {
-			files = append(files, fmt.Sprintf("file%d", i))
-		}
-		return files
-	}
-	e := &Engine{
-		checkHotspot:      true,
-		workerConcurrency: 32,
-		dataFiles:         genFiles(100),
-	}
-	require.Equal(t, 8, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(8000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
-
-	e.checkHotspot = false
-	e.dataFiles = genFiles(10)
-	require.Equal(t, 32, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(100)
-	require.Equal(t, 10, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(10000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
-}
-
 func TestTryDecodeEndKey(t *testing.T) {
 	encodedRowID := common.EncodeIntRowID(1)
 	e := &Engine{}
@@ -350,4 +327,72 @@ func TestGetRegionSplitKeys(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, len(tc.splitKeys), len(res))
 	}
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	var (
+		outCh    chan common.DataAndRanges
+		eg       errgroup.Group
+		e        *Engine
+		finished atomic.Int32
+	)
+
+	resetFn := func() {
+		outCh = make(chan common.DataAndRanges, 4)
+		eg = errgroup.Group{}
+		finished.Store(0)
+		e = &Engine{
+			jobKeys:           make([][]byte, 64),
+			workerConcurrency: *atomic.NewInt32(4),
+			readyCh:           make(chan struct{}),
+		}
+
+		// Load and consume the data
+		eg.Go(func() error {
+			defer close(outCh)
+			return e.LoadIngestData(context.Background(), outCh)
+		})
+		eg.Go(func() error {
+			for data := range outCh {
+				// mock some time consuming job
+				data.Data.IncRef()
+				time.Sleep(time.Millisecond * 100)
+				finished.Add(1)
+				data.Data.DecRef()
+			}
+			return nil
+		})
+	}
+
+	t.Run("reduce concurrency", func(t *testing.T) {
+		resetFn()
+		// Wait part of the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() > 2
+		}, time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 1, 1024)
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency", func(t *testing.T) {
+		resetFn()
+		// Wait part of the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() > 2
+		}, time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 8, 1024)
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency after loading all data", func(t *testing.T) {
+		resetFn()
+		// Wait all data being loaded and increase concurrency
+		require.Eventually(t, func() bool {
+			return finished.Load() >= 16
+		}, 3*time.Second, 10*time.Millisecond)
+		e.UpdateResource(context.Background(), 8, 1024)
+		require.NoError(t, eg.Wait())
+	})
 }

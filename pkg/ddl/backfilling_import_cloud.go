@@ -16,6 +16,8 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -37,6 +39,7 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
+	engine        atomic.Pointer[external.Engine]
 }
 
 func newCloudImportExecutor(
@@ -73,6 +76,8 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	local := m.bc.GetLocalBackend()
+	local.UpdateWriteSpeedLimit(m.job.ReorgMeta.GetMaxWriteSpeed())
+
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
@@ -107,6 +112,14 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+
+	eng := local.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	m.engine.Store(eng)
+	defer m.engine.Store(nil)
+
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if common.ErrFoundDuplicateKeys.Equal(err) {
 		err = convertToKeyExistsErr(err, m.index, m.ptbl.Meta())
@@ -118,5 +131,53 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
+	return nil
+}
+
+// TaskMetaModified changes the max write speed for ingest
+func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	// Here is just a sample. For IMPORT INTO, we need to store
+	// write speed and concurrency in the task meta and implement the
+	// below interface:
+	//     func (*importScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {}
+	//
+	// Then we can write modification to system table by taskManager.ModifyTaskByID,
+	// or using SQL directly. And we can get the newest meta here and apply the
+	// latest parameters to local backend in the same way.
+
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
+	local := m.bc.GetLocalBackend()
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+	if newMaxWriteSpeed != m.job.ReorgMeta.GetMaxWriteSpeed() {
+		m.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if local != nil {
+			local.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
+	return nil
+}
+
+// ResourceModified change the concurrency for ingest
+func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	local := m.bc.GetLocalBackend()
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency == local.Concurrency() {
+		return nil
+	}
+
+	eng := m.engine.Load()
+	if eng != nil {
+		if err := eng.UpdateResource(ctx, newConcurrency, newResource.Mem.Capacity()); err != nil {
+			return err
+		}
+	}
+
+	local.SetConcurrency(newConcurrency)
 	return nil
 }

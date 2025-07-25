@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"go.uber.org/atomic"
 )
 
 // DDLReorgMeta is meta info of DDL reorganization.
@@ -34,6 +35,20 @@ type DDLReorgMeta struct {
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
+
+	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
+}
+
+// GetMaxWriteSpeed gets the max write speed from DDLReorgMeta.
+// 0 means no limit.
+func (dm *DDLReorgMeta) GetMaxWriteSpeed() int {
+	// 0 means no limit, so it's ok even when the job coming from old cluster
+	return int(dm.MaxWriteSpeed.Load())
+}
+
+// SetMaxWriteSpeed sets the max write speed in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
+	dm.MaxWriteSpeed.Store(int64(maxWriteSpeed))
 }
 
 const (

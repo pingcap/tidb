@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1074,6 +1075,22 @@ func TestMultiIngest(t *testing.T) {
 	}
 }
 
+func newWorker(
+	ctx context.Context,
+	jobWg *sync.WaitGroup,
+	local *Backend,
+	jobFromWorkerCh chan *regionJob,
+) *regionJobBaseWorker {
+	opCtx, _ := operator.NewContext(ctx)
+	return &regionJobBaseWorker{
+		ctx:             opCtx,
+		jobWg:           jobWg,
+		local:           local,
+		jobFromWorkerCh: jobFromWorkerCh,
+		afterExecuteJob: nil,
+	}
+}
+
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	bak := Backend{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
@@ -1083,7 +1100,7 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	jobCh := make(chan *regionJob, 1)
 	jobCh <- &regionJob{}
 	jobOutCh := make(chan *regionJob, 1)
-	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil)
+	err := newWorker(context.Background(), nil, &bak, jobOutCh).run(jobCh)
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	require.Len(t, jobCh, 0)
@@ -1317,7 +1334,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil)
+		err := newWorker(ctx, nil, local, jobOutCh).run(jobCh)
 		require.NoError(t, err)
 	}()
 
@@ -1424,7 +1441,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := newWorker(ctx, &jobWg, local, jobOutCh).run(jobCh)
 		require.NoError(t, err)
 	}()
 
@@ -1524,7 +1541,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		err := newWorker(ctx, &jobWg, local, jobOutCh).run(jobCh)
 		require.NoError(t, err)
 	}()
 
@@ -1645,7 +1662,8 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, &jobWg)
+		worker := newWorker(ctx, &jobWg, local, jobOutCh)
+		err := worker.run(jobCh)
 		require.NoError(t, err)
 	}()
 
@@ -1717,7 +1735,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 			panicSplitRegionClient{}, // make sure no further split region
 		),
 	}
-	local.BackendConfig.WorkerConcurrency = 1
+	local.BackendConfig.WorkerConcurrency.Store(1)
 	db, tmpPath := makePebbleDB(t, nil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	ctx := context.Background()
@@ -1779,7 +1797,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 			panicSplitRegionClient{}, // make sure no further split region
 		),
 	}
-	local.BackendConfig.WorkerConcurrency = 1
+	local.BackendConfig.WorkerConcurrency.Store(1)
 
 	keys := make([][]byte, 0, 10)
 	value := make([][]byte, 0, 10)
@@ -1984,7 +2002,7 @@ func TestDoImport(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 2,
+			WorkerConcurrency: toAtomic(2),
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
@@ -2065,7 +2083,7 @@ func TestDoImport(t *testing.T) {
 
 	// test write meet unretryable error
 	maxRetryBackoffSecond = 100
-	l.WorkerConcurrency = 1
+	l.WorkerConcurrency.Store(1)
 	fakeRegionJobs = map[[2]string]struct {
 		jobs []*regionJob
 		err  error
@@ -2168,7 +2186,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 2,
+			WorkerConcurrency: toAtomic(2),
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
@@ -2227,7 +2245,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 1,
+			WorkerConcurrency: toAtomic(1),
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
@@ -2258,7 +2276,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 	ctx := context.Background()
 	l := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 1,
+			WorkerConcurrency: toAtomic(1),
 		},
 		splitCli: initTestSplitClient(
 			[][]byte{{1}, {11}},
@@ -2338,7 +2356,7 @@ func TestExternalEngine(t *testing.T) {
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: 2,
+			WorkerConcurrency: toAtomic(2),
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
 		splitCli: initTestSplitClient([][]byte{
