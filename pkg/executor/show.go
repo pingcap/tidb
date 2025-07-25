@@ -2475,7 +2475,8 @@ func handleImportJobInfo(
 		if err != nil {
 			return err
 		}
-		runInfo.StartTime = info.StartTime
+		// UpdateTime is updated when the job is switching to the next step
+		runInfo.StartTime = info.UpdateTime
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
