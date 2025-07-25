@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -1718,7 +1719,7 @@ type ServerInfo struct {
 	IsOwner  bool `json:"is_owner"`
 	MaxProcs int  `json:"max_procs"`
 	GOGC     int  `json:"gogc"`
-	*infosync.ServerInfo
+	*serverinfo.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1744,11 +1745,11 @@ func (h ServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 
 // ClusterServerInfo is used to report cluster servers info when do http request.
 type ClusterServerInfo struct {
-	ServersNum                   int                             `json:"servers_num,omitempty"`
-	OwnerID                      string                          `json:"owner_id"`
-	IsAllServerVersionConsistent bool                            `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []infosync.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*infosync.ServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                               `json:"servers_num,omitempty"`
+	OwnerID                      string                            `json:"owner_id"`
+	IsAllServerVersionConsistent bool                              `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []serverinfo.VersionInfo          `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*serverinfo.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1774,14 +1775,14 @@ func (h AllServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) 
 		log.Error("failed to get owner id", zap.Error(err))
 		return
 	}
-	allVersionsMap := map[infosync.ServerVersionInfo]struct{}{}
-	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[serverinfo.VersionInfo]struct{}{}
+	allVersions := make([]serverinfo.VersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
-		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+		if _, ok := allVersionsMap[v.VersionInfo]; ok {
 			continue
 		}
-		allVersionsMap[v.ServerVersionInfo] = struct{}{}
-		allVersions = append(allVersions, v.ServerVersionInfo)
+		allVersionsMap[v.VersionInfo] = struct{}{}
+		allVersions = append(allVersions, v.VersionInfo)
 	}
 	clusterInfo := ClusterServerInfo{
 		ServersNum: len(allServersInfo),

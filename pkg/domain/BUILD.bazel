@@ -152,6 +152,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/errno",
         "//pkg/infoschema",
         "//pkg/infoschema/isvalidator",
