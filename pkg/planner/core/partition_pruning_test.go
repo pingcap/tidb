@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,11 +46,11 @@ func TestCanBePrune(t *testing.T) {
 
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
 	result := partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
-	require.True(t, equalPartitionRangeOR(result, partitionRangeOR{{0, 1}}))
+	require.True(t, slices.Equal(result, partitionRangeOR{{0, 1}}))
 
 	queryExpr = tc.expr("d > '2018-03-08 00:00:00'")
 	result = partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
-	require.True(t, equalPartitionRangeOR(result, partitionRangeOR{}))
+	require.True(t, slices.Equal(result, partitionRangeOR{}))
 
 	// For the following case:
 	// CREATE TABLE quarterly_report_status (
@@ -68,12 +69,12 @@ func TestCanBePrune(t *testing.T) {
 
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
 	result = partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
-	require.True(t, equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}))
+	require.True(t, slices.Equal(result, partitionRangeOR{{2, 4}}))
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
 	partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
 	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
-	// require.True(t, equalPartitionRangeOR(result, partitionRangeOR{{2, 4}}))
+	// require.True(t, slices.Equal(result, partitionRangeOR{{2, 4}}))
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
 	// Because unix_timestamp('2008-05-01 00:00:00') is fold to constant int 1564761600, and compare it with timestamp (report_updated)
 	// need to convert 1564761600 to a timestamp, during that step, an error happen and the result is set to <nil>
@@ -265,20 +266,8 @@ func TestPartitionRangeForExpr(t *testing.T) {
 		require.NoError(t, err)
 		result := fullRange(lessThan.length())
 		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
+		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v", ca.input)
 	}
-}
-
-func equalPartitionRangeOR(x, y partitionRangeOR) bool {
-	if len(x) != len(y) {
-		return false
-	}
-	for i := range x {
-		if x[i] != y[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestPartitionRangeOperation(t *testing.T) {
@@ -299,7 +288,7 @@ func TestPartitionRangeOperation(t *testing.T) {
 	}
 	for i, ca := range testIntersectionRange {
 		result := ca.input1.intersectionRange(ca.input2.start, ca.input2.end)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "fail = %d", i)
+		require.Truef(t, slices.Equal(ca.result, result), "fail = %d", i)
 	}
 
 	testIntersection := []struct {
@@ -319,7 +308,7 @@ func TestPartitionRangeOperation(t *testing.T) {
 	}
 	for i, ca := range testIntersection {
 		result := ca.input1.intersection(ca.input2)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "fail = %d", i)
+		require.Truef(t, slices.Equal(ca.result, result), "fail = %d", i)
 	}
 
 	testUnion := []struct {
@@ -339,7 +328,7 @@ func TestPartitionRangeOperation(t *testing.T) {
 	}
 	for i, ca := range testUnion {
 		result := ca.input1.union(ca.input2)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "fail = %d", i)
+		require.Truef(t, slices.Equal(ca.result, result), "fail = %d", i)
 	}
 }
 
@@ -384,7 +373,7 @@ func TestPartitionRangePruner2VarChar(t *testing.T) {
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
 		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
+		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v", ca.input)
 	}
 }
 
@@ -434,7 +423,7 @@ func TestPartitionRangePruner2CharWithCollation(t *testing.T) {
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
 		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
+		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
 
@@ -490,7 +479,7 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
 		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v, %v != %v", ca.input, ca.result, result)
+		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v, %v != %v", ca.input, ca.result, result)
 	}
 }
 
@@ -570,7 +559,7 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		result := fullRange(len(lessThan))
 		e := expression.SplitCNFItems(expr)
 		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
+		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
 
@@ -624,7 +613,7 @@ func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
 		result := fullRange(len(lessThan))
 		e := expression.SplitCNFItems(expr)
 		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
-		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
+		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
 

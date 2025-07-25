@@ -605,7 +605,9 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
-
+	if _, ok := option.Expr.(*ast.ColumnNameExpr); ok {
+		return hasDefaultValue, errors.New("column name is not yet supported as a default value")
+	}
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
 		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
