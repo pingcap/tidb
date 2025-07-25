@@ -707,9 +707,11 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
+	procKeys := execdetails.Int64(0)
 	if copStats.ScanDetail != nil {
-		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+		procKeys = execdetails.Int64(copStats.ScanDetail.ProcessedKeys)
 	}
+	s.procKeys.Add(procKeys)
 	if len(copStats.BackoffSleep) > 0 {
 		if s.backoffSleep == nil {
 			s.backoffSleep = make(map[string]time.Duration)
