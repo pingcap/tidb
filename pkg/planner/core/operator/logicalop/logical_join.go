@@ -711,9 +711,16 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 
 	// First, simplify this join
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
+		// If there are predicates on the outer table, we can convert the join to an inner join.
+		var schema *expression.Schema
+		if p.JoinType == LeftOuterJoin {
+			schema = outerTable.Schema()
+		} else if p.JoinType == RightOuterJoin {
+			schema = innerTable.Schema()
+		}
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), outerTable.Schema(), expr, true)
+			isOk := util.IsNullRejected(p.SCtx(), schema, expr, true)
 			if isOk {
 				canBeSimplified = true
 				break
