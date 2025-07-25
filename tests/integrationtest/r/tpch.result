@@ -1172,7 +1172,7 @@ Sort	19999.44	root		tpch50.supplier.s_name
   ├─HashAgg(Build)	125724.99	root		group by:tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_suppkey)->tpch50.partsupp.ps_suppkey
   │ └─Selection	125724.99	root		gt(cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY), mul(0.5, Column#44))
   │   └─HashAgg	157156.24	root		group by:tpch50.partsupp.ps_partkey, tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_suppkey)->tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_availqty)->tpch50.partsupp.ps_availqty, funcs:sum(tpch50.lineitem.l_quantity)->Column#44
-  │     └─HashJoin	4731068.54	root		left outer join, left side:IndexHashJoin, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.lineitem.l_partkey) eq(tpch50.partsupp.ps_suppkey, tpch50.lineitem.l_suppkey)]
+  │     └─HashJoin	4731068.54	root		inner join, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.lineitem.l_partkey) eq(tpch50.partsupp.ps_suppkey, tpch50.lineitem.l_suppkey)]
   │       ├─IndexHashJoin(Build)	157156.24	root		inner join, inner:IndexLookUp, outer key:tpch50.part.p_partkey, inner key:tpch50.partsupp.ps_partkey, equal cond:eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey)
   │       │ ├─TableReader(Build)	39153.78	root		data:Selection
   │       │ │ └─Selection	39153.78	cop[tikv]		like(tpch50.part.p_name, "green%", 92)
