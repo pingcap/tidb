@@ -1403,13 +1403,10 @@ func IsImmutableFunc(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(exprs []Expression) []Expression {
-<<<<<<< HEAD
-	res := make([]Expression, 0, len(exprs))
-=======
 	if len(exprs) <= 1 {
 		return exprs
 	}
->>>>>>> cc37d0d3b05 (expression: skip empty  or one expression in the RemoveDupExprs (#62114))
+	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
 	for _, expr := range exprs {
 		key := string(expr.HashCode())
