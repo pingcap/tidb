@@ -230,4 +230,5 @@ type SessionManager interface {
 	KillNonFlashbackClusterConn()
 	// GetConAttrs gets the connection attributes
 	GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string
+	GetStatusVars() map[uint64]map[string]string
 }
