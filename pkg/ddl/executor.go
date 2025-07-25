@@ -7083,17 +7083,17 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
 	job := &model.Job{
 		Version:        model.JobVersion2,
-		SchemaID:       args.InvolvedDBID,
-		TableID:        args.InvolvedTableID,
-		SchemaName:     args.InvolvedDBName,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		SchemaName:     args.SchemaName,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database: args.InvolvedDBName,
-				Table:    args.InvolvedTableName,
+				Database: args.SchemaName,
+				Table:    args.TableName,
 			},
 		},
 	}
