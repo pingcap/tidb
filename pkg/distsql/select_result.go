@@ -539,10 +539,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
 		return
 	}
-	if copStats.ScanDetail.ProcessedKeys > 0 || copStats.TimeDetail.KvReadWallTime > 0 {
-		readKeys := copStats.ScanDetail.ProcessedKeys
+	if (copStats.ScanDetail != nil && copStats.ScanDetail.ProcessedKeys > 0) || copStats.TimeDetail.KvReadWallTime > 0 {
+		var readKeys int64
+		var readSize float64
+		if copStats.ScanDetail != nil {
+			readKeys = copStats.ScanDetail.ProcessedKeys
+			readSize = float64(copStats.ScanDetail.ProcessedKeysSize)
+		}
 		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
-		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
 		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
 
@@ -580,7 +584,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.ScanDetail, copStats.TimeDetail, nil)
+			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
 		}
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
 		// report MPP cross AZ network traffic bytes to resource control manager.
@@ -614,7 +618,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, &copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
@@ -703,7 +707,11 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
-	s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+	procKeys := execdetails.Int64(0)
+	if copStats.ScanDetail != nil {
+		procKeys = execdetails.Int64(copStats.ScanDetail.ProcessedKeys)
+	}
+	s.procKeys.Add(procKeys)
 	if len(copStats.BackoffSleep) > 0 {
 		if s.backoffSleep == nil {
 			s.backoffSleep = make(map[string]time.Duration)
