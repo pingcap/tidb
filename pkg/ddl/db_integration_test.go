@@ -2175,7 +2175,7 @@ func TestAutoIncrementForce(t *testing.T) {
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
 	tk.MustExec("alter table t auto_increment=100;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Your specified '100' is ignored and triggered automatic rebasing. AUTO_INCREMENT has been updated to 5201."))
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
@@ -2302,7 +2302,7 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=201 /*T![auto_id_cache] AUTO_ID_CACHE=1 */"))
 	tk.MustExec("alter table t auto_increment=100;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 201 instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Your specified '100' is ignored and triggered automatic rebasing. AUTO_INCREMENT has been updated to 201."))
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery("select * from t").Check(testkit.Rows("200", "211"))
 	tk.MustQuery("show create table t").Check(testkit.Rows(

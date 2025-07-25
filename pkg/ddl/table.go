@@ -642,9 +642,14 @@ func onRebaseAutoID(jobCtx *jobContext, job *model.Job, tp autoid.AllocatorType)
 			return ver, errors.Trace(err)
 		}
 		if newBase != newBaseTemp {
-			job.Warning = toTError(fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
-				newBase, newBaseTemp,
-			))
+			hint := "AUTO_INCREMENT"
+			if tp == autoid.AutoRandomType {
+				hint = "AUTO_RANDOM_BASE"
+			}
+			job.Warning = toTError(
+				errors.NewNoStackErrorf("Your specified '%d' is ignored and triggered automatic rebasing. %s has been updated to %d.",
+					newBase, hint, newBaseTemp,
+				))
 		}
 		newBase = newBaseTemp
 	}
