@@ -2025,6 +2025,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT IS_IPV6('10.0.5.9');`, true, "SELECT IS_IPV6(_UTF8MB4'10.0.5.9')"},
 		{`SELECT IS_USED_LOCK(@str);`, true, "SELECT IS_USED_LOCK(@`str`)"},
 		{`SELECT NAME_CONST('myname', 14);`, true, "SELECT NAME_CONST(_UTF8MB4'myname', 14)"},
+		{`SELECT MYSQL_QUERY_ATTRIBUTE_STRING(@str);`, true, "SELECT MYSQL_QUERY_ATTRIBUTE_STRING(@`str`)"},
 		{`SELECT RELEASE_ALL_LOCKS();`, true, "SELECT RELEASE_ALL_LOCKS()"},
 		{`SELECT UUID();`, true, "SELECT UUID()"},
 		{`SELECT UUID_SHORT()`, true, "SELECT UUID_SHORT()"},

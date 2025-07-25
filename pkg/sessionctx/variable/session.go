@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1114,6 +1115,9 @@ type SessionVars struct {
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
+	// EnableTablePartition enables table partition feature.
+	EnableTablePartition string
+
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
@@ -1723,6 +1727,9 @@ type SessionVars struct {
 	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
 	// `select for update` statements which do acquire pessimsitic locks.
 	SharedLockPromotion bool
+
+	// QueryAttributes record query attributed for each statement.
+	QueryAttributes map[string]param.BinaryParam
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
