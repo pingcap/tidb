@@ -386,8 +386,7 @@ func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName ast.CIStr, t
 	return indexesToRemove
 }
 
-func updateChangingCol(col *model.ColumnInfo, newName ast.CIStr) *model.ColumnInfo {
-	col.Name = newName
+func updateChangingCol(col *model.ColumnInfo) *model.ColumnInfo {
 	col.ChangeStateInfo = nil
 	// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
 	// so that there is no error in getting the default value from OriginDefaultValue.
@@ -395,6 +394,20 @@ func updateChangingCol(col *model.ColumnInfo, newName ast.CIStr) *model.ColumnIn
 	// So it can set OriginDefaultValue to nil.
 	col.OriginDefaultValue = nil
 	return col
+}
+
+func swapIndexInfos(tblInfo *model.TableInfo, idxIDA, idxIDB int64) {
+	offsetA := 0
+	offsetB := 0
+	for i, idx := range tblInfo.Indices {
+		switch idx.ID {
+		case idxIDA:
+			offsetA = i
+		case idxIDB:
+			offsetB = i
+		}
+	}
+	tblInfo.Indices[offsetA], tblInfo.Indices[offsetB] = tblInfo.Indices[offsetB], tblInfo.Indices[offsetA]
 }
 
 func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.IndexInfo {
@@ -889,17 +902,22 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
 	newName ast.CIStr, pos *ast.ColumnPosition) (done bool) {
 	oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
-	chaningIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+	changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+	intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
 	switch oldCol.State {
 	case model.StatePublic:
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
-		updateChangingObjState(changingCol, chaningIdxInfos, model.StatePublic)
-		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, chaningIdxInfos)
-		updateChangingCol(changingCol, newName)
+		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
+		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, newName)
+		updateChangingCol(changingCol)
 		// Move the new column to a correct offset.
-		destOffset, _ := LocateOffsetToMove(oldCol.Offset, pos, tblInfo)
+		destOffset, _ := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
 		tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 		tblInfo.MoveColumnInfo(tblInfo.FindColumnByID(oldCol.ID).Offset, len(tblInfo.Columns)-1)
+		// Move the new indexes to correct offsets.
+		for i := range oldIdxInfos {
+			swapIndexInfos(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
+		}
 		return false
 	case model.StateWriteOnly:
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
@@ -912,8 +930,8 @@ func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, chang
 	panic("should not reach here")
 }
 
-func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo) {
-	publicName := oldCol.Name
+func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
+	publicName := newColName
 	removingName := ast.NewCIStr(genRemovingColumnName(oldCol.Name.O))
 
 	renameColumnTo(oldCol, oldIdxs, removingName)
