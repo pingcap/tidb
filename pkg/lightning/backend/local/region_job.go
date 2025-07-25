@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -353,7 +354,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 		if errors.Cause(err) == context.DeadlineExceeded {
 			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
-				log.FromContext(ctx).Info("Experiencing a wait timeout while writing to tikv",
+				tidblogutil.Logger(ctx).Info("Experiencing a wait timeout while writing to tikv",
 					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
 					zap.Int("limit-size", local.writeLimiter.Limit()))
 				err = errors.Trace(cause) // return the common.ErrWriteTooSlow instead to let caller retry it
@@ -375,7 +376,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		return nil, errors.Trace(err)
 	}
 	if firstKey == nil {
-		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
+		tidblogutil.Logger(ctx).Debug("keys within region is empty, skip doIngest",
 			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("regionStart", region.StartKey),
 			logutil.Key("end", j.keyRange.End),
@@ -505,7 +506,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		// GO_FAILPOINTS action supplies the duration in
 		ms, _ := val.(int)
 		innerTimeout = time.Duration(ms) * time.Millisecond
-		log.FromContext(ctx).Info("Injecting a timeout to write context.")
+		tidblogutil.Logger(ctx).Info("Injecting a timeout to write context.")
 		wctx, wcancel = context.WithTimeoutCause(
 			ctx, innerTimeout, common.ErrWriteTooSlow)
 	})
@@ -563,7 +564,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 
 		failpoint.Inject("afterFlushKVs", func() {
-			log.FromContext(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
+			tidblogutil.Logger(ctx).Info(fmt.Sprintf("afterFlushKVs count=%d,size=%d", count, size))
 		})
 		return nil
 	}
@@ -604,7 +605,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
 				remainingStartKey = slices.Clone(iter.Key())
-				log.FromContext(ctx).Info("write to tikv partial finish",
+				tidblogutil.Logger(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
 					logutil.Key("startKey", j.keyRange.Start),
@@ -642,7 +643,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		}
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
-			log.FromContext(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+			tidblogutil.Logger(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
 		}
 	}
 
@@ -656,14 +657,14 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	}
 
 	failpoint.Inject("NoLeader", func() {
-		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		tidblogutil.Logger(ctx).Warn("enter failpoint NoLeader")
 		leaderPeerMetas = nil
 	})
 
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
-		log.FromContext(ctx).Warn("write to tikv no leader",
+		tidblogutil.Logger(ctx).Warn("write to tikv no leader",
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
@@ -671,7 +672,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	}
 
 	takeTime := time.Since(begin)
-	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
+	tidblogutil.Logger(ctx).Debug("write to kv", zap.Reflect("region", j.region), zap.Uint64("leader", leaderID),
 		zap.Reflect("meta", meta), zap.Reflect("return metas", leaderPeerMetas),
 		zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize),
 		zap.Stringer("takeTime", takeTime))
@@ -719,7 +720,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				return err
 			}
 			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
-			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
+			tidblogutil.Logger(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
 				zap.Int("retry", retry))
@@ -808,7 +809,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 		ingestMetas := j.writeResult.sstMeta[start:end]
 		weight := uint(len(ingestMetas))
 
-		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
+		tidblogutil.Logger(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
 		failpoint.Inject("FailIngestMeta", func(val failpoint.Value) {
 			// only inject the error once

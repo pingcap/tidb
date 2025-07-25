@@ -24,15 +24,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 )
 
-// ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalProjection) ResolveIndicesItself() (err error) {
+// resolveIndicesItself resolve indices for PhysicalPlan itself
+func resolveIndicesItself4PhysicalProjection(p *physicalop.PhysicalProjection) (err error) {
 	for i, expr := range p.Exprs {
 		p.Exprs[i], err = expr.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {
 			return err
 		}
 	}
-	childProj, isProj := p.Children()[0].(*PhysicalProjection)
+	childProj, isProj := p.Children()[0].(*physicalop.PhysicalProjection)
 	if !isProj {
 		return
 	}
@@ -40,13 +40,14 @@ func (p *PhysicalProjection) ResolveIndicesItself() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalProjection) ResolveIndices() (err error) {
+// resolveIndices4PhysicalProjection implements Plan interface.
+func resolveIndices4PhysicalProjection(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalProjection)
 	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
-	return p.ResolveIndicesItself()
+	return resolveIndicesItself4PhysicalProjection(p)
 }
 
 // refine4NeighbourProj refines the index for p.Exprs whose type is *Column when
@@ -54,7 +55,7 @@ func (p *PhysicalProjection) ResolveIndices() (err error) {
 // This function is introduced because that different childProj.Expr may refer
 // to the same index of childProj.Schema, so we need to keep this relation
 // between the specified expressions in the parent Projection.
-func refine4NeighbourProj(p, childProj *PhysicalProjection) {
+func refine4NeighbourProj(p, childProj *physicalop.PhysicalProjection) {
 	inputIdx2OutputIdxes := make(map[int][]int)
 	for i, expr := range childProj.Exprs {
 		col, isCol := expr.(*expression.Column)
@@ -357,8 +358,9 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalUnionScan) ResolveIndices() (err error) {
+// resolveIndices4PhysicalUnionScan implements Plan interface.
+func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalUnionScan)
 	err = p.BasePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err
@@ -485,8 +487,9 @@ func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 	return nil
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalSelection) ResolveIndices() (err error) {
+// resolveIndices4PhysicalSelection implements Plan interface.
+func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
+	p := pp.(*physicalop.PhysicalSelection)
 	err = p.BasePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err

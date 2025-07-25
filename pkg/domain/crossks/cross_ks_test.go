@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -50,6 +51,9 @@ func TestManager(t *testing.T) {
 	}
 	require.NoError(t, kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
 	sysKSStore, sysKSDom := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
+	sysKSTK := testkit.NewTestKit(t, sysKSStore)
+	sysKSTK.MustExec("use test")
+	sysKSTK.MustExec("create table t(id int)")
 
 	t.Run("same keyspace access", func(t *testing.T) {
 		_, err := sysKSDom.GetKSSessPool(keyspace.System)
@@ -68,7 +72,7 @@ func TestManager(t *testing.T) {
 		require.ErrorContains(t, err, "failed to get store")
 	})
 
-	t.Run("cross keyspace session pool works", func(t *testing.T) {
+	t.Run("cross keyspace session works, and only allowed to read/write system tables", func(t *testing.T) {
 		// in uni-store, Store instances are completely isolated, even they have the
 		// same keyspace name, so we store them here and mock the GetStore
 		// TODO use a shared storage for all Store instances.
@@ -86,6 +90,10 @@ func TestManager(t *testing.T) {
 			userKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, ks)
 			storeMap[ks] = userKSStore
 
+			userTK := testkit.NewTestKit(t, userKSStore)
+			userTK.MustExec("use test")
+			userTK.MustExec("create table t(id int)")
+
 			// must switch back to SYSTEM keyspace before creating a cross keyspace session
 			config.UpdateGlobal(func(conf *config.Config) {
 				conf.KeyspaceName = keyspace.System
@@ -100,8 +108,19 @@ func TestManager(t *testing.T) {
 				return err
 			}))
 			// verify through the user keyspace session from user keyspace
-			userTK := testkit.NewTestKit(t, userKSStore)
 			userTK.MustQuery("select count(1) from mysql.tidb_import_jobs").Check(testkit.Rows("1"))
+
+			// we cannot access user tables in cross keyspace session
+			require.ErrorIs(t, mgr.WithNewSession(func(se sessionctx.Context) error {
+				_, err2 := se.GetSQLExecutor().ExecuteInternal(ctx, "select * from test.t")
+				return err2
+			}), infoschema.ErrTableNotExists)
+
+			// we cannot execute DDL in cross keyspace session
+			require.ErrorContains(t, mgr.WithNewSession(func(se sessionctx.Context) error {
+				_, err2 := se.GetSQLExecutor().ExecuteInternal(ctx, "create table test.t2(id int)")
+				return err2
+			}), "DDL is not supported in cross keyspace session")
 		}
 		// SYSTEM keyspace should not have any import jobs
 		sysTK := testkit.NewTestKit(t, sysKSStore)

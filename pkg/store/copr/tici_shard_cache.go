@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tici"
@@ -57,27 +59,50 @@ func (s *Shard) ContainsByEnd(key []byte) bool {
 		(bytes.Compare(key, s.EndKey) <= 0 || len(s.EndKey) == 0)
 }
 
+const (
+	expiredTTL    = -1
+	shardCacheTTL = 600 // 10min
+)
+
 // ShardWithAddr represents a shard of data with local cache addresses.
 type ShardWithAddr struct {
 	Shard
 	localCacheAddrs []string
+	ttl             atomic.Int64
+}
+
+func (s *ShardWithAddr) invalidate() {
+	s.ttl.Store(expiredTTL)
+}
+
+// CheckShardCacheTTL checks if the shard cache is still valid based on the provided timestamp.
+func (s *ShardWithAddr) CheckShardCacheTTL(ts int64) bool {
+	for {
+		oldTTL := s.ttl.Load()
+		if oldTTL < ts {
+			return false
+		}
+		if s.ttl.CompareAndSwap(oldTTL, ts+shardCacheTTL) {
+			return true
+		}
+	}
 }
 
 // ShardLocation represents a shard location with its ranges.
 type ShardLocation struct {
-	ShardWithAddr
+	*ShardWithAddr
 	Ranges *KeyRanges
 }
 
 type shardIndexMu struct {
-	// shardIndex is a map of region ID to shared index.
 	sync.RWMutex
+	shards map[uint64]*ShardWithAddr
 	sorted *SortedShards
 }
 
 // Client is the interface for the TiCI shard cache client.
 type Client interface {
-	ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]ShardWithAddr, error)
+	ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardWithAddr, error)
 	Close()
 }
 
@@ -93,7 +118,7 @@ func NewTiCIShardCacheClient() (*TiCIShardCacheClient, error) {
 }
 
 // ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
-func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []ShardWithAddr, err error) {
+func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []*ShardWithAddr, err error) {
 	ticiKeyRanges := make([]*tici.KeyRange, 0, len(keyRanges))
 	for _, r := range keyRanges {
 		ticiKeyRanges = append(ticiKeyRanges, &tici.KeyRange{
@@ -128,17 +153,17 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 	s += "]"
 	logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
 
+	ts := time.Now().Unix()
 	for _, s := range response.ShardLocalCacheInfos {
 		if s != nil {
-			ret = append(ret, ShardWithAddr{
-				Shard{
-					ShardID:  s.Shard.ShardId,
-					StartKey: s.Shard.StartKey,
-					EndKey:   s.Shard.EndKey,
-					Epoch:    s.Shard.Epoch,
-				},
-				s.LocalCacheAddrs,
-			})
+			shard := &ShardWithAddr{}
+			shard.ShardID = s.Shard.ShardId
+			shard.StartKey = s.Shard.StartKey
+			shard.EndKey = s.Shard.EndKey
+			shard.Epoch = s.Shard.Epoch
+			shard.localCacheAddrs = s.LocalCacheAddrs
+			shard.ttl.Store(ts + shardCacheTTL)
+			ret = append(ret, shard)
 		}
 	}
 
@@ -161,6 +186,7 @@ func NewTiCIShardCache(client Client) *TiCIShardCache {
 	return &TiCIShardCache{
 		client: client,
 		mu: shardIndexMu{
+			shards: make(map[uint64]*ShardWithAddr),
 			sorted: NewSortedShards(btreeDegree),
 		},
 	}
@@ -294,7 +320,7 @@ func (s *TiCIShardCache) BatchLocateKeyRanges(
 			break
 		}
 		for _, shard := range shards {
-			merger.appendShard(&shard)
+			merger.appendShard(shard)
 		}
 		uncachedRanges = rangesAfterKey(uncachedRanges, shards[len(shards)-1].EndKey)
 		retry++
@@ -341,7 +367,7 @@ func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 	indexID int64,
 	keyRanges []kv.KeyRange,
 	limit int,
-) (shards []ShardWithAddr, err error) {
+) (shards []*ShardWithAddr, err error) {
 	if len(keyRanges) == 0 {
 		return nil, nil
 	}
@@ -352,7 +378,7 @@ func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, shard := range shards {
-		s.insertShardToCache(&shard, true)
+		s.insertShardToCache(shard, true)
 	}
 
 	return shards, nil
@@ -392,7 +418,7 @@ func (s *TiCIShardCache) scanShardsFromCache(ctx context.Context, startKey, endK
 	return shards, nil
 }
 
-func (s *TiCIShardCache) splitKeyRangesByLocations(loc ShardWithAddr, ranges *KeyRanges, res []*ShardLocation) ([]*ShardLocation, *KeyRanges, bool) {
+func (s *TiCIShardCache) splitKeyRangesByLocations(loc *ShardWithAddr, ranges *KeyRanges, res []*ShardLocation) ([]*ShardLocation, *KeyRanges, bool) {
 	var r kv.KeyRange
 	var i int
 	for ; i < ranges.Len(); i++ {
@@ -444,7 +470,7 @@ func newBatchLocateShardsMerger(cachedShards []*ShardWithAddr, sizeHint int) *ba
 
 func (m *batchLocateShardsMerger) appendKeyLocation(shard *ShardWithAddr) {
 	m.mergedLocations = append(m.mergedLocations, &ShardLocation{
-		ShardWithAddr: *shard,
+		ShardWithAddr: shard,
 		Ranges:        NewKeyRanges([]kv.KeyRange{{StartKey: kv.Key(shard.StartKey), EndKey: kv.Key(shard.EndKey)}}),
 	})
 }
@@ -491,7 +517,34 @@ func (m *batchLocateShardsMerger) build() []*ShardLocation {
 }
 
 func (mu *shardIndexMu) insertShardToCache(cachedShard *ShardWithAddr, invalidateOldShard bool) bool {
-	_, _ = mu.sorted.removeIntersecting(cachedShard)
+	intersectingShard, _ := mu.sorted.removeIntersecting(cachedShard)
+	for _, item := range intersectingShard {
+		if invalidateOldShard {
+			item.cachedShard.invalidate()
+			mu.shards[item.cachedShard.ShardID] = nil
+		}
+	}
 	mu.sorted.ReplaceOrInsert(cachedShard)
+	mu.shards[cachedShard.ShardID] = cachedShard
 	return true
+}
+
+// InvalidateCachedShard invalidates the cached shard with the given shardID.
+func (s *TiCIShardCache) InvalidateCachedShard(shardID uint64) {
+	logutil.BgLogger().Info("InvalidateCachedShard", zap.Uint64("shardID", shardID))
+	cachedShard := s.GetCachedShardWithRLock(shardID)
+	if cachedShard == nil {
+		return
+	}
+	cachedShard.invalidate()
+}
+
+// GetCachedShardWithRLock retrieves the cached shard with the given shardID using a read lock.
+func (s *TiCIShardCache) GetCachedShardWithRLock(shardID uint64) *ShardWithAddr {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if shard, ok := s.mu.shards[shardID]; ok {
+		return shard
+	}
+	return nil
 }

@@ -116,12 +116,12 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 	logger := logutil.ErrVerboseLogger().With(
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
-		zap.String("task-type", string(task.Type)),
 	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
+	subCtx = logutil.WithLogger(subCtx, logger)
 	taskExecutorImpl := &BaseTaskExecutor{
 		Param:  param,
 		ctx:    subCtx,
@@ -441,6 +441,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskCtx, subtaskCancel := context.WithCancel(e.stepCtx)
+	subtaskCtx = logutil.WithLogger(subtaskCtx, logger)
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
 

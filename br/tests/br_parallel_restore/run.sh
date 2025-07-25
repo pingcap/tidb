@@ -691,8 +691,32 @@ test_restore_abort() {
     # Verify task was deleted (abort should have detected it was stale and cleaned it up)
     verify_registry "filter_strings = '$DB2.*'" false "stale running task should be deleted after abort"
     
+    echo "Test abort with keyspace parameter handling..."
+
+    # Test 1: Create a paused task with keyspace parameter (using pre-allocated keyspace1)
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/fail-at-end-of-restore=return(true)"
+    restore_fail=0
+    run_br restore full --filter "${DB}_keyspace.*" --keyspace-name "keyspace1" -s "$ABORT_BACKUP_DIR" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'expecting restore with keyspace to fail before completion but succeeded'
+        exit 1
+    fi
+    export GO_FAILPOINTS=""
+
+    # Verify paused task with keyspace exists
+    verify_registry "filter_strings = '${DB}_keyspace.*' AND status = 'paused'" true "paused task with keyspace creation"
+
+    # Test 2: Abort with matching keyspace parameter
+    echo "Testing abort with matching keyspace parameter..."
+    run_br abort restore full --filter "${DB}_keyspace.*" --keyspace-name "keyspace1" -s "$ABORT_BACKUP_DIR"
+
+    # Verify task was deleted
+    verify_registry "filter_strings = '${DB}_keyspace.*'" false "task deleted after abort with matching keyspace"
+
+    echo "PASS: Keyspace parameter handling test completed successfully"
+
     echo "Comprehensive restore abort functionality test completed successfully"
-    
+
     cleanup
 }
 

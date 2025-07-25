@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 )
 
 // ProjectionImpl is the implementation of PhysicalProjection.
@@ -27,14 +28,16 @@ type ProjectionImpl struct {
 }
 
 // NewProjectionImpl creates a new projection Implementation.
-func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
+func NewProjectionImpl(proj *physicalop.PhysicalProjection) *ProjectionImpl {
 	return &ProjectionImpl{baseImpl{plan: proj}}
 }
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *ProjectionImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	proj := impl.plan.(*plannercore.PhysicalProjection)
-	impl.cost = proj.GetCost(children[0].GetPlan().StatsInfo().RowCount) + children[0].GetCost()
+	proj := impl.plan.(*physicalop.PhysicalProjection)
+	child := children[0]
+	impl.cost = utilfuncp.GetCost4PhysicalProjection(proj,
+		child.GetPlan().StatsInfo().RowCount) + child.GetCost()
 	return impl.cost
 }
 
@@ -61,7 +64,7 @@ func (sel *TiDBSelectionImpl) CalcCost(_ float64, children ...memo.Implementatio
 }
 
 // NewTiDBSelectionImpl creates a new TiDBSelectionImpl.
-func NewTiDBSelectionImpl(sel *plannercore.PhysicalSelection) *TiDBSelectionImpl {
+func NewTiDBSelectionImpl(sel *physicalop.PhysicalSelection) *TiDBSelectionImpl {
 	return &TiDBSelectionImpl{baseImpl{plan: sel}}
 }
 
@@ -78,7 +81,7 @@ func (sel *TiKVSelectionImpl) CalcCost(_ float64, children ...memo.Implementatio
 }
 
 // NewTiKVSelectionImpl creates a new TiKVSelectionImpl.
-func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
+func NewTiKVSelectionImpl(sel *physicalop.PhysicalSelection) *TiKVSelectionImpl {
 	return &TiKVSelectionImpl{baseImpl{plan: sel}}
 }
 

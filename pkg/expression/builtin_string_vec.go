@@ -1774,8 +1774,15 @@ func (b *builtinOctStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			result.AppendNull()
 			continue
 		}
-		negative, overflow := false, false
+
+		// for issue #59446 should return NULL for empty string
 		str := buf.GetString(i)
+		if len(str) == 0 {
+			result.AppendNull()
+			continue
+		}
+
+		negative, overflow := false, false
 		str = getValidPrefix(strings.TrimSpace(str), 10)
 		if len(str) == 0 {
 			result.AppendString("0")

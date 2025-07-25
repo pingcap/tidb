@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -428,7 +429,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 		ReadBlockSize:          LoadDataReadBlockSize,
 		CSV:                    *e.GenerateCSVConfig(),
 	}
-	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
+	makeEngineCtx := logutil.WithLogger(ctx, e.logger)
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
