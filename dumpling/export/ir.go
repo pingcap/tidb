@@ -35,6 +35,7 @@ type TableMeta interface {
 	ShowCreateView() string
 	AvgRowLength() uint64
 	HasImplicitRowID() bool
+	ChunkKey() string
 }
 
 // SQLRowIter is the iterator on a collection of sql.Row.
