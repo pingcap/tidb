@@ -20,16 +20,20 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -154,10 +158,41 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+		err = importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
 			func() (*local.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},
 		)
+		if common.IsRetryableError(err) {
+			return err
+		}
+		failpoint.Inject("errorWhenResetTableMode", func() {
+			failpoint.Return(errors.New("occur an error when reset table mode to normal"))
+		})
+		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
+		if err2 != nil {
+			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
+		} else {
+			err2 = markTaskResetTableMode(ctx, taskManager, p.taskMeta)
+		}
+		if err != nil {
+			return err
+		}
+		return err2
 	})
+}
+
+func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManager, taskMeta *TaskMeta) error {
+	task, err := taskManager.GetTaskByID(ctx, taskMeta.JobID)
+	if err != nil {
+		return err
+	}
+	if err := taskManager.ModifyTaskByID(ctx, taskMeta.JobID, &proto.ModifyParam{PrevState: task.State}); err != nil {
+		return err
+	}
+	taskMeta.ResetTableMode = true
+	if err := updateMeta(task, taskMeta); err != nil {
+		return err
+	}
+	return taskManager.ModifiedTask(ctx, task)
 }
