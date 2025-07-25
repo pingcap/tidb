@@ -63,6 +63,7 @@ func TestInvalidDDLJob(t *testing.T) {
 	job.InvolvingSchemaInfo = []model.InvolvingSchemaInfo{}
 	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job args: InvolvingSchemaInfo")
+
 	job.TableName = "table"
 	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job args: InvolvingSchemaInfo")
