@@ -309,40 +309,44 @@ func main() {
 		standbyController = standby.NewLoadKeyspaceController()
 	}
 
-	mainErrHandler := func(err error) { terror.MustNil(err) }
+	var err error
 
-	// If running standby mode, overwrite the keyspace config and error handlers.
+	// If running standby mode, wait for activate request.
 	if standbyController != nil {
 		standbyController.WaitForActivate()
-		// replace mainErrHandler to make sure standby handler can exit gracefully.
-		mainErrHandler = func(err error) {
-			if err != nil {
-				standbyController.EndStandby(err)
-			}
-			terror.MustNil(err)
-		}
+		// EndStandby only execute once. If server is created
+		// successfully, the defer has no effect. If panics
+		// before server is created, the defer makes sure to
+		// notify the activate caller.
+		defer standbyController.EndStandby(err)
 		// need to validate config again in case of config change via standby
-		mainErrHandler(config.GetGlobalConfig().Valid())
+		terror.MustNil(config.GetGlobalConfig().Valid())
 	}
 
 	signal.SetupUSR1Handler()
-	registerStores()
-	err := metricsutil.RegisterMetrics()
-	mainErrHandler(err)
+	err = registerStores()
+	terror.MustNil(err)
+	err = metricsutil.RegisterMetrics()
+	terror.MustNil(err)
 
 	if vardef.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
-		err := disk.InitializeTempDir()
-		mainErrHandler(err)
-		checkTempStorageQuota()
+		err = disk.InitializeTempDir()
+		terror.MustNil(err)
+		err = checkTempStorageQuota()
+		terror.MustNil(err)
 	}
-	setupLog()
-	memory.InitMemoryHook()
-	setupExtensions()
+	err = setupLog()
+	terror.MustNil(err)
+
+	err = memory.InitMemoryHook()
+	terror.MustNil(err)
+	_, err = setupExtensions()
+	terror.MustNil(err)
 	setupStmtSummary()
 
 	err = cpuprofile.StartCPUProfiler()
-	mainErrHandler(err)
+	terror.MustNil(err)
 
 	if config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler {
 		err = tiflashcompute.InitGlobalTopoFetcher(
@@ -350,7 +354,7 @@ func main() {
 			config.GetGlobalConfig().TiFlashComputeAutoScalerAddr,
 			config.GetGlobalConfig().AutoScalerClusterID,
 			config.GetGlobalConfig().IsTiFlashComputeFixedPool)
-		mainErrHandler(err)
+		terror.MustNil(err)
 	}
 
 	// Enable failpoints in tikv/client-go if the test API is enabled.
@@ -364,16 +368,19 @@ func main() {
 		logutil.BgLogger().Warn("internal check is enabled, this should NOT happen in the production environment")
 	}
 	setGlobalVars()
-	setCPUAffinity()
+	err = setCPUAffinity()
+	terror.MustNil(err)
 	cgmon.StartCgroupMonitor()
-	setupTracing() // Should before createServer and after setup config.
+	err = setupTracing() // Should before createServer and after setup config.
+	terror.MustNil(err)
 	printInfo()
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	terror.MustNil(err)
 	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
 	if standbyController != nil {
@@ -393,7 +400,7 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL(keyspace.GetKeyspaceNameBytesBySettings(), svr)
-	mainErrHandler(svr.Run(dom))
+	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
 }
@@ -411,22 +418,23 @@ func syncLog() {
 	}
 }
 
-func checkTempStorageQuota() {
+func checkTempStorageQuota() error {
 	// check capacity and the quota when EnableTmpStorageOnOOM is enabled
 	c := config.GetGlobalConfig()
 	if c.TempStorageQuota >= 0 {
 		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
 		if err != nil {
-			log.Fatal(err.Error())
+			return err
 		} else if capacityByte < uint64(c.TempStorageQuota) {
-			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
+			return fmt.Errorf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath)
 		}
 	}
+	return nil
 }
 
-func setCPUAffinity() {
+func setCPUAffinity() error {
 	if affinityCPU == nil || len(*affinityCPU) == 0 {
-		return
+		return nil
 	}
 	var cpu []int
 	for _, af := range strings.Split(*affinityCPU, ",") {
@@ -435,7 +443,7 @@ func setCPUAffinity() {
 			c, err := strconv.Atoi(af)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
-				os.Exit(1)
+				return err
 			}
 			cpu = append(cpu, c)
 		}
@@ -443,34 +451,42 @@ func setCPUAffinity() {
 	err := linux.SetAffinity(cpu)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
-		os.Exit(1)
+		return err
 	}
 	if len(cpu) < runtime.GOMAXPROCS(0) {
 		log.Info("cpu number less than maxprocs", zap.Int("cpu number ", len(cpu)), zap.Int("maxprocs", runtime.GOMAXPROCS(0)))
 		runtime.GOMAXPROCS(len(cpu))
 	}
+	return nil
 }
 
-func registerStores() {
+func registerStores() error {
 	err := kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
-	terror.MustNil(err)
+	if err != nil {
+		return err
+	}
 	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
-	terror.MustNil(err)
+	if err != nil {
+		return err
+	}
 	err = kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{})
-	terror.MustNil(err)
+	return err
 }
 
-func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, error) {
 	storage := kvstore.MustInitStorage(keyspaceName)
 	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
 		pdhttpCli := tikvStore.GetPDHTTPClient()
 		// unistore also implements kv.StorageWithPD, but it does not have PD client.
 		if pdhttpCli != nil {
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
-			terror.MustNil(err)
+			if err != nil {
+				return nil, nil, err
+			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
-				log.Fatal("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
+				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
+				return nil, nil, errors.New("kernel type mismatch")
 			}
 		}
 	}
@@ -478,10 +494,14 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
-	terror.MustNil(err)
+	if err != nil {
+		return nil, nil, err
+	}
 	dom, err := session.BootstrapSession(storage)
-	terror.MustNil(err)
-	return storage, dom
+	if err != nil {
+		return nil, nil, err
+	}
+	return storage, dom, nil
 }
 
 // Prometheus push.
@@ -906,23 +926,30 @@ func setGlobalVars() {
 	}
 }
 
-func setupLog() {
+func setupLog() error {
 	cfg := config.GetGlobalConfig()
 	err := logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())
-	terror.MustNil(err)
+	if err != nil {
+		return err
+	}
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
+	return nil
 }
 
-func setupExtensions() *extension.Extensions {
+func setupExtensions() (*extension.Extensions, error) {
 	err := extension.Setup()
-	terror.MustNil(err)
+	if err != nil {
+		return nil, err
+	}
 
 	extensions, err := extension.GetExtensions()
-	terror.MustNil(err)
+	if err != nil {
+		return nil, err
+	}
 
-	return extensions
+	return extensions, nil
 }
 
 func printInfo() {
@@ -963,15 +990,17 @@ func setupMetrics() {
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
 
-func setupTracing() {
+func setupTracing() error {
 	cfg := config.GetGlobalConfig()
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
 	tracer, _, err := tracingCfg.NewTracer()
 	if err != nil {
-		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
+		log.Error("setup jaeger tracer failed", zap.String("error message", err.Error()))
+		return err
 	}
 	opentracing.SetGlobalTracer(tracer)
+	return nil
 }
 
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
