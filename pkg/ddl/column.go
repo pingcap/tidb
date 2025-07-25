@@ -396,6 +396,13 @@ func updateChangingCol(col *model.ColumnInfo) *model.ColumnInfo {
 	return col
 }
 
+func swapColumnInfo(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo) {
+	oldOffset := oldCol.Offset
+	changingOffset := changingCol.Offset
+	tblInfo.MoveColumnInfo(oldOffset, changingOffset)
+	tblInfo.MoveColumnInfo(changingCol.Offset, oldOffset)
+}
+
 func swapIndexInfos(tblInfo *model.TableInfo, idxIDA, idxIDB int64) {
 	offsetA := 0
 	offsetB := 0
@@ -910,10 +917,10 @@ func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, chang
 		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
 		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, newName)
 		updateChangingCol(changingCol)
+		swapColumnInfo(tblInfo, oldCol, changingCol)
 		// Move the new column to a correct offset.
 		destOffset, _ := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
 		tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
-		tblInfo.MoveColumnInfo(tblInfo.FindColumnByID(oldCol.ID).Offset, len(tblInfo.Columns)-1)
 		// Move the new indexes to correct offsets.
 		for i := range oldIdxInfos {
 			swapIndexInfos(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
