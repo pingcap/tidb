@@ -107,7 +107,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // Apply
 			sql: "select * from t t1 where t1.b > (select count(*) from t t2 where t2.c > t1.a and t2.d>1) and t1.c>2",
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				pp, ok := p.(*plannercore.PhysicalProjection)
+				pp, ok := p.(*physicalop.PhysicalProjection)
 				require.True(t, ok)
 				pa, ok := pp.Children()[0].(*plannercore.PhysicalApply)
 				require.True(t, ok)
@@ -172,7 +172,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pc, ok := p.(*plannercore.PhysicalCTE)
 				require.True(t, ok)
-				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
+				pp, ok := pc.SeedPlan.(*physicalop.PhysicalProjection)
 				require.True(t, ok)
 				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)

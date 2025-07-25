@@ -218,7 +218,7 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
 		updatePartitionInfo(tblInfo)
 		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions, scatterScope)
@@ -2555,7 +2555,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			return ver, errors.Trace(err)
 		}
 		var scatterScope string
-		if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions, scatterScope)
