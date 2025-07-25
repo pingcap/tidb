@@ -1196,6 +1196,14 @@ func TestStorageEnginesInStmtSummary(t *testing.T) {
 	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
 		"where query_sample_text like 'select%t_index_merge%'").
 		Check(testkit.Rows("1 0"))
+
+	// TABLESAMPLE queries should register as reading from TiKV
+	query = "select * from t_tikv tablesample regions();"
+	tk.MustHavePlan(query, "TableSample")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%tablesample%'").
+		Check(testkit.Rows("1 0"))
 }
 
 func TestServerInfoResolveLoopBackAddr(t *testing.T) {

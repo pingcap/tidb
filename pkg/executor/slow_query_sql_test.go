@@ -525,4 +525,12 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
 		"where query like 'select%t_index_merge%;'").
 		Check(testkit.Rows("1 0"))
+
+	// TABLESAMPLE queries should register as reading from TiKV
+	query = "select * from t_tikv tablesample regions();"
+	tk.MustHavePlan(query, "TableSample")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%tablesample%;'").
+		Check(testkit.Rows("1 0"))
 }
