@@ -94,7 +94,7 @@ type KeyspaceMismatch struct {
 	Local  string `json:"local"`
 }
 
-func keyspaceChecker(next http.Handler) http.HandlerFunc {
+func keyspaceValidateMiddleware(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		remote := r.URL.Query().Get("keyspace")
 		local := config.GetGlobalKeyspaceName()
@@ -187,18 +187,24 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 		case svr != nil && !svr.Health():
 			mu.Unlock()
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("server is going to shutdown"))
+			_, err := w.Write([]byte("server is going to shutdown"))
+			if err != nil {
+				logutil.BgLogger().Error("failed to write response", zap.Error(err))
+			}
 			return
 		case activateRequest.KeyspaceName != req.KeyspaceName:
 			mu.Unlock()
 			w.WriteHeader(http.StatusPreconditionFailed)
-			w.Write([]byte("server is not in standby mode"))
+			_, err := w.Write([]byte("server is not in standby mode"))
+			if err != nil {
+				logutil.BgLogger().Error("failed to write response", zap.Error(err))
+			}
 			return
 		}
 		// if client tries to activate with same keyspace name, wait for ready signal and return 200.
 		mu.Unlock()
 
-		timeout := make(<-chan time.Time)
+		var timeout <-chan time.Time
 		if activationTimeout > 0 {
 			timeout = time.After(time.Duration(activationTimeout) * time.Second)
 		}
@@ -212,7 +218,10 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 		case <-timeout: // reach hardlimit timeout from config.
 			logutil.BgLogger().Warn("timeout waiting for activation")
 			w.WriteHeader(http.StatusRequestTimeout)
-			w.Write([]byte("timeout waiting for activation"))
+			_, err := w.Write([]byte("timeout waiting for activation"))
+			if err != nil {
+				logutil.BgLogger().Error("failed to write response", zap.Error(err))
+			}
 			go func() {
 				c.EndStandby(errors.New("timeout waiting for activation"))
 				signal.TiDBExit(syscall.SIGTERM)
@@ -220,13 +229,17 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 		case <-c.serverStartCh:
 			if c.startServerErr != nil {
 				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte(c.startServerErr.Error()))
+				_, err := w.Write([]byte(c.startServerErr.Error()))
+				if err != nil {
+					logutil.BgLogger().Error("failed to write response", zap.Error(err))
+				}
 				return
 			}
 			statusHandler(w, r)
 		}
 	})
-	mux.HandleFunc(httpPathPrefix+"exit", keyspaceChecker(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Terminate the tidb server by sending a request. For example, in a cloud environment, we may need to delete pod to free up resources.
+	mux.HandleFunc(httpPathPrefix+"exit", keyspaceValidateMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logutil.BgLogger().Info("receiving exit request")
 		if svr != nil {
 			SaveTidbNormalRestartInfo("received exit request")
@@ -239,7 +252,10 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 		keyspaceName, connID := r.URL.Query().Get("keyspace_name"), r.URL.Query().Get("conn_id")
 		if keyspaceName == "" || connID == "" {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("keyspace_name or conn_id is empty"))
+			_, err := w.Write([]byte("keyspace_name or conn_id is empty"))
+			if err != nil {
+				logutil.BgLogger().Error("failed to write response", zap.Error(err))
+			}
 			return
 		}
 		logger := logutil.BgLogger().With(zap.String("keyspace_name", keyspaceName), zap.String("conn_id", connID))
@@ -247,17 +263,26 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 		if svr != nil {
 			if msg := svr.GetNormalClosedConn(keyspaceName, connID); msg != "" {
 				logger.Info("connection is normal closed", zap.String("msg", msg))
-				w.Write([]byte(connNormalClosed))
+				_, err := w.Write([]byte(connNormalClosed))
+				if err != nil {
+					logutil.BgLogger().Error("failed to write response", zap.Error(err))
+				}
 				return
 			}
 		}
 		if ok, msg := IsPreTidbNormalRestart(keyspaceName); ok {
 			logger.Info("connection is normal closed", zap.String("msg", msg))
-			w.Write([]byte(connNormalClosed))
+			_, err := w.Write([]byte(connNormalClosed))
+			if err != nil {
+				logutil.BgLogger().Error("failed to write response", zap.Error(err))
+			}
 			return
 		}
 		logger.Info("connection is unconfirmed")
-		w.Write([]byte(`unconfirmed`))
+		_, err := w.Write([]byte(`unconfirmed`))
+		if err != nil {
+			logutil.BgLogger().Error("failed to write response", zap.Error(err))
+		}
 	})
 	return httpPathPrefix, mux
 }
@@ -267,7 +292,10 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	defer mu.RUnlock()
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s"}`, state, activateRequest.KeyspaceName)
+	_, err := fmt.Fprintf(w, `{"state": "%s", "keyspace_name": "%s"}`, state, activateRequest.KeyspaceName)
+	if err != nil {
+		logutil.BgLogger().Error("failed to write response", zap.Error(err))
+	}
 }
 
 var httpServer *http.Server

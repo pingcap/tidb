@@ -52,8 +52,7 @@ func (c *LoadKeyspaceController) OnServerCreated(svr *server.Server) {
 	go func() {
 		ticker := time.NewTicker(time.Second * 10)
 		defer ticker.Stop()
-		for {
-			<-ticker.C
+		for range ticker.C {
 			last := atomic.LoadInt64(&c.lastActive)
 			if time.Now().Unix()-last > int64(maxIdleSecs) {
 				connCount := svr.ConnectionCount()
