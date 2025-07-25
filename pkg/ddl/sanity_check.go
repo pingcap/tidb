@@ -198,8 +198,9 @@ func (*executor) checkInvolvingSchemaInfoInTest(job *model.Job) {
 	}
 	// all DDLs should set InvolvingSchemaInfo to make sure DDL execution in order.
 	for _, info := range job.GetInvolvingSchemaInfo() {
-		if info.Database == model.InvolvingNone || info.Table == model.InvolvingNone {
-			panic(fmt.Sprintf("job ID %d, type %s, involved DB %s, involved table %s", job.ID, job.Type, info.Database, info.Table))
+		if (info.Database == model.InvolvingNone || info.Table == model.InvolvingNone) &&
+			info.Policy == model.InvolvingNone && info.ResourceGroup == model.InvolvingNone {
+			panic(fmt.Sprintf("job ID %d, type %s", job.ID, job.Type))
 		}
 	}
 }
