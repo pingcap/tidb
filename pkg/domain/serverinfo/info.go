@@ -36,6 +36,10 @@ const (
 	TopologyInformationPath = "/topology/tidb"
 	// TopologySessionTTL is ttl for topology, ant it's the ETCD session's TTL in seconds.
 	TopologySessionTTL = 45
+	// TopologyTimeToRefresh means time to refresh etcd.
+	TopologyTimeToRefresh = 30 * time.Second
+	// minTSReportInterval is interval of infoSyncerKeeper reporting min startTS.
+	minTSReportInterval = 30 * time.Second
 )
 
 // VersionInfo is the server version and git_hash.

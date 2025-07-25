@@ -53,7 +53,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			partCnt++
 			if partCnt == 2 {
 				dom.DDL().OwnerManager().ResignOwner(context.Background())
-				dom.InfoSyncer().RemoveServerInfo()
+				dom.InfoSyncer().ServerInfoSyncer().RemoveServerInfo()
 				os.Exit(0) // Mock TiDB exit abnormally. We use zero because the requirement of `ExecuteBlocks()`.
 			}
 		})
@@ -73,7 +73,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			partCnt++
 			if partCnt == 2 {
 				dom.DDL().OwnerManager().ResignOwner(context.Background())
-				dom.InfoSyncer().RemoveServerInfo()
+				dom.InfoSyncer().ServerInfoSyncer().RemoveServerInfo()
 				os.Exit(0)
 			}
 		})

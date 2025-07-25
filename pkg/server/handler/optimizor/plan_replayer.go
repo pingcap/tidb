@@ -139,7 +139,7 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 		return
 	}
 	// If we didn't find file in origin request, try to broadcast the request to all remote tidb-servers
-	topos, err := dfHandler.infoGetter.GetAllTiDBTopology(req.Context())
+	topos, err := dfHandler.infoGetter.ServerInfoSyncer().GetAllTiDBTopology(req.Context())
 	if err != nil {
 		handler.WriteError(w, err)
 		return
