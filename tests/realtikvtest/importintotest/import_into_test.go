@@ -1419,5 +1419,5 @@ func (s *mockGCSSuite) TestTableMode() {
 func adminRepairTable(tk *testkit.TestKit, table, createTableSQL string) {
 	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{table})
-	tk.MustExec("admin repair table " + table + createTableSQL)
+	tk.MustExec("admin repair table " + table + " " + createTableSQL)
 }
