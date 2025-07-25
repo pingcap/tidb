@@ -270,7 +270,6 @@ func TestPartitionRangeForExpr(t *testing.T) {
 	}
 }
 
-
 func TestPartitionRangeOperation(t *testing.T) {
 	testIntersectionRange := []struct {
 		input1 partitionRangeOR

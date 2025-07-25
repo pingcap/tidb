@@ -56,7 +56,6 @@ func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (boo
 	return slices.Equal(tidbDDLIDs, pdDDLIDs), nil
 }
 
-
 func string2Map(a, b []string) map[string]string {
 	a2b := make(map[string]string, len(a))
 	for i, str := range a {
