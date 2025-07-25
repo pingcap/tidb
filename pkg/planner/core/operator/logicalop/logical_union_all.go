@@ -177,6 +177,11 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalUnionAll) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	// UnionAll can not be pushed down to TiFlash.
+	// So we return an empty possible property.
+	return &property.PossibleProp{}
+}
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

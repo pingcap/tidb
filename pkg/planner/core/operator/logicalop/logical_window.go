@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -415,7 +416,8 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, childProps ...*property.PossibleProp) *property.PossibleProp {
+	intest.Assert(len(childProps) > 0 && childProps[0] != nil)
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
 	for i := range p.PartitionBy {
 		result = append(result, p.PartitionBy[i].Col)
@@ -423,7 +425,10 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 	for i := range p.OrderBy {
 		result = append(result, p.OrderBy[i].Col)
 	}
-	return [][]*expression.Column{result}
+	return &property.PossibleProp{
+		OrderCols:   [][]*expression.Column{result},
+		TiFlashable: childProps[0].TiFlashable,
+	}
 }
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.

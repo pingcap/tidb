@@ -114,6 +114,10 @@ func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+func (p *LogicalLock) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	// LogicalLock table can not be pushed down to TiFlash.
+	return &property.PossibleProp{}
+}
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

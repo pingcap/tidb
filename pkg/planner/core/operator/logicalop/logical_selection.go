@@ -247,7 +247,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*property.PossibleProp) *property.PossibleProp {
 	return childrenProperties[0]
 }
 

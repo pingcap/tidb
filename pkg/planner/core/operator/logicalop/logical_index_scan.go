@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -130,16 +131,29 @@ func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *exp
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	res := &property.PossibleProp{}
 	if len(is.IdxCols) == 0 {
-		return nil
+		return res
+	}
+	// fetch the ds tiFlash path info.
+	hasTiFlash := false
+	if is.Source != nil {
+		for _, path := range is.Source.AllPossibleAccessPaths {
+			if path.StoreType == kv.TiFlash {
+				hasTiFlash = true
+				break
+			}
+		}
 	}
 	result := make([][]*expression.Column, 0, is.EqCondCount+1)
 	for i := 0; i <= is.EqCondCount; i++ {
 		result = append(result, make([]*expression.Column, len(is.IdxCols)-i))
 		copy(result[i], is.IdxCols[i:])
 	}
-	return result
+	res.OrderCols = result
+	res.TiFlashable = hasTiFlash
+	return res
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
