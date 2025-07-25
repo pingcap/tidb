@@ -575,6 +575,8 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 
 	// time1, ts1: before everything starts
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
 	time1 := time.Now()
 	ts1 := oracle.GoTimeToTS(time1)
 
