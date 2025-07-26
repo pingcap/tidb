@@ -309,7 +309,7 @@ StreamAgg	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#5
   ├─Limit(Build)	1.00	root		offset:0, count:1
   │ └─TableReader	1.00	root		data:Limit
   │   └─Limit	1.00	cop[tikv]		offset:0, count:1
-  │     └─TableFullScan	1.00	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
+  │     └─TableFullScan	100.99	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
   └─TableReader(Probe)	1.00	root		data:TableRangeScan
     └─TableRangeScan	1.00	cop[tikv]	table:b	range: decided by [planner__cascades__integration.t.a], keep order:false, stats:pseudo
 select max(a.a) from t a left join t b on a.a = b.a;
@@ -374,7 +374,7 @@ StreamAgg	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#3
 └─Limit	1.00	root		offset:0, count:1
   └─TableReader	1.00	root		data:Limit
     └─Limit	1.00	cop[tikv]		offset:0, count:1
-      └─TableFullScan	1.00	cop[tikv]	table:t	keep order:true, desc, stats:pseudo
+      └─TableFullScan	100.99	cop[tikv]	table:t	keep order:true, desc, stats:pseudo
 select max(a) from t;
 max(a)
 4
@@ -679,7 +679,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:2, count:1
 └─TableReader	3.00	root		data:Limit
   └─Limit	3.00	cop[tikv]		offset:0, count:3
-    └─TableFullScan	3.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+    └─TableFullScan	102.97	cop[tikv]	table:t	keep order:true, stats:pseudo
 select a from t order by a limit 1 offset 2;
 a
 3
@@ -843,7 +843,7 @@ Projection	10000.00	root		eq(planner__cascades__integration.t1.a, planner__casca
     └─TableReader	10000.00	root		data:Limit
       └─Limit	10000.00	cop[tikv]		offset:0, count:1
         └─Selection	10000.00	cop[tikv]		eq(planner__cascades__integration.t1.b, planner__cascades__integration.t2.b)
-          └─TableFullScan	10000000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+          └─TableFullScan	10900000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1;
 a = (select a from t2 where t1.b = t2.b order by a limit 1)
 1
@@ -910,7 +910,7 @@ Limit	2.00	root		offset:1, count:2
   └─TableReader	4.00	root		data:Limit
     └─Limit	4.00	cop[tikv]		offset:0, count:4
       └─Selection	4.00	cop[tikv]		gt(planner__cascades__integration.t.b, 2)
-        └─TableFullScan	12.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+        └─TableFullScan	111.88	cop[tikv]	table:t	keep order:true, stats:pseudo
 select a from (select a from t where b > 2 order by a limit 3 offset 1) as t1 order by a limit 2 offset 1;
 a
 3
@@ -921,7 +921,7 @@ Limit	3.00	root		offset:0, count:5
 └─Limit	3.00	root		offset:0, count:3
   └─TableReader	3.00	root		data:Limit
     └─Limit	3.00	cop[tikv]		offset:0, count:3
-      └─TableFullScan	3.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+      └─TableFullScan	102.97	cop[tikv]	table:t	keep order:true, stats:pseudo
 select * from (select * from t order by a limit 3) as t1 order by a limit 5;
 a	b
 1	11
@@ -951,7 +951,7 @@ Limit	3.00	root		offset:5, count:3
 └─Limit	3.00	root		offset:5, count:3
   └─TableReader	8.00	root		data:Limit
     └─Limit	8.00	cop[tikv]		offset:0, count:8
-      └─TableFullScan	8.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+      └─TableFullScan	107.92	cop[tikv]	table:t	keep order:true, stats:pseudo
 select a from (select a from t order by a limit 3 offset 5) as t1 order by a limit 3 offset 5;
 a
 explain format="brief" select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1;
@@ -972,7 +972,7 @@ TopN	3.00	root		planner__cascades__integration.t.a, planner__cascades__integrati
 └─Limit	3.00	root		offset:0, count:3
   └─TableReader	3.00	root		data:Limit
     └─Limit	3.00	cop[tikv]		offset:0, count:3
-      └─TableFullScan	3.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+      └─TableFullScan	102.97	cop[tikv]	table:t	keep order:true, stats:pseudo
 select * from (select * from t order by a limit 3) as t1 order by a, b limit 5;
 a	b
 1	11

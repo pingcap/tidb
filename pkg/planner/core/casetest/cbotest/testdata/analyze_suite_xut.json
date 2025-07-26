@@ -195,7 +195,7 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  eq(test.t.b, 2)",
-          "      └─TableFullScan 4.17 cop[tikv] table:t keep order:true"
+          "      └─TableFullScan 4.38 cop[tikv] table:t keep order:true"
         ]
       },
       {
