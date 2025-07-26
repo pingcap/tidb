@@ -796,18 +796,24 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
         "Plan": [
-          "HashAgg 16000.00 root  group by:Column#41, funcs:firstrow(Column#41)->Column#41",
+          "HashAgg 16000.00 root  group by:Column#21, funcs:firstrow(Column#21)->Column#21",
           "└─Union 1000000010000.00 root  ",
           "  ├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "  │ ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
-          "  │ │ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
-          "  │ └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
-          "  │   ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
-          "  │   │ └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo",
-          "  │   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  │ └─CTEFullScan(Probe) 100000000.00 root CTE:cte2 data:CTE_1",
           "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "CTE_1 100000000.00 root  Non-Recursive CTE",
+          "└─HashJoin(Seed Part) 100000000.00 root  CARTESIAN inner join",
+          "  ├─CTEFullScan(Build) 10000.00 root CTE:cte4 data:CTE_3",
+          "  └─CTEFullScan(Probe) 10000.00 root CTE:cte3 data:CTE_2",
+          "CTE_3 10000.00 root  Non-Recursive CTE",
+          "└─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
+          "CTE_2 10000.00 root  Non-Recursive CTE",
+          "└─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_a(a) keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
