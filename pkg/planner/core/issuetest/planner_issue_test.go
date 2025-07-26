@@ -324,3 +324,20 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
 		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
+
+func TestIssue60737(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table chqin(id int, f1 date);")
+	tk.MustExec("insert into chqin values (1,null);")
+	tk.MustExec("insert into chqin values (2,null);")
+	tk.MustExec("insert into chqin values (3,null);")
+	tk.MustExec("create table chqin2(id int, f1 date);")
+	tk.MustExec("insert into chqin2 values (1,'1990-11-27');")
+	tk.MustExec("insert into chqin2 values (2,'1990-11-27');")
+	tk.MustExec("insert into chqin2 values (3,'1990-11-27');")
+	tk.MustQuery(`explain select 1 from chqin where  '2008-05-28' NOT IN
+		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
+		Check(testkit.Rows())
+}
