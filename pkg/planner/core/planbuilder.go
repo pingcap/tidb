@@ -76,7 +76,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -499,6 +501,11 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
+	err := b.checkSEMStmt(node.Node)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build might be called recursively, right now they all share the same resolve
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
@@ -575,8 +582,6 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildDropBindPlan(x)
 	case *ast.SetBindingStmt:
 		return b.buildSetBindingStatusPlan(x)
-	case *ast.ChangeStmt:
-		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
 		return b.buildSplitRegion(x)
 	case *ast.DistributeTableStmt:
@@ -598,13 +603,6 @@ func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) 
 	}
 	expr, _, err := b.rewrite(ctx, v.Value, mockTablePlan, nil, true)
 	return &SetConfig{Name: v.Name, Type: v.Type, Instance: v.Instance, Value: expr}, err
-}
-
-func (*PlanBuilder) buildChange(v *ast.ChangeStmt) (base.Plan, error) {
-	exe := &Change{
-		ChangeStmt: v,
-	}
-	return exe, nil
 }
 
 func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (base.Plan, error) {
@@ -3803,6 +3801,16 @@ func collectVisitInfoFromRevokeStmt(ctx context.Context, sctx base.PlanContext, 
 	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
+		if semv2.IsEnabled() {
+			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(item.Name)) ||
+				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(item.Priv.String())) {
+				// In `semv2`, we'll support to limit non-dynamic privileges unless the user has the `RESTRICTED_PRIV_ADMIN` privilege.
+				// For example, `File` privilege might be restricted.
+				// It's also controlled by the `GRANT OPTION`, so the user will also need the `GRANT OPTION` for this privilege.
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+				vi = appendDynamicVisitInfo(vi, []string{"RESTRICTED_PRIV_ADMIN"}, false, err)
+			}
+		}
 		if item.Priv == mysql.ExtendedPriv {
 			vi = appendDynamicVisitInfo(vi, []string{strings.ToUpper(item.Name)}, true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
 			continue
@@ -3868,6 +3876,16 @@ func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *
 	var allPrivs []mysql.PrivilegeType
 	authErr := genAuthErrForGrantStmt(sctx, dbName)
 	for _, item := range stmt.Privs {
+		if semv2.IsEnabled() {
+			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(item.Name)) ||
+				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(item.Priv.String())) {
+				// In `semv2`, we'll support to limit non-dynamic privileges unless the user has the `RESTRICTED_PRIV_ADMIN` privilege.
+				// For example, `File` privilege might be restricted.
+				// It's also controlled by the `GRANT OPTION`, so the user will also need the `GRANT OPTION` for this privilege.
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+				vi = appendDynamicVisitInfo(vi, []string{"RESTRICTED_PRIV_ADMIN"}, false, err)
+			}
+		}
 		if item.Priv == mysql.ExtendedPriv {
 			// The observed MySQL behavior is that the error is:
 			// ERROR 1227 (42000): Access denied; you need (at least one of) the GRANT OPTION privilege(s) for this operation
@@ -4667,7 +4685,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = storage.IsLocal(u)
-		if sem.IsEnabled() {
+		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
@@ -5683,7 +5701,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
-	if sem.IsEnabled() {
+	if semv1.IsEnabled() {
 		return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("SELECT INTO")
 	}
 	selectIntoInfo := sel.SelectIntoOpt
@@ -6289,4 +6307,26 @@ func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, e
 		return 0, fmt.Errorf("the value %v for %s is invalid", v.Value.GetValue(), opt.Name)
 	}
 	return maxWriteSpeed, nil
+}
+
+func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
+	if !semv2.IsEnabled() {
+		return nil
+	}
+
+	stmtNode, ok := stmt.(ast.StmtNode)
+	intest.Assert(ok, "node.Node should be ast.StmtNode, but got %T", stmt)
+	if !semv2.IsRestrictedSQL(stmtNode) {
+		return nil
+	}
+
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	hasPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_SQL_ADMIN", false)
+
+	if hasPriv {
+		return nil
+	}
+
+	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
 }
