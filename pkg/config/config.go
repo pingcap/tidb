@@ -277,6 +277,17 @@ type Config struct {
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 
+	// Serverless related configs.
+	StandByMode    bool `toml:"standby-mode" json:"standby-mode"`
+	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
+	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
+	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+
+	// EnableZeroBackend is used to control the behavior of standby idle watcher.
+	// When it is enabled, the idle watcher will not wait for session migration
+	// and will not consider client interactive connections.
+	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
+
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 

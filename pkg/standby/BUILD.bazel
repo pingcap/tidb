@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "standby",
+    srcs = [
+        "idle_watcher.go",
+        "standby.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/standby",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/keyspace",
+        "//pkg/parser/mysql",
+        "//pkg/server",
+        "//pkg/util/logutil",
+        "//pkg/util/signal",
+        "@org_uber_go_zap//:zap",
+    ],
+)
