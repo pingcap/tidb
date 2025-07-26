@@ -82,7 +82,9 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
+	removingColumnPrefix  = "_ColRm$_"
 	changingIndexPrefix   = "_Idx$_"
+	removingIndexPrefix   = "_IdxRm$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535
@@ -3362,6 +3364,7 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 
 	args := &model.ModifyColumnArgs{
 		Column:        newCol,
+		OldColumnID:   oldCol.ID,
 		OldColumnName: oldColName,
 		Position:      spec.Position,
 	}
