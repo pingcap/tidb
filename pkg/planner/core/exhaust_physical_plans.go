@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -2397,6 +2398,7 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 		if _, ok := childTasks[0].(*CopTask); ok {
 			return true
 		}
+		return false
 	}
 	if meetThreshold {
 		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
@@ -4163,6 +4165,9 @@ func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *pr
 
 func exhaustPhysicalPlans4LogicalTopN(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	lt := lp.(*logicalop.LogicalTopN)
+	if strings.Contains(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "limit_to_cop") {
+		fmt.Println(1)
+	}
 	if MatchItems(prop, lt.ByItems) {
 		return append(getPhysTopN(lt, prop), getPhysLimits(lt, prop)...), true, nil
 	}
