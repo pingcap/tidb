@@ -599,6 +599,7 @@ func newTaskIDAllocator() *taskIDAllocator {
 }
 
 func (a *taskIDAllocator) alloc() int {
+	ret := a.id
 	a.id++
-	return a.id
+	return ret
 }
