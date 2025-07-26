@@ -376,6 +376,10 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 
 // GetUserResources gets the maximum number of connections for the current user
 func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
+	if SkipWithGrant {
+		return 0, nil
+	}
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {

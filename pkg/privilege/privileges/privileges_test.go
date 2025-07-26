@@ -2140,7 +2140,7 @@ func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
 	require.ErrorContains(t, err, "Access denied")
 }
 
-func TestNilHandleInConnectionVerification(t *testing.T) {
+func TestNilHandleInSkipWithGrant(t *testing.T) {
 	config.GetGlobalConfig().Security.SkipGrantTable = true
 	privileges.SkipWithGrant = true
 	defer func() {
@@ -2149,7 +2149,13 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// check ConnectionVerification
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
+	// check GetUserResources
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	userLimit, err := pc.GetUserResources("root", "%")
+	require.NoError(t, err)
+	require.EqualValues(t, 0, userLimit)
 }
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
