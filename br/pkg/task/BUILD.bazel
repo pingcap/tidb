@@ -94,6 +94,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
         "@com_github_tikv_pd_client//http",
         "@com_google_cloud_go_storage//:storage",
         "@io_etcd_go_etcd_client_pkg_v3//transport",

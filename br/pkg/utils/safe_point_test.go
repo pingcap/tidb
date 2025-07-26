@@ -8,9 +8,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 func TestCheckGCSafepoint(t *testing.T) {
@@ -35,12 +38,26 @@ func TestCheckGCSafepoint(t *testing.T) {
 	}
 }
 
+// UpdateServiceSafePoint register BackupTS to PD, to lock down BackupTS as safePoint with TTL seconds.
+func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp utils.BRServiceSafePoint) error {
+	log.Debug("update PD safePoint limit with TTL", zap.Object("safePoint", sp))
+
+	lastSafePoint, err := pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
+	if lastSafePoint > sp.BackupTS-1 && sp.TTL > 0 {
+		log.Warn("service GC safe point lost, we may fail to back up if GC lifetime isn't long enough",
+			zap.Uint64("lastSafePoint", lastSafePoint),
+			zap.Object("safePoint", sp),
+		)
+	}
+	return errors.Trace(err)
+}
+
 func TestCheckUpdateServiceSafepoint(t *testing.T) {
 	ctx := context.Background()
 	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
 	{
 		// nothing happened, because current safepoint is large than servicee safepoint.
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
+		err := UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
 			"BR_SERVICE",
 			1,
 			1,
@@ -52,7 +69,7 @@ func TestCheckUpdateServiceSafepoint(t *testing.T) {
 	}
 	{
 		// register br service safepoint
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
+		err := UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
 			"BR_SERVICE",
 			1,
 			2334,
@@ -65,7 +82,7 @@ func TestCheckUpdateServiceSafepoint(t *testing.T) {
 	}
 	{
 		// remove br service safepoint
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
+		err := UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
 			"BR_SERVICE",
 			0,
 			math.MaxUint64,

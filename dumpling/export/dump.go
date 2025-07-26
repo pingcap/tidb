@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/pkg/caller"
 	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -1534,7 +1535,8 @@ func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int6
 			zap.Uint64("safePoint", snapshotTS),
 			zap.Int64("ttl", ttl))
 		for retryCnt := range 11 {
-			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
+			cli := pdClient.GetGCStatesClient(constants.NullKeyspaceID)
+			_, err := cli.SetGCBarrier(tctx, dumplingServiceSafePointID, snapshotTS, time.Duration(ttl)*time.Second)
 			if err == nil {
 				break
 			}

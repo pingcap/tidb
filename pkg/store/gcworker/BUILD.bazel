@@ -67,6 +67,7 @@ go_test(
         "//pkg/store/mockstore",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/errorpb",
@@ -83,5 +84,6 @@ go_test(
         "@com_github_tikv_pd_client//clients/gc",
         "@com_github_tikv_pd_client//constants",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
     ],
 )

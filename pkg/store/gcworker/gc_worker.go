@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -701,31 +700,6 @@ func (w *GCWorker) advanceTxnSafePoint(ctx context.Context, target uint64) (newT
 	}
 
 	return result.NewTxnSafePoint, nil
-}
-
-// setGCWorkerServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
-// service safePoint among all services.
-func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	// Sets TTL to MAX to make it permanently valid.
-	minSafePoint, err := w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, math.MaxInt64, safePoint)
-	if err != nil {
-		logutil.Logger(ctx).Error("failed to update service safe point", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		metrics.GCJobFailureCounter.WithLabelValues("update_service_safe_point").Inc()
-		return 0, errors.Trace(err)
-	}
-	if minSafePoint < safePoint {
-		logutil.Logger(ctx).Info("there's another service in the cluster requires an earlier safe point. "+
-			"gc will continue with the earlier one",
-			zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Uint64("ourSafePoint", safePoint),
-			zap.Uint64("minSafePoint", minSafePoint),
-		)
-		safePoint = minSafePoint
-	}
-	return safePoint, nil
 }
 
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency gcConcurrency) error {

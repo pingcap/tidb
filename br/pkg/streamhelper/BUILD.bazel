@@ -45,6 +45,7 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/rangetask",
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
         "@com_github_tikv_pd_client//opt",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
