@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -272,22 +273,22 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		return fmt.Sprintf("return(`%s`)", string(bytes))
 	}
 
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s1",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone1",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s2",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
@@ -354,52 +355,52 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 
 	// partial matches
-	mockedAllServerInfos = map[string]*infosync.ServerInfo{
+	mockedAllServerInfos = map[string]*serverinfo.ServerInfo{
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s1",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone1",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s2",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
 			},
 		},
 		"s22": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s22",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
 			},
 		},
 		"s3": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s3",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone3",
 				},
 			},
 		},
 		"s4": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s4",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone4",
 				},
