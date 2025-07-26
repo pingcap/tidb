@@ -473,7 +473,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
-		maxExecutionTime := hints[hintOffs["max_execution_time"]]
+		maxExecutionTime := hints[hintOffs[HintMaxExecutionTime]]
 		if maxExecutionTimeCnt > 1 {
 			warn := errors.NewNoStackErrorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
 			warns = append(warns, warn)
@@ -518,7 +518,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 // isStmtHint checks whether this hint is a statement-level hint.
 func isStmtHint(h *ast.TableOptimizerHint) bool {
 	switch h.HintName.L {
-	case "max_execution_time", HintMemoryQuota, "resource_group":
+	case HintMaxExecutionTime, HintMemoryQuota, "resource_group":
 		return true
 	default:
 		return false

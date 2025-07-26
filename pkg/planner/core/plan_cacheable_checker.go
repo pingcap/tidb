@@ -102,7 +102,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				return in, true
 			}
 		}
-
 	case *ast.PatternInExpr:
 		checker.sumInListLen += len(node.List)
 		if checker.sumInListLen > checker.maxNumParam { // to save memory
