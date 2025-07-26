@@ -277,7 +277,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx PlanContext, p LogicalPlan, tr
 
 		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
 			if useGreedy {
-				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin, tracer.opt)
 				if !ok {
 					ctx.GetSessionVars().StmtCtx.SetHintWarning(
 						"leading hint is inapplicable, check if the leading hint table is valid")
@@ -399,9 +399,15 @@ type baseSingleGroupJoinOrderSolver struct {
 	*basicJoinGroupInfo
 }
 
+<<<<<<< HEAD
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool) (bool, []LogicalPlan) {
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
+=======
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, []base.LogicalPlan) {
+	var leadingJoinGroup []base.LogicalPlan
+	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
+>>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
 	copy(leftJoinGroup, curJoinGroup)
 	var queryBlockNames []ast.HintTable
 	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
@@ -462,7 +468,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 			// If the joinGroups contain the outer join, we disable the cartesian product.
 			return false, nil
 		}
-		leadingJoin, s.otherConds = s.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType)
+		leadingJoin, s.otherConds = s.makeJoin(leadingJoin, leadingJoinGroup[0], usedEdges, joinType, opt)
 		leadingJoinGroup = leadingJoinGroup[1:]
 	}
 	s.leadingJoinGroup = leadingJoin
@@ -547,7 +553,11 @@ func (*baseSingleGroupJoinOrderSolver) injectExpr(p LogicalPlan, expr expression
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
+<<<<<<< HEAD
 func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) (LogicalPlan, []expression.Expression) {
+=======
+func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression) {
+>>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
 	var (
@@ -601,7 +611,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPla
 		// so noway here we got remainOBOtherConds remained.
 	}
 	return s.newJoinWithEdges(leftPlan, rightPlan, eqEdges,
-		append(otherConds, obOtherConds...), append(leftConds, obLeftConds...), append(rightConds, obRightConds...), joinType.JoinType), remainOtherConds
+		append(otherConds, obOtherConds...), append(leftConds, obLeftConds...), append(rightConds, obRightConds...), joinType.JoinType, opt), remainOtherConds
 }
 
 // makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
@@ -652,14 +662,31 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	return join
 }
 
+<<<<<<< HEAD
 func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan,
 	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan {
+=======
+func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.LogicalPlan,
+	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+>>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
 	newJoin.LeftConditions = leftConds
 	newJoin.RightConditions = rightConds
 	newJoin.JoinType = joinType
+	if newJoin.JoinType == logicalop.InnerJoin {
+		if newJoin.LeftConditions != nil {
+			left := newJoin.Children()[0]
+			logicalop.AddSelection(newJoin, left, newJoin.LeftConditions, 0, opt)
+			newJoin.LeftConditions = nil
+		}
+		if newJoin.RightConditions != nil {
+			right := newJoin.Children()[1]
+			logicalop.AddSelection(newJoin, right, newJoin.RightConditions, 1, opt)
+			newJoin.RightConditions = nil
+		}
+	}
 	return newJoin
 }
 
