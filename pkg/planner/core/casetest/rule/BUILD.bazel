@@ -9,10 +9,15 @@ go_test(
         "rule_inject_extra_projection_test.go",
         "rule_join_reorder_test.go",
         "rule_predicate_pushdown_test.go",
+        "rule_predicate_simplification_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 10,
+>>>>>>> 0bf7afe5cdf (planner: constant folding to isnull(not null column) (#62046))
     deps = [
         "//pkg/domain",
         "//pkg/expression",
