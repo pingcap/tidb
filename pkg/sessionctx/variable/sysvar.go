@@ -2598,7 +2598,6 @@ var defaultSysVars = []*SysVar{
 			return vardef.On, nil
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			s.TiDBEnableExchangePartition = true
 			return nil
 		}},
 	// It's different from tmp_table_size or max_heap_table_size. See https://github.com/pingcap/tidb/issues/28691.
