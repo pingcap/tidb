@@ -638,8 +638,7 @@ func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.Vect
 func (col *Column) Clone() Expression {
 	newCol := *col
 	if col.hashcode != nil {
-		newCol.hashcode = make([]byte, len(col.hashcode))
-		copy(newCol.hashcode, col.hashcode)
+		newCol.hashcode = slices.Clone(col.hashcode)
 	}
 	return &newCol
 }
@@ -867,8 +866,7 @@ func (col *Column) Repertoire() Repertoire {
 
 // SortColumns sort columns based on UniqueID.
 func SortColumns(cols []*Column) []*Column {
-	sorted := make([]*Column, len(cols))
-	copy(sorted, cols)
+	sorted := slices.Clone(cols)
 	slices.SortFunc(sorted, func(i, j *Column) int {
 		return cmp.Compare(i.UniqueID, j.UniqueID)
 	})

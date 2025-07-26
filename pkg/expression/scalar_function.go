@@ -244,8 +244,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 			ctx.GetEvalCtx().AppendWarning(err)
 		}
 	}
-	funcArgs := make([]Expression, len(args))
-	copy(funcArgs, args)
+	funcArgs := slices.Clone(args)
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
@@ -356,12 +355,10 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.hashcode != nil {
-		c.hashcode = make([]byte, len(sf.hashcode))
-		copy(c.hashcode, sf.hashcode)
+		c.hashcode = slices.Clone(sf.hashcode)
 	}
 	if sf.canonicalhashcode != nil {
-		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
-		copy(c.canonicalhashcode, sf.canonicalhashcode)
+		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())

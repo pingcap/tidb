@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"unsafe"
 
 	perrors "github.com/pingcap/errors"
@@ -205,8 +206,7 @@ func (c *Constant) Clone() Expression {
 		con.DeferredExpr = c.DeferredExpr.Clone()
 	}
 	if c.hashcode != nil {
-		con.hashcode = make([]byte, len(c.hashcode))
-		copy(con.hashcode, c.hashcode)
+		con.hashcode = slices.Clone(c.hashcode)
 	}
 	return &con
 }

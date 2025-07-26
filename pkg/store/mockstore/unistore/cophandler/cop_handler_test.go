@@ -136,8 +136,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 
 func getTestPointRange(tableID int64, handle int64) kv.KeyRange {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
-	endKey := make([]byte, len(startKey))
-	copy(endKey, startKey)
+	endKey := slices.Clone(startKey)
 	convertToPrefixNext(endKey)
 	return kv.KeyRange{
 		StartKey: startKey,

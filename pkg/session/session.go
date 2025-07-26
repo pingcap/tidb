@@ -30,6 +30,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -880,8 +881,7 @@ func (s *session) tryReplaceWriteConflictError(ctx context.Context, oldErr error
 	inErr, _ := originErr.(*errors.Error)
 	// we don't want to modify the oldErr, so copy the args list
 	oldArgs := inErr.Args()
-	args := make([]any, len(oldArgs))
-	copy(args, oldArgs)
+	args := slices.Clone(oldArgs)
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	if is == nil {
 		return nil
@@ -1442,8 +1442,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
-	res := make([]ast.StmtNode, len(tmp))
-	copy(res, tmp)
+	res := slices.Clone(tmp)
 	return res, warn, err
 }
 

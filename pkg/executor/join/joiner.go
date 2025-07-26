@@ -15,6 +15,8 @@
 package join
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -352,12 +354,10 @@ func (j *baseJoiner) Clone() baseJoiner {
 		base.defaultInner = j.defaultInner.CopyConstruct()
 	}
 	if j.lUsed != nil {
-		base.lUsed = make([]int, len(j.lUsed))
-		copy(base.lUsed, j.lUsed)
+		base.lUsed = slices.Clone(j.lUsed)
 	}
 	if j.rUsed != nil {
-		base.rUsed = make([]int, len(j.rUsed))
-		copy(base.rUsed, j.rUsed)
+		base.rUsed = slices.Clone(j.rUsed)
 	}
 	return base
 }
