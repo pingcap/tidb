@@ -240,6 +240,7 @@ func TestIssue18681(t *testing.T) {
 	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
 	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := sc.TypeFlags()
