@@ -2738,7 +2738,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
 	}
-	ts, _ := getOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.isMatchProp == property.SortPropSatisfiedUnconditionally)
+	ts, _ := getOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.isMatchProp.Matched())
 	// merge-sort 匹配时设置 ByItems 和 GroupedRanges
 	if candidate.isMatchProp == property.SortPropSatisfiedByMergeSort {
 		byItems := make([]*util.ByItems, 0, len(prop.SortItems))
