@@ -43,10 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -699,10 +697,6 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	}
 	// Remove the matched condition from PushedDownConds.
 	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
-	logutil.BgLogger().Warn("building FTS access path",
-		zap.String("conds after pruning", fmt.Sprintf("%v", ds.PushedDownConds)),
-		zap.String("matched index", matchedIdx.Name.O),
-	)
 	// Build protobuf info for the matched index.
 	pbColumns := make([]*tipb.ColumnInfo, 0, len(matchedColumns))
 	for _, col := range matchedColumns {
@@ -713,10 +707,6 @@ func (ds *DataSource) analyzeFTSFunc() error {
 		colNames = append(colNames, col.OrigName)
 	}
 	ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc, pbColumns, colNames)
-	logutil.BgLogger().Info("built TiCI FTS access path",
-		zap.String("index", ds.PossibleAccessPaths[0].Index.Name.O),
-		zap.String("is fts", fmt.Sprintf("%v", ds.PossibleAccessPaths[0].FtsQueryInfo != nil)),
-	)
 	// If we build a TiCI FTS access path, we should remove all the
 	return nil
 }

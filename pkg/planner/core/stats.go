@@ -614,7 +614,6 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		} else if path.FtsQueryInfo != nil {
 			deriveSearchPathStats(ds, path)
 			path.IsSingleScan = false
-			logutil.BgLogger().Warn("add pushed down selection", zap.String("table filters", fmt.Sprintf("%v", path.TableFilters)))
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)

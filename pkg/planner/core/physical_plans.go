@@ -792,7 +792,7 @@ type PhysicalIndexScan struct {
 
 	StoreType kv.StoreType
 
-	FtsQueryInfo *tipb.FTSQueryInfo
+	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
 }
 
 // Clone implements op.PhysicalPlan interface.
