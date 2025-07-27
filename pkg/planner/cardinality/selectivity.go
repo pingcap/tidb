@@ -1115,7 +1115,7 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 // Func call can pass in nil for c or idx, but at least one of them must be non-nil. If both are nil, then
 // the returned result will be based on realtimeRowCount only, and the maxEstimate will be equal to realtimeRowCount.
 func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *statistics.Index, realtimeRowCount float64) (result, maxEstimate float64) {
-	fullRowCount, fullNDV, histRowCount, histNDV, minTopN, lenTopN := float64(0), float64(0), float64(0), float64(0), float64(0), float64(0)
+	fullRowCount, fullNDV, histRowCount, histNDV, minTopN, lenTopN, fullResult := float64(0), float64(0), float64(0), float64(0), float64(0), float64(0), float64(0)
 	if c != nil {
 		// Use column stats if available.
 		fullRowCount = c.TotalRowCount()
@@ -1133,6 +1133,9 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		minTopN = float64(idx.TopN.MinCount())
 		lenTopN = float64(idx.TopN.Num())
 	}
+	if fullNDV > 0 {
+		fullResult = fullRowCount / fullNDV
+	}
 	addedRows := realtimeRowCount - fullRowCount
 	// We may be missing stats if we've added rows since the last analysis, or if we have no histogram buckets
 	missingStats := addedRows > 0 || (histRowCount == 0 && lenTopN > 0 && lenTopN < fullNDV)
@@ -1145,7 +1148,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		// If we are missing histogram statistics, revert to using statistics from the full table.
 		if fullRowCount > 0 {
 			if fullNDV > 0 {
-				result = fullRowCount / fullNDV
+				result = fullResult
 				maxEstimate = fullRowCount - (fullNDV - 1)
 			} else {
 				// If we stil haven't derived a result - it's because we didn't have a valid NDV.
@@ -1161,6 +1164,10 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 			// This also means that we don't have a valid maxEstimate, so we set it to large value to reflect it's risk.
 			maxEstimate = realtimeRowCount - (defaultNDV - 1)
 		}
+	}
+	// If we didn't get a result, but we have a fullResult - use that.
+	if result <= 0 && fullResult > 0 {
+		result = fullResult
 	}
 	// Do not allow the result to be greater than the smallest TopN value.
 	if minTopN > 0 {
