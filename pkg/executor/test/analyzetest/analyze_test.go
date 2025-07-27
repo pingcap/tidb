@@ -2988,9 +2988,9 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_unsigned) */* from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
-		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"IndexMerge 18.00 root  type: union",
+		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_double) */ * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
 		"TableReader 21.60 root  data:Selection",
@@ -2998,14 +2998,14 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_binary) */ * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
-		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"IndexMerge 14.83 root  type: union",
+		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_char) */ * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
-		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"IndexMerge 13.50 root  type: union",
+		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
 	// 3.4. clean up the stats and re-analyze the table
@@ -3019,19 +3019,19 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_unsigned) */ * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
-		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"IndexMerge 18.00 root  type: union",
+		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_binary) */ * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
-		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"IndexMerge 14.83 root  type: union",
+		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_char) */ * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
-		"IndexMerge 27.00 root  type: union",
-		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+		"IndexMerge 13.50 root  type: union",
+		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
 	// 4. check stats content in the memory
