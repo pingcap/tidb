@@ -1151,7 +1151,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if there is some sort items and this path doesn't match this prop, continue.
 			match := true
 			for _, oneAccessPath := range oneAlternative {
-				if !noSortItem && !matchProperty(ds, oneAccessPath, prop).Matched() {
+				if !noSortItem && matchProperty(ds, oneAccessPath, prop) != property.SortPropSatisfiedUnconditionally {
 					match = false
 				}
 			}
@@ -1250,7 +1250,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 		return property.SortPropNotSatisfied
 	}
 	for _, partialPath := range path.PartialIndexPaths {
-		if !matchProperty(ds, partialPath, prop).Matched() {
+		if matchProperty(ds, partialPath, prop) != property.SortPropSatisfiedUnconditionally {
 			return property.SortPropNotSatisfied
 		}
 	}
@@ -1809,6 +1809,8 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	// lift the limitation of that double read can not build index merge **COP** task with intersection.
 	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
 
+	intest.Assert(candidate.isMatchProp != property.SortPropSatisfiedByMergeSort, "index merge should not match property using merge sort")
+
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp.Matched() {
 		return base.InvalidTask, nil
 	}
@@ -1914,11 +1916,8 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 			is.Columns = tmpColumns
 			is.SetSchema(tmpSchema)
 		}
+		// Add sort items for index scan for merge-sort operation between partitions.
 		is.ByItems = byItems
-		// merge-sort 匹配时设置 GroupedRanges
-		if matchProp == property.SortPropSatisfiedByMergeSort {
-			is.GroupedRanges = path.GroupedRanges
-		}
 	}
 
 	// Add a `Selection` for `IndexScan` with global index.
@@ -1975,10 +1974,6 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			ts.SetSchema(tmpSchema)
 		}
 		ts.ByItems = byItems
-		// merge-sort 匹配时设置 GroupedRanges
-		if matchProp == property.SortPropSatisfiedByMergeSort {
-			ts.GroupedRanges = path.GroupedRanges
-		}
 	}
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.filterCondition, nil)
