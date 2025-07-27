@@ -72,7 +72,7 @@ func WithCascades(on bool) TestOption {
 }
 
 // RunTestUnderCascades run the basic test body among two different planner mode.
-func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string)) {
+func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
@@ -89,7 +89,7 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 	// iter the options
 	for _, val := range options {
 		t.Run(val.name, func(t *testing.T) {
-			store := CreateMockStore(t)
+			store := CreateMockStore(t, opts...)
 			tk := NewTestKit(t, store)
 			val.opt(tk)
 			testFunc(t, tk, val.name, funcName)
@@ -98,7 +98,7 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 }
 
 // RunTestUnderCascadesWithDomain run the basic test body among two different planner mode.
-func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
+func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
@@ -115,7 +115,7 @@ func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk
 	// iter the options
 	for _, val := range options {
 		t.Run(val.name, func(t *testing.T) {
-			store, do := CreateMockStoreAndDomain(t)
+			store, do := CreateMockStoreAndDomain(t, opts...)
 			tk := NewTestKit(t, store)
 			val.opt(tk)
 			testFunc(t, tk, do, val.name, funcName)
