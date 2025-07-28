@@ -5462,7 +5462,7 @@ func checkAlterImportJobOptValue(opt *AlterImportJobOpt) error {
 		if err != nil {
 			return err
 		}
-		if speed < 0 {
+		if speed < 0 || speed > units.PiB {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
