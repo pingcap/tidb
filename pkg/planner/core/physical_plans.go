@@ -77,7 +77,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalHashAgg{}
 	_ base.PhysicalPlan = &PhysicalStreamAgg{}
 	_ base.PhysicalPlan = &PhysicalApply{}
-	_ base.PhysicalPlan = &PhysicalIndexJoin{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
@@ -89,7 +89,7 @@ var (
 
 	_ PhysicalJoin = &PhysicalHashJoin{}
 	_ PhysicalJoin = &PhysicalMergeJoin{}
-	_ PhysicalJoin = &PhysicalIndexJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &PhysicalIndexHashJoin{}
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
@@ -1352,88 +1352,9 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 	return hashJoin
 }
 
-// PhysicalIndexJoin represents the plan of index look up join.
-// NOTICE: When adding any member variables, remember to modify the Clone method.
-type PhysicalIndexJoin struct {
-	physicalop.BasePhysicalJoin
-
-	innerPlan base.PhysicalPlan
-
-	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges ranger.MutableRanges
-	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
-	KeyOff2IdxOff []int
-	// IdxColLens stores the length of each index column.
-	IdxColLens []int
-	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
-	// e.g. select * from t, t1 where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
-	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b+10
-	//      need to be evaluated after we fetch the data of t1.
-	// This struct stores them and evaluate them to ranges.
-	CompareFilters *ColWithCmpFuncManager
-	// OuterHashKeys indicates the outer keys used to build hash table during
-	// execution. OuterJoinKeys is the prefix of OuterHashKeys.
-	OuterHashKeys []*expression.Column
-	// InnerHashKeys indicates the inner keys used to build hash table during
-	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
-	InnerHashKeys []*expression.Column
-	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
-	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexJoin)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalJoin = *base
-	if p.innerPlan != nil {
-		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
-	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
-	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexJoin
-func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
-	if p.innerPlan != nil {
-		sum += p.innerPlan.MemoryUsage()
-	}
-	if p.CompareFilters != nil {
-		sum += p.CompareFilters.MemoryUsage()
-	}
-
-	for _, col := range p.OuterHashKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.InnerHashKeys {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
 type PhysicalIndexMergeJoin struct {
-	PhysicalIndexJoin
+	physicalop.PhysicalIndexJoin
 
 	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
 	KeyOff2KeyOffOrderByIdx []int
@@ -1461,7 +1382,7 @@ func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
 
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
-	PhysicalIndexJoin
+	physicalop.PhysicalIndexJoin
 	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
 	KeepOuterOrder bool

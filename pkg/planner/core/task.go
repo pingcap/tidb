@@ -2982,5 +2982,5 @@ type IndexJoinInfo struct {
 	IdxColLens     []int
 	KeyOff2IdxOff  []int
 	Ranges         ranger.MutableRanges
-	CompareFilters *ColWithCmpFuncManager
+	CompareFilters *physicalop.ColWithCmpFuncManager
 }

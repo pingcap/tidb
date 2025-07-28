@@ -285,6 +285,9 @@ var CloneExpressionsForPlanCache func(exprs, cloned []expression.Expression) []e
 // CloneColumnsForPlanCache is used to clone columns for plan cache.
 var CloneColumnsForPlanCache func(cols, cloned []*expression.Column) []*expression.Column
 
+// CloneConstantsForPlanCache is used to clone constants for plan cache.
+var CloneConstantsForPlanCache func(constants, cloned []*expression.Constant) []*expression.Constant
+
 // ****************************************** optimize portal *********************************************
 
 // DoOptimize is to optimize a logical plan.
