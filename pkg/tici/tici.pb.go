@@ -2595,8 +2595,8 @@ const file_tici_proto_rawDesc = "" +
 	"\x11requests_in_cycle\x18\x03 \x01(\rR\x0frequestsInCycle\x12$\n" +
 	"\x0ecache_hit_rate\x18\x04 \x01(\x01R\fcacheHitRate\"\xc6\x01\n" +
 	"\x15WorkerNodeShardStatus\x12\x1b\n" +
-	"\tstart_key\x18\x01 \x01(\tR\bstartKey\x12\x17\n" +
-	"\aend_key\x18\x02 \x01(\tR\x06endKey\x12\x19\n" +
+	"\tstart_key\x18\x01 \x01(\fR\bstartKey\x12\x17\n" +
+	"\aend_key\x18\x02 \x01(\fR\x06endKey\x12\x19\n" +
 	"\btable_id\x18\x03 \x01(\x03R\atableId\x12\x19\n" +
 	"\bindex_id\x18\x04 \x01(\x03R\aindexId\x12\x19\n" +
 	"\bshard_id\x18\x05 \x01(\x04R\ashardId\x12\x14\n" +
@@ -2635,8 +2635,8 @@ const file_tici_proto_rawDesc = "" +
 	"\x16AppendFragMetaResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\x05R\x06status\"@\n" +
 	"\bKeyRange\x12\x1b\n" +
-	"\tstart_key\x18\x01 \x01(\tR\bstartKey\x12\x17\n" +
-	"\aend_key\x18\x02 \x01(\tR\x06endKey\"r\n" +
+	"\tstart_key\x18\x01 \x01(\fR\bstartKey\x12\x17\n" +
+	"\aend_key\x18\x02 \x01(\fR\x06endKey\"r\n" +
 	"\x13ShardLocalCacheInfo\x12/\n" +
 	"\x05shard\x18\x01 \x01(\v2\x19.tici.ShardManifestHeaderR\x05shard\x12*\n" +
 	"\x11local_cache_addrs\x18\x02 \x03(\tR\x0flocalCacheAddrs\"\x96\x01\n" +
@@ -2682,8 +2682,8 @@ const file_tici_proto_rawDesc = "" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"|\n" +
 	"\x13ShardManifestHeader\x12\x19\n" +
 	"\bshard_id\x18\x01 \x01(\x04R\ashardId\x12\x1b\n" +
-	"\tstart_key\x18\x02 \x01(\tR\bstartKey\x12\x17\n" +
-	"\aend_key\x18\x03 \x01(\tR\x06endKey\x12\x14\n" +
+	"\tstart_key\x18\x02 \x01(\fR\bstartKey\x12\x17\n" +
+	"\aend_key\x18\x03 \x01(\fR\x06endKey\x12\x14\n" +
 	"\x05epoch\x18\x04 \x01(\x04R\x05epoch\"\xe7\x02\n" +
 	"\x0fAddShardRequest\x12/\n" +
 	"\x05shard\x18\x01 \x01(\v2\x19.tici.ShardManifestHeaderR\x05shard\x12.\n" +
