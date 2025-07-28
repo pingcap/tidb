@@ -192,7 +192,7 @@ run_pitr_core_test() {
 
     # file corruption
     file_corruption
-    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" || restore_fail=1
@@ -219,7 +219,7 @@ run_pitr_core_test() {
 
     # file lost
     file_lost
-    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
     restore_fail=0
     if [ "$USE_TABLE_FILTER" = "true" ]; then
         run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" -f "db_to_be_dropped*.*" -f "table_to_be_dropped_or_truncated*.*" -f "key_types_test.*" -f "br_pitr.*" -f "test.*" -f "partition_to_be_dropped_or_truncated*.*" -f "partition_to_be_removed_or_altered*.*" -f "index_or_primarykey_to_be_dropped*.*" -f "indexes_to_be_dropped*.*" -f "column_s_to_be_dropped*.*" -f "column_to_be_modified*.*" || restore_fail=1
