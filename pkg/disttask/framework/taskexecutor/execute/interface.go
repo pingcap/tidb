@@ -64,49 +64,49 @@ type StepExecutor interface {
 	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
-// Keep only the last 20 data points for subtask summary
-const maxDataPoints = 20
+// Keep only the last 5 data points for subtask summary
+const maxDataPoints = 5
 
 // SubtaskSummary contains the summary of a subtask.
 // It tracks the progress in terms of rows and bytes processed.
 type SubtaskSummary struct {
-	RowCnt     atomic.Int64 `json:"row_count,omitempty"`
-	Bytes      atomic.Int64 `json:"bytes,omitempty"`
-	UpdateTime time.Time    `json:"update_time,omitempty"`
+	RowCnt atomic.Int64 `json:"row_count,omitempty"`
+	Bytes  atomic.Int64 `json:"bytes,omitempty"`
 
-	LastBytes []int64     `json:"last_bytes,omitempty"`
-	LastTimes []time.Time `json:"last_times,omitempty"`
+	// UpdateBytes and UpdateTimes are the history of bytes processed
+	// They are used to calculate a smoother speed of the subtask.
+	UpdateBytes []int64     `json:"update_bytes,omitempty"`
+	UpdateTimes []time.Time `json:"update_times,omitempty"`
 }
 
 // Update updates the summary with the current time.
 func (s *SubtaskSummary) Update() {
-	s.UpdateTime = time.Now()
-	s.LastBytes = append(s.LastBytes, s.Bytes.Load())
-	s.LastTimes = append(s.LastTimes, s.UpdateTime)
+	s.UpdateBytes = append(s.UpdateBytes, s.Bytes.Load())
+	s.UpdateTimes = append(s.UpdateTimes, time.Now())
 
-	if len(s.LastBytes) > maxDataPoints {
-		s.LastBytes = s.LastBytes[len(s.LastBytes)-maxDataPoints:]
-		s.LastTimes = s.LastTimes[len(s.LastTimes)-maxDataPoints:]
+	if len(s.UpdateBytes) > maxDataPoints {
+		s.UpdateBytes = s.UpdateBytes[len(s.UpdateBytes)-maxDataPoints:]
+		s.UpdateTimes = s.UpdateTimes[len(s.UpdateTimes)-maxDataPoints:]
 	}
 }
 
 // GetSpeedInTimeRange returns the speed in the specified time range.
 func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Duration) int64 {
-	if len(s.LastBytes) < 2 {
+	if len(s.UpdateBytes) < 2 {
 		return 0
 	}
 
 	startTime := endTime.Add(-duration)
-	if endTime.Before(s.LastTimes[0]) || startTime.After(s.LastTimes[len(s.LastTimes)-1]) {
+	if endTime.Before(s.UpdateTimes[0]) || startTime.After(s.UpdateTimes[len(s.UpdateTimes)-1]) {
 		return 0
 	}
 
 	// The number of point is small, so we can afford to iterate through all points.
 	var totalBytes float64
-	for i := 0; i < len(s.LastTimes)-1; i++ {
-		rangeStart := s.LastTimes[i]
-		rangeEnd := s.LastTimes[i+1]
-		rangeBytes := float64(s.LastBytes[i+1] - s.LastBytes[i])
+	for i := 0; i < len(s.UpdateTimes)-1; i++ {
+		rangeStart := s.UpdateTimes[i]
+		rangeEnd := s.UpdateTimes[i+1]
+		rangeBytes := float64(s.UpdateBytes[i+1] - s.UpdateBytes[i])
 		if endTime.Before(rangeStart) || startTime.After(rangeEnd) {
 			continue
 		} else if startTime.Before(rangeStart) && endTime.After(rangeEnd) {
@@ -134,8 +134,8 @@ func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Du
 func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
 	s.Bytes.Store(0)
-	s.LastBytes = s.LastBytes[:0]
-	s.LastTimes = s.LastTimes[:0]
+	s.UpdateBytes = s.UpdateBytes[:0]
+	s.UpdateTimes = s.UpdateTimes[:0]
 	s.Update()
 }
 

@@ -280,18 +280,14 @@ func GetRuntimeInfoForJob(
 		return nil, err
 	}
 
-	currentTime := time.Now().In(location)
+	currentTime := time.Now()
+	timeRange := taskexecutor.UpdateSubtaskSummaryInterval * 10
 
 	ri.Speed = 0
 	for _, s := range summaries {
 		ri.Processed += s.Bytes.Load()
 		ri.ImportRows += s.RowCnt.Load()
-
-		gap := currentTime.Sub(s.UpdateTime.In(location))
-		if s.State == proto.SubtaskStateRunning &&
-			(gap > 0 && gap < taskexecutor.UpdateSubtaskSummaryInterval) {
-			ri.Speed += s.Speed
-		}
+		ri.Speed += s.GetSpeedInTimeRange(currentTime, timeRange)
 	}
 
 	if task.Step == proto.ImportStepPostProcess {

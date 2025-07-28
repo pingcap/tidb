@@ -33,8 +33,8 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 		{
 			name: "insufficient data points",
 			setup: func(s *SubtaskSummary) {
-				s.LastBytes = []int64{100}
-				s.LastTimes = []time.Time{time.Unix(1000, 0)}
+				s.UpdateBytes = []int64{100}
+				s.UpdateTimes = []time.Time{time.Unix(1000, 0)}
 			},
 			endTime:     time.Unix(1010, 0),
 			duration:    time.Second * 10,
@@ -45,8 +45,8 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "no overlap with data range",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.LastBytes = []int64{0, 100}
-				s.LastTimes = []time.Time{
+				s.UpdateBytes = []int64{0, 100}
+				s.UpdateTimes = []time.Time{
 					baseTime,
 					baseTime.Add(1 * time.Second),
 				}
@@ -60,8 +60,8 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "zero duration",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.LastBytes = []int64{0, 100}
-				s.LastTimes = []time.Time{
+				s.UpdateBytes = []int64{0, 100}
+				s.UpdateTimes = []time.Time{
 					baseTime,
 					baseTime.Add(1 * time.Second),
 				}
@@ -75,8 +75,8 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "partial time range overlap",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.LastBytes = []int64{0, 50, 100, 150}
-				s.LastTimes = []time.Time{
+				s.UpdateBytes = []int64{0, 50, 100, 150}
+				s.UpdateTimes = []time.Time{
 					baseTime,
 					baseTime.Add(1 * time.Second),
 					baseTime.Add(2 * time.Second),
@@ -92,8 +92,8 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "multiple overlapping",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.LastBytes = []int64{0, 60, 120, 180, 240}
-				s.LastTimes = []time.Time{
+				s.UpdateBytes = []int64{0, 60, 120, 180, 240}
+				s.UpdateTimes = []time.Time{
 					baseTime,
 					baseTime.Add(1 * time.Second),
 					baseTime.Add(2 * time.Second),
@@ -110,8 +110,8 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "whole range",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1001, 0)
-				s.LastBytes = []int64{0, 60, 120, 180, 240}
-				s.LastTimes = []time.Time{
+				s.UpdateBytes = []int64{0, 60, 120, 180, 240}
+				s.UpdateTimes = []time.Time{
 					baseTime,
 					baseTime.Add(1 * time.Second),
 					baseTime.Add(2 * time.Second),

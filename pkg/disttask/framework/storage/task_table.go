@@ -626,7 +626,7 @@ func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select state, summary from mysql.tidb_background_subtask
+		`select summary from mysql.tidb_background_subtask
 		where task_key = %? and step = %?`,
 		taskID, step)
 	if err != nil {
@@ -638,10 +638,9 @@ func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
 	summaries := make([]*execute.SubtaskSummary, 0, len(rs))
 	for _, r := range rs {
 		summary := &execute.SubtaskSummary{}
-		if err := json.Unmarshal(hack.Slice(r.GetJSON(1).String()), summary); err != nil {
+		if err := json.Unmarshal(hack.Slice(r.GetJSON(0).String()), summary); err != nil {
 			return nil, errors.Trace(err)
 		}
-		summary.State = proto.SubtaskState(r.GetString(0))
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
