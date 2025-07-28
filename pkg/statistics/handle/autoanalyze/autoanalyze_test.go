@@ -75,6 +75,10 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	// Try to set tidb_enable_auto_analyze_priority_queue to OFF, it should return error.
+	_, err = tk.Exec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=OFF")
+	require.Error(t, err)
+	require.Equal(t, "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze.", err.Error())
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {
