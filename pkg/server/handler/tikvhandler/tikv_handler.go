@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -70,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/constants"
 	pd "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
@@ -2165,4 +2167,45 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		handler.WriteError(w, errors.New("method not allowed"))
 	}
+}
+
+type GCHandler struct {
+	store kv.Storage
+}
+
+func NewGCHandler(store kv.Storage) *GCHandler {
+	return &GCHandler{
+		store: store,
+	}
+}
+
+func (gc *GCHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	pdStoreBackend, ok := gc.store.(kv.StorageWithPD)
+	if !ok {
+		handler.WriteError(w, errors.New("GC API only support storage with PD"))
+		return
+	}
+
+	pdCli := pdStoreBackend.GetPDClient()
+	keyspaceName := gc.store.GetKeyspace()
+
+	var keyspaceID uint32
+	if !kerneltype.IsNextGen() {
+		keyspaceID = constants.NullKeyspaceID
+	} else {
+		ksMeta, err := pdCli.LoadKeyspace(context.Background(), keyspaceName)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		keyspaceID = ksMeta.Id
+	}
+
+	gcCli := pdCli.GetGCStatesClient(keyspaceID)
+	state, err := gcCli.GetGCState(context.Background())
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	handler.WriteData(w, state)
 }
