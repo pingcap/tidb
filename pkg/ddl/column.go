@@ -938,6 +938,9 @@ func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, chang
 	intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
 	switch oldCol.State {
 	case model.StatePublic:
+		if tblInfo.TTLInfo != nil {
+			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, newName)
+		}
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
 		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
 		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, newName)

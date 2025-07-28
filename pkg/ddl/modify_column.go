@@ -560,10 +560,6 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
-		if tblInfo.TTLInfo != nil {
-			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, changingCol.Name)
-		}
-
 		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
 		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
 		if err != nil {
