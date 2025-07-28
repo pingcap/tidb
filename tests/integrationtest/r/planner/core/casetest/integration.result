@@ -116,12 +116,12 @@ HashAgg	2.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
   │ └─Limit	1.00	root		offset:0, count:1
   │   └─TableReader	1.00	root		data:Limit
   │     └─Limit	1.00	cop[tikv]		offset:0, count:1
-  │       └─TableFullScan	1.00	cop[tikv]	table:t	keep order:true, desc, stats:pseudo
+  │       └─TableFullScan	100.99	cop[tikv]	table:t	keep order:true, desc, stats:pseudo
   └─StreamAgg	1.00	root		funcs:min(planner__core__casetest__integration.t.a)->Column#4
     └─Limit	1.00	root		offset:0, count:1
       └─TableReader	1.00	root		data:Limit
         └─Limit	1.00	cop[tikv]		offset:0, count:1
-          └─TableFullScan	1.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+          └─TableFullScan	100.99	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain format = 'brief' select min(a), max(a) from cluster_index_t;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
@@ -129,12 +129,12 @@ HashJoin	1.00	root		CARTESIAN inner join
 │ └─Limit	1.00	root		offset:0, count:1
 │   └─TableReader	1.00	root		data:Limit
 │     └─Limit	1.00	cop[tikv]		offset:0, count:1
-│       └─TableFullScan	1.00	cop[tikv]	table:cluster_index_t	keep order:true, desc, stats:pseudo
+│       └─TableFullScan	100.99	cop[tikv]	table:cluster_index_t	keep order:true, desc, stats:pseudo
 └─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.a)->Column#4
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─TableFullScan	1.00	cop[tikv]	table:cluster_index_t	keep order:true, stats:pseudo
+        └─TableFullScan	100.99	cop[tikv]	table:cluster_index_t	keep order:true, stats:pseudo
 explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
@@ -142,12 +142,12 @@ HashJoin	1.00	root		CARTESIAN inner join
 │ └─Limit	1.00	root		offset:0, count:1
 │   └─TableReader	1.00	root		data:Limit
 │     └─Limit	1.00	cop[tikv]		offset:0, count:1
-│       └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, desc, stats:pseudo
+│       └─TableRangeScan	1.09	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, desc, stats:pseudo
 └─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#4
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, stats:pseudo
+        └─TableRangeScan	1.09	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, stats:pseudo
 explain format = 'brief' select min(a), max(a) from cluster_index_t where b = 1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5
@@ -1838,3 +1838,13 @@ Update	N/A	root		N/A
     └─TableReader(Probe)	0.00	root		data:Selection
       └─Selection	0.00	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))
         └─TableRangeScan	0.00	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo
+CREATE TABLE test_62564(c0 DECIMAL);
+INSERT INTO test_62564 VALUES (0);
+SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
+c0
+0
+SET @b = NULL;
+PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE ? END ) AS DATE)';
+EXECUTE prepare_query USING @b;
+c0
+0

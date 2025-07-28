@@ -47,7 +47,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+    └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
@@ -149,31 +149,31 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+    └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' select /*+ order_index(t, primary) */ * from t use index(primary) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+    └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' select /*+ order_index(t, primary) force_index(t, primary) */ * from t where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+    └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' select /*+ order_index(t, primary) */ * from t force index(primary) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+    └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' select /*+ order_index(t, primary) ignore_index(t, primary) */ * from t where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+    └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' select /*+ no_order_index(t, primary) use_index(t, primary) */ * from t where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
 TopN	1.00	root		planner__core__casetest__hint__hint.t.a, offset:0, count:1
@@ -251,7 +251,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+    └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v;
 id	estRows	task	access object	operator info
 TopN	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
@@ -293,7 +293,7 @@ CTE_0	0.80	root		Non-Recursive CTE
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─TableRangeScan	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
+        └─TableRangeScan	363.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='brief' WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
 id	estRows	task	access object	operator info
 HashAgg	2.00	root		group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9
