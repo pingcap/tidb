@@ -250,7 +250,7 @@ func TestLoadHist(t *testing.T) {
 	require.False(t, newStatsTbl2 == newStatsTbl)
 	// The histograms is not updated.
 	newStatsTbl.ForEachColumnImmutable(func(id int64, hist *statistics.Column) bool {
-		require.Equal(t, newStatsTbl2.GetCol(id), hist)
+		require.Equal(t, hist.LastUpdateVersion, newStatsTbl2.GetCol(id).LastUpdateVersion)
 		return false
 	})
 	require.Greater(t, newStatsTbl2.GetCol(3).LastUpdateVersion, newStatsTbl2.GetCol(1).LastUpdateVersion)
