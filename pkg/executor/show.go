@@ -120,7 +120,6 @@ type ShowExec struct {
 
 	ImportJobID       *int64
 	DistributionJobID *int64
-	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
 	ShowGroupKey      string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
 
