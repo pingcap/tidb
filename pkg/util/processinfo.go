@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -225,7 +226,7 @@ type SessionManager interface {
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
-	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
+	CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL)
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
 	// GetConAttrs gets the connection attributes

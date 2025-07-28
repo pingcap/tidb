@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -192,10 +193,10 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 }
 
 // CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
-func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+func (msm *MockSessionManager) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	msm.mu.Lock()
 	for _, se := range msm.Conn {
-		session.RemoveLockDDLJobs(se, job2ver, job2ids, false)
+		session.RemoveLockDDLJobs(se, jobs, false)
 	}
 	msm.mu.Unlock()
 }

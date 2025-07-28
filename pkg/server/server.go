@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1129,7 +1130,7 @@ func setSystemTimeZoneVariable() {
 }
 
 // CheckOldRunningTxn implements SessionManager interface.
-func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 
@@ -1140,7 +1141,7 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
+			session.RemoveLockDDLJobs(client.ctx.Session, jobs, printLog)
 		}
 	}
 }
