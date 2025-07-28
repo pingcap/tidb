@@ -1040,7 +1040,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 	}
 	if len(groupByColIdxs) > 0 && matchResult == property.SortPropSatisfiedUnconditionally {
-		groups := groupRangesByCols(path.Ranges, groupByColIdxs)
+		groups := GroupRangesByCols(path.Ranges, groupByColIdxs)
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
@@ -1050,7 +1050,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	return matchResult
 }
 
-func groupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) map[string][]*ranger.Range {
+func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) map[string][]*ranger.Range {
 	groups := make(map[string][]*ranger.Range)
 	for _, ran := range ranges {
 		var datums []types.Datum

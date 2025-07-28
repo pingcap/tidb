@@ -303,9 +303,14 @@ func (e *IndexReaderExecutor) buildKeyRanges(dctx *distsqlctx.DistSQLContext, ra
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		is := e.plans[0].(*plannercore.PhysicalIndexScan)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, is, e.idxCols, e.colLens)
 		if err != nil {
 			return err
+		}
+		// Rebuild GroupedRanges if it was originally set
+		if len(is.GroupByColIdxs) > 0 {
+			e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 		}
 	}
 
@@ -582,9 +587,14 @@ func (e *IndexLookUpExecutor) setDummy() {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		is := e.idxPlans[0].(*plannercore.PhysicalIndexScan)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, is, e.idxCols, e.colLens)
 		if err != nil {
 			return err
+		}
+		// Rebuild GroupedRanges if it was originally set
+		if len(is.GroupByColIdxs) > 0 {
+			e.GroupedRanges = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 		}
 	}
 
