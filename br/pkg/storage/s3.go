@@ -248,7 +248,7 @@ func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
 		return false
 	}
 
-	return opts.Provider == "aws" || opts.Endpoint == "" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
+	return opts.Provider == "aws" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
 // defineS3Flags defines the command line flags for S3BackendOptions.
