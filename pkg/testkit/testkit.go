@@ -169,25 +169,22 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 		}
 	}()
 	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
-	if !strings.Contains(sql, "information_schema") ||
-		strings.Contains(sql, "trace") ||
-		strings.Contains(sql, "statements_summary") ||
-		strings.Contains(sql, "slow_query") ||
-		strings.Contains(sql, "cluster_config") ||
-		strings.Contains(sql, "CLUSTER_") ||
-		strings.Contains(sql, "STATEMENTS_SUMMARY_EVICTED") ||
-		strings.Contains(sql, "TIDB_TRX") {
+	sqlLower := strings.ToLower(sql)
+	if !strings.Contains(sqlLower, "information_schema") ||
+		strings.Contains(sqlLower, "trace") ||
+		strings.Contains(sqlLower, "statements_summary") ||
+		strings.Contains(sqlLower, "slow_query") ||
+		strings.Contains(sqlLower, "cluster_config") ||
+		strings.Contains(sqlLower, "cluster_") ||
+		strings.Contains(sqlLower, "statements_summary_evicted") ||
+		strings.Contains(sqlLower, "tidb_trx") {
 		return rs1
 	}
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(tk.t, err)
 	rs2 := tk.MustQueryWithContext(context.Background(), sql, args...)
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(tk.t, err)
 	rs1Row := make([][]string, 0, len(rs1.rows))
 	for _, row := range rs1.rows {
 		rs1SubRow := make([]string, 0, len(row))
