@@ -5885,13 +5885,14 @@ CancelImportStmt:
 			JobID: $4.(int64),
 		}
 	}
+
 AlterImportStmt:
 	"ALTER" "IMPORT" "JOB" Int64Num AlterJobOptionList
 	{
-			$$ = &ast.AlterImportJobStmt{
-					JobID: $4.(int64),
-					AlterJobOptions: $5.([]*ast.AlterJobOption),
-			}
+		$$ = &ast.AlterImportJobStmt{
+			JobID:           $4.(int64),
+			AlterJobOptions: $5.([]*ast.AlterJobOption),
+		}
 	}
 
 AlterJobOptionList:
@@ -12127,7 +12128,7 @@ Statement:
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
 |	CancelImportStmt
-|   AlterImportStmt
+|	AlterImportStmt
 
 TraceableStmt:
 	DeleteFromStmt

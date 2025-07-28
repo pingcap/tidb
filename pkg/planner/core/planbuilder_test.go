@@ -756,4 +756,18 @@ func TestBuildAlterImportJobPlan(t *testing.T) {
 	cons, ok := plan.Options[0].Value.(*expression.Constant)
 	require.True(t, ok)
 	require.Equal(t, int64(8), cons.Value.GetInt64())
+
+	// Negative case: invalid syntax
+	stmt, err = parser.ParseOneStmt("alter import job thread = 8", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.Error(t, err)
+	require.Nil(t, p)
+
+	// Negative case: wrong option type
+	stmt, err = parser.ParseOneStmt("alter import job 1 thread = 'abc'", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.Error(t, err)
+	require.Nil(t, p)
 }

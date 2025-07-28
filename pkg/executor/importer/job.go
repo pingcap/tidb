@@ -379,25 +379,23 @@ func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err 
 }
 
 // UpdateJobParameters updates job parameters for ALTER IMPORT JOB.
-func UpdateJobParameters(ctx context.Context, exec sqlexec.SQLExecutor, jobID int64, opts []*core.AlterImportJobOpt) error {
+func UpdateJobParameters(
+	ctx context.Context,
+	exec sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+	hasSuperPriv bool,
+	opts []*core.AlterImportJobOpt,
+) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+
 	// fetch current parameters
-	rs, err := exec.ExecuteInternal(ctx, `SELECT parameters FROM mysql.tidb_import_jobs WHERE id = %?`, jobID)
+	jobInfo, err := GetJob(ctx, exec, jobID, user, hasSuperPriv)
 	if err != nil {
 		return err
 	}
-	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-	if err != nil {
-		return err
-	}
-	if len(rows) == 0 {
-		return exeerrors.ErrLoadDataJobNotFound.GenWithStackByArgs(jobID)
-	}
-	paramStr := rows[0].GetString(0)
-	params := ImportParameters{}
-	if err = json.Unmarshal([]byte(paramStr), &params); err != nil {
-		return err
-	}
+	params := jobInfo.Parameters
+
 	for _, opt := range opts {
 		if opt.Value == nil {
 			continue

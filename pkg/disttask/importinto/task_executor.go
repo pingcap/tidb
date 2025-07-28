@@ -305,35 +305,22 @@ func (s *importStepExecutor) ResourceModified(_ context.Context, newResource *pr
 		s.logger.Info("ResourceModified called but no subtask running")
 		return errors.Errorf("no subtask running")
 	}
+
+	currSize := currOp.GetWorkerPoolSize()
 	target := int32(newResource.CPU.Capacity())
-	if target != currOp.GetWorkerPoolSize() {
+	if target != currSize {
 		s.logger.Info("ResourceModified: tuning worker pool size",
 			zap.String("step", "importStepExecutor"),
-			zap.Int32("old", currOp.GetWorkerPoolSize()),
+			zap.Int32("old", currSize),
 			zap.Int32("new", target))
 		currOp.TuneWorkerPoolSize(target, true)
 	}
 
-	// update the memory size limit and block size.
-	oldDataKVMemSizePerCon := s.dataKVMemSizePerCon
-	oldPerIndexKVMemSizePerCon := s.perIndexKVMemSizePerCon
-	oldDataBlockSize := s.dataBlockSize
-	oldIndexBlockSize := s.indexBlockSize
+	s.logger.Info("ResourceModified: finished tuning worker pool size",
+		zap.String("step", "importStepExecutor"),
+		zap.Int32("old", currSize),
+		zap.Int32("new", currOp.GetWorkerPoolSize()))
 
-	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(newResource, s.tableImporter.Plan)
-	s.dataBlockSize = getAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
-	s.indexBlockSize = getAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
-
-	s.logger.Info("ResourceModified: updated memory and block size",
-		zap.Uint64("old-data-kv-mem-size", oldDataKVMemSizePerCon),
-		zap.Uint64("new-data-kv-mem-size", s.dataKVMemSizePerCon),
-		zap.Uint64("old-index-kv-mem-size", oldPerIndexKVMemSizePerCon),
-		zap.Uint64("new-index-kv-mem-size", s.perIndexKVMemSizePerCon),
-		zap.Int("old-data-block-size", oldDataBlockSize),
-		zap.Int("new-data-block-size", s.dataBlockSize),
-		zap.Int("old-index-block-size", oldIndexBlockSize),
-		zap.Int("new-index-block-size", s.indexBlockSize),
-	)
 	return nil
 }
 
@@ -483,25 +470,22 @@ func (m *mergeSortStepExecutor) ResourceModified(_ context.Context, newResource 
 		m.logger.Info("ResourceModified called but no subtask running")
 		return errors.Errorf("no subtask running")
 	}
+
+	currSize := currOp.GetWorkerPoolSize()
 	target := int32(newResource.CPU.Capacity())
-	if target != currOp.GetWorkerPoolSize() {
+	if target != currSize {
 		m.logger.Info("ResourceModified: tuning worker pool size",
 			zap.String("step", "mergeSortStepExecutor"),
 			zap.Int32("old", currOp.GetWorkerPoolSize()),
 			zap.Int32("new", target))
 		currOp.TuneWorkerPoolSize(target, true)
 	}
-	oldDataKVPartSize := m.dataKVPartSize
-	oldIndexKVPartSize := m.indexKVPartSize
-	dataKVMem, indexKVMem := getWriterMemorySizeLimit(newResource, &m.taskMeta.Plan)
-	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMem*uint64(external.MaxMergingFilesPerThread)/10000))
-	m.indexKVPartSize = max(external.MinUploadPartSize, int64(indexKVMem*uint64(external.MaxMergingFilesPerThread)/10000))
-	m.logger.Info("ResourceModified: updated part sizes",
-		zap.Int64("old-data-kv-part-size", oldDataKVPartSize),
-		zap.Int64("new-data-kv-part-size", m.dataKVPartSize),
-		zap.Int64("old-index-kv-part-size", oldIndexKVPartSize),
-		zap.Int64("new-index-kv-part-size", m.indexKVPartSize),
-	)
+
+	m.logger.Info("ResourceModified: finished tuning worker pool size",
+		zap.String("step", "mergeSortStepExecutor"),
+		zap.Int32("old", currSize),
+		zap.Int32("new", currOp.GetWorkerPoolSize()))
+
 	return nil
 }
 
@@ -667,10 +651,10 @@ func (e *writeAndIngestStepExecutor) TaskMetaModified(_ context.Context, newMeta
 	if newTaskMeta.Plan.MaxWriteSpeed != e.taskMeta.Plan.MaxWriteSpeed {
 		oldSpeed := e.taskMeta.Plan.MaxWriteSpeed
 		newSpeed := newTaskMeta.Plan.MaxWriteSpeed
-		e.logger.Info("TaskMetaModified: updating MaxWriteSpeed",
+		e.logger.Info("TaskMetaModified: updating max_write_speed",
 			zap.String("step", "writeAndIngestStepExecutor"),
-			zap.Int64("old-max-write-speed", int64(oldSpeed)),
-			zap.Int64("new-max-write-speed", int64(newSpeed)),
+			zap.Int64("old", int64(oldSpeed)),
+			zap.Int64("new", int64(newSpeed)),
 		)
 		e.tableImporter.Backend().UpdateWriteSpeedLimit(int(newSpeed))
 		e.taskMeta.Plan.MaxWriteSpeed = newSpeed
@@ -692,8 +676,7 @@ func (e *writeAndIngestStepExecutor) ResourceModified(ctx context.Context, newRe
 	}
 	e.logger.Info("ResourceModified: updated engine resource",
 		zap.String("step", "writeAndIngestStepExecutor"),
-		zap.Int("new-concurrency", newConcurrency),
-		zap.Int64("new-mem", newMem),
+		zap.Any("newResource", newResource),
 	)
 	e.tableImporter.Backend().SetConcurrency(newConcurrency)
 	return nil

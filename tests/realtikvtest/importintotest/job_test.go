@@ -666,7 +666,9 @@ func (s *mockGCSSuite) TestAlterImportJob() {
 	s.server.CreateObject(fakestorage.Object{ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-alter-job", Name: "t.csv"}, Content: []byte("1")})
 
 	syncCh := make(chan struct{})
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted", func() { close(syncCh) })
+	var once sync.Once
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted",
+		func() { once.Do(func() { close(syncCh) }) })
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 
 	result := s.tk.MustQuery(fmt.Sprintf(`import into t FROM 'gs://test-alter-job/t.csv?endpoint=%s' with detached, thread=1`, gcsEndpoint)).Rows()
@@ -694,5 +696,4 @@ func (s *mockGCSSuite) TestAlterImportJob() {
 		}
 		return meta.Plan.ThreadCnt == 8 && task.State == proto.TaskStateSucceed
 	}, maxWaitTime, time.Second)
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
 }

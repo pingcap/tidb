@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -66,10 +67,17 @@ func (e *AlterImportJobExec) Open(ctx context.Context) error {
 		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("ALTER")
 	}
 
-	taskID, err := taskManager.GetImportTaskIDByJobID(ctx, e.jobID)
+	taskKey := fmt.Sprintf("%s/%d", proto.ImportInto, e.jobID)
+	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return err
 	}
+	if task == nil {
+		return errors.Errorf("no import into task found for job id %d", e.jobID)
+
+	}
+	taskID := task.ID
+
 	currTask, err := taskManager.GetTaskByID(ctx, taskID)
 	if err != nil {
 		return err
@@ -86,12 +94,7 @@ func (e *AlterImportJobExec) Open(ctx context.Context) error {
 	for _, opt := range e.AlterOpts {
 		opts = append(opts, &core.AlterImportJobOpt{Name: opt.Name, Value: opt.Value})
 	}
-	if err := taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		exec := se.GetSQLExecutor()
-		return importer.UpdateJobParameters(ctx, exec, e.jobID, opts)
-	}); err != nil {
-		return err
-	}
+
 	mods := make([]proto.Modification, 0, len(opts))
 	for _, opt := range opts {
 		switch opt.Name {
@@ -114,8 +117,24 @@ func (e *AlterImportJobExec) Open(ctx context.Context) error {
 			mods = append(mods, proto.Modification{Type: proto.ModifyMaxWriteSpeed, To: val})
 		}
 	}
-	return taskManager.ModifyTaskByID(ctx, jobInfo.ID, &proto.ModifyParam{
+
+	if err := taskManager.ModifyTaskByID(ctx, jobInfo.ID, &proto.ModifyParam{
 		PrevState:     currTask.State,
 		Modifications: mods,
+	}); err != nil {
+		return err
+	}
+
+	// Only update job parameters if task modification succeeded.
+	return taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		exec := se.GetSQLExecutor()
+		return importer.UpdateJobParameters(
+			ctx,
+			exec,
+			e.jobID,
+			e.Ctx().GetSessionVars().User.String(),
+			hasSuperPriv,
+			opts,
+		)
 	})
 }

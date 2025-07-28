@@ -25,7 +25,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -126,7 +125,7 @@ func TestImportStepExecutorResourceModified(t *testing.T) {
 	}
 	e := &importStepExecutor{taskID: 1, taskMeta: &TaskMeta{Plan: importer.Plan{ThreadCnt: 1, DesiredTableInfo: &model.TableInfo{}}}, tableImporter: tblImporter, logger: zap.NewNop()}
 	newRes := &proto.StepResource{CPU: proto.NewAllocatable(2), Mem: proto.NewAllocatable(2 * units.GiB)}
-	require.Error(t, e.ResourceModified(context.Background(), newRes))
+	require.ErrorContains(t, e.ResourceModified(context.Background(), newRes), "no subtask running")
 
 	op := newDummyEncodeOp()
 	e.op.Store(op)
@@ -135,16 +134,8 @@ func TestImportStepExecutorResourceModified(t *testing.T) {
 		op.AsyncOperator.Close()
 	})
 
-	dataMem, indexMem := getWriterMemorySizeLimit(newRes, e.tableImporter.Plan)
-	dataBlk := getAdjustedBlockSize(dataMem, tidbconfig.MaxTxnEntrySizeLimit)
-	indexBlk := getAdjustedBlockSize(indexMem, external.DefaultBlockSize)
-
 	require.NoError(t, e.ResourceModified(context.Background(), newRes))
 	require.Equal(t, int32(2), op.GetWorkerPoolSize())
-	require.Equal(t, dataMem, e.dataKVMemSizePerCon)
-	require.Equal(t, indexMem, e.perIndexKVMemSizePerCon)
-	require.Equal(t, dataBlk, e.dataBlockSize)
-	require.Equal(t, indexBlk, e.indexBlockSize)
 }
 
 func TestImportStepExecutorTaskMetaModified(t *testing.T) {
@@ -181,7 +172,7 @@ func (*mockExternalStorage) Close()                                             
 func TestMergeSortStepExecutorResourceModified(t *testing.T) {
 	m := &mergeSortStepExecutor{taskID: 1, taskMeta: &TaskMeta{Plan: importer.Plan{ThreadCnt: 1, DesiredTableInfo: &model.TableInfo{}}}, logger: zap.NewNop()}
 	res := &proto.StepResource{CPU: proto.NewAllocatable(4), Mem: proto.NewAllocatable(4 * units.GiB)}
-	require.Error(t, m.ResourceModified(context.Background(), res))
+	require.ErrorContains(t, m.ResourceModified(context.Background(), res), "no subtask running")
 
 	opCtx, _ := operator.NewContext(context.Background())
 	mockStore := &mockExternalStorage{}
@@ -195,14 +186,8 @@ func TestMergeSortStepExecutorResourceModified(t *testing.T) {
 		mergeOp.AsyncOperator.Close()
 	})
 
-	dataMem, indexMem := getWriterMemorySizeLimit(res, &m.taskMeta.Plan)
-	dataPart := max(external.MinUploadPartSize, int64(dataMem*uint64(external.MaxMergingFilesPerThread)/10000))
-	indexPart := max(external.MinUploadPartSize, int64(indexMem*uint64(external.MaxMergingFilesPerThread)/10000))
-
 	require.NoError(t, m.ResourceModified(context.Background(), res))
 	require.Equal(t, int32(4), mergeOp.GetWorkerPoolSize())
-	require.Equal(t, dataPart, m.dataKVPartSize)
-	require.Equal(t, indexPart, m.indexKVPartSize)
 }
 
 func TestMergeSortStepExecutorTaskMetaModified(t *testing.T) {
