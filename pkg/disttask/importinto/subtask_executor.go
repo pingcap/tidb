@@ -187,7 +187,8 @@ func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManage
 	if err != nil {
 		return err
 	}
-	if err := taskManager.ModifyTaskByID(ctx, taskMeta.JobID, &proto.ModifyParam{PrevState: task.State}); err != nil {
+	task.ModifyParam = proto.ModifyParam{PrevState: task.State}
+	if err := taskManager.ModifyTaskByID(ctx, taskMeta.JobID, &task.ModifyParam); err != nil {
 		return err
 	}
 	taskMeta.ResetTableMode = true
