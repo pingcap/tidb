@@ -553,6 +553,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		job.SchemaState = model.StatePublic
 	case model.StatePublic:
+		oldIdxIDs := buildRelatedIndexIDs(tblInfo, oldCol.ID)
 		done := stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol, colName, pos)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if !done || err != nil {
@@ -572,7 +573,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		rmIdxs := append(buildRelatedIndexIDs(tblInfo, oldCol.ID), args.RedundantIdxs...)
+		rmIdxs := append(oldIdxIDs, args.RedundantIdxs...)
 		args.IndexIDs = rmIdxs
 		args.PartitionIDs = getPartitionIDs(tblInfo)
 		job.FillFinishedArgs(args)

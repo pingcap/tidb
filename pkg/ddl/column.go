@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/bits"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -403,6 +404,21 @@ func swapColumnInfo(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnI
 	tblInfo.MoveColumnInfo(changingCol.Offset, oldOffset)
 }
 
+func swapIndexInfoSlices(tblInfo *model.TableInfo, oldIdxInfos, changingIdxInfos []*model.IndexInfo) {
+	for i, oldIdx := range oldIdxInfos {
+		allRemoved := true
+		for _, ic := range oldIdx.Columns {
+			if !isColumnToBeRemoved(ic.Name.O) {
+				allRemoved = false
+				break
+			}
+		}
+		if allRemoved {
+			swapIndexInfos(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
+		}
+	}
+}
+
 func swapIndexInfos(tblInfo *model.TableInfo, idxIDA, idxIDB int64) {
 	offsetA := 0
 	offsetB := 0
@@ -424,6 +440,15 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 			indexInfos = append(indexInfos, idx)
 		}
 	}
+	slices.SortFunc(indexInfos, func(idxA, idxB *model.IndexInfo) int {
+		if idxA.ID < idxB.ID {
+			return -1
+		}
+		if idxA.ID > idxB.ID {
+			return 1
+		}
+		return 0
+	})
 	return indexInfos
 }
 
@@ -922,9 +947,7 @@ func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, chang
 		destOffset, _ := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
 		tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 		// Move the new indexes to correct offsets.
-		for i := range oldIdxInfos {
-			swapIndexInfos(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
-		}
+		swapIndexInfoSlices(tblInfo, oldIdxInfos, changingIdxInfos)
 		return false
 	case model.StateWriteOnly:
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
@@ -944,8 +967,9 @@ func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, chang
 	renameColumnTo(oldCol, oldIdxs, removingName)
 	renameColumnTo(changingCol, changingIdxs, publicName)
 	for i := range oldIdxs {
-		publicName := oldIdxs[i].Name
-		removingName := ast.NewCIStr(genRemovingIndexName(oldIdxs[i].Name.O))
+		oldIdxName := oldIdxs[i].Name.O
+		publicName := ast.NewCIStr(getRemovingIndexOriginName(oldIdxName))
+		removingName := ast.NewCIStr(genRemovingIndexName(oldIdxName))
 
 		changingIdxs[i].Name = publicName
 		oldIdxs[i].Name = removingName
@@ -1372,6 +1396,10 @@ func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnI
 	return fmt.Sprintf("%s_%d", newColumnNamePrefix, suffix)
 }
 
+func isColumnToBeRemoved(name string) bool {
+	return strings.HasPrefix(name, removingColumnPrefix)
+}
+
 func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
 	suffix := 0
 	newIndexNamePrefix := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
@@ -1421,13 +1449,12 @@ func genRemovingColumnName(colName string) string {
 }
 
 func genRemovingIndexName(idxName string) string {
+	if strings.HasPrefix(idxName, removingIndexPrefix) {
+		return idxName
+	}
 	return fmt.Sprintf("%s%s", removingIndexPrefix, idxName)
 }
 
-func getRemovingColumnOriginName(removingCol *model.ColumnInfo) string {
-	return strings.TrimPrefix(removingCol.Name.O, removingColumnPrefix)
-}
-
-func getRemovingIndexOriginName(removingIdx *model.IndexInfo) string {
-	return strings.TrimPrefix(removingIdx.Name.O, removingIndexPrefix)
+func getRemovingIndexOriginName(idxName string) string {
+	return strings.TrimPrefix(idxName, removingIndexPrefix)
 }
