@@ -236,7 +236,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3, rawURL string) error {
 
 func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
 	// User has explicitly specified ForcePathStyle, use specified value
-	if strings.Contains(rawURL, "force-path-style") || strings.Contains(rawURL, "force_path_style") {
+	if rawURL == "" || strings.Contains(rawURL, "force-path-style") || strings.Contains(rawURL, "force_path_style") {
 		return false
 	}
 

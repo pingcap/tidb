@@ -123,7 +123,7 @@ func TestS3BackendOptionsAWSCLIPrecedence(t *testing.T) {
 
 	// Test Apply method respects precedence
 	s3Backend := &backuppb.S3{}
-	err = options.Apply(s3Backend)
+	err = options.Apply(s3Backend, "")
 	require.NoError(t, err)
 
 	// Profile should always be set
@@ -156,7 +156,7 @@ func TestS3BackendOptionsNoProfile(t *testing.T) {
 
 	// Test Apply method without profile
 	s3Backend := &backuppb.S3{}
-	err = options.Apply(s3Backend)
+	err = options.Apply(s3Backend, "")
 	require.NoError(t, err)
 
 	// All flags should be applied normally when no profile is used
@@ -180,7 +180,7 @@ func TestS3BackendOptionsProfileOnly(t *testing.T) {
 
 	// Test Apply method
 	s3Backend := &backuppb.S3{}
-	err = options.Apply(s3Backend)
+	err = options.Apply(s3Backend, "")
 	require.NoError(t, err)
 
 	// Only profile should be set, everything else empty (comes from profile)
@@ -209,7 +209,7 @@ func TestS3BackendOptionsPartialOverride(t *testing.T) {
 
 	// Test Apply method
 	s3Backend := &backuppb.S3{}
-	err = options.Apply(s3Backend)
+	err = options.Apply(s3Backend, "")
 	require.NoError(t, err)
 
 	require.Equal(t, "staging", s3Backend.Profile)
@@ -226,7 +226,7 @@ func TestS3BackendOptionsProfileCredentials(t *testing.T) {
 	}
 
 	s3Backend := &backuppb.S3{}
-	err := options.Apply(s3Backend)
+	err := options.Apply(s3Backend, "")
 	require.NoError(t, err, "Should not require credentials when using profile")
 
 	require.Equal(t, "production", s3Backend.Profile)
@@ -244,7 +244,7 @@ func TestS3BackendOptionsProfileWithExplicitCredentials(t *testing.T) {
 	}
 
 	s3Backend := &backuppb.S3{}
-	err := options.Apply(s3Backend)
+	err := options.Apply(s3Backend, "")
 	require.NoError(t, err)
 
 	require.Equal(t, "development", s3Backend.Profile)
@@ -262,7 +262,7 @@ func TestS3BackendOptionsNoProfileCredentialValidation(t *testing.T) {
 		Region:          "us-east-1",
 	}
 	s3Backend1 := &backuppb.S3{}
-	err := options1.Apply(s3Backend1)
+	err := options1.Apply(s3Backend1, "")
 	require.NoError(t, err, "Should accept both keys when no profile")
 
 	// Case 2: Only access key - should fail
@@ -272,7 +272,7 @@ func TestS3BackendOptionsNoProfileCredentialValidation(t *testing.T) {
 		Region: "us-east-1",
 	}
 	s3Backend2 := &backuppb.S3{}
-	err = options2.Apply(s3Backend2)
+	err = options2.Apply(s3Backend2, "")
 	require.Error(t, err, "Should require secret key when access key is provided")
 	require.Contains(t, err.Error(), "secret_access_key not found")
 
@@ -283,7 +283,7 @@ func TestS3BackendOptionsNoProfileCredentialValidation(t *testing.T) {
 		Region: "us-east-1",
 	}
 	s3Backend3 := &backuppb.S3{}
-	err = options3.Apply(s3Backend3)
+	err = options3.Apply(s3Backend3, "")
 	require.Error(t, err, "Should require access key when secret key is provided")
 	require.Contains(t, err.Error(), "access_key not found")
 
@@ -292,7 +292,7 @@ func TestS3BackendOptionsNoProfileCredentialValidation(t *testing.T) {
 		Region: "us-east-1",
 	}
 	s3Backend4 := &backuppb.S3{}
-	err = options4.Apply(s3Backend4)
+	err = options4.Apply(s3Backend4, "")
 	require.NoError(t, err, "Should accept no credentials when no profile (IAM role, etc.)")
 }
 
@@ -306,7 +306,7 @@ func TestS3BackendOptionsProfilePartialCredentials(t *testing.T) {
 		// No SecretAccessKey - should be OK with profile
 	}
 	s3Backend1 := &backuppb.S3{}
-	err := options1.Apply(s3Backend1)
+	err := options1.Apply(s3Backend1, "")
 	require.NoError(t, err, "Should allow partial credentials with profile")
 
 	// Case 2: Profile with only secret key (no access) - should be allowed
@@ -316,7 +316,7 @@ func TestS3BackendOptionsProfilePartialCredentials(t *testing.T) {
 		// No AccessKey - should be OK with profile
 	}
 	s3Backend2 := &backuppb.S3{}
-	err = options2.Apply(s3Backend2)
+	err = options2.Apply(s3Backend2, "")
 	require.NoError(t, err, "Should allow partial credentials with profile")
 }
 
@@ -337,7 +337,7 @@ func TestS3BackendOptionsFlagParsingWithProfile(t *testing.T) {
 
 	// Verify credentials are not required when profile is set
 	s3Backend := &backuppb.S3{}
-	err = options.Apply(s3Backend)
+	err = options.Apply(s3Backend, "")
 	require.NoError(t, err, "Should not require explicit credentials when using profile")
 
 	require.Equal(t, "production", s3Backend.Profile)
@@ -358,7 +358,7 @@ func TestS3ProfileAvoidAutoNewCred(t *testing.T) {
 	}
 
 	s3Backend := &backuppb.S3{}
-	err := options.Apply(s3Backend)
+	err := options.Apply(s3Backend, "")
 	require.NoError(t, err, "Should work with profile and no explicit credentials")
 
 	// Verify profile is set but no explicit credentials
