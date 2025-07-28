@@ -196,22 +196,23 @@ func (c ColumnarIndexType) SQLName() string {
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID            int64              `json:"id"`
-	Name          ast.CIStr          `json:"idx_name"` // Index name.
-	Table         ast.CIStr          `json:"tbl_name"` // Table name.
-	Columns       []*IndexColumn     `json:"idx_cols"` // Index columns.
-	State         SchemaState        `json:"state"`
-	BackfillState BackfillState      `json:"backfill_state"`
-	Comment       string             `json:"comment"`         // Comment
-	Tp            ast.IndexType      `json:"index_type"`      // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
-	Unique        bool               `json:"is_unique"`       // Whether the index is unique.
-	Primary       bool               `json:"is_primary"`      // Whether the index is primary key.
-	Invisible     bool               `json:"is_invisible"`    // Whether the index is invisible.
-	Global        bool               `json:"is_global"`       // Whether the index is global.
-	MVIndex       bool               `json:"mv_index"`        // Whether the index is multivalued index.
-	VectorInfo    *VectorIndexInfo   `json:"vector_index"`    // VectorInfo is the vector index information.
-	InvertedInfo  *InvertedIndexInfo `json:"inverted_index"`  // InvertedInfo is the inverted index information.
-	FullTextInfo  *FullTextIndexInfo `json:"full_text_index"` // FullTextInfo is the FULLTEXT index information.
+	ID                  int64              `json:"id"`
+	Name                ast.CIStr          `json:"idx_name"` // Index name.
+	Table               ast.CIStr          `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
+	State               SchemaState        `json:"state"`
+	BackfillState       BackfillState      `json:"backfill_state"`
+	Comment             string             `json:"comment"`                       // Comment
+	Tp                  ast.IndexType      `json:"index_type"`                    // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Unique              bool               `json:"is_unique"`                     // Whether the index is unique.
+	Primary             bool               `json:"is_primary"`                    // Whether the index is primary key.
+	Invisible           bool               `json:"is_invisible"`                  // Whether the index is invisible.
+	Global              bool               `json:"is_global"`                     // Whether the index is global.
+	MVIndex             bool               `json:"mv_index"`                      // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo   `json:"vector_index"`                  // VectorInfo is the vector index information.
+	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`                // InvertedInfo is the inverted index information.
+	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`               // FullTextInfo is the FULLTEXT index information.
+	ConditionExprString string             `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
 }
 
 // Hash64 implement HashEquals interface.
