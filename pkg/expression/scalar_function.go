@@ -188,17 +188,17 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	}
 	for i, arg := range args {
 		argflags := arg.GetType(ctx)
-		if intest.InTest {
-			switch a := arg.(type) {
-			case *Column:
-				intest.Assert(len(a.hashcode) == 0)
-			case *ScalarFunction:
-				intest.Assert(len(a.hashcode) == 0)
-			case *Constant:
-				intest.Assert(len(a.hashcode) == 0)
-			}
-		}
 		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
+			if intest.InTest {
+				switch a := arg.(type) {
+				case *Column:
+					intest.Assert(len(a.hashcode) == 0)
+				case *ScalarFunction:
+					intest.Assert(len(a.hashcode) == 0)
+				case *Constant:
+					intest.Assert(len(a.hashcode) == 0)
+				}
+			}
 			newarg := arg.Clone()
 			*newarg.GetType(ctx) = *retFieldTp.Clone()
 			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
