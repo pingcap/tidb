@@ -64,43 +64,78 @@ type StepExecutor interface {
 	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
-// SubtaskSummary contains the summary of a subtask
-// These fields represent the number of data/rows inputed to the subtask.
+// Keep only the last 20 data points for subtask summary
+const maxDataPoints = 20
+
+// SubtaskSummary contains the summary of a subtask.
+// It tracks the progress in terms of rows and bytes processed.
 type SubtaskSummary struct {
 	RowCnt     atomic.Int64 `json:"row_count,omitempty"`
 	Bytes      atomic.Int64 `json:"bytes,omitempty"`
 	UpdateTime time.Time    `json:"update_time,omitempty"`
 
-	Speed     int64       `json:"speed,omitempty"`
-	lastBytes []int64     `json:"-"`
-	lastTimes []time.Time `json:"-"`
-
-	// State is only filled when reading from the subtask table by GetAllSubtaskSummaryByStep.
-	State proto.SubtaskState `json:"-"`
+	LastBytes []int64     `json:"last_bytes,omitempty"`
+	LastTimes []time.Time `json:"last_times,omitempty"`
 }
 
 // Update updates the summary with the current time.
-// It also updates the current speed based on the last 10 updates.
 func (s *SubtaskSummary) Update() {
 	s.UpdateTime = time.Now()
-	s.lastBytes = append(s.lastBytes, 0)
-	s.lastTimes = append(s.lastTimes, s.UpdateTime)
-	if len(s.lastBytes) > 10 {
-		s.lastBytes = s.lastBytes[1:]
-		s.lastTimes = s.lastTimes[1:]
-	}
-	if len(s.lastBytes) > 1 {
-		s.Speed = int64(float64(s.lastBytes[len(s.lastBytes)-1]-s.lastBytes[0]) /
-			(s.lastTimes[len(s.lastTimes)-1].Sub(s.lastTimes[0]).Seconds()))
+	s.LastBytes = append(s.LastBytes, s.Bytes.Load())
+	s.LastTimes = append(s.LastTimes, s.UpdateTime)
+
+	if len(s.LastBytes) > maxDataPoints {
+		s.LastBytes = s.LastBytes[len(s.LastBytes)-maxDataPoints:]
+		s.LastTimes = s.LastTimes[len(s.LastTimes)-maxDataPoints:]
 	}
 }
 
-// Reset resets the summary to the given row count and bytes.
+// GetSpeedInTimeRange returns the speed in the specified time range.
+func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Duration) int64 {
+	if len(s.LastBytes) < 2 {
+		return 0
+	}
+
+	startTime := endTime.Add(-duration)
+	if endTime.Before(s.LastTimes[0]) || startTime.After(s.LastTimes[len(s.LastTimes)-1]) {
+		return 0
+	}
+
+	// The number of point is small, so we can afford to iterate through all points.
+	var totalBytes float64
+	for i := 0; i < len(s.LastTimes)-1; i++ {
+		rangeStart := s.LastTimes[i]
+		rangeEnd := s.LastTimes[i+1]
+		rangeBytes := float64(s.LastBytes[i+1] - s.LastBytes[i])
+		if endTime.Before(rangeStart) || startTime.After(rangeEnd) {
+			continue
+		} else if startTime.Before(rangeStart) && endTime.After(rangeEnd) {
+			totalBytes += rangeBytes
+			continue
+		}
+
+		iStart := rangeStart
+		if startTime.After(rangeStart) {
+			iStart = startTime
+		}
+
+		iEnd := rangeEnd
+		if endTime.Before(rangeEnd) {
+			iEnd = endTime
+		}
+
+		totalBytes += rangeBytes * float64(iEnd.Sub(iStart)) / float64(rangeEnd.Sub(rangeStart))
+	}
+
+	return int64(totalBytes / duration.Seconds())
+}
+
+// Reset resets the summary to zero values and clears history data.
 func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
 	s.Bytes.Store(0)
-	s.lastBytes = s.lastBytes[:0]
-	s.lastTimes = s.lastTimes[:0]
+	s.LastBytes = s.LastBytes[:0]
+	s.LastTimes = s.LastTimes[:0]
 	s.Update()
 }
 
