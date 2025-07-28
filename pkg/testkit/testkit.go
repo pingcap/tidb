@@ -70,6 +70,8 @@ type TestKit struct {
 	store   kv.Storage
 	session sessionapi.Session
 	alloc   chunk.Allocator
+
+	pushDownCheck bool
 }
 
 // NewTestKit returns a new *TestKit.
@@ -86,6 +88,8 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		t:       t,
 		store:   store,
 		alloc:   chunk.NewAllocator(),
+
+		pushDownCheck: true,
 	}
 	tk.RefreshSession()
 
@@ -170,7 +174,8 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 	}()
 	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
 	sqlLower := strings.ToLower(sql)
-	if !strings.Contains(sqlLower, "information_schema") ||
+	if !tk.pushDownCheck ||
+		!strings.Contains(sqlLower, "information_schema") ||
 		strings.Contains(sqlLower, "trace") ||
 		strings.Contains(sqlLower, "statements_summary") ||
 		strings.Contains(sqlLower, "slow_query") ||
@@ -626,6 +631,17 @@ func (tk *TestKit) RequireNotEqual(expected any, actual any, msgAndArgs ...any) 
 // RequireNoError checks if error happens
 func (tk *TestKit) RequireNoError(err error, msgAndArgs ...any) {
 	tk.require.NoError(err, msgAndArgs)
+}
+
+// DisablePushDownCheckForMemTables disable the push down check flag for memory tables temporarily.
+// Known issue:
+// - predicate match is case-insensitive for memory table scan, but it is case-sensitive for memory table scan + selection.
+func (tk *TestKit) DisablePushDownCheckForMemTables(assertFn func()) {
+	tk.pushDownCheck = false
+	defer func() {
+		tk.pushDownCheck = true
+	}()
+	assertFn()
 }
 
 // RegionProperityClient is to get region properties.
