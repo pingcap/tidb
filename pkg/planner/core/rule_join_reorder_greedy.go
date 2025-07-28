@@ -20,11 +20,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -149,11 +145,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-<<<<<<< HEAD
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan) (LogicalPlan, []expression.Expression) {
-=======
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression) {
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, []expression.Expression) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 {
 		return nil, nil

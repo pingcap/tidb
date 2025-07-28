@@ -19,22 +19,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-<<<<<<< HEAD
-	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan
-=======
-	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType, opt *util.LogicalOptimizeOp) LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -250,11 +241,7 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 	return usedEqEdges, otherConds
 }
 
-<<<<<<< HEAD
-func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression) (LogicalPlan, error) {
-=======
-func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
 	var eqConds []*expression.ScalarFunction
 	for _, edge := range edges {
 		lCol := edge.edge.GetArgs()[0].(*expression.Column)
@@ -266,22 +253,13 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 			eqConds = append(eqConds, newSf)
 		}
 	}
-<<<<<<< HEAD
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, InnerJoin)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, InnerJoin, opt)
 	_, err := join.recursiveDeriveStats(nil)
-=======
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin, opt)
-	_, _, err := join.RecursiveDeriveStats(nil)
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
 	return join, err
 }
 
 // Make cartesian join as bushy tree.
-<<<<<<< HEAD
-func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, otherConds []expression.Expression) LogicalPlan {
-=======
-func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPlan, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, otherConds []expression.Expression, opt *util.LogicalOptimizeOp) LogicalPlan {
 	for len(cartesianJoinGroup) > 1 {
 		resultJoinGroup := make([]LogicalPlan, 0, len(cartesianJoinGroup))
 		for i := 0; i < len(cartesianJoinGroup); i += 2 {
@@ -297,11 +275,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPla
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-<<<<<<< HEAD
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, InnerJoin))
-=======
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin, opt))
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, InnerJoin, opt))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

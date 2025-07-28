@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -399,15 +400,9 @@ type baseSingleGroupJoinOrderSolver struct {
 	*basicJoinGroupInfo
 }
 
-<<<<<<< HEAD
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool) (bool, []LogicalPlan) {
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool, opt *util.LogicalOptimizeOp) (bool, []LogicalPlan) {
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
-=======
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool, opt *optimizetrace.LogicalOptimizeOp) (bool, []base.LogicalPlan) {
-	var leadingJoinGroup []base.LogicalPlan
-	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
 	copy(leftJoinGroup, curJoinGroup)
 	var queryBlockNames []ast.HintTable
 	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
@@ -553,11 +548,7 @@ func (*baseSingleGroupJoinOrderSolver) injectExpr(p LogicalPlan, expr expression
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
-<<<<<<< HEAD
-func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) (LogicalPlan, []expression.Expression) {
-=======
-func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression) {
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg, opt *util.LogicalOptimizeOp) (LogicalPlan, []expression.Expression) {
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
 	var (
@@ -662,20 +653,15 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	return join
 }
 
-<<<<<<< HEAD
 func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan,
-	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan {
-=======
-func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.LogicalPlan,
-	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
->>>>>>> d0ac8e61518 (planner: right deal with predicate in the join reorder (#62561))
+	eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType, opt *util.LogicalOptimizeOp) LogicalPlan {
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
 	newJoin.LeftConditions = leftConds
 	newJoin.RightConditions = rightConds
 	newJoin.JoinType = joinType
-	if newJoin.JoinType == logicalop.InnerJoin {
+	if newJoin.JoinType == InnerJoin {
 		if newJoin.LeftConditions != nil {
 			left := newJoin.Children()[0]
 			logicalop.AddSelection(newJoin, left, newJoin.LeftConditions, 0, opt)
