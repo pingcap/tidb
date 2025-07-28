@@ -70,6 +70,7 @@ const (
 	defaultRegion = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
+	domainAWS    = "amazonaws.com"
 )
 
 var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
@@ -186,7 +187,7 @@ type S3BackendOptions struct {
 }
 
 // Apply apply s3 options on backuppb.S3.
-func (options *S3BackendOptions) Apply(s3 *backuppb.S3, rawURL string) error {
+func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
@@ -199,12 +200,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3, rawURL string) error {
 			return errors.Errorf("host not found in endpoint")
 		}
 	}
-	// In some cases, we need to set ForcePathStyle to false.
-	// Refer to: https://rclone.org/s3/#s3-force-path-style
-	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" || useVirtualHostStyleForAWSS3(options, rawURL) ||
-		options.UseAccelerateEndpoint {
-		options.ForcePathStyle = false
-	}
+
 	// When not using a profile, if either key is provided, both must be provided
 	if options.Profile == "" {
 		if options.AccessKey == "" && options.SecretAccessKey != "" {
@@ -234,22 +230,25 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3, rawURL string) error {
 	return nil
 }
 
+// setForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
+func (options *S3BackendOptions) setForcePathStyle(rawURL string) {
+	// In some cases, we need to set ForcePathStyle to false.
+	// Refer to: https://rclone.org/s3/#s3-force-path-style
+	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
+		options.UseAccelerateEndpoint || useVirtualHostStyleForAWSS3(options, rawURL) {
+		options.ForcePathStyle = false
+	}
+}
+
 func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
-	// User has explicitly specified ForcePathStyle, use specified value
-	if rawURL == "" || strings.Contains(rawURL, "force-path-style") || strings.Contains(rawURL, "force_path_style") {
+	// If user has explicitly specified ForcePathStyle, use the specified value
+	if rawURL == "" ||
+		strings.Contains(rawURL, "force-path-style") ||
+		strings.Contains(rawURL, "force_path_style") {
 		return false
 	}
 
-	if opts.Provider == "aws" {
-		return true
-	}
-	if strings.Contains(opts.Endpoint, "amazonaws.com") {
-		return true
-	}
-	if opts.RoleARN != "" {
-		return true
-	}
-	return false
+	return opts.Provider == "aws" || opts.Endpoint == "" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
 // defineS3Flags defines the command line flags for S3BackendOptions.
