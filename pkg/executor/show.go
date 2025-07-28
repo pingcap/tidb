@@ -2454,9 +2454,8 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	result.AppendString(16, runInfo.ProcessedSize())
 	result.AppendString(17, runInfo.TotalSize())
 	result.AppendString(18, runInfo.Percent())
-	speed, eta := runInfo.SpeedAndETA()
-	result.AppendString(19, speed)
-	result.AppendString(20, eta)
+	result.AppendString(19, fmt.Sprintf("%s/s", units.HumanSize(float64(runInfo.Speed))))
+	result.AppendString(20, runInfo.ETA())
 }
 
 func handleImportJobInfo(

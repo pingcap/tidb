@@ -199,15 +199,15 @@ func FormatSecondAsTime(sec int64) string {
 	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
 }
 
-// SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
-func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
+// ETA returns the estimated time of arrival (ETA) for the current step.
+func (ri *RuntimeInfo) ETA() string {
 	remainTime := notAvailable
 	if ri.Speed > 0 && ri.Total > 0 {
 		remainSecond := max((ri.Total-ri.Processed)/ri.Speed, 0)
 		remainTime = FormatSecondAsTime(remainSecond)
 	}
 
-	return fmt.Sprintf("%s/s", units.HumanSize(float64(ri.Speed))), remainTime
+	return remainTime
 }
 
 // TotalSize returns the total size of the current step in human-readable format.
