@@ -21,6 +21,7 @@ go_library(
     deps = [
         "//pkg/bindinfo",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
@@ -39,6 +40,7 @@ go_library(
         "//pkg/executor/staticrecordset",
         "//pkg/expression",
         "//pkg/expression/exprctx",
+        "//pkg/expression/exprstatic",
         "//pkg/expression/sessionexpr",
         "//pkg/extension",
         "//pkg/extension/extensionimpl",
