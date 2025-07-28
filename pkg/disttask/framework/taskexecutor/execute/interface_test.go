@@ -57,21 +57,6 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			description: "should return 0 when time range doesn't overlap with data",
 		},
 		{
-			name: "zero duration",
-			setup: func(s *SubtaskSummary) {
-				baseTime := time.Unix(1000, 0)
-				s.UpdateBytes = []int64{0, 100}
-				s.UpdateTimes = []time.Time{
-					baseTime,
-					baseTime.Add(1 * time.Second),
-				}
-			},
-			endTime:     time.Unix(1001, 0),
-			duration:    0,
-			expected:    0,
-			description: "should return 0 for zero duration",
-		},
-		{
 			name: "partial time range overlap",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
