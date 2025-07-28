@@ -366,7 +366,7 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 }
 
 // filterIndexesToRemove filters out the indexes that can be removed.
-func filterIndexesToRemove(oldIdxs []*model.IndexInfo, colName ast.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
+func filterIndexesToRemove(oldIdxs []*model.IndexInfo, colName ast.CIStr) []*model.IndexInfo {
 	indexesToRemove := make([]*model.IndexInfo, 0, len(oldIdxs))
 	for _, idx := range oldIdxs {
 		tmp := idx.Columns[:0]
