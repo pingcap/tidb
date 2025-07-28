@@ -784,6 +784,9 @@ type PhysicalIndexScan struct {
 
 	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
 	GroupedRanges map[string][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge-sort to satisfy physical property.
+	// This field is used to rebuild GroupedRanges in plan cache.
+	GroupByColIdxs []int
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -971,6 +974,9 @@ type PhysicalTableScan struct {
 
 	// GroupedRanges stores the result of grouping ranges by columns when using merge-sort to satisfy physical property.
 	GroupedRanges map[string][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge-sort to satisfy physical property.
+	// This field is used to rebuild GroupedRanges in plan cache.
+	GroupByColIdxs []int
 }
 
 // ColumnarIndexExtra is the extra information for columnar index.

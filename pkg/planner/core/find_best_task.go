@@ -1043,17 +1043,18 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		groups := groupRangesByCols(path.Ranges, groupByColIdxs)
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
+			path.GroupByColIdxs = groupByColIdxs
 			return property.SortPropSatisfiedByMergeSort
 		}
 	}
 	return matchResult
 }
 
-func groupRangesByCols(ranges []*ranger.Range, skipCols []int) map[string][]*ranger.Range {
+func groupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) map[string][]*ranger.Range {
 	groups := make(map[string][]*ranger.Range)
 	for _, ran := range ranges {
 		var datums []types.Datum
-		for _, idx := range skipCols {
+		for _, idx := range groupByColIdxs {
 			datums = append(datums, ran.LowVal[idx])
 		}
 		// We just use it to group the values, so any time zone is ok.
@@ -2273,6 +2274,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 		is.ByItems = byItems
 		is.GroupedRanges = path.GroupedRanges
+		is.GroupByColIdxs = path.GroupByColIdxs
 	}
 	cop := &CopTask{
 		indexPlan:   is,
@@ -2745,6 +2747,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 		ts.ByItems = byItems
 		ts.GroupedRanges = candidate.path.GroupedRanges
+		ts.GroupByColIdxs = candidate.path.GroupByColIdxs
 	}
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
