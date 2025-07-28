@@ -475,11 +475,6 @@ func (s *Syncer) InfoSchema() infoschema.InfoSchema {
 	return s.loader.infoCache.GetLatest()
 }
 
-// GetInfoSyncer returns the InfoSyncer.
-func (s *Syncer) GetInfoSyncer() *infosync.InfoSyncer {
-	return s.info
-}
-
 // GetSchemaValidator returns the schema validator.
 func (s *Syncer) GetSchemaValidator() validatorapi.Validator {
 	return s.schemaValidator
