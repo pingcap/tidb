@@ -240,7 +240,7 @@ func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
 		return false
 	}
 
-	if opts.Provider == "aws" || opts.Provider == "" {
+	if opts.Provider == "aws" {
 		return true
 	}
 	if strings.Contains(opts.Endpoint, "amazonaws.com") {
