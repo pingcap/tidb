@@ -114,16 +114,17 @@ func (e *AlterImportJobExec) Open(ctx context.Context) error {
 		}
 	}
 
-	if err := taskManager.ModifyTaskByID(ctx, jobInfo.ID, &proto.ModifyParam{
-		PrevState:     currTask.State,
-		Modifications: mods,
-	}); err != nil {
-		return err
-	}
-
-	// Only update job parameters if task modification succeeded.
 	return taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
+
+		err := taskManager.ModifyTaskByIDWithTxn(ctx, se, jobInfo.ID, &proto.ModifyParam{
+			PrevState:     currTask.State,
+			Modifications: mods,
+		})
+		if err != nil {
+			return err
+		}
+
 		return importer.UpdateJobParameters(
 			ctx,
 			exec,
