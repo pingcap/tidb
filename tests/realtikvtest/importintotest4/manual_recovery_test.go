@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -80,6 +82,14 @@ func (s *mockGCSSuite) TestResolutionCancelTheTask() {
 		return t.State == proto.TaskStateReverted
 	})
 	s.NoError(err)
+	require.Eventually(s.T(), func() bool {
+		err := s.tk.QueryToErr("SELECT * FROM t;")
+		if err != nil {
+			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			return false
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
