@@ -1515,7 +1515,7 @@ func TestLoadStatsForBitColumn(t *testing.T) {
 		tableName := fmt.Sprintf("t%d", i)
 
 		tk.MustExec(fmt.Sprintf("create table %s(a bit(%d));", tableName, testCase.len))
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 		require.NoError(t, err)
 
 		tk.MustExec(fmt.Sprintf("insert into %s values (%s), (%s);", tableName, testCase.lowerBound, testCase.upperBound))
