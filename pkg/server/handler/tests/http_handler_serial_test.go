@@ -734,5 +734,5 @@ func TestGC(t *testing.T) {
 	require.NoError(t, err)
 
 	var empty gc.GCState
-	require.NotEqual(empty, state)
+	require.NotEqual(t, empty, state)
 }
