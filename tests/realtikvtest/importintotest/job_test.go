@@ -676,6 +676,11 @@ func (s *mockGCSSuite) TestAlterImportJob() {
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 	<-syncCh
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	s.Require().Eventually(func() bool {
+		task := s.getTaskByJobID(ctx, int64(jobID))
+		return task.State == proto.TaskStateRunning
+	}, maxWaitTime, time.Second)
 	s.tk.MustExec(fmt.Sprintf("alter import job %d thread = 8", jobID))
 
 	rows := s.tk.MustQuery(fmt.Sprintf("select parameters from mysql.tidb_import_jobs where id=%d", jobID)).Rows()
@@ -684,7 +689,7 @@ func (s *mockGCSSuite) TestAlterImportJob() {
 
 	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
-	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	ctx = util.WithInternalSourceType(context.Background(), "taskManager")
 	s.Require().Eventually(func() bool {
 		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
 		if err2 != nil {

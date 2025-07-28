@@ -74,7 +74,6 @@ func (e *AlterImportJobExec) Open(ctx context.Context) error {
 	}
 	if task == nil {
 		return errors.Errorf("no import into task found for job id %d", e.jobID)
-
 	}
 	taskID := task.ID
 

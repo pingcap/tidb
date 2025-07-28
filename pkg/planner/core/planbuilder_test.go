@@ -758,11 +758,8 @@ func TestBuildAlterImportJobPlan(t *testing.T) {
 	require.Equal(t, int64(8), cons.Value.GetInt64())
 
 	// Negative case: invalid syntax
-	stmt, err = parser.ParseOneStmt("alter import job thread = 8", "", "")
-	require.NoError(t, err)
-	p, err = builder.Build(ctx, stmt)
+	_, err = parser.ParseOneStmt("alter import job thread = 8", "", "")
 	require.Error(t, err)
-	require.Nil(t, p)
 
 	// Negative case: wrong option type
 	stmt, err = parser.ParseOneStmt("alter import job 1 thread = 'abc'", "", "")
