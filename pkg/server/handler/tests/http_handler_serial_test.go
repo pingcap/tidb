@@ -722,7 +722,13 @@ func TestGC(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
-	resp, err := ts.FetchStatus("/txn-gc-states")
+
+	var data url.Values
+	resp, err := ts.FormStatus("/txn-gc-states", data)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	resp, err = ts.FetchStatus("/txn-gc-states")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)

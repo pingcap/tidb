@@ -2180,7 +2180,12 @@ func NewTxnGCStatesHandler(store kv.Storage) *TxnGCStatesHandler {
 }
 
 // ServeHTTP implements the HTTP handler interface.
-func (gc *TxnGCStatesHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+func (gc *TxnGCStatesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "this API only support GET method", http.StatusMethodNotAllowed)
+		return
+	}
+
 	pdStoreBackend, ok := gc.store.(kv.StorageWithPD)
 	if !ok {
 		handler.WriteError(w, errors.New("GC API only support storage with PD"))
