@@ -980,7 +980,7 @@ func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdx
 	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 	var removedIdxIDs []int64
 	if len(oldIdxs) > 0 {
-		indexesToRemove := filterIndexesToRemove(oldIdxs, oldCol.Name, tblInfo)
+		indexesToRemove := filterIndexesToRemove(oldIdxs, oldCol.Name)
 		removedIdxIDs = make([]int64, 0, len(indexesToRemove))
 		for _, idx := range indexesToRemove {
 			removedIdxIDs = append(removedIdxIDs, idx.ID)
