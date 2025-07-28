@@ -1113,7 +1113,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-			if TiDBOptOn(normalizedValue) {
+			if !TiDBOptOn(normalizedValue) {
 				return "", errors.New("tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze.")
 			}
 			return normalizedValue, nil
