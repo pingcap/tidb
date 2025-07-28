@@ -530,7 +530,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	// whether the call is from a data engine or an index engine.
 	var engineID int32
 	if sm.KVGroup == dataKVGroup {
-		engineID = int32(0)
+		engineID = int32(common.DataEngineID)
 	} else {
 		engineID = int32(common.IndexEngineID)
 	}

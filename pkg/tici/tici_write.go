@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -77,7 +76,7 @@ func NewTiCIDataWriter(
 	idxInfo *model.IndexInfo,
 	schema string,
 ) *DataWriter {
-	logger := log.FromContext(ctx)
+	logger := logutil.Logger(ctx)
 	logger.Info("building TiCIDataWriter",
 		zap.Int64("tableID", tblInfo.ID),
 		zap.String("tableName", tblInfo.Name.O),
@@ -148,7 +147,7 @@ func (w *DataWriter) FetchCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) (string, error) {
-	logger := log.FromContext(ctx)
+	logger := logutil.Logger(ctx)
 	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
 		logger.Error("failed to create TiCI manager",
@@ -200,7 +199,7 @@ func (w *DataWriter) MarkPartitionUploadFinished(
 	ctx context.Context,
 	s3PathOpt ...string,
 ) error {
-	logger := log.FromContext(ctx)
+	logger := logutil.Logger(ctx)
 	s3Path := w.s3Path
 	if len(s3PathOpt) > 0 && s3PathOpt[0] != "" {
 		s3Path = s3PathOpt[0]
@@ -257,7 +256,7 @@ func (w *DataWriter) MarkPartitionUploadFinished(
 func (w *DataWriter) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
-	logger := log.FromContext(ctx)
+	logger := logutil.Logger(ctx)
 	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
 		logger.Error("failed to create TiCI manager",
@@ -416,7 +415,7 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 	}
 	writers := make([]*DataWriter, 0, len(fulltextIndexes))
 
-	logger := log.FromContext(ctx)
+	logger := logutil.Logger(ctx)
 	logger.Info("building TiCIDataWriterGroup",
 		zap.Int64("tableID", tblInfo.ID),
 		zap.String("schema", schema),
