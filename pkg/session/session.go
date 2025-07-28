@@ -4880,7 +4880,7 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	return true
 }
 
-// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
 func RemoveLockDDLJobs(s sessionapi.Session, jobs map[int64]*mdldef.JobMDL, printLog bool) {
 	sv := s.GetSessionVars()
 	if sv.InRestrictedSQL {

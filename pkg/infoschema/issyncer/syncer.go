@@ -172,7 +172,7 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 // MDLCheckLoop is a loop that checks the MDL locks periodically.
 func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 	ticker := time.Tick(mdlCheckLookDuration)
-	var saveMaxSchemaVersion int64
+	var lastCheckedVersion int64
 	haveJobToCheck := false
 	jobCache := make(map[int64]int64, 1000)
 
@@ -191,8 +191,8 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 
 		s.mdlCheckTableInfo.mu.Lock()
 		maxVer := s.mdlCheckTableInfo.newestVer
-		if maxVer > saveMaxSchemaVersion {
-			saveMaxSchemaVersion = maxVer
+		if maxVer > lastCheckedVersion {
+			lastCheckedVersion = maxVer
 		} else if !haveJobToCheck {
 			// Schema doesn't change, and no job to check in the last run.
 			s.mdlCheckTableInfo.mu.Unlock()
@@ -219,9 +219,8 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 		}
 
 		// if there are sessions using older schema version to access tables
-		// involved in a DDL job, CheckOldRunningTxn will remove it from jobID2Ver,
-		// so the remaining items in jobID2Ver are the jobs that can proceed to
-		// the next step.
+		// involved in a DDL job, CheckOldRunningTxn will remove it from 'jobs',
+		// so the remaining items are the jobs that can proceed to the next step.
 		if len(jobs) == checkingJobCnt {
 			haveJobToCheck = false
 		}
