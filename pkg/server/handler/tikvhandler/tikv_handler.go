@@ -2169,17 +2169,20 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	}
 }
 
+// GCHandler is the handler for GC related API.
 type GCHandler struct {
 	store kv.Storage
 }
 
+// NewGCHandler creates a GCHandler.
 func NewGCHandler(store kv.Storage) *GCHandler {
 	return &GCHandler{
 		store: store,
 	}
 }
 
-func (gc *GCHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+// ServeHTTP implements the HTTP handler interface.
+func (gc *GCHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	pdStoreBackend, ok := gc.store.(kv.StorageWithPD)
 	if !ok {
 		handler.WriteError(w, errors.New("GC API only support storage with PD"))
