@@ -4891,9 +4891,10 @@ func RemoveLockDDLJobs(s sessionapi.Session, job2ver map[int64]int64, job2ids ma
 		return
 	}
 	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+		txnRef := value.(*plannercore.TxnSchemaRef)
 		for jobID, ver := range job2ver {
 			ids := util.Str2Int64Map(job2ids[jobID])
-			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
+			if _, ok := ids[tblID.(int64)]; ok && txnRef.SchemaVersion < ver {
 				delete(job2ver, jobID)
 				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
 				if elapsedTime > time.Minute && printLog {

@@ -1984,6 +1984,12 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
+// TxnSchemaRef is used to store the schema version and db id of a table in the current transaction.
+type TxnSchemaRef struct {
+	SchemaVersion int64
+	DBID          int64
+}
+
 func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName ast.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
 	skipLock := false
 	shouldLockMDL := false
@@ -2047,7 +2053,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		// the background mdl check loop gets the mdl lock from this txn. But the domain infoSchema may be changed before writing the ver to the map.
 		// In this case, this TiDB wrongly gets the mdl lock.
 		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, &TxnSchemaRef{SchemaVersion: 0, DBID: 0})
 			lockedID = tableInfo.ID
 		}
 		latestIS := sctx.GetLatestISWithoutSessExt().(infoschema.InfoSchema)
@@ -2057,7 +2063,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			return nil, err
 		}
 		if !skipLock {
-			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
+			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, &TxnSchemaRef{SchemaVersion: domainSchemaVer, DBID: tbl.Meta().DBID})
 			lockedID = tbl.Meta().ID
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
