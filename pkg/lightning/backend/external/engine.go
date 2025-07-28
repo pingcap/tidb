@@ -254,6 +254,8 @@ func getFilesReadConcurrency(
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
 	totalFileSize := uint64(0)
+	concurrentReader := 0
+	totalConcurrency := 0
 	for i := range statsFiles {
 		size := endOffs[i] - startOffs[i]
 		totalFileSize += size
@@ -271,6 +273,7 @@ func getFilesReadConcurrency(
 		}
 		// only log for files with expected concurrency > 1, to avoid too many logs
 		if expectedConc > 1 {
+			concurrentReader += 1
 			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 				zap.String("filename", statsFiles[i]),
 				zap.Uint64("startOffset", startOffs[i]),
@@ -279,11 +282,16 @@ func getFilesReadConcurrency(
 				zap.Uint64("concurrency", result[i]),
 			)
 		}
+		totalConcurrency += int(expectedConc)
 	}
 	// Note: this is the file size of the range group, KV size is smaller, as we
 	// need additional 8*2 for each KV.
 	logutil.Logger(ctx).Info("estimated file size of this range group",
-		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))),
+		zap.Int("reader num", len(statsFiles)),
+		zap.Int("concurrent reader", concurrentReader),
+		zap.Int("totalConcurrency", totalConcurrency),
+	)
 	return result, startOffs, nil
 }
 
