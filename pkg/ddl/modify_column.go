@@ -546,15 +546,14 @@ func (w *worker) doModifyColumnTypeWithData(
 		if !done {
 			return ver, err
 		}
-		done = stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol, colName, pos)
+		_, done = stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol, colName, pos)
 		if !done {
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StatePublic
 	case model.StatePublic:
-		oldIdxIDs := buildRelatedIndexIDs(tblInfo, oldCol.ID)
-		done := stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol, colName, pos)
+		oldIdxIDs, done := stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol, colName, pos)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if !done || err != nil {
 			return ver, errors.Trace(err)

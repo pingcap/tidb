@@ -82,9 +82,8 @@ import (
 const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
-	removingColumnPrefix  = "_ColRm$_"
+	removingObjPrefix     = "_Tomestone$_"
 	changingIndexPrefix   = "_Idx$_"
-	removingIndexPrefix   = "_IdxRm$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535

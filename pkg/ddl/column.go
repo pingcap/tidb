@@ -366,23 +366,20 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 }
 
 // filterIndexesToRemove filters out the indexes that can be removed.
-func filterIndexesToRemove(changingIdxs []*model.IndexInfo, colName ast.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
-	indexesToRemove := make([]*model.IndexInfo, 0, len(changingIdxs))
-	for _, idx := range changingIdxs {
-		var hasOtherChangingCol bool
+func filterIndexesToRemove(oldIdxs []*model.IndexInfo, colName ast.CIStr, tblInfo *model.TableInfo) []*model.IndexInfo {
+	indexesToRemove := make([]*model.IndexInfo, 0, len(oldIdxs))
+	for _, idx := range oldIdxs {
+		tmp := idx.Columns[:0]
 		for _, col := range idx.Columns {
-			if col.Name.L == colName.L {
-				continue // ignore the current modifying column.
-			}
-			if !hasOtherChangingCol {
-				hasOtherChangingCol = tblInfo.Columns[col.Offset].ChangeStateInfo != nil
+			if col.Name.L != colName.L {
+				tmp = append(tmp, col)
 			}
 		}
-		// For the indexes that still contains other changing column, skip removing it now.
-		// We leave the removal work to the last modify column job.
-		if !hasOtherChangingCol {
+		if len(tmp) == 0 {
 			indexesToRemove = append(indexesToRemove, idx)
+			continue
 		}
+		idx.Columns = tmp
 	}
 	return indexesToRemove
 }
@@ -408,7 +405,7 @@ func swapIndexInfoSlices(tblInfo *model.TableInfo, oldIdxInfos, changingIdxInfos
 	for i, oldIdx := range oldIdxInfos {
 		allRemoved := true
 		for _, ic := range oldIdx.Columns {
-			if !isColumnToBeRemoved(ic.Name.O) {
+			if !isObjectToBeRemoved(ic.Name.O) {
 				allRemoved = false
 				break
 			}
@@ -932,7 +929,7 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 }
 
 func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
-	newName ast.CIStr, pos *ast.ColumnPosition) (done bool) {
+	newName ast.CIStr, pos *ast.ColumnPosition) (removedIdxID []int64, done bool) {
 	oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 	changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 	intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
@@ -951,41 +948,46 @@ func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, chang
 		tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 		// Move the new indexes to correct offsets.
 		swapIndexInfoSlices(tblInfo, oldIdxInfos, changingIdxInfos)
-		return false
+		return nil, false
 	case model.StateWriteOnly:
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
-		return false
+		return nil, false
 	case model.StateDeleteOnly:
-		removeOldObjects(tblInfo, oldCol, oldIdxInfos)
-		return true
+		removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
+		return removedIdxIDs, true
 	}
-	intest.Assert(false)
 	panic("should not reach here")
 }
 
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
 	publicName := newColName
-	removingName := ast.NewCIStr(genRemovingColumnName(oldCol.Name.O))
+	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
 
 	renameColumnTo(oldCol, oldIdxs, removingName)
 	renameColumnTo(changingCol, changingIdxs, publicName)
 	for i := range oldIdxs {
 		oldIdxName := oldIdxs[i].Name.O
-		publicName := ast.NewCIStr(getRemovingIndexOriginName(oldIdxName))
-		removingName := ast.NewCIStr(genRemovingIndexName(oldIdxName))
+		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
+		removingName := ast.NewCIStr(getRemovingObjName(oldIdxName))
 
 		changingIdxs[i].Name = publicName
 		oldIdxs[i].Name = removingName
 	}
 }
 
-func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdxs []*model.IndexInfo) {
+func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdxs []*model.IndexInfo) []int64 {
 	tblInfo.MoveColumnInfo(oldCol.Offset, len(tblInfo.Columns)-1)
 	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+	var removedIdxIDs []int64
 	if len(oldIdxs) > 0 {
 		indexesToRemove := filterIndexesToRemove(oldIdxs, oldCol.Name, tblInfo)
+		removedIdxIDs = make([]int64, 0, len(indexesToRemove))
+		for _, idx := range indexesToRemove {
+			removedIdxIDs = append(removedIdxIDs, idx.ID)
+		}
 		removeOldIndexes(tblInfo, indexesToRemove)
 	}
+	return removedIdxIDs
 }
 
 func renameColumnTo(col *model.ColumnInfo, idxInfos []*model.IndexInfo, newName ast.CIStr) {
@@ -1399,10 +1401,6 @@ func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnI
 	return fmt.Sprintf("%s_%d", newColumnNamePrefix, suffix)
 }
 
-func isColumnToBeRemoved(name string) bool {
-	return strings.HasPrefix(name, removingColumnPrefix)
-}
-
 func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
 	suffix := 0
 	newIndexNamePrefix := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
@@ -1447,17 +1445,17 @@ func getExpressionIndexOriginName(originalName ast.CIStr) string {
 	return columnName[:pos]
 }
 
-func genRemovingColumnName(colName string) string {
-	return fmt.Sprintf("%s%s", removingColumnPrefix, colName)
+func isObjectToBeRemoved(name string) bool {
+	return strings.HasPrefix(name, removingObjPrefix)
 }
 
-func genRemovingIndexName(idxName string) string {
-	if strings.HasPrefix(idxName, removingIndexPrefix) {
-		return idxName
+func getRemovingObjName(name string) string {
+	if strings.HasPrefix(name, removingObjPrefix) {
+		return name
 	}
-	return fmt.Sprintf("%s%s", removingIndexPrefix, idxName)
+	return fmt.Sprintf("%s%s", removingObjPrefix, name)
 }
 
-func getRemovingIndexOriginName(idxName string) string {
-	return strings.TrimPrefix(idxName, removingIndexPrefix)
+func getRemovingObjOriginName(idxName string) string {
+	return strings.TrimPrefix(idxName, removingObjPrefix)
 }
