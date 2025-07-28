@@ -64,8 +64,8 @@ type StepExecutor interface {
 	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
-// Keep only the last 5 data points for subtask summary
-const maxDataPoints = 5
+// MaxDataPoints is the number of data points for subtask summary
+const MaxDataPoints = 5
 
 // SubtaskSummary contains the summary of a subtask.
 // It tracks the progress in terms of rows and bytes processed.
@@ -84,9 +84,9 @@ func (s *SubtaskSummary) Update() {
 	s.UpdateBytes = append(s.UpdateBytes, s.Bytes.Load())
 	s.UpdateTimes = append(s.UpdateTimes, time.Now())
 
-	if len(s.UpdateBytes) > maxDataPoints {
-		s.UpdateBytes = s.UpdateBytes[len(s.UpdateBytes)-maxDataPoints:]
-		s.UpdateTimes = s.UpdateTimes[len(s.UpdateTimes)-maxDataPoints:]
+	if len(s.UpdateBytes) > MaxDataPoints {
+		s.UpdateBytes = s.UpdateBytes[len(s.UpdateBytes)-MaxDataPoints:]
+		s.UpdateTimes = s.UpdateTimes[len(s.UpdateTimes)-MaxDataPoints:]
 	}
 }
 

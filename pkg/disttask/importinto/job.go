@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -281,7 +282,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	currentTime := time.Now()
-	timeRange := taskexecutor.UpdateSubtaskSummaryInterval * 10
+	timeRange := taskexecutor.UpdateSubtaskSummaryInterval * execute.MaxDataPoints
 
 	ri.Speed = 0
 	for _, s := range summaries {
