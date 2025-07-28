@@ -103,7 +103,7 @@ func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Du
 
 	// The number of point is small, so we can afford to iterate through all points.
 	var totalBytes float64
-	for i := 0; i < len(s.UpdateTimes)-1; i++ {
+	for i := range len(s.UpdateTimes) - 1 {
 		rangeStart := s.UpdateTimes[i]
 		rangeEnd := s.UpdateTimes[i+1]
 		rangeBytes := float64(s.UpdateBytes[i+1] - s.UpdateBytes[i])

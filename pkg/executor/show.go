@@ -28,7 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -2479,13 +2478,6 @@ func handleImportJobInfo(
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
 		}
-
-		failpoint.Inject("mockUpdateTime", func(val failpoint.Value) {
-			if v, ok := val.(int); ok {
-				runInfo.UpdateTime = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
-				runInfo.Speed = int64(v)
-			}
-		})
 	}
 	FillOneImportJobInfo(result, info, runInfo)
 	return nil

@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -283,6 +284,13 @@ func GetRuntimeInfoForJob(
 
 	currentTime := time.Now()
 	timeRange := taskexecutor.UpdateSubtaskSummaryInterval * execute.MaxDataPoints
+
+	failpoint.Inject("mockSpeedDuration", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			currentTime = time.Unix(1000, int64(v*1000000))
+			timeRange = time.Millisecond * time.Duration(v)
+		}
+	})
 
 	ri.Speed = 0
 	for _, s := range summaries {
