@@ -1377,6 +1377,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
 		BucketsVersion:  task.bucketsVer,
 	})
+	failpoint.Inject("CopResourceGroupChecker", func(val failpoint.Value) {
+		expectedRgName := val.(string)
+		if req.GetResourceControlContext().GetResourceGroupName() != expectedRgName {
+			panic(fmt.Sprintf("resource group name not match, expected: %s, actual: %s; %#+v", expectedRgName, rgName, worker.req))
+		}
+	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
