@@ -310,14 +310,12 @@ func (s *importStepExecutor) ResourceModified(_ context.Context, newResource *pr
 	target := int32(newResource.CPU.Capacity())
 	if target != currSize {
 		s.logger.Info("ResourceModified: tuning worker pool size",
-			zap.String("step", "importStepExecutor"),
 			zap.Int32("old", currSize),
 			zap.Int32("new", target))
 		currOp.TuneWorkerPoolSize(target, true)
 	}
 
 	s.logger.Info("ResourceModified: finished tuning worker pool size",
-		zap.String("step", "importStepExecutor"),
 		zap.Int32("old", currSize),
 		zap.Int32("new", currOp.GetWorkerPoolSize()))
 
@@ -475,14 +473,12 @@ func (m *mergeSortStepExecutor) ResourceModified(_ context.Context, newResource 
 	target := int32(newResource.CPU.Capacity())
 	if target != currSize {
 		m.logger.Info("ResourceModified: tuning worker pool size",
-			zap.String("step", "mergeSortStepExecutor"),
 			zap.Int32("old", currOp.GetWorkerPoolSize()),
 			zap.Int32("new", target))
 		currOp.TuneWorkerPoolSize(target, true)
 	}
 
 	m.logger.Info("ResourceModified: finished tuning worker pool size",
-		zap.String("step", "mergeSortStepExecutor"),
 		zap.Int32("old", currSize),
 		zap.Int32("new", currOp.GetWorkerPoolSize()))
 
@@ -652,7 +648,6 @@ func (e *writeAndIngestStepExecutor) TaskMetaModified(_ context.Context, newMeta
 		oldSpeed := e.taskMeta.Plan.MaxWriteSpeed
 		newSpeed := newTaskMeta.Plan.MaxWriteSpeed
 		e.logger.Info("TaskMetaModified: updating max_write_speed",
-			zap.String("step", "writeAndIngestStepExecutor"),
 			zap.Int64("old", int64(oldSpeed)),
 			zap.Int64("new", int64(newSpeed)),
 		)
@@ -675,7 +670,6 @@ func (e *writeAndIngestStepExecutor) ResourceModified(ctx context.Context, newRe
 		return err
 	}
 	e.logger.Info("ResourceModified: updated engine resource",
-		zap.String("step", "writeAndIngestStepExecutor"),
 		zap.Stringer("newResource", newResource),
 	)
 	e.tableImporter.Backend().SetConcurrency(newConcurrency)
