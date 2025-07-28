@@ -215,10 +215,10 @@ func RefreshMeta(
 	dbName, tableName string,
 ) {
 	args := &model.RefreshMetaArgs{
-		SchemaID:   dbID,
-		TableID:    tableID,
-		SchemaName: dbName,
-		TableName:  tableName,
+		SchemaID:      dbID,
+		TableID:       tableID,
+		InvolvedDB:    dbName,
+		InvolvedTable: tableName,
 	}
 	err := de.RefreshMeta(ctx, args)
 	require.NoError(t, err)

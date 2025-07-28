@@ -1932,10 +1932,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 					}
 				}
 				args := &model.RefreshMetaArgs{
-					SchemaID:   dbID,
-					TableID:    tableID,
-					SchemaName: dbName,
-					TableName:  tableName,
+					SchemaID:      dbID,
+					TableID:       tableID,
+					InvolvedDB:    dbName,
+					InvolvedTable: tableName,
 				}
 
 				log.Info("refreshing deleted table meta",
@@ -1961,10 +1961,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 			dbName = dbReplace.Name
 		}
 		args := &model.RefreshMetaArgs{
-			SchemaID:   dbID,
-			TableID:    0, // 0 for database-only refresh
-			SchemaName: dbName,
-			TableName:  model.InvolvingAll,
+			SchemaID:      dbID,
+			TableID:       0, // 0 for database-only refresh
+			InvolvedDB:    dbName,
+			InvolvedTable: model.InvolvingAll,
 		}
 
 		log.Info("refreshing potential deleted database meta",
@@ -1994,10 +1994,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		}
 
 		args := &model.RefreshMetaArgs{
-			SchemaID:   dbReplace.DbID,
-			TableID:    0, // tableID = 0 for database-only refresh
-			SchemaName: dbReplace.Name,
-			TableName:  model.InvolvingAll,
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // tableID = 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
 		}
 		log.Info("refreshing database-only meta",
 			zap.Int64("schemaID", dbReplace.DbID),
@@ -2028,10 +2028,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 				}
 
 				args := &model.RefreshMetaArgs{
-					SchemaID:   dbReplace.DbID,
-					TableID:    tableReplace.TableID,
-					SchemaName: dbReplace.Name,
-					TableName:  tableReplace.Name,
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
 				}
 				log.Info("refreshing regular table meta",
 					zap.Int64("schemaID", dbReplace.DbID),

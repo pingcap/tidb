@@ -7085,15 +7085,15 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
-		SchemaName:     args.SchemaName,
+		SchemaName:     args.InvolvedDB,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				Database: args.SchemaName,
-				Table:    args.TableName,
+				Database: args.InvolvedDB,
+				Table:    args.InvolvedTable,
 			},
 		},
 	}
