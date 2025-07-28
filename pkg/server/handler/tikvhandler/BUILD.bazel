@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/domain/infosync",
@@ -46,6 +47,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//clients/router",
+        "@com_github_tikv_pd_client//constants",
         "@com_github_tikv_pd_client//http",
         "@com_github_tikv_pd_client//opt",
         "@org_uber_go_zap//:zap",
