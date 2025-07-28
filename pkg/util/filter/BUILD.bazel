@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/meta/metadef",
+        "//pkg/util/intest",
         "//pkg/util/table-filter",
         "//pkg/util/table-rule-selector",
         "@com_github_pingcap_errors//:errors",
