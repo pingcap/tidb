@@ -676,7 +676,7 @@ func (e *writeAndIngestStepExecutor) ResourceModified(ctx context.Context, newRe
 	}
 	e.logger.Info("ResourceModified: updated engine resource",
 		zap.String("step", "writeAndIngestStepExecutor"),
-		zap.Any("newResource", newResource),
+		zap.Stringer("newResource", newResource),
 	)
 	e.tableImporter.Backend().SetConcurrency(newConcurrency)
 	return nil

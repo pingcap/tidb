@@ -16,11 +16,11 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -67,13 +67,10 @@ func (e *AlterImportJobExec) Open(ctx context.Context) error {
 		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("ALTER")
 	}
 
-	taskKey := fmt.Sprintf("%s/%d", proto.ImportInto, e.jobID)
+	taskKey := importinto.TaskKey(e.jobID)
 	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return err
-	}
-	if task == nil {
-		return errors.Errorf("no import into task found for job id %d", e.jobID)
 	}
 	taskID := task.ID
 
