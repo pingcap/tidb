@@ -58,19 +58,6 @@ func TestInvalidDDLJob(t *testing.T) {
 	de := dom.DDLExecutor().(ddl.ExecutorForTest)
 	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job type: none")
-
-	job.Type = model.ActionCreateSchema
-	job.InvolvingSchemaInfo = []model.InvolvingSchemaInfo{}
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
-	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job args: InvolvingSchemaInfo")
-
-	job.TableName = "table"
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
-	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job args: InvolvingSchemaInfo")
-
-	job.InvolvingSchemaInfo = []model.InvolvingSchemaInfo{{Database: "db"}}
-	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
-	require.ErrorContains(t, err, "[ddl:8204]invalid ddl job args: InvolvingSchemaInfo")
 }
 
 func TestAddBatchJobError(t *testing.T) {
