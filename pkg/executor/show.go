@@ -1258,6 +1258,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
 		}
+		if idxInfo.PartialConditionExprString != "" {
+			fmt.Fprintf(buf, " WHERE %s", idxInfo.PartialConditionExprString)
+		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}

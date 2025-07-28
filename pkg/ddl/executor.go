@@ -1766,7 +1766,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
@@ -4901,8 +4901,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == ast.IndexTypeHypo { // for hypo-index
+		partialConditionString, err := CheckAndBuildIndexPartialConditionString(tblInfo, indexOption.PartialCondition, keyType)
+		if err != nil {
+			return err
+		}
 		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
-			indexPartSpecifications, indexOption, model.StatePublic)
+			indexPartSpecifications, indexOption, partialConditionString, model.StatePublic)
 		if err != nil {
 			return err
 		}
@@ -4928,6 +4932,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
+	var partialConditionString string
+	if indexOption != nil {
+		partialConditionString, err = CheckAndBuildIndexPartialConditionString(tblInfo, indexOption.PartialCondition, keyType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,
@@ -4937,6 +4948,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 			SplitOpt:                splitOpt,
+			PartialConditionString:  partialConditionString,
 		}},
 		OpType: model.OpAddIndex,
 	}
