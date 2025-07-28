@@ -79,10 +79,11 @@ func getPlanCostVer24PhysicalSelection(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalProjection returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + proj-cost / concurrency
 // proj-cost = input-rows * len(expressions) * cpu-factor
-func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalProjection(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalProjection)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -539,11 +540,15 @@ func getPlanCostVer24PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 	}
 
 	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
-	n := max(1, float64(p.Count+p.Offset))
-	if n > 10000 {
-		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
-		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
-		n = min(n, rows)
+	n := max(MinNumRows, float64(p.Count+p.Offset))
+	minTopNThreshold := float64(100) // set a minimum of 100 to avoid too low n
+	if n > minTopNThreshold {
+		// `rows` may be under-estimated. We need to adjust 'n' to ensure we keep a reasonable value.
+		if rows < float64(p.Offset) {
+			n = rows + float64(p.Offset)
+		} else {
+			n = max(min(n, rows), minTopNThreshold)
+		}
 	}
 	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)

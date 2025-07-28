@@ -40,7 +40,7 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	require.True(t, needReportExecutionSummary(limitTIDB, 10, false))
 	require.False(t, needReportExecutionSummary(limitTIDB, 11, false))
 
-	projection := &plannercore.PhysicalProjection{}
+	projection := &physicalop.PhysicalProjection{}
 	projection.SetChildren(tableReader)
 	require.False(t, needReportExecutionSummary(projection, 10, false))
 

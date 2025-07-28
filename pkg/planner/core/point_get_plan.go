@@ -676,6 +676,10 @@ func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr)
 	if len(names) == 0 {
 		return true
 	}
+	// partIdx can be -1 more to check issue #62458
+	if pi == nil || idx < 0 || idx >= len(pi.Definitions) {
+		return false
+	}
 	s := pi.Definitions[idx].Name.L
 	for _, name := range names {
 		if s == name.L {

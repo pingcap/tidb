@@ -413,17 +413,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return str.String()
 }
 
-// ExplainInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainInfo() string {
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
-	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.Schema(), enableRedactLog)
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return exprStr
-}
-
 func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
@@ -450,14 +439,6 @@ func (p *PhysicalExpand) explainInfoV2() string {
 	return sb.String()
 }
 
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainNormalizedInfo() string {
-	if vardef.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
-	}
-	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalExpand) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
@@ -467,9 +448,11 @@ func (p *PhysicalExpand) ExplainInfo() string {
 	var str strings.Builder
 	str.WriteString("group set num:")
 	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
-	str.WriteString(", groupingID:")
-	str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
-	str.WriteString(", ")
+	if p.GroupingIDCol != nil {
+		str.WriteString(", groupingID:")
+		str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
+		str.WriteString(", ")
+	}
 	str.WriteString(p.GroupingSets.StringWithCtx(ectx, perrors.RedactLogDisable))
 	return str.String()
 }

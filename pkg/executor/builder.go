@@ -278,7 +278,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildHashAgg(v)
 	case *plannercore.PhysicalStreamAgg:
 		return b.buildStreamAgg(v)
-	case *plannercore.PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		return b.buildProjection(v)
 	case *physicalop.PhysicalMemTable:
 		return b.buildMemTable(v)
@@ -286,7 +286,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTableDual(v)
 	case *plannercore.PhysicalApply:
 		return b.buildApply(v)
-	case *plannercore.PhysicalMaxOneRow:
+	case *physicalop.PhysicalMaxOneRow:
 		return b.buildMaxOneRow(v)
 	case *plannercore.Analyze:
 		return b.buildAnalyze(v)
@@ -901,7 +901,6 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
 		DistributionJobID:     v.DistributionJobID,
-		SQLOrDigest:           v.SQLOrDigest,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
@@ -2200,7 +2199,7 @@ func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Execut
 	return e
 }
 
-func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exec.Executor {
+func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2740,7 +2739,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 	return constructSerialExec()
 }
 
-func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) exec.Executor {
+func (b *executorBuilder) buildMaxOneRow(v *physicalop.PhysicalMaxOneRow) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -3415,7 +3414,7 @@ func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 					return true
 				}
 			}
-		case *plannercore.PhysicalProjection:
+		case *physicalop.PhysicalProjection:
 			for _, expr := range x.Exprs {
 				if len(expression.ExtractCorColumns(expr)) > 0 {
 					return true
@@ -4591,7 +4590,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 	case *physicalop.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
-	case *plannercore.PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
@@ -5054,7 +5053,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	ctx context.Context,
-	v *plannercore.PhysicalProjection,
+	v *physicalop.PhysicalProjection,
 	lookUpContents []*join.IndexJoinLookUpContent,
 	indexRanges []*ranger.Range,
 	keyOff2IdxOff []int,

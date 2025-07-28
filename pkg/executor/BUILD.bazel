@@ -115,6 +115,7 @@ go_library(
         "//pkg/disttask/importinto",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/executor/aggfuncs",
