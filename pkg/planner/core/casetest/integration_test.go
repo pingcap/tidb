@@ -536,3 +536,29 @@ func TestIssue56915(t *testing.T) {
 		"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 }
+
+func TestCaseWhenPreparedStatementBug(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 DECIMAL);")
+	tk.MustExec("INSERT INTO t0 VALUES (0);")
+
+	normalResult := tk.MustQuery("SELECT * FROM t0 WHERE CAST((CASE t0.c0 WHEN t0.c0 THEN CAST(t0.c0 AS TIME) ELSE NULL END ) AS DATE);")
+	t.Logf("Normal query result: %v", normalResult.Rows())
+
+	caseResult := tk.MustQuery("SELECT CAST((CASE t0.c0 WHEN t0.c0 THEN CAST(t0.c0 AS TIME) ELSE NULL END ) AS DATE) FROM t0;")
+	t.Logf("Normal CASE result: %v", caseResult.Rows())
+
+	tk.MustExec("SET @b = NULL;")
+	tk.MustExec("PREPARE prepare_query FROM 'SELECT * FROM t0 WHERE CAST((CASE t0.c0 WHEN t0.c0 THEN CAST(t0.c0 AS TIME) ELSE ? END ) AS DATE)';")
+	preparedResult := tk.MustQuery("EXECUTE prepare_query USING @b;")
+	t.Logf("Prepared statement result: %v", preparedResult.Rows())
+
+	tk.MustExec("PREPARE prepare_case FROM 'SELECT CAST((CASE t0.c0 WHEN t0.c0 THEN CAST(t0.c0 AS TIME) ELSE ? END ) AS DATE) FROM t0';")
+	preparedCaseResult := tk.MustQuery("EXECUTE prepare_case USING @b;")
+	t.Logf("Prepared CASE result: %v", preparedCaseResult.Rows())
+
+	require.Equal(t, len(normalResult.Rows()), len(preparedResult.Rows()), "Results should have the same number of rows")
+}
