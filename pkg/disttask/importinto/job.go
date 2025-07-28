@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -28,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -56,8 +60,8 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
-func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *infosync.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
-	var instances []*infosync.ServerInfo
+func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+	var instances []*serverinfo.ServerInfo
 	if instance != nil {
 		instances = append(instances, instance)
 	}
@@ -157,50 +161,163 @@ type RuntimeInfo struct {
 	Status     proto.TaskState
 	ImportRows int64
 	ErrorMsg   string
+
+	Step       proto.Step
+	StartTime  types.Time
+	UpdateTime types.Time
+	Processed  int64
+	Total      int64
+}
+
+var notAvailable = "N/A"
+
+// Percent returns the progress percentage of the current step.
+func (ri *RuntimeInfo) Percent() string {
+	// Currently, we can't track the progress of post process
+	if ri.Step == proto.ImportStepPostProcess || ri.Step == proto.StepInit {
+		return notAvailable
+	}
+
+	percentage := 0.0
+	if ri.Total > 0 {
+		percentage = float64(ri.Processed) / float64(ri.Total)
+		percentage = min(percentage, 1.0)
+	}
+	return strconv.FormatInt(int64(percentage*100), 10)
+}
+
+// FormatSecondAsTime formats the given seconds into the given format
+// If the duration is less than a day, it returns the time in HH:MM:SS format.
+// Otherwise, it returns the time in DD d HH:MM:SS format.
+func FormatSecondAsTime(sec int64) string {
+	day := ""
+	dur := time.Duration(sec) * time.Second
+	if dur.Hours() >= 24 {
+		day = fmt.Sprintf("%d d ", int(dur.Hours()/24))
+	}
+	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
+}
+
+// SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
+func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
+	s := int64(0)
+	duration := types.TimestampDiff("SECOND", ri.StartTime, ri.UpdateTime)
+	if duration > 0 && ri.Processed > 0 {
+		s = ri.Processed / duration
+	}
+
+	remainTime := notAvailable
+	if s > 0 && ri.Total > 0 {
+		remainSecond := max((ri.Total-ri.Processed)/s, 0)
+		remainTime = FormatSecondAsTime(remainSecond)
+	}
+
+	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
+}
+
+// TotalSize returns the total size of the current step in human-readable format.
+func (ri *RuntimeInfo) TotalSize() string {
+	return units.HumanSize(float64(ri.Total))
+}
+
+// ProcessedSize returns the processed size of the current step in human-readable format.
+func (ri *RuntimeInfo) ProcessedSize() string {
+	return units.HumanSize(float64(ri.Processed))
+}
+
+// convertToMySQLTime converts go time to MySQL time with the specified location.
+// It's partially copied from builtin_time.go
+func convertToMySQLTime(t time.Time, loc *time.Location) (types.Time, error) {
+	tr, err := types.TruncateFrac(t, 0)
+	if err != nil {
+		return types.ZeroTime, err
+	}
+
+	result := types.NewTime(types.FromGoTime(tr), mysql.TypeDatetime, 0)
+	err = result.ConvertTimeZone(t.Location(), loc)
+	return result, err
 }
 
 // GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
-func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
+func GetRuntimeInfoForJob(
+	ctx context.Context,
+	location *time.Location,
+	jobID int64,
+) (*RuntimeInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
 	dxfTaskMgr, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
 	}
 
-	taskKey := TaskKey(jobID)
-	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
+	task, err := dxfTaskMgr.GetTaskByKeyWithHistory(ctx, TaskKey(jobID))
 	if err != nil {
 		return nil, err
 	}
-	taskMeta := TaskMeta{}
+
+	var (
+		taskMeta    TaskMeta
+		taskSummary importer.Summary
+
+		latestTime time.Time
+		ri         = &RuntimeInfo{
+			Status: task.State,
+			Step:   task.Step,
+		}
+	)
+
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	step := proto.ImportStepImport
-	if taskMeta.Plan.CloudStorageURI != "" {
-		step = proto.ImportStepWriteAndIngest
+	if task.Error != nil {
+		ri.ErrorMsg = task.Error.Error()
+		return ri, nil
 	}
 
-	summaries, err := dxfTaskMgr.GetAllSubtaskSummaryByStep(ctx, task.ID, step)
+	if len(taskMeta.TaskResult) != 0 {
+		if err = json.Unmarshal(taskMeta.TaskResult, &taskSummary); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	summaries, err := dxfTaskMgr.GetAllSubtaskSummaryByStep(ctx, task.ID, task.Step)
 	if err != nil {
 		return nil, err
 	}
 
-	var importedRows int64
-	for _, summary := range summaries {
-		importedRows += summary.RowCnt.Load()
+	for _, s := range summaries {
+		ri.Processed += s.Bytes.Load()
+		ri.ImportRows += s.RowCnt.Load()
+		if s.UpdateTime.After(latestTime) {
+			latestTime = s.UpdateTime
+		}
 	}
 
-	var errMsg string
-	if task.Error != nil {
-		errMsg = task.Error.Error()
+	if task.Step == proto.ImportStepPostProcess {
+		ri.ImportRows = taskSummary.ImportedRows
+	} else if task.Step != proto.ImportStepWriteAndIngest && task.Step != proto.ImportStepImport {
+		ri.ImportRows = 0
 	}
-	return &RuntimeInfo{
-		Status:     task.State,
-		ImportRows: importedRows,
-		ErrorMsg:   errMsg,
-	}, nil
+
+	switch task.Step {
+	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+		ri.Total = taskSummary.IngestSummary.Bytes
+	case proto.ImportStepEncodeAndSort:
+		ri.Total = taskSummary.EncodeSummary.Bytes
+	case proto.ImportStepMergeSort:
+		ri.Total = taskSummary.MergeSummary.Bytes
+	}
+
+	if !latestTime.IsZero() {
+		ri.UpdateTime, err = convertToMySQLTime(latestTime, location)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return ri, nil
 }
 
 // GetLastUpdateTimeForRunningJob get the last update time for given job.

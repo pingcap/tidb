@@ -58,7 +58,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	sel = sel.Init(ctx, stats, 0)
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}
 	proj = proj.Init(ctx, stats, 0)
 	proj.SetSchema(schema)
 
@@ -71,7 +71,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	}
 
 	// mock a union-scan and attach to task.
-	unionScan := &PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
+	unionScan := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan.Attach2Task(task)
 
 	// assert the child task's p is unchanged.
@@ -84,7 +84,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 		p: proj,
 	}
 	// mock a union-scan and attach to task.
-	unionScan2 := &PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
+	unionScan2 := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan2.Self = unionScan2
 	unionScan2.Attach2Task(task2)
 

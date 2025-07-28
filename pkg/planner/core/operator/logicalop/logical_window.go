@@ -306,7 +306,7 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
@@ -319,8 +319,8 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 			canNotBePushed = append(canNotBePushed, cond)
 		}
 	}
-	p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return canNotBePushed, p
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	return canNotBePushed, p, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.

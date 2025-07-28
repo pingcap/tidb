@@ -390,7 +390,8 @@ type Job struct {
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
 
-	// SessionVars store session variables
+	// SessionVars store system variables used in the DDL execution.
+	// To keep the backward compatibility, we still name it SessionVars.
 	SessionVars map[string]string `json:"session_vars,omitempty"`
 }
 
@@ -696,13 +697,13 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
-// AddSessionVars add a session variable in DDL job.
-func (job *Job) AddSessionVars(name, value string) {
+// AddSystemVars add a system variable in DDL job.
+func (job *Job) AddSystemVars(name string, value string) {
 	job.SessionVars[name] = value
 }
 
-// GetSessionVars get a session variable in DDL job.
-func (job *Job) GetSessionVars(name string) (string, bool) {
+// GetSystemVars get a system variable stored in DDL job.
+func (job *Job) GetSystemVars(name string) (string, bool) {
 	value, ok := job.SessionVars[name]
 	return value, ok
 }
@@ -1129,6 +1130,8 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
+	IsRefreshMeta bool `json:"-"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }

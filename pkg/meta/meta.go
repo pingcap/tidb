@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -93,10 +95,13 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
-	mBDRRole             = []byte("BDRRole")
-	mMetaDataLock        = []byte("metadataLock")
-	mSchemaCacheSize     = []byte("SchemaCacheSize")
-	mRequestUnitStats    = []byte("RequestUnitStats")
+	// the name doesn't contain nextgen, as we might impl the same logic in classic
+	// kernel later, then we can reuse the same meta key.
+	mBootTableVersion = []byte("BootTableVersion")
+	mBDRRole          = []byte("BDRRole")
+	mMetaDataLock     = []byte("metadataLock")
+	mSchemaCacheSize  = []byte("SchemaCacheSize")
+	mRequestUnitStats = []byte("RequestUnitStats")
 
 	mIngestMaxBatchSplitRangesKey  = []byte("IngestMaxBatchSplitRanges")
 	mIngestMaxSplitRangesPerSecKey = []byte("IngestMaxSplitRangesPerSec")
@@ -132,11 +137,6 @@ const (
 	typeUnknown int = 0
 	typeJSON    int = 1
 	// todo: customized handler.
-
-	// MaxInt48 is the max value of int48.
-	MaxInt48 = 0x0000FFFFFFFFFFFF
-	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
-	MaxGlobalID = MaxInt48 - 1000
 )
 
 var (
@@ -162,6 +162,21 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
+// NextGenBootTableVersion is the version of nextgen bootstrapping.
+// it serves the same purpose as DDLTableVersion, to avoid the same table created
+// twice, as we are creating those tables in meta kv directly, without going
+// through DDL.
+type NextGenBootTableVersion int
+
+const (
+	// InitNextGenBootTableVersion means it's a fresh cluster, we haven't bootstrapped yet.
+	InitNextGenBootTableVersion NextGenBootTableVersion = 0
+	// BaseNextGenBootTableVersion is the first version of nextgen bootstrapping, we
+	// will create 52 physical tables.
+	// Note: DDL related tables are created separately, see DDLTableVersion.
+	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
+)
+
 // DDLTableVersion is to display ddl related table versions
 type DDLTableVersion int
 
@@ -178,9 +193,8 @@ const (
 	DDLNotifierTableVersion DDLTableVersion = 4
 )
 
-// Bytes returns the byte slice.
-func (ver DDLTableVersion) Bytes() []byte {
-	return []byte(strconv.Itoa(int(ver)))
+func encodeIntVal(i int) []byte {
+	return []byte(strconv.Itoa(i))
 }
 
 // Option is for Mutator option.
@@ -218,8 +232,8 @@ func (m *Mutator) GenGlobalID() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	return newID, err
 }
@@ -234,8 +248,8 @@ func (m *Mutator) AdvanceGlobalIDs(n int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	return origID, nil
@@ -250,8 +264,8 @@ func (m *Mutator) GenGlobalIDs(n int) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if newID > MaxGlobalID {
-		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)
@@ -677,6 +691,17 @@ func (m *Mutator) CreateDatabase(dbInfo *model.DBInfo) error {
 	return nil
 }
 
+// IsDatabaseExist checks whether a database exists by dbID.
+// exported for testing.
+func (m *Mutator) IsDatabaseExist(dbID int64) (bool, error) {
+	dbKey := m.dbKey(dbID)
+	v, err := m.txn.HGet(mDBs, dbKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return v != nil, nil
+}
+
 // UpdateDatabase updates a database with db info.
 func (m *Mutator) UpdateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
@@ -737,29 +762,52 @@ func (m *Mutator) ClearBDRRole() error {
 	return errors.Trace(m.txn.Clear(mBDRRole))
 }
 
-// SetDDLTables write a key into storage.
-func (m *Mutator) SetDDLTables(ddlTableVersion DDLTableVersion) error {
-	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
+// SetDDLTableVersion write a key into storage.
+func (m *Mutator) SetDDLTableVersion(ddlTableVersion DDLTableVersion) error {
+	return m.setTableVersion(mDDLTableVersion, int(ddlTableVersion))
 }
 
-// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
-func (m *Mutator) CheckDDLTableVersion() (DDLTableVersion, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
+// SetNextGenBootTableVersion set the table version on initial bootstrap.
+func (m *Mutator) SetNextGenBootTableVersion(version NextGenBootTableVersion) error {
+	return m.setTableVersion(mBootTableVersion, int(version))
+}
+
+func (m *Mutator) setTableVersion(key []byte, version int) error {
+	return errors.Trace(m.txn.Set(key, encodeIntVal(version)))
+}
+
+// GetDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Mutator) GetDDLTableVersion() (DDLTableVersion, error) {
+	v, err := m.getTableVersion(mDDLTableVersion)
+	return DDLTableVersion(v), err
+}
+
+// GetNextGenBootTableVersion checks the version of the bootstrapping tables.
+func (m *Mutator) GetNextGenBootTableVersion() (NextGenBootTableVersion, error) {
+	v, err := m.getTableVersion(mBootTableVersion)
+	return NextGenBootTableVersion(v), err
+}
+
+func (m *Mutator) getTableVersion(key []byte) (int, error) {
+	v, err := m.txn.Get(key)
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
 	if string(v) == "" {
-		return InitDDLTableVersion, nil
+		return 0, nil
 	}
 	ver, err := strconv.Atoi(string(v))
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
-	return DDLTableVersion(ver), nil
+	return ver, nil
 }
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
+	if kerneltype.IsNextGen() {
+		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
+	}
 	id, err := m.GetSystemDBID()
 	if id != 0 || err != nil {
 		return id, err
@@ -769,15 +817,33 @@ func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	return id, m.CreateSysDatabaseByID(mysql.SystemDB, id)
+}
+
+// CreateSysDatabaseByIDIfNotExists creates a system database with the given name
+// and ID if it does not already exist.
+func (m *Mutator) CreateSysDatabaseByIDIfNotExists(name string, id int64) error {
+	exist, err := m.IsDatabaseExist(id)
+	if err != nil {
+		return err
+	}
+	if exist {
+		return nil
+	}
+	return m.CreateSysDatabaseByID(name, id)
+}
+
+// CreateSysDatabaseByID creates a system database with the given name and ID.
+// exported for testing.
+func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 	db := model.DBInfo{
 		ID:      id,
-		Name:    ast.NewCIStr(mysql.SystemDB),
+		Name:    ast.NewCIStr(name),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
 	}
-	err = m.CreateDatabase(&db)
-	return db.ID, err
+	return m.CreateDatabase(&db)
 }
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.

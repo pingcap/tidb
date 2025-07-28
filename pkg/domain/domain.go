@@ -91,7 +91,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -198,12 +197,14 @@ type Domain struct {
 		expiredTimeStamp types.Time
 	}
 
-	brOwnerMgr               owner.Manager
-	logBackupAdvancer        *daemon.OwnerDaemon
-	historicalStatsWorker    *HistoricalStatsWorker
-	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
-	runawayManager           *runaway.Manager
-	resourceGroupsController *rmclient.ResourceGroupsController
+	brOwnerMgr            owner.Manager
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	runawayManager        *runaway.Manager
+	// resourceGroupsController can be changed via `SetResourceGroupsController`
+	// in unit test.
+	resourceGroupsController atomic.Pointer[rmclient.ResourceGroupsController]
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1143,22 +1144,6 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
-	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
-	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
-	if err == nil && version == cgroup.V2 {
-		// see cgroup.detectMemLimitInV2 for more details.
-		// below are some real memory limits tested on GCP:
-		// node-spec  real-limit  percent
-		// 16c32g        27.83Gi    87%
-		// 32c64g        57.36Gi    89.6%
-		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
-		// content of 'memory.max' might be 'max', so we use the min of them.
-		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
-		logger.Info("adjust memory limit for cgroup v2",
-			zap.String("before", units.BytesSize(float64(totalMem))),
-			zap.String("after", units.BytesSize(float64(adjustedMem))))
-		totalMem = adjustedMem
-	}
 	var totalDisk uint64
 	cfg := config.GetGlobalConfig()
 	sz, err := lcom.GetStorageSize(cfg.TempDir)
@@ -1672,12 +1657,12 @@ func (do *Domain) RunawayManager() *runaway.Manager {
 
 // ResourceGroupsController returns the resource groups controller.
 func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
-	return do.resourceGroupsController
+	return do.resourceGroupsController.Load()
 }
 
 // SetResourceGroupsController is only used in test.
 func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
-	do.resourceGroupsController = controller
+	do.resourceGroupsController.Store(controller)
 }
 
 // SetupHistoricalStatsWorker setups worker

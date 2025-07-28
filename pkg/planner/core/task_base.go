@@ -487,7 +487,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
@@ -529,7 +529,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}
 
 		if t.needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)

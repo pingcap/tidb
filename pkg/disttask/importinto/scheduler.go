@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -166,6 +167,7 @@ func NewImportScheduler(
 func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
 	return &importScheduler{
 		GlobalSort: globalSort,
+		taskKS:     tidb.GetGlobalKeyspaceName(),
 	}
 }
 
@@ -272,13 +274,20 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
-) (
-	resSubtaskMeta [][]byte, err error) {
+) (resSubtaskMeta [][]byte, err error) {
+	nodeCnt := len(execIDs)
+	if kerneltype.IsNextGen() {
+		// in nextgen, node resource are scaled out automatically, we only consider
+		// the max allowed node for the task, and ignore how many node currently
+		// available.
+		nodeCnt = task.MaxNodeCount
+	}
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
+		zap.Int("node-count", nodeCnt),
 	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
@@ -306,6 +315,10 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+		// Update update_time in tidb_import_jobs
+		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepGlobalSorting); err != nil {
+			return nil, err
+		}
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
@@ -336,17 +349,17 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
-		// we need get metas where checksum is stored.
-		if err := updateResult(taskHandle, task, taskMeta, sch.GlobalSort); err != nil {
-			return nil, err
-		}
 		step := getStepOfEncode(sch.GlobalSort)
 		metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, step)
 		if err != nil {
 			return nil, err
 		}
 		previousSubtaskMetas[step] = metas
-		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
+		var importResult importer.Summary
+		if err := json.Unmarshal(taskMeta.TaskResult, &importResult); err != nil {
+			return nil, errors.Trace(err)
+		}
+		logger.Info("move to post-process step ", zap.Any("result", importResult))
 	case proto.StepDone:
 		return nil, nil
 	default:
@@ -359,8 +372,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(execIDs),
+		ExecuteNodesCnt:      nodeCnt,
 		Store:                sch.store,
+		ThreadCnt:            task.Concurrency,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
@@ -372,6 +386,10 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	}
 	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, nextStep)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := updateTaskSummary(taskHandle, task, taskMeta, nextStep, logicalPlan); err != nil {
 		return nil, err
 	}
 
@@ -504,16 +522,47 @@ func getStepOfEncode(globalSort bool) proto.Step {
 	return proto.ImportStepImport
 }
 
-// we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
-	stepOfEncode := getStepOfEncode(globalSort)
-	summaries, err := handle.GetPreviousSubtaskSummary(task.ID, stepOfEncode)
-	if err != nil {
-		return err
+// Store task summary in task meta.
+// We will update it in place and make task.Meta point to the new taskMeta.
+func updateTaskSummary(
+	handle storage.TaskHandle,
+	task *proto.Task,
+	taskMeta *TaskMeta,
+	nextStep proto.Step,
+	p *LogicalPlan,
+) error {
+	var (
+		importSummary importer.Summary
+		err           error
+	)
+
+	if len(taskMeta.TaskResult) > 0 {
+		if err = json.Unmarshal(taskMeta.TaskResult, &importSummary); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	for _, summary := range summaries {
-		taskMeta.Result.LoadedRowCnt += uint64(summary.RowCnt.Load())
+	// Process row count and data size
+	switch nextStep {
+	case proto.ImportStepEncodeAndSort, proto.ImportStepImport:
+		importSummary.EncodeSummary = p.summary
+	case proto.ImportStepMergeSort:
+		importSummary.MergeSummary = p.summary
+	case proto.ImportStepWriteAndIngest:
+		importSummary.IngestSummary = p.summary
+	case proto.ImportStepPostProcess:
+		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for _, subtaskSummary := range subtaskSummaries {
+			importSummary.ImportedRows += subtaskSummary.RowCnt.Load()
+		}
+	}
+
+	if taskMeta.TaskResult, err = json.Marshal(importSummary); err != nil {
+		return errors.Trace(err)
 	}
 
 	return updateMeta(task, taskMeta)
@@ -569,13 +618,20 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	if err != nil {
 		return err
 	}
-	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
+
+	summary := &importer.Summary{}
+	if len(taskMeta.TaskResult) > 0 {
+		if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, int64(taskMeta.Result.LoadedRowCnt)); err != nil {
+				if err := importer.FlushTableStats(ctx, se, taskMeta.Plan.TableInfo.ID, summary.ImportedRows); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
 				exec := se.GetSQLExecutor()
@@ -587,6 +643,13 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 
 func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
+	summary := &importer.Summary{}
+	if len(taskMeta.TaskResult) > 0 {
+		if err := json.Unmarshal(taskMeta.TaskResult, summary); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
@@ -599,7 +662,7 @@ func (sch *importScheduler) failJob(ctx context.Context, task *proto.Task,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
-				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
+				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg, summary)
 			})
 		},
 	)

@@ -107,7 +107,7 @@ func (*ImplTableDual) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) 
 func (*ImplTableDual) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicDual := expr.ExprNode.(*logicalop.LogicalTableDual)
-	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.QueryBlockOffset())
+	dual := physicalop.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.QueryBlockOffset())
 	dual.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewTableDualImpl(dual)}, nil
 }
@@ -128,7 +128,7 @@ func (*ImplMemTableScan) OnImplement(
 ) ([]memo.Implementation, error) {
 	logic := expr.ExprNode.(*logicalop.LogicalMemTable)
 	logicProp := expr.Group.Prop
-	physical := plannercore.PhysicalMemTable{
+	physical := physicalop.PhysicalMemTable{
 		DBName:    logic.DBName,
 		Table:     logic.TableInfo,
 		Columns:   logic.TableInfo.Columns,
@@ -155,7 +155,7 @@ func (*ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physi
 	if !ok {
 		return nil, nil
 	}
-	proj := plannercore.PhysicalProjection{
+	proj := physicalop.PhysicalProjection{
 		Exprs:            logicProj.Exprs,
 		CalculateNoDelay: logicProj.CalculateNoDelay,
 	}.Init(logicProj.SCtx(), logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicProj.QueryBlockOffset(), childProp)
@@ -557,7 +557,7 @@ func (*ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (
 // OnImplement implements ImplementationRule OnImplement interface
 func (*ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*logicalop.LogicalApply)
-	join := plannercore.GetHashJoin(la, reqProp)
+	join := plannercore.GetHashJoin(nil, la, reqProp)
 	physicalApply := plannercore.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
@@ -583,7 +583,7 @@ func (*ImplMaxOneRow) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) 
 // OnImplement implements ImplementationRule OnImplement interface
 func (*ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	mor := expr.ExprNode.(*logicalop.LogicalMaxOneRow)
-	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
+	physicalMaxOneRow := physicalop.PhysicalMaxOneRow{}.Init(
 		mor.SCtx(),
 		expr.Group.Prop.Stats,
 		mor.QueryBlockOffset(),
