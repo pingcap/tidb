@@ -119,10 +119,10 @@ func TestTopology(t *testing.T) {
 	require.True(t, ttlExists)
 }
 
-func (is *Syncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
-	info := is.GetLocalServerInfo()
+func (s *Syncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
+	info := s.GetLocalServerInfo()
 	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.IP, info.Port)
-	resp, err := is.etcdCli.Get(ctx, key)
+	resp, err := s.etcdCli.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -140,10 +140,10 @@ func (is *Syncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error
 	return &ret, nil
 }
 
-func (is *Syncer) ttlKeyExists(ctx context.Context) (bool, error) {
-	info := is.GetLocalServerInfo()
+func (s *Syncer) ttlKeyExists(ctx context.Context) (bool, error) {
+	info := s.GetLocalServerInfo()
 	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.IP, info.Port)
-	resp, err := is.etcdCli.Get(ctx, key)
+	resp, err := s.etcdCli.Get(ctx, key)
 	if err != nil {
 		return false, err
 	}
