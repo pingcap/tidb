@@ -17,7 +17,6 @@ package taskexecutor
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -496,24 +495,4 @@ func TestManagerInitMeta(t *testing.T) {
 	mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
 	require.ErrorIs(t, m.InitMeta(), context.Canceled)
 	require.True(t, ctrl.Satisfied())
-}
-
-func TestXX(t *testing.T) {
-	// Create two times representing the same wall clock time in different time zones.
-	locNY, _ := time.LoadLocation("America/New_York")
-	locLA, _ := time.LoadLocation("America/Los_Angeles")
-	// Let's take a specific wall clock time: 2025-01-01 08:00:00
-	t1 := time.Date(2025, 1, 1, 8, 0, 0, 0, locNY) // 8:00 AM in New York (EST)
-	t2 := time.Date(2025, 1, 1, 8, 0, 0, 0, locLA) // 8:00 AM in Los Angeles (PST)
-	// Since New York is 3 hours ahead of Los Angeles, t1 (8am in NY) is the same as 5am in LA.
-	// Therefore, t1 is 3 hours ahead of t2.
-	// So the duration from t2 to t1 should be 3 hours.
-	dur := t1.Sub(t2)
-	fmt.Println(dur) // should be 3h0m0s
-	// Alternatively, if we have two times that are the same absolute time but in different zones:
-	// For example, 8:00 AM in New York and 5:00 AM in Los Angeles (because of the 3-hour difference) are the same absolute time.
-	t3 := time.Date(2025, 1, 1, 8, 0, 0, 0, locNY)
-	t4 := time.Date(2025, 1, 1, 5, 0, 0, 0, locLA)
-	dur2 := t3.Sub(t4)
-	fmt.Println(dur2) // should be 0s
 }

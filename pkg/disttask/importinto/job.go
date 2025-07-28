@@ -288,6 +288,9 @@ func GetRuntimeInfoForJob(
 		ri.Processed += s.Bytes.Load()
 		ri.ImportRows += s.RowCnt.Load()
 		ri.Speed += s.GetSpeedInTimeRange(currentTime, timeRange)
+		if s.UpdateTime().After(latestTime) {
+			latestTime = s.UpdateTime()
+		}
 	}
 
 	if task.Step == proto.ImportStepPostProcess {

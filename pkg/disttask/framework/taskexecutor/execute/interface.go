@@ -130,6 +130,14 @@ func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Du
 	return int64(totalBytes / duration.Seconds())
 }
 
+// UpdateTime returns the last update time of the summary.
+func (s *SubtaskSummary) UpdateTime() time.Time {
+	if len(s.UpdateTimes) == 0 {
+		return time.Time{}
+	}
+	return s.UpdateTimes[len(s.UpdateTimes)-1]
+}
+
 // Reset resets the summary to zero values and clears history data.
 func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
