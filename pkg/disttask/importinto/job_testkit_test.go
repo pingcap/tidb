@@ -286,7 +286,7 @@ func TestShowImportProgress(t *testing.T) {
 
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 1000)
+		"root", "", &importer.ImportParameters{}, 1000)
 	require.NoError(t, err)
 
 	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)

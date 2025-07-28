@@ -363,27 +363,8 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	}, nil
 }
 
-// GetJobsByGroupKey gets jobs with given group key.
-// If groupKey is empty, it will return all jobs with not-null group key.
-func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, groupKey string, hasSuperPriv bool) ([]*JobInfo, error) {
+func getJobInfoFromSQL(ctx context.Context, conn sqlexec.SQLExecutor, sql string, args ...any) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	sql := baseQuerySQL
-	args := []any{}
-	var whereClause []string
-	if !hasSuperPriv {
-		whereClause = append(whereClause, "created_by = %?")
-		args = append(args, user)
-	}
-	if groupKey != "" {
-		whereClause = append(whereClause, "GROUP_KEY = %?")
-		args = append(args, groupKey)
-	} else {
-		whereClause = append(whereClause, "GROUP_KEY is not NULL")
-	}
-	if len(whereClause) > 0 {
-		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
-	}
-
 	rs, err := conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -405,34 +386,43 @@ func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, grou
 	return ret, nil
 }
 
+// GetJobsByGroupKey gets jobs with given group key.
+// If groupKey is empty, it will return all jobs with not-null group key.
+func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, groupKey string, hasSuperPriv bool) ([]*JobInfo, error) {
+	sql := baseQuerySQL
+	args := []any{}
+	var whereClause []string
+	if !hasSuperPriv {
+		whereClause = append(whereClause, "created_by = %?")
+		args = append(args, user)
+	}
+
+	if groupKey == "N/A" {
+		// "N/A" is used to indicate that the group key is not set.
+		whereClause = append(whereClause, "group_key IS NULL")
+	} else if groupKey != "" {
+		whereClause = append(whereClause, "GROUP_KEY = %?")
+		args = append(args, groupKey)
+	} else {
+		whereClause = append(whereClause, "GROUP_KEY is not NULL")
+	}
+	if len(whereClause) > 0 {
+		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
+	}
+
+	return getJobInfoFromSQL(ctx, conn, sql, args...)
+}
+
 // GetAllViewableJobs gets all viewable jobs.
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	sql := baseQuerySQL
 	args := []any{}
 	if !hasSuperPriv {
 		sql += " WHERE created_by = %?"
 		args = append(args, user)
 	}
-	rs, err := conn.ExecuteInternal(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer terror.Call(rs.Close)
-	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-	if err != nil {
-		return nil, err
-	}
-	ret := make([]*JobInfo, 0, len(rows))
-	for _, row := range rows {
-		jobInfo, err2 := convert2JobInfo(row)
-		if err2 != nil {
-			return nil, err2
-		}
-		ret = append(ret, jobInfo)
-	}
 
-	return ret, nil
+	return getJobInfoFromSQL(ctx, conn, sql, args...)
 }
 
 // CancelJob cancels import into job. Only a running/paused job can be canceled.

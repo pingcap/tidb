@@ -258,12 +258,12 @@ func TestGetAndCancelJob(t *testing.T) {
 	require.NoError(t, err)
 
 	// only see job created by user-for-test-2@%
-	jobs, err := importer.GetAllViewableJobs(ctx, conn, "user-for-test-2@%", "", false)
+	jobs, err := importer.GetAllViewableJobs(ctx, conn, "user-for-test-2@%", false)
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	require.Equal(t, jobID2, jobs[0].ID)
 	// with super privilege, we can see all jobs
-	jobs, err = importer.GetAllViewableJobs(ctx, conn, "user-for-test-2@%", "", true)
+	jobs, err = importer.GetAllViewableJobs(ctx, conn, "user-for-test-2@%", true)
 	require.NoError(t, err)
 	require.Len(t, jobs, 2)
 	require.Equal(t, jobID1, jobs[0].ID)
@@ -318,7 +318,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
 		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
-	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", "", true)
+	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", true)
 	require.NoError(t, err)
 	require.Len(t, gotJobInfos, 2)
 	// result should be in order, jobID1, jobID2
