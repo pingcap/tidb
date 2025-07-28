@@ -295,10 +295,10 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 
 	if p.PushedLimit != nil {
 		if indexRows > float64(p.PushedLimit.Count) {
-			indexRows = float64(p.PushedLimit.Count)
+			indexRows = float64(p.PushedLimit.Count) // rows returned from the index side
 		}
 		if tableRows > float64(p.PushedLimit.Count) {
-			tableRows = float64(p.PushedLimit.Count)
+			tableRows = float64(p.PushedLimit.Count) // rows to scan on the table side
 		}
 	}
 
