@@ -901,7 +901,6 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
 		DistributionJobID:     v.DistributionJobID,
-		SQLOrDigest:           v.SQLOrDigest,
 		ShowGroupKey:          v.ShowGroupKey,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {

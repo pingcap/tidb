@@ -2014,6 +2014,6 @@ func upgradeToVer250(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD INDEX idx_keyspace(keyspace)", dbterror.ErrDupKeyName)
 }
 
-func upgradeToVer251(s sessiontypes.Session, _ int64) {
+func upgradeToVer251(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(300) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
 }

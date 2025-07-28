@@ -106,7 +106,6 @@ type JobInfo struct {
 	StartTime      types.Time
 	UpdateTime     types.Time
 	EndTime        types.Time
-	UpdateTime     types.Time
 	TableSchema    string
 	TableName      string
 	TableID        int64

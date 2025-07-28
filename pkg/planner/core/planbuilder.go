@@ -3493,7 +3493,6 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
 			DistributionJobID:     show.DistributionJobID,
-			SQLOrDigest:           show.SQLOrDigest,
 			ShowGroupKey:          show.ShowGroupKey,
 		},
 	}.Init(b.ctx)
