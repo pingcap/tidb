@@ -215,10 +215,10 @@ func (s *Syncer) RemoveServerInfo() {
 // ServerInfoSyncLoop syncs the server information periodically.
 func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) {
 	defer func() {
-		logutil.BgLogger().Info("infoSyncerKeeper exited.")
+		logutil.BgLogger().Info("server info sync loop exited.")
 	}()
 
-	defer tidbutil.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
+	defer tidbutil.Recover(metrics.LabelDomain, "ServerInfoSyncLoop", nil, false)
 
 	ticker := time.NewTicker(minTSReportInterval)
 	defer ticker.Stop()
@@ -345,11 +345,11 @@ func (s *Syncer) RestartTopology(ctx context.Context) error {
 
 // TopologySyncLoop syncs the topology information periodically.
 func (s *Syncer) TopologySyncLoop(exitCh chan struct{}) {
-	defer tidbutil.Recover(metrics.LabelDomain, "topologySyncerKeeper", nil, false)
+	defer tidbutil.Recover(metrics.LabelDomain, "TopologySyncLoop", nil, false)
 	ticker := time.NewTicker(TopologyTimeToRefresh)
 	defer func() {
 		ticker.Stop()
-		logutil.BgLogger().Info("topologySyncerKeeper exited.")
+		logutil.BgLogger().Info("topology sync loop exited.")
 	}()
 
 	for {
