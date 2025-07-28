@@ -146,8 +146,8 @@ func (e *HashJoinV1Exec) Close() error {
 		util.WithRecovery(func() {
 			err := e.RowContainer.Close()
 			if err != nil {
-				logutil.BgLogger().Error("RowContainer encounters error",
-					zap.Error(err),
+				logutil.BgLogger().Warn("RowContainer encounters unexpected behaviour",
+					zap.String("info", err.Error()),
 					zap.Stack("stack trace"))
 			}
 		}, nil)
