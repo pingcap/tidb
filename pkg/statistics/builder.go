@@ -422,18 +422,25 @@ func BuildHistAndTopN(
 	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
 	lenSamples := int64(len(samples))
 	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
+		minTopNCnt := int64(topNList[len(topNList)-1].Count)
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			// Safety:
-			// When a sample value matches an entry in the topN list, it is removed from the samples array,
-			// so it can never match the previous sample. Therefore, this equality check will never be true
-			// in that case. For values not found in topN, we don't need keep checking the same value.
-			if i > 0 && bytes.Equal(sampleBytes, samples[i-1].Value.GetBytes()) {
-				// If the sample is the same as the previous one, we can skip it.
-				continue
+			// If current sample value is less frequent than the least frequent topn value, then it cannot
+			// be a topn value. This check is only helpful if the least frequent topn n value occurs more than once.
+			if minTopNCnt > 1 {
+				if i+minTopNCnt-1 >= lenSamples {
+					continue
+				}
+				nextBytes, err := getComparedBytes(samples[i+minTopNCnt-1].Value)
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
+				if !bytes.Equal(sampleBytes, nextBytes) {
+					continue
+				}
 			}
 			// For debugging invalid sample data.
 			var (
@@ -468,7 +475,7 @@ func BuildHistAndTopN(
 					firstTimeSample = samples[i].Value
 					// Found the same value in topn: need to skip over this value in samples.
 					copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-					samples = samples[:uint64(len(samples))-topNList[j].Count]
+					samples = samples[:uint64(lenSamples)-topNList[j].Count]
 					lenSamples = int64(len(samples))
 					i--
 					foundTwice = true

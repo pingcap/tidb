@@ -26,7 +26,7 @@ import (
 )
 
 // BenchmarkBuildHistAndTopN is used to benchmark the performance of BuildHistAndTopN.
-// go test -benchmem -run=^$ -bench ^BenchmarkBuildHistAndTopN$ github.com/pingcap/tidb/pkg/statistics
+// go test -benchmem -run=^$ -benchtime=10x -bench ^BenchmarkBuildHistAndTopN$ github.com/pingcap/tidb/pkg/statistics
 // * The NDV is 1000000
 func BenchmarkBuildHistAndTopN(b *testing.B) {
 	ctx := mock.NewContext()
@@ -79,7 +79,7 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 }
 
 // BenchmarkBuildHistAndTopNWithLowNDV is used to benchmark the performance of BuildHistAndTopN with low NDV.
-// go test -benchmem -run=^$ -bench ^BenchmarkBuildHistAndTopNWithLowNDV github.com/pingcap/tidb/pkg/statistics
+// go test -benchmem -run=^$ -benchtime=10x -bench ^BenchmarkBuildHistAndTopNWithLowNDV github.com/pingcap/tidb/pkg/statistics
 // * NDV is 102
 func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 	ctx := mock.NewContext()
@@ -128,5 +128,127 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
+	}
+}
+
+// BenchmarkBuildHistAndTopNIncreaseSkew is used to benchmark the performance of BuildHistAndTopN with notable skew.
+// go test -benchmem -run=^$ -benchtime=10x -bench ^BenchmarkBuildHistAndTopNIncreaseSkew$ github.com/pingcap/tidb/pkg/statistics
+// * The NDV is 1000000
+func BenchmarkBuildHistAndTopNIncreaseSkew(b *testing.B) {
+	ctx := mock.NewContext()
+	const cnt = 1000_000
+	sketch := NewFMSketch(cnt)
+	data := make([]*SampleItem, 0, 8)
+	for i := 1; i <= cnt; i++ {
+		d := types.NewIntDatum(int64(i))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(b, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for j := 1; j < 200; j++ {
+		for i := 1; i < 150; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	for j := 1; j < 1000; j++ {
+		for i := 1; i < 50; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	for j := 1; j < 5000; j++ {
+		for i := 1; i < 20; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	for j := 1; j < 10000; j++ {
+		for i := 1; i < 5; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(len(data)),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+	filedType := types.NewFieldType(mysql.TypeLong)
+	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = BuildHistAndTopN(ctx, 256, 100, 0, collector, filedType, true, memoryTracker, false)
+	}
+}
+
+// BenchmarkBuildHistAndTopNLargeNDV is used to benchmark the performance of BuildHistAndTopN with greater NDV and some skew.
+// go test -benchmem -run=^$ -benchtime=10x -bench ^BenchmarkBuildHistAndTopNLargeNDV$ github.com/pingcap/tidb/pkg/statistics
+// * The NDV is 10000000
+func BenchmarkBuildHistAndTopNLargeNDV(b *testing.B) {
+	ctx := mock.NewContext()
+	const cnt = 10_000_000
+	sketch := NewFMSketch(cnt)
+	data := make([]*SampleItem, 0, 8)
+	for i := 1; i <= cnt; i++ {
+		d := types.NewIntDatum(int64(i))
+		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+		require.NoError(b, err)
+		data = append(data, &SampleItem{Value: d})
+	}
+	for j := 1; j < 2000; j++ {
+		for i := 1; i < 150; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	for j := 1; j < 10000; j++ {
+		for i := 1; i < 50; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	for j := 1; j < 50000; j++ {
+		for i := 1; i < 20; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	for j := 1; j < 100000; j++ {
+		for i := 1; i < 5; i++ {
+			d := types.NewIntDatum(int64(i))
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(b, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(len(data)),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+	filedType := types.NewFieldType(mysql.TypeLong)
+	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = BuildHistAndTopN(ctx, 256, 100, 0, collector, filedType, true, memoryTracker, false)
 	}
 }
