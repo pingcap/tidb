@@ -1335,6 +1335,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	return matchResult
 }
 
+// GroupRangesByCols xxx
 func GroupRangesByCols(ranges []*ranger.Range, groupByColIdxs []int) map[string][]*ranger.Range {
 	groups := make(map[string][]*ranger.Range)
 	for _, ran := range ranges {
