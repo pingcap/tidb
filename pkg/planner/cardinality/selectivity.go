@@ -592,6 +592,67 @@ func compareType(l, r int) int {
 
 const unknownColumnID = math.MinInt64
 
+// StaleLastBucketThreshold is the threshold for detecting stale last bucket estimates.
+// If the last bucket's count is less than 30% of the average bucket count, we consider
+// it potentially stale and fall through to uniform distribution.
+const StaleLastBucketThreshold = 0.3
+
+// SignificantModifyThreshold is the minimum ratio of modifications to table size
+// required to consider applying the stale bucket heuristic. This prevents false
+// positives from small modifications that don't warrant estimation adjustments.
+const SignificantModifyThreshold = 0.01
+
+// MinRowCountForStaleHeuristic is the minimum original row count required to apply
+// the stale bucket heuristic. This prevents the heuristic from triggering on very
+// small tables where a few new rows would create misleadingly high growth ratios.
+const MinRowCountForStaleHeuristic = 100
+
+// IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
+// has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
+func IsLastBucketEndValueUnderrepresented(hg *statistics.Histogram, val types.Datum,
+	histCnt float64, realtimeRowCount, modifyCount int64, sctx planctx.PlanContext) bool {
+	if modifyCount <= 0 || len(hg.Buckets) == 0 {
+		return false
+	}
+
+	originalRowCount := hg.TotalRowCount()
+
+	// Only apply heuristic to tables with sufficient size to avoid false positives
+	// on very small tables where a few new rows create misleadingly high growth ratios
+	if originalRowCount < MinRowCountForStaleHeuristic {
+		return false
+	}
+
+	// This represents new rows added since ANALYZE (much better than modifyCount)
+	newRowsAdded := realtimeRowCount - int64(originalRowCount)
+	if newRowsAdded <= 0 {
+		return false
+	}
+
+	// Only apply heuristic when net growth is significant relative to original table size
+	// This focuses on new inserts rather than updates/deletes
+	growthRatio := float64(newRowsAdded) / originalRowCount
+	if growthRatio < SignificantModifyThreshold {
+		return false
+	}
+
+	// Use LocateBucket to check if this value is at the last bucket's upper bound
+	_, bucketIdx, inBucket, matchLastValue := hg.LocateBucket(sctx, val)
+
+	// Check if this is the last bucket's upper bound value (end value)
+	isLastBucketEndValue := (bucketIdx == len(hg.Buckets)-1) && inBucket && matchLastValue
+	if !isLastBucketEndValue {
+		return false
+	}
+
+	// Check if the count is suspiciously low compared to other buckets
+	totalHistCount := hg.NotNullCount()
+	avgBucketCount := totalHistCount / float64(len(hg.Buckets))
+
+	// If count is much less than average, it's likely underrepresented
+	return histCnt < avgBucketCount*StaleLastBucketThreshold
+}
+
 // getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
 // ID of the column.
 func getConstantColumnID(e []expression.Expression) int64 {

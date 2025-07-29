@@ -1680,3 +1680,81 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	// Result of count3 should be larger because the risk ratio is higher
 	require.Less(t, count2, count3)
 }
+
+func TestLastBucketEndValueHeuristic(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, index idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+
+	// Insert initial data with a clear distribution
+	// Values 1-10 each appear 100 times (1000 rows)
+	// Value 11 appears only once (to be in last bucket with low count)
+	for i := 1; i <= 10; i++ {
+		for j := 0; j < 100; j++ {
+			testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		}
+	}
+	testKit.MustExec("insert into t values (11)")
+
+	// Flush any pending deltas before ANALYZE
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	testKit.MustExec("analyze table t with 0 topn")
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(table.Meta())
+	sctx := testKit.Session()
+	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
+
+	// Verify initial state
+	t.Logf("After ANALYZE - Original row count: %.0f, Realtime count: %d, Modify count: %d",
+		col.TotalRowCount(), statsTbl.RealtimeCount, statsTbl.ModifyCount)
+
+	// Get baseline estimation for value 11 which should be 1
+	baselineCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	require.NoError(t, err)
+	require.Equal(t, baselineCount, float64(1))
+
+	// Insert many more rows with value 11 (simulating concentrated writes at tail)
+	for i := 0; i < 100; i++ {
+		testKit.MustExec("insert into t values (11)")
+	}
+
+	// Update stats handle to reflect new row counts and modifications
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	// Get updated stats
+	statsTbl = h.GetTableStats(table.Meta())
+	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
+
+	// Get estimation after table growth (should be much higher due to our heuristic)
+	enhancedCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	require.NoError(t, err)
+	require.InDelta(t, 100.09, enhancedCount, 0.1, "Enhanced count should be approximately 100.09")
+
+	// Also test that the heuristic doesn't trigger for other values in the same bucket range
+	// that are not the last bucket end value
+	otherCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(1, 1), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	require.NoError(t, err)
+	require.InDelta(t, 109.99, otherCount, 0.1, "Other value count should be approximately 109.09")
+
+	// Test index estimation as well
+	idx := statsTbl.GetIdx(table.Meta().Indices[0].ID)
+	if idx != nil {
+		idxEnhancedCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11))
+		require.NoError(t, err)
+		require.InDelta(t, 100.09, idxEnhancedCount, 0.1, "Index enhanced count should be approximately 100.09")
+
+		idxOtherCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(1, 1))
+		require.NoError(t, err)
+		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
+	}
+}

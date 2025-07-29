@@ -168,7 +168,14 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
 	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
 	if matched {
-		return histCnt, nil
+		// Check if this last bucket end value should fall through to uniform distribution
+		if IsLastBucketEndValueUnderrepresented(&c.Histogram, val, histCnt, realtimeRowCount, modifyCount, sctx) {
+			matched = false
+		}
+
+		if matched {
+			return histCnt, nil
+		}
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
