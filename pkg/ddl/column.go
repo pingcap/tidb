@@ -365,25 +365,6 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 	}
 }
 
-// filterIndexesToRemove filters out the indexes that can be removed.
-func filterIndexesToRemove(oldIdxs []*model.IndexInfo, colName ast.CIStr) []*model.IndexInfo {
-	indexesToRemove := make([]*model.IndexInfo, 0, len(oldIdxs))
-	for _, idx := range oldIdxs {
-		tmp := idx.Columns[:0]
-		for _, col := range idx.Columns {
-			if col.Name.L != colName.L {
-				tmp = append(tmp, col)
-			}
-		}
-		if len(tmp) == 0 {
-			indexesToRemove = append(indexesToRemove, idx)
-			continue
-		}
-		idx.Columns = tmp
-	}
-	return indexesToRemove
-}
-
 func updateChangingCol(col *model.ColumnInfo) *model.ColumnInfo {
 	col.ChangeStateInfo = nil
 	// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
@@ -928,16 +909,33 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 	return nil
 }
 
+func printTableInfo(tblInfo *model.TableInfo) {
+	for _, col := range tblInfo.Columns {
+		logutil.DDLLogger().Info("column", zap.Int64("id", col.ID), zap.String("name", col.Name.O))
+	}
+
+	for _, idx := range tblInfo.Indices {
+		idxCols := make([]string, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			idxCols = append(idxCols, idxCol.Name.O)
+		}
+
+		logutil.DDLLogger().Info("index", zap.Int64("id", idx.ID),
+			zap.String("name", idx.Name.O), zap.Strings("idxCols", idxCols))
+	}
+}
+
 func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
 	newName ast.CIStr, pos *ast.ColumnPosition) (removedIdxID []int64, done bool) {
+	printTableInfo(tblInfo)
 	oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
-	changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
-	intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
 	switch oldCol.State {
 	case model.StatePublic:
 		if tblInfo.TTLInfo != nil {
 			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, newName)
 		}
+		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
 		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
 		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, newName)
@@ -980,12 +978,11 @@ func removeOldObjects(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, oldIdx
 	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 	var removedIdxIDs []int64
 	if len(oldIdxs) > 0 {
-		indexesToRemove := filterIndexesToRemove(oldIdxs, oldCol.Name)
-		removedIdxIDs = make([]int64, 0, len(indexesToRemove))
-		for _, idx := range indexesToRemove {
+		removedIdxIDs = make([]int64, 0, len(oldIdxs))
+		for _, idx := range oldIdxs {
 			removedIdxIDs = append(removedIdxIDs, idx.ID)
 		}
-		removeOldIndexes(tblInfo, indexesToRemove)
+		removeOldIndexes(tblInfo, oldIdxs)
 	}
 	return removedIdxIDs
 }
