@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // MockSessionManager is a mocked session manager which is used for test.
@@ -196,7 +196,7 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 func (msm *MockSessionManager) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	msm.mu.Lock()
 	for _, se := range msm.Conn {
-		session.RemoveLockDDLJobs(se, jobs, false)
+		variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, false)
 	}
 	msm.mu.Unlock()
 }

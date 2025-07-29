@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -4879,37 +4878,6 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		)
 	}
 	return true
-}
-
-// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
-func RemoveLockDDLJobs(s sessionapi.Session, jobs map[int64]*mdldef.JobMDL, printLog bool) {
-	sv := s.GetSessionVars()
-	if sv.InRestrictedSQL {
-		return
-	}
-	sv.TxnCtxMu.Lock()
-	defer sv.TxnCtxMu.Unlock()
-	if sv.TxnCtx == nil {
-		return
-	}
-	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
-		for jobID, jobMDL := range jobs {
-			if _, ok := jobMDL.TableIDs[tblID.(int64)]; ok && value.(int64) < jobMDL.Ver {
-				delete(jobs, jobID)
-				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
-				logFn := logutil.BgLogger().Debug
-				if elapsedTime > time.Minute && printLog {
-					logFn = logutil.BgLogger().Info
-				}
-				logFn("old running transaction block DDL",
-					zap.Int64("table ID", tblID.(int64)),
-					zap.Int64("jobID", jobID),
-					zap.Uint64("connection ID", sv.ConnectionID),
-					zap.Duration("elapsed time", elapsedTime))
-			}
-		}
-		return true
-	})
 }
 
 // GetDBNames gets the sql layer database names from the session.

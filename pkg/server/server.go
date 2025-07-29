@@ -1141,8 +1141,9 @@ func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 		s.printMDLLogTime = time.Now()
 	}
 	for _, client := range s.clients {
-		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, jobs, printLog)
+		se := client.ctx.Session
+		if se != nil {
+			variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, printLog)
 		}
 	}
 }
