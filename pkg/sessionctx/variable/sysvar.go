@@ -3604,7 +3604,6 @@ var defaultSysVars = []*SysVar{
 		Type:     vardef.TypeDuration,
 		MinValue: int64(time.Second), MaxValue: uint64(time.Hour * 24 * 365),
 		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
-			logutil.BgLogger().Info("set tidb advancer check point lag limit", zap.String("s", s))
 			d, err := time.ParseDuration(s)
 			if err != nil {
 				return err
