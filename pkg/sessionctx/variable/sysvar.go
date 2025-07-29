@@ -3597,6 +3597,25 @@ var defaultSysVars = []*SysVar{
 		// because the special character in custom syntax cannot be correctly handled in set_var hint
 		IsHintUpdatableVerified: true,
 	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAdvancerCheckPointLagLimit,
+		Value:    vardef.DefTiDBAdvancerCheckPointLagLimit.String(),
+		Type:     vardef.TypeDuration,
+		MinValue: int64(time.Second), MaxValue: uint64(time.Hour * 24 * 365),
+		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
+			logutil.BgLogger().Info("set tidb advancer check point lag limit", zap.String("s", s))
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.AdvancerCheckPointLagLimit.Store(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
