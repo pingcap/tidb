@@ -927,7 +927,6 @@ func printTableInfo(tblInfo *model.TableInfo) {
 
 func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
 	newName ast.CIStr, pos *ast.ColumnPosition) (removedIdxID []int64, done bool) {
-	printTableInfo(tblInfo)
 	oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 	switch oldCol.State {
 	case model.StatePublic:

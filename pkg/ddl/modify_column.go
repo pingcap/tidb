@@ -71,6 +71,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	defer func() {
+		printTableInfo(tblInfo)
+	}()
 
 	if job.IsRollingback() {
 		// For those column-type-change jobs which don't reorg the data.
@@ -229,6 +232,9 @@ func getModifyColumnInfo(
 	}
 	if oldCol == nil {
 		job.State = model.JobStateCancelled
+		if args.OldColumnID > 0 {
+			return nil, nil, nil, errors.Trace(dbterror.ErrColumnInChange.FastGenByArgs(args.OldColumnName.O, args.OldColumnID))
+		}
 		return nil, nil, nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(args.OldColumnName, tblInfo.Name))
 	}
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
