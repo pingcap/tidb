@@ -2192,6 +2192,7 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`DO (SELECT a FROM test.t1)`)
 	userTk.MustGetErrCode(`SELECT b FROM test.t1`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SET @res = (SELECT b FROM test.t1)`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`DO (SELECT b FROM test.t1)`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT a FROM test.t2`, errno.ErrColumnaccessDenied)
 	/* column accessed in WHERE clause */
 	userTk.MustGetErrCode(`SELECT a FROM test.t1 WHERE b = 2`, errno.ErrColumnaccessDenied)
@@ -2222,6 +2223,8 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	tk.MustExec(`ALTER TABLE test.t1 ADD COLUMN c int`)
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`SET @res = (SELECT b FROM test.t1)`)
+	userTk.MustExec(`DO (SELECT b FROM test.t1)`)
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t4 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`SELECT a FROM test.t1 NATURAL JOIN test.t4`)
@@ -2509,4 +2512,27 @@ func TestColumnPrivilege4Views(t *testing.T) {
 	userTk.MustQuery(`SELECT * FROM test.v4`)
 	userTk.MustQuery(`SELECT * FROM test.v5`)
 	userTk.MustQuery(`SELECT * FROM test.v6`)
+}
+
+func TestColumnPrivilege4TraceAndExplain(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'testuser'@'localhost';`)
+	tk.MustExec(`CREATE TABLE test.t (a INT, b INT, c INT);`)
+	userTk := testkit.NewTestKit(t, store)
+	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(t, err)
+
+	traceSQL := "TRACE SELECT * FROM test.t"
+	explainSQL := "EXPLAIN SELECT a,b,c FROM test.t"
+	grantSQL := "GRANT SELECT(%s) ON test.t TO 'testuser'@'localhost';"
+
+	for _, colName := range []string{"a", "b", "c"} {
+		userTk.MustQuery(traceSQL).CheckContain("session.RollbackTxn")
+		userTk.MustGetErrCode(explainSQL, mysql.ErrColumnaccessDenied)
+		tk.MustExec(fmt.Sprintf(grantSQL, colName))
+	}
+
+	userTk.MustQuery(traceSQL).CheckNotContain("session.RollbackTxn")
+	userTk.MustQuery(explainSQL)
 }
