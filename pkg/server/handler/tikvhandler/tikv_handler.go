@@ -2182,7 +2182,7 @@ func NewTxnGCStatesHandler(store kv.Storage) *TxnGCStatesHandler {
 // ServeHTTP implements the HTTP handler interface.
 func (gc *TxnGCStatesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
-		http.Error(w, "this API only support GET method", http.StatusMethodNotAllowed)
+		http.Error(w, "This API only supports GET method", http.StatusMethodNotAllowed)
 		return
 	}
 
