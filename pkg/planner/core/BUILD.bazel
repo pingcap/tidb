@@ -198,7 +198,6 @@ go_library(
         "//pkg/util/parser",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
-        "//pkg/util/ranger/context",
         "//pkg/util/redact",
         "//pkg/util/rowcodec",
         "//pkg/util/sem",

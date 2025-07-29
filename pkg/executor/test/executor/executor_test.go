@@ -791,7 +791,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	var opsNeedsCovered = []base.PhysicalPlan{
 		&plannercore.PhysicalHashJoin{},
 		&plannercore.PhysicalMergeJoin{},
-		&plannercore.PhysicalIndexJoin{},
+		&physicalop.PhysicalIndexJoin{},
 		&plannercore.PhysicalIndexHashJoin{},
 		&plannercore.PhysicalTableReader{},
 		&plannercore.PhysicalIndexReader{},
