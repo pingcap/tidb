@@ -518,7 +518,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *physicalop.PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection,
+	case *physicalop.PhysicalSort, *physicalop.PhysicalSelection, *physicalop.PhysicalUnionScan, *physicalop.PhysicalProjection,
 		*PhysicalHashAgg, *PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}

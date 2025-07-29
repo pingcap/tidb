@@ -43,8 +43,9 @@ func hasCostFlag(costFlag, flag uint64) bool {
 	return (costFlag & flag) > 0
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalSelection calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalSelection(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalSelection)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -61,7 +62,7 @@ func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
 	selfCost = getCardinality(p.Children()[0], costFlag) * cpuFactor
-	if p.fromDataSource {
+	if p.FromDataSource {
 		selfCost = 0 // for compatibility, see https://github.com/pingcap/tidb/issues/36243
 	}
 
@@ -74,8 +75,9 @@ func (p *PhysicalSelection) GetPlanCostVer1(taskType property.TaskType, option *
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of projection operator itself.
-func (p *PhysicalProjection) GetCost(count float64) float64 {
+// getCost4PhysicalProjection computes the cost of projection operator itself.
+func getCost4PhysicalProjection(pp base.PhysicalPlan, count float64) float64 {
+	p := pp.(*physicalop.PhysicalProjection)
 	sessVars := p.SCtx().GetSessionVars()
 	cpuCost := count * sessVars.GetCPUFactor()
 	concurrency := float64(sessVars.ProjectionConcurrency())
@@ -87,8 +89,9 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 	return cpuCost + concurrencyCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalProjection(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalProjection)
 	intest.Assert(p.SCtx().GetSessionVars().CostModelVersion != 0)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
@@ -99,7 +102,7 @@ func (p *PhysicalProjection) GetPlanCostVer1(taskType property.TaskType, option 
 		return 0, err
 	}
 	p.PlanCost = childCost
-	p.PlanCost += p.GetCost(getCardinality(p, costFlag)) // projection cost
+	p.PlanCost += getCost4PhysicalProjection(p, getCardinality(p, costFlag)) // projection cost
 	p.PlanCostInit = true
 	return p.PlanCost, nil
 }

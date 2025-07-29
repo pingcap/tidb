@@ -557,7 +557,9 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 	}
 	wg.Wait()
 
-	logutil.BgLogger().Info("detecting available mpp stores", zap.Int("total", len(stores)), zap.Int("alive", len(aliveIdx)))
+	if len(stores) != len(aliveIdx) {
+		logutil.BgLogger().Info("detecting available mpp stores", zap.Int("total", len(stores)), zap.Int("alive", len(aliveIdx)))
+	}
 	return aliveIdx
 }
 
@@ -825,8 +827,15 @@ func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedT
 	aliveStores = new(aliveStoresBundle)
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	allUsedTiFlashStores := getAllUsedTiFlashStores(allTiFlashStores, allUsedTiFlashStoresMap)
-	aliveStores.storesInAllZones = filterAliveStores(ctx, allUsedTiFlashStores, ttl, store)
 
+	// Get storesInAllZones and storeIDsInAllZones for all policy.
+	aliveStores.storesInAllZones = filterAliveStores(ctx, allUsedTiFlashStores, ttl, store)
+	aliveStores.storeIDsInAllZones = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
+	for _, as := range aliveStores.storesInAllZones {
+		aliveStores.storeIDsInAllZones[as.StoreID()] = struct{}{}
+	}
+
+	// Only get storesInTiDBZone and storeIDsInTiDBZone for closest_replica and closest_adaptive.
 	if !tiflashReplicaReadPolicy.IsAllReplicas() {
 		aliveStores.storeIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
 		for _, as := range aliveStores.storesInAllZones {
@@ -835,12 +844,6 @@ func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedT
 				aliveStores.storeIDsInTiDBZone[as.StoreID()] = struct{}{}
 				aliveStores.storesInTiDBZone = append(aliveStores.storesInTiDBZone, as)
 			}
-		}
-	}
-	if !tiflashReplicaReadPolicy.IsClosestReplicas() {
-		aliveStores.storeIDsInAllZones = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
-		for _, as := range aliveStores.storesInAllZones {
-			aliveStores.storeIDsInAllZones[as.StoreID()] = struct{}{}
 		}
 	}
 	return aliveStores
@@ -1551,6 +1554,19 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 				logutil.BgLogger().Info("stale regions are too many, so we omit the rest ones")
 				break
 			}
+		}
+		return
+	}
+
+	if len(response.RetryShards) > 0 {
+		logutil.BgLogger().Info("multiple shards are stale and need to be refreshed", zap.Int("shards size", len(response.RetryShards)))
+		for idx, retry := range response.RetryShards {
+			if idx < 10 {
+				logutil.BgLogger().Info("invalid shard because tiflash detected stale shard", zap.Uint64("shard id", retry.ShardId))
+			} else if idx == 10 {
+				logutil.BgLogger().Info("stale shards are too many, so we only print the first 10 stale shards")
+			}
+			b.store.GetTiCIShardCache().InvalidateCachedShard(retry.ShardId)
 		}
 		return
 	}
