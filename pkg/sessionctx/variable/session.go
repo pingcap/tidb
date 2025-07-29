@@ -1734,7 +1734,7 @@ type SessionVars struct {
 	BulkDMLEnabled bool
 
 	// InternalSQLUseUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
-	InternalSQLUseUserTable bool
+	InternalSQLScanUserTable bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
