@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package issyncer
+package mdldef
 
-import (
-	"sync"
-
-	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
-)
-
-type mdlCheckTableInfo struct {
-	mu        sync.Mutex
-	newestVer int64
-	jobs      map[int64]*mdldef.JobMDL
+// JobMDL is a DDL job's MDL info.
+// if we put this struct in the upper directory, there will be import cycle.
+type JobMDL struct {
+	// the schema version of the job we expect current instance have loaded
+	Ver int64
+	// the tables involved in this job. Before we proceed to the next job step,
+	// we need to ensure all sessions that are accessing these tables are using
+	// schema version >= Ver.
+	TableIDs map[int64]struct{}
 }

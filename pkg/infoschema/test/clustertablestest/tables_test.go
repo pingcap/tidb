@@ -41,11 +41,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
@@ -139,8 +139,8 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -194,8 +194,8 @@ func TestSomeTables(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
-	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "user-1",
 		Host:              "localhost",
@@ -209,7 +209,7 @@ func TestSomeTables(t *testing.T) {
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
 		User:              "user-2",
 		Host:              "localhost",
@@ -222,7 +222,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                3,
 		User:              "user-3",
 		Host:              "127.0.0.1",
@@ -259,8 +259,8 @@ func TestSomeTables(t *testing.T) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm = &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "user-1",
 		Host:              "localhost",
@@ -270,7 +270,7 @@ func TestSomeTables(t *testing.T) {
 		State:             1,
 		ResourceGroupName: "rg1",
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
 		User:              "user-2",
 		Host:              "localhost",

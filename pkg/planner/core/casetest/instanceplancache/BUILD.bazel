@@ -17,8 +17,8 @@ go_test(
         "//pkg/domain",
         "//pkg/parser/auth",
         "//pkg/planner/core",
+        "//pkg/session/sessmgr",
         "//pkg/testkit",
-        "//pkg/util",
         "@com_github_stretchr_testify//require",
     ],
 )
