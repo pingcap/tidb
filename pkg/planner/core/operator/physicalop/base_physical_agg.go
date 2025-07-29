@@ -53,6 +53,7 @@ const (
 	MppScalar
 )
 
+// BasePhysicalAgg is the base physical aggregation operator.
 type BasePhysicalAgg struct {
 	PhysicalSchemaProducer
 
@@ -63,22 +64,23 @@ type BasePhysicalAgg struct {
 }
 
 // Init initializes BasePhysicalAgg.
-func (base BasePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *BasePhysicalAgg {
-	base.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, &base, offset)
-	base.SetStats(stats)
-	return &base
+func (p BasePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *BasePhysicalAgg {
+	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, &p, offset)
+	p.SetStats(stats)
+	return &p
 }
 
 // InitForHash initializes BasePhysicalAgg for hash aggregation.
-func (base BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForHash(&base, ctx, stats, offset, schema, props...)
+func (p BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	return utilfuncp.InitForHash(&p, ctx, stats, offset, schema, props...)
 }
 
 // InitForStream initializes BasePhysicalAgg for stream aggregation.
-func (base BasePhysicalAgg) InitForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForStream(&base, ctx, stats, offset, schema, props...)
+func (p BasePhysicalAgg) InitForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	return utilfuncp.InitForStream(&p, ctx, stats, offset, schema, props...)
 }
 
+// IsFinalAgg checks whether the aggregation is a final aggregation.
 func (p *BasePhysicalAgg) IsFinalAgg() bool {
 	if len(p.AggFuncs) > 0 {
 		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
