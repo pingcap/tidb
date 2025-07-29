@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	core "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -130,6 +131,11 @@ type JobInfo struct {
 
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
+	return j.Status == jobStatusPending || j.Status == JobStatusRunning
+}
+
+// CanModify returns whether the job can be modified.
+func (j *JobInfo) CanModify() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
 }
 
@@ -369,5 +375,44 @@ func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err 
 			WHERE id = %? AND status IN (%?, %?);`
 	args := []any{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
+	return err
+}
+
+// UpdateJobParameters updates job parameters for ALTER IMPORT JOB.
+func UpdateJobParameters(
+	ctx context.Context,
+	exec sqlexec.SQLExecutor,
+	jobID int64,
+	user string,
+	hasSuperPriv bool,
+	opts []*core.AlterImportJobOpt,
+) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+
+	// fetch current parameters
+	jobInfo, err := GetJob(ctx, exec, jobID, user, hasSuperPriv)
+	if err != nil {
+		return err
+	}
+	params := jobInfo.Parameters
+
+	for _, opt := range opts {
+		if opt.Value == nil {
+			continue
+		}
+		switch opt.Name {
+		case core.AlterImportJobThread:
+			v, _ := core.GetThreadOrBatchSizeFromImportExpression(opt)
+			params.Options[core.AlterImportJobThread] = v
+		case core.AlterImportJobMaxWriteSpeed:
+			v, _ := core.GetMaxWriteSpeedFromImportExpression(opt)
+			params.Options[core.AlterImportJobMaxWriteSpeed] = v
+		}
+	}
+	bytes, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs SET parameters = %?, update_time = CURRENT_TIMESTAMP(6) WHERE id = %?`, string(bytes), jobID)
 	return err
 }

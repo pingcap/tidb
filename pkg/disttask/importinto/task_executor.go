@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -67,6 +68,7 @@ type importStepExecutor struct {
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
+	op           atomic.Pointer[encodeAndSortOperator]
 	indicesGenKV map[int64]genKVIndex
 }
 
@@ -177,6 +179,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
 	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	s.op.Store(op)
+	defer s.op.Store(nil)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -291,12 +295,40 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
+func (*importStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (s *importStepExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	currOp := s.op.Load()
+	if currOp == nil {
+		s.logger.Info("ResourceModified called but no subtask running")
+		return errors.Errorf("no subtask running")
+	}
+
+	currSize := currOp.GetWorkerPoolSize()
+	target := int32(newResource.CPU.Capacity())
+	if target != currSize {
+		s.logger.Info("ResourceModified: tuning worker pool size",
+			zap.Int32("old", currSize),
+			zap.Int32("new", target))
+		currOp.TuneWorkerPoolSize(target, true)
+	}
+
+	s.logger.Info("ResourceModified: finished tuning worker pool size",
+		zap.Int32("old", currSize),
+		zap.Int32("new", currOp.GetWorkerPoolSize()))
+
+	return nil
+}
+
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
 	controller *importer.LoadDataController
+	mergeOp    atomic.Pointer[external.MergeOperator]
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
 	subtaskSortedKVMeta *external.SortedKVMeta
@@ -382,6 +414,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		false,
 		onDup,
 	)
+	m.mergeOp.Store(op)
+	defer m.mergeOp.Store(nil)
 
 	if err = external.MergeOverlappingFiles(
 		opCtx,
@@ -424,6 +458,33 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	return nil
 }
 
+func (*mergeSortStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (m *mergeSortStepExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	currOp := m.mergeOp.Load()
+	if currOp == nil {
+		m.logger.Info("ResourceModified called but no subtask running")
+		return errors.Errorf("no subtask running")
+	}
+
+	currSize := currOp.GetWorkerPoolSize()
+	target := int32(newResource.CPU.Capacity())
+	if target != currSize {
+		m.logger.Info("ResourceModified: tuning worker pool size",
+			zap.Int32("old", currOp.GetWorkerPoolSize()),
+			zap.Int32("new", target))
+		currOp.TuneWorkerPoolSize(target, true)
+	}
+
+	m.logger.Info("ResourceModified: finished tuning worker pool size",
+		zap.Int32("old", currSize),
+		zap.Int32("new", currOp.GetWorkerPoolSize()))
+
+	return nil
+}
+
 func getOnDupForKVGroup(indicesGenKV map[int64]genKVIndex, kvGroup string) (common.OnDuplicateKey, error) {
 	if kvGroup == dataKVGroup {
 		return common.OnDuplicateKeyRecord, nil
@@ -453,6 +514,8 @@ type writeAndIngestStepExecutor struct {
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
+
+	engine atomic.Pointer[external.Engine]
 
 	indicesGenKV map[int64]genKVIndex
 }
@@ -522,6 +585,12 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
+	eng := localBackend.GetExternalEngine(engineUUID)
+	if eng == nil {
+		return errors.Errorf("external engine %s not found", engineUUID)
+	}
+	e.engine.Store(eng)
+	defer e.engine.Store(nil)
 	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
@@ -570,6 +639,43 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
+func (e *writeAndIngestStepExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
+	newTaskMeta := &TaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	if newTaskMeta.Plan.MaxWriteSpeed != e.taskMeta.Plan.MaxWriteSpeed {
+		oldSpeed := e.taskMeta.Plan.MaxWriteSpeed
+		newSpeed := newTaskMeta.Plan.MaxWriteSpeed
+		e.logger.Info("TaskMetaModified: updating max_write_speed",
+			zap.Int64("old", int64(oldSpeed)),
+			zap.Int64("new", int64(newSpeed)),
+		)
+		e.tableImporter.Backend().UpdateWriteSpeedLimit(int(newSpeed))
+		e.taskMeta.Plan.MaxWriteSpeed = newSpeed
+	}
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	eng := e.engine.Load()
+	if eng == nil {
+		e.logger.Info("ResourceModified called but no subtask running")
+		return errors.Errorf("no subtask running")
+	}
+
+	newConcurrency := int(newResource.CPU.Capacity())
+	newMem := newResource.Mem.Capacity()
+	if err := eng.UpdateResource(ctx, newConcurrency, newMem); err != nil {
+		return err
+	}
+	e.logger.Info("ResourceModified: updated engine resource",
+		zap.Stringer("newResource", newResource),
+	)
+	e.tableImporter.Backend().SetConcurrency(newConcurrency)
+	return nil
+}
+
 type postProcessStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	taskID   int64
@@ -605,6 +711,14 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 		time.Sleep(5 * time.Second)
 	})
 	return postProcess(ctx, p.store, p.taskMeta, &stepMeta, logger)
+}
+
+func (*postProcessStepExecutor) TaskMetaModified(context.Context, []byte) error {
+	return nil
+}
+
+func (*postProcessStepExecutor) ResourceModified(context.Context, *proto.StepResource) error {
+	return nil
 }
 
 type importExecutor struct {

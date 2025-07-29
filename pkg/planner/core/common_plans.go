@@ -141,6 +141,32 @@ type ResumeDDLJobs struct {
 	JobIDs []int64
 }
 
+const (
+	// AlterImportJobThread alter import thread count
+	AlterImportJobThread = "thread"
+	// AlterImportJobMaxWriteSpeed alter import max write speed
+	AlterImportJobMaxWriteSpeed = "max_write_speed"
+)
+
+var allowedAlterImportJobParams = map[string]bool{
+	AlterImportJobThread:        true,
+	AlterImportJobMaxWriteSpeed: true,
+}
+
+// AlterImportJobOpt represents alter import job option.
+type AlterImportJobOpt struct {
+	Name  string
+	Value expression.Expression
+}
+
+// AlterImportJob is the plan of ALTER IMPORT JOB statement.
+type AlterImportJob struct {
+	baseSchemaProducer
+
+	JobID   int64
+	Options []*AlterImportJobOpt
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer

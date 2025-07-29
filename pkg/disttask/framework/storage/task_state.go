@@ -177,39 +177,52 @@ func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
 
 // ModifyTaskByID modifies the task by the task ID.
 func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error {
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		return mgr.ModifyTaskByIDWithTxn(ctx, se, taskID, param)
+	})
+}
+
+// ModifyTaskByIDWithTxn modifies the task by the task ID using an existing session (txn context).
+func (mgr *TaskManager) ModifyTaskByIDWithTxn(
+	ctx context.Context,
+	se sessionctx.Context,
+	taskID int64,
+	param *proto.ModifyParam,
+) error {
 	if !param.PrevState.CanMoveToModifying() {
 		return ErrTaskStateNotAllow
 	}
+
 	bytes, err := json.Marshal(param)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		task, err2 := mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
-		if err2 != nil {
-			return err2
-		}
-		if task.State != param.PrevState {
-			return ErrTaskChanged
-		}
-		failpoint.InjectCall("beforeMoveToModifying")
-		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+
+	task, err := mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+	if err != nil {
+		return err
+	}
+	if task.State != param.PrevState {
+		return ErrTaskChanged
+	}
+
+	failpoint.InjectCall("beforeMoveToModifying")
+	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task
 			set state = %?, modify_params = %?, state_update_time = CURRENT_TIMESTAMP()
 			where id = %? and state = %?`,
-			proto.TaskStateModifying, json.RawMessage(bytes), taskID, param.PrevState,
-		)
-		if err != nil {
-			return err
-		}
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			// the txn is pessimistic, it's possible that another txn has
-			// changed the task state before this txn commits and there is no
-			// write-conflict.
-			return ErrTaskChanged
-		}
-		return nil
-	})
+		proto.TaskStateModifying, json.RawMessage(bytes), taskID, param.PrevState,
+	)
+	if err != nil {
+		return err
+	}
+	if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		// the txn is pessimistic, it's possible that another txn has
+		// changed the task state before this txn commits and there is no
+		// write-conflict.
+		return ErrTaskChanged
+	}
+	return nil
 }
 
 // ModifiedTask implements the scheduler.TaskManager interface.

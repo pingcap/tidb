@@ -657,3 +657,47 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 1*time.Second)
 }
+
+func (s *mockGCSSuite) TestAlterImportJob() {
+	s.cleanupSysTables()
+	s.prepareAndUseDB("test_alter_job")
+	s.tk.MustExec(`CREATE TABLE t (i INT PRIMARY KEY);`)
+	s.server.CreateObject(fakestorage.Object{ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-alter-job", Name: "t.csv"}, Content: []byte("1")})
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	syncCh := make(chan struct{})
+	var once sync.Once
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted",
+		func() { once.Do(func() { close(syncCh) }) })
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
+
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t FROM 'gs://test-alter-job/t.csv?endpoint=%s' with detached, thread=1`, gcsEndpoint)).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	<-syncCh
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	s.Require().Eventually(func() bool {
+		task := s.getTaskByJobID(ctx, int64(jobID))
+		return task.State == proto.TaskStateRunning
+	}, maxWaitTime, time.Second)
+	s.tk.MustExec(fmt.Sprintf("alter import job %d thread = 8", jobID))
+
+	rows := s.tk.MustQuery(fmt.Sprintf(
+		"select parameters from mysql.tidb_import_jobs where id=%d", jobID)).Rows()
+	s.Len(rows, 1)
+	s.Regexp(`"thread"\s*:\s*(8|"8")(\D|$)`, rows[0][0].(string))
+
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	ctx = util.WithInternalSourceType(context.Background(), "taskManager")
+	s.Require().Eventually(func() bool {
+		task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+		if err2 != nil {
+			return false
+		}
+		return task.Concurrency == 8 && task.State == proto.TaskStateSucceed
+	}, maxWaitTime, time.Second)
+}

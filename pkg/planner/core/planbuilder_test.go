@@ -734,3 +734,116 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
 }
+
+func TestBuildAlterImportJobPlan(t *testing.T) {
+	parser := parser.New()
+	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	ctx := context.TODO()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+
+	stmt, err := parser.ParseOneStmt("alter import job 1 thread = 8", "", "")
+	require.NoError(t, err)
+	p, err := builder.Build(ctx, stmt)
+	require.NoError(t, err)
+	plan, ok := p.(*AlterImportJob)
+	require.True(t, ok)
+	require.Equal(t, int64(1), plan.JobID)
+	require.Len(t, plan.Options, 1)
+	require.Equal(t, AlterImportJobThread, plan.Options[0].Name)
+	cons, ok := plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, int64(8), cons.Value.GetInt64())
+
+	// Negative case: invalid syntax
+	_, err = parser.ParseOneStmt("alter import job thread = 8", "", "")
+	require.ErrorContains(t, err, `near "thread = 8"`)
+
+	// Negative case: thread = 'abc' (invalid string type)
+	stmt, err = parser.ParseOneStmt("alter import job 1 thread = 'abc'", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "the value for thread is invalid")
+	require.Nil(t, p)
+
+	// Negative case: max_write_speed = 'abc'
+	stmt, err = parser.ParseOneStmt("alter import job 1 max_write_speed = 'abc'", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "invalid size")
+	require.Nil(t, p)
+
+	// Negative case: nil value
+	stmt, err = parser.ParseOneStmt("alter import job 1 thread = null", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "the value for thread is invalid")
+	require.Nil(t, p)
+
+	// Negative case: duplicate options
+	stmt, err = parser.ParseOneStmt("alter import job 1 thread = 4, thread = 8", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "Option thread specified more than once")
+	require.Nil(t, p)
+
+	// Negative case: thread = 0 (too small)
+	stmt, err = parser.ParseOneStmt("alter import job 1 thread = 0", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "out of range [1")
+	require.Nil(t, p)
+
+	// Negative case: thread = 999999 (too large)
+	stmt, err = parser.ParseOneStmt("alter import job 1 thread = 999999", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "out of range [1")
+	require.Nil(t, p)
+
+	// Negative case: unknown option name
+	stmt, err = parser.ParseOneStmt("alter import job 1 foobar = 123", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.Error(t, err)
+	require.Nil(t, p)
+
+	// Negative case: max_write_speed = -1
+	stmt, err = parser.ParseOneStmt("alter import job 1 max_write_speed = -1", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "Invalid option value")
+	require.Nil(t, p)
+
+	// Negative case: max_write_speed = 123456789123456789123 (too large)
+	stmt, err = parser.ParseOneStmt("alter import job 1 max_write_speed = 123456789123456789123", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.ErrorContains(t, err, "is invalid")
+	require.Nil(t, p)
+
+	// Positive case: thread = 1 (min legal)
+	stmt, err = parser.ParseOneStmt("alter import job 1 thread = 1", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.NoError(t, err)
+	plan, ok = p.(*AlterImportJob)
+	require.True(t, ok)
+	require.Equal(t, int64(1), plan.Options[0].Value.(*expression.Constant).Value.GetInt64())
+
+	// Positive case: max_write_speed = 1048576
+	stmt, err = parser.ParseOneStmt("alter import job 1 max_write_speed = 1048576", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, stmt)
+	require.NoError(t, err)
+	plan, ok = p.(*AlterImportJob)
+	require.True(t, ok)
+	require.Equal(t, int64(1), plan.JobID)
+	require.Len(t, plan.Options, 1)
+	require.Equal(t, AlterImportJobMaxWriteSpeed, plan.Options[0].Name)
+	cons, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, int64(1048576), cons.Value.GetInt64())
+}
