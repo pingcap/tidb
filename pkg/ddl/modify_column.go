@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -551,32 +552,50 @@ func (w *worker) doModifyColumnTypeWithData(
 		if !done {
 			return ver, err
 		}
-		_, done = stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol, colName, pos)
-		if !done {
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-			return ver, errors.Trace(err)
+
+		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+		if tblInfo.TTLInfo != nil {
+			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, colName)
 		}
+		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
+		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
+		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
+		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
+		updateChangingCol(changingCol)
+		moveColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
+		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
+
 		job.SchemaState = model.StatePublic
-	case model.StatePublic:
-		oldIdxIDs, done := stepOneModifyingColumnStateToPublic(tblInfo, oldCol, changingCol, colName, pos)
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		if !done || err != nil {
-			return ver, errors.Trace(err)
-		}
+		return ver, errors.Trace(err)
+	case model.StatePublic:
+		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
+		switch oldCol.State {
+		case model.StateWriteOnly:
+			updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			return ver, err
+		case model.StateDeleteOnly:
+			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
+			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
+			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 
-		modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
-		err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
-		if err != nil {
-			return ver, errors.Trace(err)
+			// Finish this job.
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			// Refactor the job args to add the old index ids into delete range table.
+			rmIdxs := append(removedIdxIDs, args.RedundantIdxs...)
+			args.IndexIDs = rmIdxs
+			args.PartitionIDs = getPartitionIDs(tblInfo)
+			job.FillFinishedArgs(args)
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			return ver, err
+		default:
+			panic("unexpected column state in modify column job")
 		}
-
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		// Refactor the job args to add the old index ids into delete range table.
-		rmIdxs := append(oldIdxIDs, args.RedundantIdxs...)
-		args.IndexIDs = rmIdxs
-		args.PartitionIDs = getPartitionIDs(tblInfo)
-		job.FillFinishedArgs(args)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}

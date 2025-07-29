@@ -942,33 +942,6 @@ func printTableInfo(tblInfo *model.TableInfo) {
 	}
 }
 
-func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
-	newName ast.CIStr, pos *ast.ColumnPosition) (removedIdxID []int64, done bool) {
-	oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
-	switch oldCol.State {
-	case model.StatePublic:
-		if tblInfo.TTLInfo != nil {
-			updateTTLInfoWhenModifyColumn(tblInfo, oldCol.Name, newName)
-		}
-		changingIdxInfos := buildRelatedIndexInfos(tblInfo, changingCol.ID)
-		intest.Assert(len(oldIdxInfos) == len(changingIdxInfos))
-		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
-		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
-		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, newName)
-		updateChangingCol(changingCol)
-		moveColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
-		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
-		return nil, false
-	case model.StateWriteOnly:
-		updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
-		return nil, false
-	case model.StateDeleteOnly:
-		removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
-		return removedIdxIDs, true
-	}
-	panic("should not reach here")
-}
-
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
 	publicName := newColName
 	removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
