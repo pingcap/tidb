@@ -588,6 +588,39 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 	return signedRanges, unsignedRanges
 }
 
+// SplitGroupedRangesAcrossInt64Boundary splits the grouped ranges into two groups:
+// 1. signedGroupedRanges for ranges less or equal than MaxInt64
+// 2. unsignedGroupedRanges for ranges greater than MaxInt64
+//
+// This function applies SplitRangesAcrossInt64Boundary to each group in the input map.
+func SplitGroupedRangesAcrossInt64Boundary(groupedRanges map[string][]*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) (signedGroupedRanges, unsignedGroupedRanges map[string][]*ranger.Range) {
+	if len(groupedRanges) == 0 {
+		return nil, nil
+	}
+
+	signedGroupedRanges = make(map[string][]*ranger.Range)
+	unsignedGroupedRanges = make(map[string][]*ranger.Range)
+
+	for groupKey, ranges := range groupedRanges {
+		signedRanges, unsignedRanges := SplitRangesAcrossInt64Boundary(ranges, keepOrder, desc, isCommonHandle)
+		if len(signedRanges) > 0 {
+			signedGroupedRanges[groupKey] = signedRanges
+		}
+		if len(unsignedRanges) > 0 {
+			unsignedGroupedRanges[groupKey] = unsignedRanges
+		}
+	}
+
+	if len(signedGroupedRanges) == 0 {
+		signedGroupedRanges = nil
+	}
+	if len(unsignedGroupedRanges) == 0 {
+		unsignedGroupedRanges = nil
+	}
+
+	return signedGroupedRanges, unsignedGroupedRanges
+}
+
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
 // For continuous handles, we should merge them to a single key range.
 func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []int) {
