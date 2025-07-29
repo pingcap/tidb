@@ -824,7 +824,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 	}
 	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
-	infoSyncer.ReportMinStartTS(dom.Store())
+	infoSyncer.ReportMinStartTS(dom.Store(), nil)
 	afterTS := oracle.GoTimeToTS(time.Now())
 	require.False(t, infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS)
 
@@ -838,7 +838,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 		{CurTxnStartTS: validTS},
 	}
 	infoSyncer.SetSessionManager(sm)
-	infoSyncer.ReportMinStartTS(dom.Store())
+	infoSyncer.ReportMinStartTS(dom.Store(), nil)
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
 

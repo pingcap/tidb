@@ -213,7 +213,7 @@ func TestCursorWillBlockMinStartTS(t *testing.T) {
 
 	infoSyncer := dom.InfoSyncer()
 	require.Eventually(t, func() bool {
-		infoSyncer.ReportMinStartTS(store)
+		infoSyncer.ReportMinStartTS(store, nil)
 		return infoSyncer.GetMinStartTS() == initialStartTS
 	}, time.Second*5, time.Millisecond*100)
 
@@ -221,7 +221,7 @@ func TestCursorWillBlockMinStartTS(t *testing.T) {
 	require.NoError(t, srs.Close())
 
 	require.Eventually(t, func() bool {
-		infoSyncer.ReportMinStartTS(store)
+		infoSyncer.ReportMinStartTS(store, nil)
 		return infoSyncer.GetMinStartTS() == secondStartTS
 	}, time.Second*5, time.Millisecond*100)
 }
