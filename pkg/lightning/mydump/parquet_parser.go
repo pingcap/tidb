@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -729,7 +730,7 @@ func (pp *ParquetParser) Close() error {
 		openedParser.Add(-1)
 	}()
 
-	log.FromContext(context.Background()).Info("[parquet parser test] Close parquet parser")
+	logutil.Logger(context.Background()).Info("[parquet parser test] Close parquet parser")
 	pp.resetReader()
 	for _, r := range pp.readers {
 		if err := r.Close(); err != nil {
@@ -889,7 +890,7 @@ func NewParquetParser(
 	if readerMemoryLimiter != nil {
 		readerMemoryLimiter.Acquire(memoryUsage)
 	}
-	log.FromContext(ctx).Info("Get memory usage of parquet reader",
+	logutil.Logger(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 		zap.String("memory limit", fmt.Sprintf("%d MB", readerMemoryLimit>>20)),
@@ -965,7 +966,7 @@ func NewParquetParser(
 		colMetas:     columnMetas,
 		columnNames:  columnNames,
 		alloc:        allocator,
-		logger:       log.FromContext(ctx),
+		logger:       log.Wrap(logutil.Logger(ctx)),
 		memoryUsage:  memoryUsage,
 		memLimiter:   readerMemoryLimiter,
 		rowPool:      &pool,
@@ -1099,7 +1100,7 @@ func SampleStatisticsFromParquet(
 		memoryUsageFull, err = estimateNonStreamMemory(ctx, fileMeta, store)
 	}
 
-	log.FromContext(ctx).Info("Get memory usage of parquet reader",
+	logutil.Logger(ctx).Info("Get memory usage of parquet reader",
 		zap.String("memory usage full", fmt.Sprintf("%d MB", memoryUsageFull>>20)),
 		zap.String("memory usage stream", fmt.Sprintf("%d MB", memoryUsageStream>>20)),
 	)
