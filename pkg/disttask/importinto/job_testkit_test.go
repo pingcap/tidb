@@ -298,25 +298,23 @@ func TestShowImportProgress(t *testing.T) {
 	}{
 		{
 			execute.SubtaskSummary{
-				RowCnt:      *atomic.NewInt64(20),
-				Bytes:       *atomic.NewInt64(200),
-				UpdateBytes: []int64{0, 200},
-				UpdateTimes: []time.Time{
-					time.Unix(1001, 0),
-					time.Unix(1002, 0),
+				RowCnt: *atomic.NewInt64(20),
+				Bytes:  *atomic.NewInt64(200),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 20, Bytes: 200, UpdateTime: time.Unix(1002, 0)},
 				},
 			},
 			proto.SubtaskStateRunning,
 		},
 		{
 			execute.SubtaskSummary{
-				RowCnt:      *atomic.NewInt64(30),
-				Bytes:       *atomic.NewInt64(300),
-				UpdateBytes: []int64{0, 150, 300},
-				UpdateTimes: []time.Time{
-					time.Unix(1000, 0),
-					time.Unix(1001, 0),
-					time.Unix(1002, 0),
+				RowCnt: *atomic.NewInt64(30),
+				Bytes:  *atomic.NewInt64(300),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1000, 0)},
+					{RowCnt: 15, Bytes: 150, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 30, Bytes: 300, UpdateTime: time.Unix(1002, 0)},
 				},
 			},
 			proto.SubtaskStateSucceed,

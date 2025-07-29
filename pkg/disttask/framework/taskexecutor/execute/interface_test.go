@@ -33,7 +33,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 		{
 			name: "insufficient data points",
 			setup: func(s *SubtaskSummary) {
-				s.Progresses = []progress{
+				s.Progresses = []Progress{
 					{Bytes: 100, UpdateTime: time.Unix(1000, 0)},
 				}
 			},
@@ -46,7 +46,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "no overlap with data range",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.Progresses = []progress{
+				s.Progresses = []Progress{
 					{Bytes: 0, UpdateTime: baseTime},
 					{Bytes: 100, UpdateTime: baseTime.Add(1 * time.Second)},
 				}
@@ -60,7 +60,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "partial time range overlap",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.Progresses = []progress{
+				s.Progresses = []Progress{
 					{Bytes: 0, UpdateTime: baseTime},
 					{Bytes: 50, UpdateTime: baseTime.Add(1 * time.Second)},
 					{Bytes: 100, UpdateTime: baseTime.Add(2 * time.Second)},
@@ -76,7 +76,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "partial time range overlap",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.Progresses = []progress{
+				s.Progresses = []Progress{
 					{Bytes: 0, UpdateTime: baseTime},
 					{Bytes: 30, UpdateTime: baseTime.Add(1 * time.Second)},
 					{Bytes: 60, UpdateTime: baseTime.Add(2 * time.Second)},
@@ -92,7 +92,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "multiple overlapping",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.Progresses = []progress{
+				s.Progresses = []Progress{
 					{Bytes: 0, UpdateTime: baseTime},
 					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
 					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},
@@ -109,7 +109,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "whole range",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1001, 0)
-				s.Progresses = []progress{
+				s.Progresses = []Progress{
 					{Bytes: 0, UpdateTime: baseTime},
 					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
 					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},

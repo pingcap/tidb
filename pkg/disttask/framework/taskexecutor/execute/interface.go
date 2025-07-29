@@ -76,7 +76,8 @@ const (
 	SubtaskSpeedDuration = UpdateSubtaskSummaryInterval * maxProgressInSummary / 2
 )
 
-type progress struct {
+// Progress represents the progress of a subtask.
+type Progress struct {
 	RowCnt     int64     `json:"row_count,omitempty"`
 	Bytes      int64     `json:"bytes,omitempty"`
 	UpdateTime time.Time `json:"update_time,omitempty"`
@@ -92,12 +93,12 @@ type SubtaskSummary struct {
 	// Progresses are the history of data processed, which is used to get a
 	// smoother speed for each subtask.
 	// It's updated each time we store the latest summary into subtask table.
-	Progresses []progress `json:"progresses,omitempty"`
+	Progresses []Progress `json:"progresses,omitempty"`
 }
 
 // Update stores the latest progress of the subtask.
 func (s *SubtaskSummary) Update() {
-	s.Progresses = append(s.Progresses, progress{
+	s.Progresses = append(s.Progresses, Progress{
 		RowCnt:     s.RowCnt.Load(),
 		Bytes:      s.Bytes.Load(),
 		UpdateTime: time.Now(),
