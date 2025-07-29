@@ -125,6 +125,11 @@ func (s *BaseScheduler) ScheduleTask() {
 func (*BaseScheduler) Close() {
 }
 
+// Context returns the context of the scheduler.
+func (b *BaseScheduler) Context() context.Context {
+	return b.ctx
+}
+
 // GetTask implements the Scheduler interface.
 func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()

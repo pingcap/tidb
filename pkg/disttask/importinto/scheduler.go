@@ -186,6 +186,13 @@ func (sch *importScheduler) Init() (err error) {
 }
 
 func (sch *importScheduler) Close() {
+	sch.taskInfoMap.Range(func(key, value any) bool {
+		if info, ok := value.(*taskInfo); ok {
+			info.close(sch.Context())
+		}
+		sch.taskInfoMap.Delete(key)
+		return true
+	})
 	metricsManager.unregister(sch.GetTask().ID)
 	sch.BaseScheduler.Close()
 }
