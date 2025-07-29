@@ -263,6 +263,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	EncodeThreadCnt       int
 	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
@@ -1286,6 +1287,33 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
+	failpoint.Inject("skipReadFiles", func() {
+		failpoint.Goto("afterReadFiles")
+	})
+
+	// Fill memory usage info
+	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
+		_, memoryUsageStream, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
+		memoryUsage, encodeThreadCnt, useStream := mydump.AdjustEncodeThreadCnt(memoryUsageStream, memoryUsageFull, e.Plan.ThreadCnt)
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, dataFile := range dataFiles {
+			// To reduce the memory usage, we only use streaming mode to read file.
+			dataFile.ParquetMeta = mydump.ParquetFileMeta{
+				MemoryUsage:  memoryUsage,
+				UseStreaming: useStream,
+			}
+		}
+
+		// Because we may not be able to open ThreadCnt files concurrently,
+		// we can adjust thread count for parquet here.
+		e.Plan.EncodeThreadCnt = encodeThreadCnt
+	}
+
+	failpoint.Label("afterReadFiles")
+
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
@@ -1401,6 +1429,7 @@ func (e *LoadDataController) GetParser(
 			e.dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	}
 	if err != nil {

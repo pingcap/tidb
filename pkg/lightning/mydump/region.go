@@ -366,7 +366,7 @@ func makeParquetFileRegion(
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
 ) ([]*TableRegion, []float64, error) {
-	numberRows := dataFile.FileMeta.Rows
+	numberRows := dataFile.FileMeta.ParquetMeta.Rows
 	var err error
 	// for safety
 	if numberRows <= 0 {

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -105,11 +106,19 @@ func getTableImporter(
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
+
 	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
 	s.tableImporter = tableImporter
+
+	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
+		mydump.ConfigureReaderLimitForParquet(mydump.ImportIntoReaderUsage)
+		if s.tableImporter.EncodeThreadCnt > 0 {
+			s.tableImporter.Plan.ThreadCnt = s.tableImporter.EncodeThreadCnt
+		}
+	}
 
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
@@ -302,6 +311,10 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 }
 
 func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
+	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
+		mydump.ReleaseMemoryForParquet()
+	}
+
 	s.logger.Info("cleanup subtask env")
 	s.importCancel()
 	s.wg.Wait()

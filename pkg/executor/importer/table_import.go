@@ -100,6 +100,7 @@ type Chunk struct {
 	Type         mydump.SourceType
 	Compression  mydump.Compression
 	Timestamp    int64
+	ParquetMeta  mydump.ParquetFileMeta
 }
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
@@ -454,6 +455,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 			Type:         region.FileMeta.Type,
 			Compression:  region.FileMeta.Compression,
 			Timestamp:    timestamp,
+			ParquetMeta:  region.FileMeta.ParquetMeta,
 		})
 	}
 
