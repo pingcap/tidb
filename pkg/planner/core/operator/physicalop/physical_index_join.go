@@ -193,29 +193,29 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexJoin)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.BasePhysicalJoin = *basePlan
-	if op.InnerPlan != nil {
-		innerPlan, ok := op.InnerPlan.CloneForPlanCache(newCtx)
+	if p.InnerPlan != nil {
+		innerPlan, ok := p.InnerPlan.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
 		cloned.InnerPlan = innerPlan.(base.PhysicalPlan)
 	}
-	cloned.Ranges = op.Ranges.CloneForPlanCache()
-	cloned.KeyOff2IdxOff = make([]int, len(op.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, op.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.CompareFilters = op.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = utilfuncp.CloneColumnsForPlanCache(op.OuterHashKeys, nil)
-	cloned.InnerHashKeys = utilfuncp.CloneColumnsForPlanCache(op.InnerHashKeys, nil)
+	cloned.Ranges = p.Ranges.CloneForPlanCache()
+	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
+	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
+	cloned.OuterHashKeys = utilfuncp.CloneColumnsForPlanCache(p.OuterHashKeys, nil)
+	cloned.InnerHashKeys = utilfuncp.CloneColumnsForPlanCache(p.InnerHashKeys, nil)
 	return cloned, true
 }
 
