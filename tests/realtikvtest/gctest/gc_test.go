@@ -36,6 +36,7 @@ func TestMockExternalServicesCall(t *testing.T) {
 	gccli := pdcli.GetGCStatesClient(uint32(keyspaceID))
 	state, err := gccli.GetGCState(context.Background())
 	require.NoError(t, err)
+	require.Empty(t, state.GCBarriers)
 
 	nowTS := oracle.GoTimeToTS(time.Now())
 	ttl := 15 * time.Minute
@@ -47,6 +48,7 @@ func TestMockExternalServicesCall(t *testing.T) {
 	require.Equal(t, ttl, info.TTL)
 
 	state, err = gccli.GetGCState(context.Background())
+	require.NoError(t, err)
 	require.Len(t, state.GCBarriers, 1)
 	info = state.GCBarriers[0]
 	require.Equal(t, barrierID, info.BarrierID)
@@ -55,6 +57,7 @@ func TestMockExternalServicesCall(t *testing.T) {
 
 	cli := pdcli.GetGCInternalController(uint32(keyspaceID))
 	res, err := cli.AdvanceTxnSafePoint(context.Background(), nowTS+1)
+	require.NoError(t, err)
 	require.Equal(t, res.OldTxnSafePoint, state.TxnSafePoint)
 	require.Equal(t, res.NewTxnSafePoint, nowTS)
 	require.Equal(t, res.Target, nowTS+1)
