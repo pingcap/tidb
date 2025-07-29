@@ -417,18 +417,20 @@ func BuildHistAndTopN(
 		}
 	}
 
-	if allowPruning && sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(topNList) >= int(sampleNDV) {
-		// If we're sampling, and TopN contains everything in the sample - trim TopN so that buckets will be
-		// built. This can help address issues in optimizer cardinality estimation if TopN contains all values
-		// in the sample, but the length of the TopN is less than the true column/index NDV.
-		// Ensure that we keep at least one item in the topN list. If the sampleNDV is small, all remaining
-		// values are likely to added as the last value of a bucket such that skew will still be recognized.
-		keepTopN := max(1, sampleNDV-1)
-		topNList = topNList[:keepTopN]
-	}
-
 	if allowPruning {
+		// Prune out any TopN values that have the same count as the remaining average.
 		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(topNList) >= int(sampleNDV) {
+			// If we're sampling, and TopN contains everything in the sample - trim TopN so
+			// that buckets will be built. This can help address issues in optimizer
+			// cardinality estimation if TopN contains all values in the sample, but the
+			// length of the TopN is less than the true column/index NDV. Ensure that we keep
+			// at least one item in the topN list. If the sampleNDV is small, all remaining
+			// values are likely to added as the last value of a bucket such that skew will
+			// still be recognized.
+			keepTopN := max(1, sampleNDV-1)
+			topNList = topNList[:keepTopN]
+		}
 	}
 
 	topn := &TopN{TopN: topNList}
