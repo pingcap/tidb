@@ -21,9 +21,11 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -79,7 +81,7 @@ type server struct {
 type ddlSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	s     sessiontypes.Session
+	s     sessionapi.Session
 	ctx   sessionctx.Context
 
 	m     sync.Mutex
@@ -297,7 +299,7 @@ func (s *ddlSuite) startServer(i int, fp *os.File) (*server, error) {
 
 	// Open database.
 	var db *sql.DB
-	addr := fmt.Sprintf("%s:%d", *tidbIP, *startPort+i)
+	addr := net.JoinHostPort(*tidbIP, strconv.FormatUint(uint64(*startPort+i), 10))
 	sleepTime := time.Millisecond * 250
 	startTime := time.Now()
 	for i := range s.retryCount {
@@ -1161,5 +1163,5 @@ func addEnvPath(newPath string) {
 }
 
 func init() {
-	_ = store.Register(config.StoreTypeTiKV, tidbdriver.TiKVDriver{})
+	_ = store.Register(config.StoreTypeTiKV, &tidbdriver.TiKVDriver{})
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -43,7 +44,6 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -413,7 +413,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
 ) bool {
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	dbs := infoschema.AllSchemaNames(is)
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
@@ -433,7 +433,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 
 	for _, db := range dbs {
 		// Ignore the memory and system database.
-		if util.IsMemOrSysDB(strings.ToLower(db)) {
+		if metadef.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
 		}
 

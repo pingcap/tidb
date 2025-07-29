@@ -2485,7 +2485,7 @@ func TestFKBuild(t *testing.T) {
 	tk.MustExec("create table t1 (id int key);")
 	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockTryLoadDiffError", `return("renametable")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/MockTryLoadDiffError", `return("renametable")`)
 
 	tk.MustExec("rename table t1 to t3;")
 	tk.MustExec("insert into test.t3 values (1)")
@@ -2528,7 +2528,7 @@ func TestLockKeysInDML(t *testing.T) {
 }
 
 func TestLockKeysInInsertIgnore(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int primary key);")

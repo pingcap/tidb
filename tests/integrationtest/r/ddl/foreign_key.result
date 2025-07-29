@@ -205,7 +205,8 @@ id	b
 select * from t2;
 id	b
 2	2
-admin check table t1,t2;
+admin check table t1;
+admin check table t2;
 create database test_db_1;
 create database test_db_2;
 create database test_db_3;

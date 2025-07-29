@@ -514,6 +514,7 @@ var Keywords = []KeywordsType{
 	{"RECOMMEND", false, "unreserved"},
 	{"RECOVER", false, "unreserved"},
 	{"REDUNDANT", false, "unreserved"},
+	{"REFRESH", false, "unreserved"},
 	{"RELOAD", false, "unreserved"},
 	{"REMOVE", false, "unreserved"},
 	{"REORGANIZE", false, "unreserved"},

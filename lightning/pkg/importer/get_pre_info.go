@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -197,7 +198,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	})
 	exec := common.SQLWithRetry{
 		DB:     g.db,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	var dump int
 	err := exec.QueryRow(ctx, "check table empty",
@@ -540,7 +541,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 		sourceTotalSize       = int64(0)
 		tableCount            = 0
 		unSortedBigTableCount = 0
-		errMgr                = errormanager.New(nil, p.cfg, log.FromContext(ctx))
+		errMgr                = errormanager.New(nil, p.cfg, log.Wrap(logutil.Logger(ctx)))
 	)
 
 	dbInfos, err := p.GetAllTableStructures(ctx)
@@ -631,7 +632,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	logger := log.FromContext(ctx).With(zap.String("table", tableMeta.Name))
+	logger := log.Wrap(logutil.Logger(ctx).With(zap.String("table", tableMeta.Name)))
 	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        p.cfg.TiDB.SQLMode,
@@ -708,7 +709,7 @@ outloop:
 						columnNames,
 						ignoreColsMap,
 						tableInfo,
-						log.FromContext(ctx))
+						log.Wrap(logutil.Logger(ctx)))
 					if err != nil {
 						return 0.0, false, errors.Trace(err)
 					}
@@ -742,7 +743,7 @@ outloop:
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, offset)
 		if encodeErr != nil {
-			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
+			encodeErr = errMgr.RecordTypeError(ctx, log.Wrap(logutil.Logger(ctx)), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)
 			if encodeErr != nil {
 				return 0.0, false, errors.Annotatef(encodeErr, "in file at offset %d", offset)
@@ -780,7 +781,7 @@ outloop:
 	if rowSize > 0 && kvSize > rowSize {
 		resultIndexRatio = float64(kvSize) / float64(rowSize)
 	}
-	log.FromContext(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
+	logutil.Logger(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
 	return resultIndexRatio, isRowOrdered, nil
 }
 

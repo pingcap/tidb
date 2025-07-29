@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
-	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"go.uber.org/zap"
 )
 
 // backfillExecutor is used to manage the lifetime of backfill workers.
@@ -261,9 +259,6 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	jc := b.jobCtx
-	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
-		ddllogutil.DDLLogger().Error("load DDL reorganization variable failed", zap.Error(err))
-	}
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
@@ -273,7 +268,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblAddIdxRate, false, false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblAddIdxRate, false)
 			if err != nil {
 				return err
 			}
@@ -286,7 +281,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			runner = newBackfillWorker(b.ctx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblMergeTmpIdxRate, false, false)
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblMergeTmpIdxRate, false)
 			if err != nil {
 				return err
 			}
@@ -330,7 +325,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 		b.workers = b.workers[:workerCnt]
 		closeBackfillWorkers(workers)
 	}
-	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
+	return nil
 }
 
 func (b *txnBackfillExecutor) close(force bool) {

@@ -136,7 +136,7 @@ func indexJoinPathNewMutableRange(
 	ranges []*ranger.Range,
 	path *util.AccessPath) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs) {
+	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs...) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
 			ranges:        ranges,

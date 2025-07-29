@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -134,7 +135,7 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	task, err := mgr.GetTaskByKeyWithHistory(ctx, fmt.Sprintf("ddl/backfill/%d", jobID))
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID))
 	require.NoError(t, err)
 	return task.ID
 }
@@ -158,6 +159,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
+	cloudStorageURI = handle.GetCloudStorageURI(context.Background(), store) // path with cluster id
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")

@@ -90,7 +90,7 @@ func (j *runningJobs) checkRunnable(jobID int64, involves []model.InvolvingSchem
 
 	if _, ok := j.ids[jobID]; ok {
 		// should not happen
-		if intest.InTest {
+		if intest.EnableInternalCheck {
 			panic(fmt.Sprintf("job %d is already running", jobID))
 		}
 		return false
@@ -250,7 +250,7 @@ func (j *runningJobs) removeRunning(jobID int64, involves []model.InvolvingSchem
 }
 
 func (j *runningJobs) removeRunningWithoutLock(jobID int64, involves []model.InvolvingSchemaInfo) {
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		if _, ok := j.ids[jobID]; !ok {
 			panic(fmt.Sprintf("job %d is not running", jobID))
 		}

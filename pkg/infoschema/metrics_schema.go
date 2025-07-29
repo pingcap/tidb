@@ -24,11 +24,11 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
 
@@ -64,7 +64,7 @@ func init() {
 
 	dbInfo := &model.DBInfo{
 		ID:      dbID,
-		Name:    ast.NewCIStr(util.MetricSchemaName.O),
+		Name:    ast.NewCIStr(metadef.MetricSchemaName.O),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 	}

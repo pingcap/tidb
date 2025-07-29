@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -87,7 +88,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // PartitionTable
 			sql: "select * from pt where a < 15 and c > 1",
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				pua, ok := p.(*plannercore.PhysicalUnionAll)
+				pua, ok := p.(*physicalop.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
 					require.Greater(t, countFullStats(child.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
@@ -106,7 +107,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // Apply
 			sql: "select * from t t1 where t1.b > (select count(*) from t t2 where t2.c > t1.a and t2.d>1) and t1.c>2",
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
-				pp, ok := p.(*plannercore.PhysicalProjection)
+				pp, ok := p.(*physicalop.PhysicalProjection)
 				require.True(t, ok)
 				pa, ok := pp.Children()[0].(*plannercore.PhysicalApply)
 				require.True(t, ok)
@@ -171,7 +172,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pc, ok := p.(*plannercore.PhysicalCTE)
 				require.True(t, ok)
-				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
+				pp, ok := pc.SeedPlan.(*physicalop.PhysicalProjection)
 				require.True(t, ok)
 				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
@@ -194,7 +195,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		logger, buffer := log.MakeTestLogger()
-		logCtx := log.NewContext(ctx, logger)
+		logCtx := logutil.WithLogger(ctx, logger.Logger)
 		dbSQL := dbMeta.GetSchema(logCtx, store)
 		require.Equal(t, "CREATE DATABASE IF NOT EXISTS `db`", dbSQL)
 		for _, tblMeta := range dbMeta.Tables {

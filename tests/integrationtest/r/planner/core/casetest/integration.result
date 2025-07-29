@@ -116,12 +116,12 @@ HashAgg	2.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
   │ └─Limit	1.00	root		offset:0, count:1
   │   └─TableReader	1.00	root		data:Limit
   │     └─Limit	1.00	cop[tikv]		offset:0, count:1
-  │       └─TableFullScan	1.00	cop[tikv]	table:t	keep order:true, desc, stats:pseudo
+  │       └─TableFullScan	100.99	cop[tikv]	table:t	keep order:true, desc, stats:pseudo
   └─StreamAgg	1.00	root		funcs:min(planner__core__casetest__integration.t.a)->Column#4
     └─Limit	1.00	root		offset:0, count:1
       └─TableReader	1.00	root		data:Limit
         └─Limit	1.00	cop[tikv]		offset:0, count:1
-          └─TableFullScan	1.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+          └─TableFullScan	100.99	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain format = 'brief' select min(a), max(a) from cluster_index_t;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
@@ -129,12 +129,12 @@ HashJoin	1.00	root		CARTESIAN inner join
 │ └─Limit	1.00	root		offset:0, count:1
 │   └─TableReader	1.00	root		data:Limit
 │     └─Limit	1.00	cop[tikv]		offset:0, count:1
-│       └─TableFullScan	1.00	cop[tikv]	table:cluster_index_t	keep order:true, desc, stats:pseudo
+│       └─TableFullScan	100.99	cop[tikv]	table:cluster_index_t	keep order:true, desc, stats:pseudo
 └─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.a)->Column#4
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─TableFullScan	1.00	cop[tikv]	table:cluster_index_t	keep order:true, stats:pseudo
+        └─TableFullScan	100.99	cop[tikv]	table:cluster_index_t	keep order:true, stats:pseudo
 explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
@@ -142,12 +142,12 @@ HashJoin	1.00	root		CARTESIAN inner join
 │ └─Limit	1.00	root		offset:0, count:1
 │   └─TableReader	1.00	root		data:Limit
 │     └─Limit	1.00	cop[tikv]		offset:0, count:1
-│       └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, desc, stats:pseudo
+│       └─TableRangeScan	1.09	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, desc, stats:pseudo
 └─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#4
   └─Limit	1.00	root		offset:0, count:1
     └─TableReader	1.00	root		data:Limit
       └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, stats:pseudo
+        └─TableRangeScan	1.09	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, stats:pseudo
 explain format = 'brief' select min(a), max(a) from cluster_index_t where b = 1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5
@@ -711,8 +711,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tuk where a<=>null and b>0 and b<2;
 id	estRows	task	access object	operator info
-IndexReader_6	1.25	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader_7	1.25	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	1.25	cop[tikv]	table:tuk, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tuk where a<=>null and b>0 and b<2;
 a	b	c
 NULL	1	NULL
@@ -780,8 +780,8 @@ NULL	1	1
 set @@session.tidb_regard_null_as_point=true;
 explain select * from tik where a<=>null and b>=1 and b<2;
 id	estRows	task	access object	operator info
-IndexReader_6	1.25	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
+IndexReader_7	1.25	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	1.25	cop[tikv]	table:tik, index:a(a, b, c)	range:[NULL 1,NULL 1], keep order:false, stats:pseudo
 select * from tik where a<=>null and b>=1 and b<2;
 a	b	c
 NULL	1	NULL
@@ -1092,47 +1092,47 @@ set @@tidb_enable_chunk_rpc = on;
 explain format = 'verbose' select * from t where a > 1 order by f;
 id	estRows	estCost	task	access object	operator info
 Sort_5	3333.33	2146348.14	root		planner__core__casetest__integration.t.f
-└─TableReader_9	3333.33	160128.74	root		data:TableRangeScan_8
-  └─TableRangeScan_8	3333.33	923531.15	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
+└─TableReader_10	3333.33	160128.74	root		data:TableRangeScan_9
+  └─TableRangeScan_9	3333.33	923531.15	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
 Note	1105	[t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 1;
 id	estRows	estCost	task	access object	operator info
-TableReader_7	3333.33	501239.13	root		data:Selection_6
-└─Selection_6	3333.33	6040186.91	cop[tikv]		gt(planner__core__casetest__integration.t.f, 1)
-  └─TableFullScan_5	10000.00	5541186.91	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_8	3333.33	501239.13	root		data:Selection_7
+└─Selection_7	3333.33	6040186.91	cop[tikv]		gt(planner__core__casetest__integration.t.f, 1)
+  └─TableFullScan_6	10000.00	5541186.91	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select f from t where f > 1;
 id	estRows	estCost	task	access object	operator info
-IndexReader_6	3333.33	50257.78	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	3333.33	542666.67	cop[tikv]	table:t, index:f(f)	range:(1,+inf], keep order:false, stats:pseudo
+IndexReader_7	3333.33	50257.78	root		index:IndexRangeScan_6
+└─IndexRangeScan_6	3333.33	542666.67	cop[tikv]	table:t, index:f(f)	range:(1,+inf], keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 3 and g = 5;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_12	3.33	19531.97	root		
-├─IndexRangeScan_9(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
-└─Selection_11(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
-  └─TableRowIDScan_10	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_13	3.33	19531.97	root		
+├─IndexRangeScan_10(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
+└─Selection_12(Probe)	3.33	3269.59	cop[tikv]		gt(planner__core__casetest__integration.t.f, 3)
+  └─TableRowIDScan_11	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where g = 5 order by f;
 id	estRows	estCost	task	access object	operator info
 Sort_5	10.00	21321.97	root		planner__core__casetest__integration.t.f
-└─IndexLookUp_10	10.00	19545.34	root		
-  ├─IndexRangeScan_8(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
-  └─TableRowIDScan_9(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexLookUp_11	10.00	19545.34	root		
+  ├─IndexRangeScan_9(Build)	10.00	2035.00	cop[tikv]	table:t, index:g(g)	range:[5,5], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 Note	1105	[t,f_g,g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
 explain format = 'verbose' select * from t where d = 3 order by c, e;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_15	10.00	215519.24	root		
-├─Selection_14(Build)	10.00	2941000.00	cop[tikv]		eq(planner__core__casetest__integration.t.d, 3)
-│ └─IndexFullScan_12	10000.00	2442000.00	cop[tikv]	table:t, index:c_d_e(c, d, e)	keep order:true, stats:pseudo
-└─TableRowIDScan_13(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_17	10.00	215519.24	root		
+├─Selection_16(Build)	10.00	2941000.00	cop[tikv]		eq(planner__core__casetest__integration.t.d, 3)
+│ └─IndexFullScan_14	10000.00	2442000.00	cop[tikv]	table:t, index:c_d_e(c, d, e)	keep order:true, stats:pseudo
+└─TableRowIDScan_15(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
 Note	1105	[t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.c asc} {planner__core__casetest__integration.t.e asc}], TaskTp: rootTask}
 Note	1105	[t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
@@ -1146,43 +1146,43 @@ set @@tidb_enable_chunk_rpc = on;
 set tidb_opt_prefer_range_scan = 0;
 explain format = 'verbose' select * from t where b > 5;
 id	estRows	estCost	task	access object	operator info
-TableReader_7	3.00	130.42	root		data:Selection_6
-└─Selection_6	3.00	1386.04	cop[tikv]		gt(planner__core__casetest__integration.t.b, 5)
-  └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
+TableReader_8	3.00	130.42	root		data:Selection_7
+└─Selection_7	3.00	1386.04	cop[tikv]		gt(planner__core__casetest__integration.t.b, 5)
+  └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	1.00	98.74	root		offset:0, count:1
-└─TableReader_24	1.00	98.74	root		data:Limit_23
-  └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
-      └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
+Limit_13	1.00	98.74	root		offset:0, count:1
+└─TableReader_33	1.00	98.74	root		data:Limit_32
+  └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	1.00	98.74	root		offset:0, count:1
-└─TableReader_13	1.00	98.74	root		data:Limit_12
-  └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
-      └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
+Limit_9	1.00	98.74	root		offset:0, count:1
+└─TableReader_16	1.00	98.74	root		data:Limit_15
+  └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
 set tidb_opt_prefer_range_scan = 1;
 explain format = 'verbose' select * from t where b > 5;
 id	estRows	estCost	task	access object	operator info
-TableReader_7	3.00	130.42	root		data:Selection_6
-└─Selection_6	3.00	1386.04	cop[tikv]		gt(planner__core__casetest__integration.t.b, 5)
-  └─TableFullScan_5	5.00	1136.54	cop[tikv]	table:t	keep order:false
+TableReader_8	3.00	130.42	root		data:Selection_7
+└─Selection_7	3.00	1386.04	cop[tikv]		gt(planner__core__casetest__integration.t.b, 5)
+  └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_11	1.00	98.74	root		offset:0, count:1
-└─TableReader_24	1.00	98.74	root		data:Limit_23
-  └─Limit_23	1.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_22	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
-      └─TableFullScan_21	5.00	1136.54	cop[tikv]	table:t	keep order:true
+Limit_13	1.00	98.74	root		offset:0, count:1
+└─TableReader_33	1.00	98.74	root		data:Limit_32
+  └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_8	1.00	98.74	root		offset:0, count:1
-└─TableReader_13	1.00	98.74	root		data:Limit_12
-  └─Limit_12	1.00	1386.04	cop[tikv]		offset:0, count:1
-    └─Selection_11	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
-      └─TableFullScan_10	5.00	1136.54	cop[tikv]	table:t	keep order:false
+Limit_9	1.00	98.74	root		offset:0, count:1
+└─TableReader_16	1.00	98.74	root		data:Limit_15
+  └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
+    └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
+      └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
 set @@tidb_enable_chunk_rpc = default;
 set tidb_opt_prefer_range_scan = default;
 drop table if exists t;
@@ -1209,8 +1209,8 @@ explain format = 'brief' select floor(dt.rn/2) rownum, count(c1) from (select @r
 id	estRows	task	access object	operator info
 Sort	1.00	root		Column#6
 └─Projection	1.00	root		floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#6, Column#5
-  └─HashAgg	1.00	root		group by:Column#14, funcs:count(Column#12)->Column#5, funcs:firstrow(Column#13)->Column#4
-    └─Projection	10000.00	root		planner__core__casetest__integration.t1.c1->Column#12, Column#4->Column#13, floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#14
+  └─HashAgg	1.00	root		group by:Column#13, funcs:count(Column#11)->Column#5, funcs:firstrow(Column#12)->Column#4
+    └─Projection	10000.00	root		planner__core__casetest__integration.t1.c1->Column#11, Column#4->Column#12, floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#13
       └─Projection	10000.00	root		setvar(rownum, plus(getvar(rownum), 1))->Column#4, planner__core__casetest__integration.t1.c1
         └─HashJoin	10000.00	root		CARTESIAN inner join
           ├─Projection(Build)	1.00	root		setvar(rownum, -1)->Column#1
@@ -1220,15 +1220,15 @@ Sort	1.00	root		Column#6
 explain format = 'brief' select @n:=@n+1 as e from ta group by e;
 id	estRows	task	access object	operator info
 Projection	1.00	root		setvar(n, plus(getvar(n), 1))->Column#4
-└─HashAgg	1.00	root		group by:Column#9, funcs:firstrow(1)->Column#7
-  └─Projection	10000.00	root		setvar(n, plus(cast(getvar(n), double BINARY), 1))->Column#9
+└─HashAgg	1.00	root		group by:Column#8, funcs:firstrow(1)->Column#7
+  └─Projection	10000.00	root		setvar(n, plus(cast(getvar(n), double BINARY), 1))->Column#8
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select @n:=@n+a as e from ta group by e;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#4
-└─HashAgg	8000.00	root		group by:Column#8, funcs:firstrow(Column#7)->planner__core__casetest__integration.ta.a
-  └─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#7, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#8
+└─HashAgg	8000.00	root		group by:Column#7, funcs:firstrow(Column#6)->planner__core__casetest__integration.ta.a
+  └─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#6, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#7
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select @n:=@n+1 as e from ta) tt group by e;
@@ -1245,14 +1245,14 @@ HashAgg	8000.00	root		group by:Column#4, funcs:firstrow(Column#4)->Column#4
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select a from ta group by @n:=@n+1;
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		group by:Column#6, funcs:firstrow(Column#5)->planner__core__casetest__integration.ta.a
-└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#5, setvar(n, plus(getvar(n), 1))->Column#6
+HashAgg	1.00	root		group by:Column#5, funcs:firstrow(Column#4)->planner__core__casetest__integration.ta.a
+└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#4, setvar(n, plus(getvar(n), 1))->Column#5
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select a from ta group by @n:=@n+a;
 id	estRows	task	access object	operator info
-HashAgg	8000.00	root		group by:Column#6, funcs:firstrow(Column#5)->planner__core__casetest__integration.ta.a
-└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#5, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#6
+HashAgg	8000.00	root		group by:Column#5, funcs:firstrow(Column#4)->planner__core__casetest__integration.ta.a
+└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#4, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#5
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 set sql_mode=default;
@@ -1505,7 +1505,7 @@ TableReader	30.00	root	partition:p0,p2	data:Selection
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a in (17, null);
 id	estRows	task	access object	operator info
-TableReader	10.00	root	partition:p0,p2	data:Selection
+TableReader	10.00	root	partition:p2	data:Selection
 └─Selection	10.00	cop[tikv]		in(planner__core__casetest__integration.t.a, 17, NULL)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a in (16, 'abc');
@@ -1838,3 +1838,13 @@ Update	N/A	root		N/A
     └─TableReader(Probe)	0.00	root		data:Selection
       └─Selection	0.00	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))
         └─TableRangeScan	0.00	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo
+CREATE TABLE test_62564(c0 DECIMAL);
+INSERT INTO test_62564 VALUES (0);
+SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
+c0
+0
+SET @b = NULL;
+PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE ? END ) AS DATE)';
+EXECUTE prepare_query USING @b;
+c0
+0
