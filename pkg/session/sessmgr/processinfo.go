@@ -207,9 +207,29 @@ func serverStatus2Str(state uint16) string {
 	return strings.Join(l, "; ")
 }
 
+// InfoSchemaCoordinator is an interface for InfoSchema related operations.
+// online schema change requires that there are at most 2 consecutive and compatible
+// schema versions can coexist in the system, we need this interface to coordinate
+// the InfoSchema changes and sessions.
+type InfoSchemaCoordinator interface {
+	// StoreInternalSession puts the internal session pointer to the map in the Manager.
+	StoreInternalSession(se any)
+	// DeleteInternalSession deletes the internal session pointer from the map in the Manager.
+	DeleteInternalSession(se any)
+	// CheckOldRunningTxn checks if there are old transactions accessing tables
+	// in the DDL jobs with older schema version, if so, we remove the jobs from
+	// the input param.
+	CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL)
+	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
+	// after flashback cluster, we need to kill all connections except the one
+	// initiating the flashback, to make sure they use the latest info.
+	KillNonFlashbackClusterConn()
+}
+
 // Manager is an interface for session manage. Show processlist and
 // kill statement rely on this interface.
 type Manager interface {
+	InfoSchemaCoordinator
 	ShowProcessList() map[uint64]*ProcessInfo
 	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
@@ -217,18 +237,10 @@ type Manager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// StoreInternalSession puts the internal session pointer to the map in the Manager.
-	StoreInternalSession(se any)
-	// DeleteInternalSession deletes the internal session pointer from the map in the Manager.
-	DeleteInternalSession(se any)
 	// ContainsInternalSession checks if the internal session pointer is in the map in the Manager.
 	ContainsInternalSession(se any) bool
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
-	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
-	CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL)
-	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
-	KillNonFlashbackClusterConn()
 	// GetConAttrs gets the connection attributes
 	GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string
 }

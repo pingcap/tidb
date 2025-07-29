@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
@@ -76,9 +76,9 @@ type Syncer struct {
 	loader            *Loader
 
 	// below fields are set when running background routines
-	info              *infosync.InfoSyncer
-	schemaVerSyncer   schemaver.Syncer
-	minJobIDRefresher *systable.MinJobIDRefresher
+	isCoordinatorGetter func() sessmgr.InfoSchemaCoordinator
+	schemaVerSyncer     schemaver.Syncer
+	minJobIDRefresher   *systable.MinJobIDRefresher
 }
 
 // New creates a new Syncer instance.
@@ -114,12 +114,12 @@ func New(
 
 // InitRequiredFields initializes some fields of the Syncer.
 func (s *Syncer) InitRequiredFields(
-	info *infosync.InfoSyncer,
+	isCoordinatorGetter func() sessmgr.InfoSchemaCoordinator,
 	schemaVerSyncer schemaver.Syncer,
 	autoidClient *autoid.ClientDiscover,
 	sysExecutorFactory func() (pools.Resource, error),
 ) {
-	s.info = info
+	s.isCoordinatorGetter = isCoordinatorGetter
 	s.schemaVerSyncer = schemaVerSyncer
 	s.loader.initFields(autoidClient, sysExecutorFactory)
 }
@@ -211,11 +211,11 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 
 		haveJobToCheck = true
 
-		sm := s.info.GetSessionManager()
-		if sm == nil {
+		coordinator := s.isCoordinatorGetter()
+		if coordinator == nil {
 			logutil.BgLogger().Info("session manager is nil")
 		} else {
-			sm.CheckOldRunningTxn(jobs)
+			coordinator.CheckOldRunningTxn(jobs)
 		}
 
 		// if there are sessions using older schema version to access tables
@@ -463,8 +463,9 @@ func (s *Syncer) postReload(oldVer, currVer int64, change *transaction.RelatedSc
 			s.store.GetMemCache().Delete(change.PhyTblIDS[idx])
 		}
 		if ac == uint64(model.ActionFlashbackCluster) {
-			if s.info != nil && s.info.GetSessionManager() != nil {
-				s.info.GetSessionManager().KillNonFlashbackClusterConn()
+			coordinator := s.isCoordinatorGetter()
+			if coordinator != nil {
+				coordinator.KillNonFlashbackClusterConn()
 			}
 		}
 	}

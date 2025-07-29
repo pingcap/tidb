@@ -723,7 +723,14 @@ func (do *Domain) Init(
 	}
 
 	do.isSyncer.InitRequiredFields(
-		do.info, do.ddl.SchemaSyncer(), do.autoidClient,
+		func() sessmgr.InfoSchemaCoordinator {
+			if do.info == nil {
+				return nil
+			}
+			return do.info.GetSessionManager()
+		},
+		do.ddl.SchemaSyncer(),
+		do.autoidClient,
 		func() (pools.Resource, error) {
 			return do.sysExecutorFactory(do)
 		},
