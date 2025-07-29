@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"slices"
 	"time"
 	"unsafe"
@@ -609,7 +610,7 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
-	var results []distsql.SelectResult
+	results := make([]distsql.SelectResult, 0, len(kvReqs))
 	for _, kvReq := range kvReqs {
 		result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
@@ -620,8 +621,10 @@ func (e *TableReaderExecutor) buildRespForGroupedRanges(ctx context.Context, gro
 	if len(results) == 1 {
 		return results[0], nil
 	}
+	intest.Assert(len(e.byItems) > 0, "buildRespForGroupedRanges should only be called when byItems is not empty")
+
 	// Only use sorted results if we have byItems to sort by
-	if e.byItems != nil && len(e.byItems) > 0 {
+	if len(e.byItems) > 0 {
 		return distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker), nil
 	}
 	// If no sorting is needed, use serial results
