@@ -313,3 +313,17 @@ func TestIssue53766(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1(c0 int);")
 	tk.MustQuery("SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));").Check(testkit.Rows())
 }
+
+func TestIssue59762(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("create table t1(a int primary key, b int, index idx(b));")
+	tk.MustExec("insert into t values(1), (2), (123);")
+	tk.MustExec("insert into t1 values(2, 123), (123, 2);")
+	tk.MustExec("set tidb_opt_fix_control='44855:on';")
+	tk.MustExec("explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;")
+	tk.MustQuery("select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;").Check(testkit.Rows("2 2 123"))
+}
