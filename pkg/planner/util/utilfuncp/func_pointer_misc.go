@@ -265,7 +265,8 @@ var Attach2Task4PhysicalProjection func(pp base.PhysicalPlan, tasks ...base.Task
 var GetCost4PhysicalIndexJoin func(pp base.PhysicalPlan,
 	outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64
 
-// GetPlanCostVer14PhysicalIndexJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// GetPlanCostVer14PhysicalIndexJoin calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
 var GetPlanCostVer14PhysicalIndexJoin func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
