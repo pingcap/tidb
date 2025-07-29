@@ -1032,6 +1032,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 					groupByColIdxs = append(groupByColIdxs, colIdx)
 					continue
 				}
+				break
 			}
 			if !found {
 				matchResult = property.SortPropNotSatisfied
