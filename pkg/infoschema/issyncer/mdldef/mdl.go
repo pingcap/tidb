@@ -15,8 +15,9 @@
 package mdldef
 
 // JobMDL is a DDL job's MDL info.
+// if we put this struct in the upper directory, there will be import cycle.
 type JobMDL struct {
-	// the version we expect current instance have loaded
+	// the schema version of the job we expect current instance have loaded
 	Ver int64
 	// the tables involved in this job. Before we proceed to the next job step,
 	// we need to ensure all sessions that are accessing these tables are using
