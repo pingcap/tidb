@@ -75,6 +75,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -2909,10 +2910,10 @@ func (s *SysProcesses) UnTrack(id uint64) {
 }
 
 // GetSysProcessList gets list of system ProcessInfo
-func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+func (s *SysProcesses) GetSysProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for connID, proc := range s.procMap {
 		// if session is still tracked in this map, it's not returned to sysSessionPool yet
 		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {

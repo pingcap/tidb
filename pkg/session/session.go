@@ -94,6 +94,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -185,7 +186,7 @@ func (h *StmtHistory) Count() int {
 
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
-	processInfo atomic.Pointer[util.ProcessInfo]
+	processInfo atomic.Pointer[sessmgr.ProcessInfo]
 	txn         LazyTxn
 
 	mu struct {
@@ -208,7 +209,7 @@ type session struct {
 	sessionPlanCache sessionctx.SessionPlanCache
 
 	sessionVars    *variable.SessionVars
-	sessionManager util.SessionManager
+	sessionManager sessmgr.Manager
 
 	pctx    *planContextImpl
 	exprctx *sessionexpr.ExprContext
@@ -434,11 +435,11 @@ func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return s.sessionPlanCache
 }
 
-func (s *session) SetSessionManager(sm util.SessionManager) {
+func (s *session) SetSessionManager(sm sessmgr.Manager) {
 	s.sessionManager = sm
 }
 
-func (s *session) GetSessionManager() util.SessionManager {
+func (s *session) GetSessionManager() sessmgr.Manager {
 	return s.sessionManager
 }
 
@@ -1482,7 +1483,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		sqlCPUUsages = nil
 	}
 
-	pi := util.ProcessInfo{
+	pi := sessmgr.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
 		DB:                    s.sessionVars.CurrentDB,
@@ -1561,8 +1562,8 @@ func (s *session) UpdateProcessInfo() {
 	s.processInfo.Store(shallowCP)
 }
 
-func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
-	return util.OOMAlarmVariablesInfo{
+func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
+	return sessmgr.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
@@ -4175,7 +4176,7 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() *util.ProcessInfo {
+func (s *session) ShowProcess() *sessmgr.ProcessInfo {
 	return s.processInfo.Load()
 }
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package sessmgr
 
 import (
 	"crypto/tls"
@@ -207,9 +207,9 @@ func serverStatus2Str(state uint16) string {
 	return strings.Join(l, "; ")
 }
 
-// SessionManager is an interface for session manage. Show processlist and
+// Manager is an interface for session manage. Show processlist and
 // kill statement rely on this interface.
-type SessionManager interface {
+type Manager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
@@ -217,11 +217,11 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
+	// StoreInternalSession puts the internal session pointer to the map in the Manager.
 	StoreInternalSession(se any)
-	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
+	// DeleteInternalSession deletes the internal session pointer from the map in the Manager.
 	DeleteInternalSession(se any)
-	// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager.
+	// ContainsInternalSession checks if the internal session pointer is in the map in the Manager.
 	ContainsInternalSession(se any) bool
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
