@@ -76,10 +76,14 @@ const (
 	SubtaskSpeedUpdateInterval = UpdateSubtaskSummaryInterval * maxProgressInSummary / 2
 )
 
-// Progress represents the progress of a subtask.
+// Progress represents the progress of a subtask at a specific time.
 type Progress struct {
-	RowCnt     int64     `json:"row_count,omitempty"`
-	Bytes      int64     `json:"bytes,omitempty"`
+	// For now, RowCnt is not used, but as it's collected by the collector,
+	// we still keep it here for future possible usage.
+	RowCnt int64 `json:"row_count,omitempty"`
+	Bytes  int64 `json:"bytes,omitempty"`
+
+	// UpdateTime is the time when this progress is stored.
 	UpdateTime time.Time `json:"update_time,omitempty"`
 }
 
