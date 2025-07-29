@@ -500,9 +500,11 @@ func (p *PhysicalExpand) ExplainInfo() string {
 	var str strings.Builder
 	str.WriteString("group set num:")
 	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
-	str.WriteString(", groupingID:")
-	str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
-	str.WriteString(", ")
+	if p.GroupingIDCol != nil {
+		str.WriteString(", groupingID:")
+		str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
+		str.WriteString(", ")
+	}
 	str.WriteString(p.GroupingSets.StringWithCtx(ectx, perrors.RedactLogDisable))
 	return str.String()
 }
