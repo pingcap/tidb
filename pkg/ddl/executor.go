@@ -3411,7 +3411,6 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 
 	args := &model.ModifyColumnArgs{
 		Column:        newCol,
-		OldColumnID:   oldCol.ID,
 		OldColumnName: oldColName,
 		Position:      spec.Position,
 	}

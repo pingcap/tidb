@@ -1034,7 +1034,7 @@ func TestParallelAlterModifyColumnToNotNullWithData(t *testing.T) {
 	sql2 := "ALTER TABLE t CHANGE b bb int null;"
 	f = func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[ddl:8245]column b id 2 does not exist, this column may have been updated by other DDL ran in parallel")
+		require.NoError(t, err2)
 		rs, err := tk.Exec("select * from t")
 		require.NoError(t, err)
 		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
@@ -1042,13 +1042,14 @@ func TestParallelAlterModifyColumnToNotNullWithData(t *testing.T) {
 		require.Equal(t, "2", sRows[0][1])
 		require.NoError(t, rs.Close())
 		err = tk.ExecToErr("insert into t values(11, null, 33, 44, 55)")
-		require.EqualError(t, err, "[table:1048]Column 'b' cannot be null")
+		require.NoError(t, err)
 		tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
 		rs, err = tk.Exec("select * from t")
 		require.NoError(t, err)
 		sRows, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
 		require.NoError(t, err)
-		require.Equal(t, "22.2", sRows[1][1])
+		require.Equal(t, "<nil>", sRows[1][1])
+		require.Equal(t, "22", sRows[2][1])
 		require.NoError(t, rs.Close())
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)

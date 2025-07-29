@@ -375,29 +375,42 @@ func updateChangingCol(col *model.ColumnInfo) *model.ColumnInfo {
 	return col
 }
 
-func swapColumnInfo(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo) {
+func moveColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
+	// Swap the old column with new column position.
 	oldOffset := oldCol.Offset
 	changingOffset := changingCol.Offset
 	tblInfo.MoveColumnInfo(oldOffset, changingOffset)
 	tblInfo.MoveColumnInfo(changingCol.Offset, oldOffset)
+	// Move the new column to a correct offset.
+	// The validation of the position is done in `validatePosition`.
+	destOffset, err := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
+	intest.AssertNoError(err)
+	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 }
 
-func swapIndexInfoSlices(tblInfo *model.TableInfo, oldIdxInfos, changingIdxInfos []*model.IndexInfo) {
-	for i, oldIdx := range oldIdxInfos {
-		allRemoved := true
-		for _, ic := range oldIdx.Columns {
-			if !isObjectToBeRemoved(ic.Name.O) {
-				allRemoved = false
+func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo,
+	oldIdxInfos, changingIdxInfos []*model.IndexInfo) {
+	for i, cIdx := range changingIdxInfos {
+		hasOtherChangingCol := false
+		for _, ic := range cIdx.Columns {
+			idxCol := tblInfo.Columns[ic.Offset]
+			if idxCol.ID == changingCol.ID {
+				continue // ignore current modifying column.
+			}
+			if idxCol.ChangeStateInfo != nil {
+				hasOtherChangingCol = true
 				break
 			}
 		}
-		if allRemoved {
-			swapIndexInfos(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
+		// For the indexes that still contains other changing column, skip removing it now.
+		// We leave the removal work to the last modify column job.
+		if !hasOtherChangingCol {
+			swapIndexInfoByID(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
 		}
 	}
 }
 
-func swapIndexInfos(tblInfo *model.TableInfo, idxIDA, idxIDB int64) {
+func swapIndexInfoByID(tblInfo *model.TableInfo, idxIDA, idxIDB int64) {
 	offsetA := 0
 	offsetB := 0
 	for i, idx := range tblInfo.Indices {
@@ -901,7 +914,6 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 		// For cases like `modify column b after b`, it should report this error.
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
-	// Move the new column to a correct offset.
 	_, err := LocateOffsetToMove(oldCol.Offset, pos, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -939,12 +951,8 @@ func stepOneModifyingColumnStateToPublic(tblInfo *model.TableInfo, oldCol, chang
 		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
 		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, newName)
 		updateChangingCol(changingCol)
-		swapColumnInfo(tblInfo, oldCol, changingCol)
-		// Move the new column to a correct offset.
-		destOffset, _ := LocateOffsetToMove(changingCol.Offset, pos, tblInfo)
-		tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
-		// Move the new indexes to correct offsets.
-		swapIndexInfoSlices(tblInfo, oldIdxInfos, changingIdxInfos)
+		moveColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
+		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
 		return nil, false
 	case model.StateWriteOnly:
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
@@ -1439,10 +1447,6 @@ func getExpressionIndexOriginName(originalName ast.CIStr) string {
 		return columnName
 	}
 	return columnName[:pos]
-}
-
-func isObjectToBeRemoved(name string) bool {
-	return strings.HasPrefix(name, removingObjPrefix)
 }
 
 func getRemovingObjName(name string) string {

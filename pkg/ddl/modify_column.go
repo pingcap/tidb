@@ -229,12 +229,11 @@ func getModifyColumnInfo(
 		oldCol = model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
 	} else {
 		oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
+		args.OldColumnID = oldCol.ID
+		logutil.DDLLogger().Info("init old column id", zap.String("oldColumnName", args.OldColumnName.L), zap.Int64("oldColumnID", oldCol.ID))
 	}
 	if oldCol == nil {
 		job.State = model.JobStateCancelled
-		if args.OldColumnID > 0 {
-			return nil, nil, nil, errors.Trace(dbterror.ErrColumnInChange.FastGenByArgs(args.OldColumnName.O, args.OldColumnID))
-		}
 		return nil, nil, nil, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(args.OldColumnName, tblInfo.Name))
 	}
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
@@ -954,7 +953,6 @@ func GetModifiableColumnJob(
 
 	args := &model.ModifyColumnArgs{
 		Column:           newCol.ColumnInfo,
-		OldColumnID:      col.ID,
 		OldColumnName:    originalColName,
 		Position:         spec.Position,
 		ModifyColumnType: modifyColumnTp,
