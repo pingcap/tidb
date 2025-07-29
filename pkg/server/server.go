@@ -1169,3 +1169,21 @@ func (s *Server) KillNonFlashbackClusterConn() {
 		s.Kill(id, false, false, false)
 	}
 }
+
+func (s *Server) GetStatusVars() map[uint64]map[string]string {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]map[string]string)
+	for _, client := range s.clients {
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			if client.tlsConn != nil {
+				connState := client.tlsConn.ConnectionState()
+				rs[pi.ID] = map[string]string{
+					"Tls_cipher":  tls.CipherSuiteName(connState.CipherSuite),
+					"Tls_version": tls.VersionName(connState.Version),
+				}
+			}
+		}
+	}
+	return rs
+}
