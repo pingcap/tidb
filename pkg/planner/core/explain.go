@@ -27,18 +27,16 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // ExplainInfo implements Plan interface.
@@ -504,12 +502,12 @@ func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
-	return p.explainInfo(false, true)
+	return p.PhysicalIndexJoin.ExplainInfoInternal(false, true)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true, true)
+	return p.PhysicalIndexJoin.ExplainInfoInternal(true, true)
 }
 
 // ExplainInfo implements Plan interface.

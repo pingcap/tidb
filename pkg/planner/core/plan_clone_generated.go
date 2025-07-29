@@ -19,6 +19,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
@@ -245,7 +246,7 @@ func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (bas
 	if !ok {
 		return nil, false
 	}
-	cloned.PhysicalIndexJoin = *inlj.(*PhysicalIndexJoin)
+	cloned.PhysicalIndexJoin = *inlj.(*physicalop.PhysicalIndexJoin)
 	cloned.Self = cloned
 	return cloned, true
 }

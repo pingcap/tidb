@@ -1401,7 +1401,7 @@ func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPla
 	if err != nil {
 		return nil, err
 	}
-	indexJoin, ok := physicalIndexJoin.(*PhysicalIndexJoin)
+	indexJoin, ok := physicalIndexJoin.(*physicalop.PhysicalIndexJoin)
 	intest.Assert(ok)
 	cloned.PhysicalIndexJoin = *indexJoin
 	cloned.KeepOuterOrder = p.KeepOuterOrder

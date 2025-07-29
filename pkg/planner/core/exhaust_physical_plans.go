@@ -546,7 +546,7 @@ func constructIndexHashJoinStatic(
 	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinProp, outerStats)
 	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
-		join := plan.(*PhysicalIndexJoin)
+		join := plan.(*physicalop.PhysicalIndexJoin)
 		indexHashJoin := PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
 			// Prop is empty means that the parent operator does not need the
@@ -639,7 +639,7 @@ func constructIndexJoinStatic(
 		DefaultValues: p.DefaultValues,
 	}
 
-	join := PhysicalIndexJoin{
+	join := physicalop.PhysicalIndexJoin{
 		BasePhysicalJoin: baseJoin,
 		// for static enumeration here, we don't need to fill inner plan anymore.
 		// for static enumeration here, the KeyOff2IdxOff, Ranges, CompareFilters, OuterHashKeys, InnerHashKeys are
@@ -874,9 +874,9 @@ func constructIndexJoin(
 		DefaultValues:   p.DefaultValues,
 	}
 
-	join := PhysicalIndexJoin{
+	join := physicalop.PhysicalIndexJoin{
 		BasePhysicalJoin: baseJoin,
-		innerPlan:        innerTask.Plan(),
+		InnerPlan:        innerTask.Plan(),
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
 		CompareFilters:   compareFilters,
@@ -907,7 +907,7 @@ func constructIndexMergeJoin(
 	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, !hintExists)
 	indexMergeJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
-		join := plan.(*PhysicalIndexJoin)
+		join := plan.(*physicalop.PhysicalIndexJoin)
 		// Index merge join can't handle hash keys. So we ban it heuristically.
 		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
 			return nil
@@ -1011,7 +1011,7 @@ func constructIndexHashJoin(
 	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, true)
 	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
-		join := plan.(*PhysicalIndexJoin)
+		join := plan.(*physicalop.PhysicalIndexJoin)
 		indexHashJoin := PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
 			// Prop is empty means that the parent operator does not need the
@@ -1426,7 +1426,7 @@ func buildIndexJoinInner2TableScan(
 	}
 	var (
 		path       *util.AccessPath
-		lastColMng *ColWithCmpFuncManager
+		lastColMng *physicalop.ColWithCmpFuncManager
 	)
 	if indexJoinResult != nil {
 		path = indexJoinResult.chosenPath
@@ -2102,7 +2102,7 @@ const (
 func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod int, ok bool) {
 	var innerIdx int
 	switch ij := join.(type) {
-	case *PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexJoinMethod
 	case *PhysicalIndexHashJoin:

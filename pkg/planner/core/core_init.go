@@ -91,6 +91,11 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalProjection = getPlanCostVer14PhysicalProjection
 	utilfuncp.GetPlanCostVer24PhysicalProjection = getPlanCostVer24PhysicalProjection
 	utilfuncp.ResolveIndices4PhysicalProjection = resolveIndices4PhysicalProjection
+	// for physical index join
+	utilfuncp.GetCost4PhysicalIndexJoin = getCost4PhysicalIndexJoin
+	utilfuncp.GetPlanCostVer14PhysicalIndexJoin = getPlanCostVer14PhysicalIndexJoin
+	utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin = getIndexJoinCostVer24PhysicalIndexJoin
+	utilfuncp.Attach2Task4PhysicalIndexJoin = attach2Task4PhysicalIndexJoin
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost

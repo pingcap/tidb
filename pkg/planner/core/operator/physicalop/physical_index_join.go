@@ -3,15 +3,14 @@ package physicalop
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"strings"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -33,7 +32,7 @@ import (
 type PhysicalIndexJoin struct {
 	BasePhysicalJoin
 
-	innerPlan base.PhysicalPlan
+	InnerPlan base.PhysicalPlan
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges ranger.MutableRanges
@@ -74,8 +73,8 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 		return nil, err
 	}
 	cloned.BasePhysicalJoin = *base
-	if p.innerPlan != nil {
-		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	if p.InnerPlan != nil {
+		cloned.InnerPlan, err = p.InnerPlan.Clone(newCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -99,8 +98,8 @@ func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 
 	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
 		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
-	if p.innerPlan != nil {
-		sum += p.innerPlan.MemoryUsage()
+	if p.InnerPlan != nil {
+		sum += p.InnerPlan.MemoryUsage()
 	}
 	if p.CompareFilters != nil {
 		sum += p.CompareFilters.MemoryUsage()
@@ -127,7 +126,8 @@ func ExplainJoinLeftSide(buffer *strings.Builder, isInnerJoin bool, normalized b
 	}
 }
 
-func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
+// ExplainInfoInternal is the internal function for explain.
+func (p *PhysicalIndexJoin) ExplainInfoInternal(normalized bool, isIndexMergeJoin bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
 		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
@@ -184,12 +184,12 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true, false)
+	return p.ExplainInfoInternal(true, false)
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
-	return p.explainInfo(false, false)
+	return p.ExplainInfoInternal(false, false)
 }
 
 // CloneForPlanCache implements the base.Plan interface.
@@ -201,12 +201,12 @@ func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.BasePhysicalJoin = *basePlan
-	if op.innerPlan != nil {
-		innerPlan, ok := op.innerPlan.CloneForPlanCache(newCtx)
+	if op.InnerPlan != nil {
+		innerPlan, ok := op.InnerPlan.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
-		cloned.innerPlan = innerPlan.(base.PhysicalPlan)
+		cloned.InnerPlan = innerPlan.(base.PhysicalPlan)
 	}
 	cloned.Ranges = op.Ranges.CloneForPlanCache()
 	cloned.KeyOff2IdxOff = make([]int, len(op.KeyOff2IdxOff))
@@ -221,88 +221,12 @@ func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 
 // GetCost computes the cost of index join operator and its children.
 func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
-	var cpuCost float64
-	sessVars := p.SCtx().GetSessionVars()
-	// Add the cost of evaluating outer filter, since inner filter of index join
-	// is always empty, we can simply tell whether outer filter is empty using the
-	// summed length of left/right conditions.
-	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
-		cpuCost += sessVars.GetCPUFactor() * outerCnt
-		outerCnt *= cost.SelectionFactor
-	}
-	// Cost of extracting lookup keys.
-	innerCPUCost := sessVars.GetCPUFactor() * outerCnt
-	// Cost of sorting and removing duplicate lookup keys:
-	// (outerCnt / batchSize) * (batchSize * Log2(batchSize) + batchSize) * CPUFactor
-	batchSize := math.Min(float64(p.SCtx().GetSessionVars().IndexJoinBatchSize), outerCnt)
-	if batchSize > 2 {
-		innerCPUCost += outerCnt * (math.Log2(batchSize) + 1) * sessVars.GetCPUFactor()
-	}
-	// Add cost of building inner executors. CPU cost of building copTasks:
-	// (outerCnt / batchSize) * (batchSize * DistinctFactor) * CPUFactor
-	// Since we don't know the number of copTasks built, ignore these network cost now.
-	innerCPUCost += outerCnt * cost.DistinctFactor * sessVars.GetCPUFactor()
-	// CPU cost of building hash table for inner results:
-	// (outerCnt / batchSize) * (batchSize * DistinctFactor) * innerCnt * CPUFactor
-	innerCPUCost += outerCnt * cost.DistinctFactor * innerCnt * sessVars.GetCPUFactor()
-	innerConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupJoinConcurrency())
-	cpuCost += innerCPUCost / innerConcurrency
-	// Cost of probing hash table in main thread.
-	numPairs := outerCnt * innerCnt
-	if p.JoinType == logicalop.SemiJoin || p.JoinType == logicalop.AntiSemiJoin ||
-		p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
-		if len(p.OtherConditions) > 0 {
-			numPairs *= 0.5
-		} else {
-			numPairs = 0
-		}
-	}
-	if costusage.HasCostFlag(costFlag, costusage.CostFlagUseTrueCardinality) {
-		numPairs = getOperatorActRows(p)
-	}
-	probeCost := numPairs * sessVars.GetCPUFactor()
-	// Cost of additional concurrent goroutines.
-	cpuCost += probeCost + (innerConcurrency+1.0)*sessVars.GetConcurrencyFactor()
-	// Memory cost of hash tables for inner rows. The computed result is the upper bound,
-	// since the executor is pipelined and not all workers are always in full load.
-	memoryCost := innerConcurrency * (batchSize * cost.DistinctFactor) * innerCnt * sessVars.GetMemoryFactor()
-	// Cost of inner child plan, i.e, mainly I/O and network cost.
-	innerPlanCost := outerCnt * innerCost
-	if p.SCtx().GetSessionVars().CostModelVersion == 2 {
-		// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be
-		//  `innerCostPerBatch * numberOfBatches` instead of `innerCostPerRow * numberOfOuterRow`.
-		// Use an empirical value batchRatio to handle this now.
-		// TODO: remove this empirical value.
-		batchRatio := 30.0
-		innerPlanCost /= batchRatio
-	}
-	return outerCost + innerPlanCost + cpuCost + memoryCost
+	return utilfuncp.GetCost4PhysicalIndexJoin(p, outerCnt, innerCnt, outerCost, innerCost, costFlag)
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
-	costFlag := option.CostFlag
-	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCost, nil
-	}
-	outerChild, innerChild := p.Children()[1-p.InnerChildIdx], p.Children()[p.InnerChildIdx]
-	outerCost, err := outerChild.GetPlanCostVer1(taskType, option)
-	if err != nil {
-		return 0, err
-	}
-	innerCost, err := innerChild.GetPlanCostVer1(taskType, option)
-	if err != nil {
-		return 0, err
-	}
-	outerCnt := getCardinality(outerChild, costFlag)
-	innerCnt := getCardinality(innerChild, costFlag)
-	if hasCostFlag(costFlag, costusage.CostFlagUseTrueCardinality) && outerCnt > 0 {
-		innerCnt /= outerCnt // corresponding to one outer row when calculating IndexJoin costs
-		innerCost /= outerCnt
-	}
-	p.PlanCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost, costFlag)
-	p.PlanCostInit = true
-	return p.PlanCost, nil
+	return utilfuncp.GetPlanCostVer14PhysicalIndexJoin(p, taskType, option)
 }
 
 // ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
@@ -436,5 +360,115 @@ func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
 	for _, cst := range cwc.TmpConstant {
 		sum += cst.MemoryUsage()
 	}
+	return
+}
+
+// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + build-filter-cost +
+// (probe-cost + probe-filter-cost) / concurrency
+// probe-cost = probe-child-cost * build-rows / batchRatio
+func (p *PhysicalIndexJoin) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(p, taskType, option, 0)
+}
+
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+	return utilfuncp.Attach2Task4PhysicalIndexJoin(p, tasks...)
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
+	err = p.PhysicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	lSchema := p.Children()[0].Schema()
+	rSchema := p.Children()[1].Schema()
+	for i := range p.InnerJoinKeys {
+		newOuterKey, err := p.OuterJoinKeys[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		p.OuterJoinKeys[i] = newOuterKey.(*expression.Column)
+		newInnerKey, err := p.InnerJoinKeys[i].ResolveIndices(p.Children()[p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		p.InnerJoinKeys[i] = newInnerKey.(*expression.Column)
+	}
+	for i, expr := range p.LeftConditions {
+		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+	}
+	for i, expr := range p.RightConditions {
+		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+	}
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+	for i, expr := range p.OtherConditions {
+		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
+		if err != nil {
+			return err
+		}
+	}
+	if p.CompareFilters != nil {
+		err = p.CompareFilters.resolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		for i := range p.CompareFilters.AffectedColSchema.Columns {
+			resolvedCol, err1 := p.CompareFilters.AffectedColSchema.Columns[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+			if err1 != nil {
+				return err1
+			}
+			p.CompareFilters.AffectedColSchema.Columns[i] = resolvedCol.(*expression.Column)
+		}
+	}
+	for i := range p.OuterHashKeys {
+		outerKey, err := p.OuterHashKeys[i].ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		innerKey, err := p.InnerHashKeys[i].ResolveIndices(p.Children()[p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
+	}
+
+	colsNeedResolving := p.Schema().Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+		colsNeedResolving--
+	}
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, p.Schema().Len())
+	copy(shallowColSlice, p.Schema().Columns)
+	p.SetSchema(expression.NewSchema(shallowColSlice...))
+	foundCnt := 0
+	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
+	// So we can just move forward j if there's no matching is found.
+	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
+	//   e.g. The schema of child_0 is [col0, col0, col1]
+	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
+	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
+		if !p.Schema().Columns[i].EqualColumn(mergedSchema.Columns[j]) {
+			j++
+			continue
+		}
+		p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
+		p.Schema().Columns[i].Index = j
+		i++
+		j++
+		foundCnt++
+	}
+	if foundCnt < colsNeedResolving {
+		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
+	}
+
 	return
 }

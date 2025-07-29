@@ -184,9 +184,9 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -196,9 +196,9 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 func indexHashJoinAttach2TaskV1(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -229,19 +229,19 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return indexHashJoinAttach2TaskV1(p, tasks...)
 }
 
-func indexJoinAttach2TaskV1(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+func indexJoinAttach2TaskV1(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
 	return t
 }
 
-func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+func indexJoinAttach2TaskV2(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	completePhysicalIndexJoin(p, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
@@ -256,8 +256,8 @@ func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task 
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+func attach2Task4PhysicalIndexJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexJoin)
 	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
 		return indexJoinAttach2TaskV2(p, tasks...)
 	}
@@ -1507,7 +1507,7 @@ func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) bas
 func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *IndexJoinInfo, stats *property.StatsInfo) {
 	var isIndexJoin bool
 	switch p.(type) {
-	case *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
 		isIndexJoin = true
 	default:
 	}
