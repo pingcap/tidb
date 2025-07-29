@@ -375,8 +375,8 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	// InternalSQLUseUserTable is for ttl scan.
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLUseUserTable {
+	// InternalSQLScanUserTable is for ttl scan.
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
 		flag |= rule.FlagCollectPredicateColumnsPoint
 		flag |= rule.FlagSyncWaitStatsLoadPoint
 	}
@@ -482,7 +482,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 
 func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() ||
-		(sctx.GetSessionVars().InRestrictedSQL && !sctx.GetSessionVars().InternalSQLUseUserTable) {
+		(sctx.GetSessionVars().InRestrictedSQL && !sctx.GetSessionVars().InternalSQLScanUserTable) {
 		return
 	}
 	logutil.BgLogger().Debug("Start runtime filter generator")
