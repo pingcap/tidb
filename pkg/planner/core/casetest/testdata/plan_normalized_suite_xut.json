@@ -651,7 +651,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select * from t1 where a>3",
+=======
+        "SQL": "explain format='brief' select * from t1 where a>3",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -695,7 +699,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select a from t1 where a>3",
+=======
+        "SQL": "explain format='brief' select a from t1 where a>3",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -704,7 +712,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select a from t1 where a>3 and b>1",
+=======
+        "SQL": "explain format='brief' select a from t1 where a>3 and b>1",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
@@ -714,7 +726,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select * from t1 where a>3 and b>1 and c>1",
+=======
+        "SQL": "explain format='brief' select * from t1 where a>3 and b>1 and c>1",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -758,7 +774,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select count(a), max(t) from t1 where a>3",
+=======
+        "SQL": "explain format='brief' select count(a), max(t) from t1 where a>3",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader     root         ",
@@ -788,7 +808,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select * from t1 where a>3",
+=======
+        "SQL": "explain format='brief' select * from t1 where a>3",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -835,7 +859,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select a from t1 where a>3",
+=======
+        "SQL": "explain format='brief' select a from t1 where a>3",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -844,7 +872,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select a from t1 where a>3 and b>1",
+=======
+        "SQL": "explain format='brief' select a from t1 where a>3 and b>1",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
@@ -854,7 +886,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select * from t1 where a>3 and b>1 and c>1",
+=======
+        "SQL": "explain format='brief' select * from t1 where a>3 and b>1 and c>1",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -899,7 +935,11 @@
         ]
       },
       {
+<<<<<<< HEAD
         "SQL": "explain format = 'plan_tree' select count(a), max(t) from t1 where a>3",
+=======
+        "SQL": "explain format='brief' select count(a), max(t) from t1 where a>3",
+>>>>>>> 9439a65b695 (planner: try fix flaky test TestTiFlashLateMaterialization (#62670))
         "Plan": [
           " HashAgg               root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader         root         ",
