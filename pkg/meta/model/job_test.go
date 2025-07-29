@@ -21,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
@@ -294,4 +295,12 @@ func TestJobEncodeV2(t *testing.T) {
 	args := &TruncateTableArgs{}
 	require.NoError(t, json.Unmarshal(j.RawArgs, args))
 	require.EqualValues(t, j.args[0], args)
+}
+
+func TestJobVerInUse(t *testing.T) {
+	if kerneltype.IsClassic() {
+		require.Equal(t, JobVersion1, GetJobVerInUse())
+	} else {
+		require.Equal(t, JobVersion2, GetJobVerInUse())
+	}
 }
