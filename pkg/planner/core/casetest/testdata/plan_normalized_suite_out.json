@@ -362,7 +362,7 @@
         ]
       },
       {
-        "SQL": "explain select * from t1 where a>1",
+        "SQL": "explain format='brief' select * from t1 where a>3",
         "Plan": [
           " TableReader       root         ",
           " └─ExchangeSender  cop[tiflash] ",
@@ -405,7 +405,7 @@
         ]
       },
       {
-        "SQL": "explain select a from t1 where a>1",
+        "SQL": "explain format='brief' select a from t1 where a>3",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -414,7 +414,7 @@
         ]
       },
       {
-        "SQL": "explain select a from t1 where a>1 and b>1",
+        "SQL": "explain format='brief' select a from t1 where a>3 and b>1",
         "Plan": [
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
@@ -424,7 +424,7 @@
         ]
       },
       {
-        "SQL": "explain select * from t1 where a>1 and b>1 and c>1",
+        "SQL": "explain format='brief' select * from t1 where a>3 and b>1 and c>1",
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
@@ -468,7 +468,7 @@
         ]
       },
       {
-        "SQL": "explain select count(a), max(t) from t1 where a>1",
+        "SQL": "explain format='brief' select count(a), max(t) from t1 where a>3",
         "Plan": [
           " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader     root         ",

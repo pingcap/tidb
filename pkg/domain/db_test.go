@@ -86,6 +86,8 @@ func TestNormalSessionPool(t *testing.T) {
 	conf.Socket = ""
 	conf.Port = 0
 	conf.Status.ReportStatus = false
+	conf.Port = 0
+	conf.Status.ReportStatus = false
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
