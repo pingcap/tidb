@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -664,12 +663,12 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild Logical
 	if newJoin.JoinType == InnerJoin {
 		if newJoin.LeftConditions != nil {
 			left := newJoin.Children()[0]
-			logicalop.AddSelection(newJoin, left, newJoin.LeftConditions, 0, opt)
+			addSelection(newJoin, left, newJoin.LeftConditions, 0, opt)
 			newJoin.LeftConditions = nil
 		}
 		if newJoin.RightConditions != nil {
 			right := newJoin.Children()[1]
-			logicalop.AddSelection(newJoin, right, newJoin.RightConditions, 1, opt)
+			addSelection(newJoin, right, newJoin.RightConditions, 1, opt)
 			newJoin.RightConditions = nil
 		}
 	}
