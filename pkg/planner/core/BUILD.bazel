@@ -182,6 +182,7 @@ go_library(
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/dbutil",
         "//pkg/util/disjointset",
+        "//pkg/util/disttask",
         "//pkg/util/domainutil",
         "//pkg/util/execdetails",
         "//pkg/util/filter",

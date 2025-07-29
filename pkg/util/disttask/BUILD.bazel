@@ -2,12 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "disttask",
-    srcs = ["idservice.go"],
+    srcs = [
+        "idservice.go",
+        "variables.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/disttask",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+        "//pkg/keyspace",
+        "//pkg/sessionctx/vardef",
     ],
 )
 
