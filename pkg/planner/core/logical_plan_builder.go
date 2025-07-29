@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -62,12 +63,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -565,6 +566,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	b.optFlag = b.optFlag | rule.FlagJoinReOrder
 	b.optFlag |= rule.FlagPredicateSimplification
 	b.optFlag |= rule.FlagConvertOuterToInnerJoin
+	b.optFlag |= rule.FlagEmptySelectionEliminator
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
 	if err != nil {
@@ -3479,9 +3481,13 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 	n.Accept(extractor)
 }
 
-func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (base.LogicalPlan, []expression.Expression, bool, error) {
+// resolveGbyExprs resolves group by expressions from the group by clause of a select statement.
+// The returned `[]ast.Node` may differ from the original `gby.Items` in the group by clause for params. For params, the
+// `gby.Items[].Expr` will not be overwritten. However, the resolved expression is still needed for further processing, so
+// it's returned out.
+func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, error) {
 	b.curClause = groupByClause
-	exprs := make([]expression.Expression, 0, len(gby.Items))
+	exprs := make([]ast.ExprNode, 0, len(gby.Items))
 	schema := p.Schema()
 	names := p.OutputNames()
 	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
@@ -3501,14 +3507,22 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, g
 		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return nil, nil, false, errors.Trace(resolver.err)
+			return exprs, errors.Trace(resolver.err)
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
 		}
 
-		itemExpr := retExpr.(ast.ExprNode)
-		expr, np, err := b.rewrite(ctx, itemExpr, p, nil, true)
+		exprs = append(exprs, retExpr.(ast.ExprNode))
+	}
+	return exprs, nil
+}
+
+func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, items []ast.ExprNode) (base.LogicalPlan, []expression.Expression, bool, error) {
+	exprs := make([]expression.Expression, 0, len(gby.Items))
+
+	for _, item := range items {
+		expr, np, err := b.rewrite(ctx, item, p, nil, true)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -3787,15 +3801,25 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		originalFields = sel.Fields.Fields
 	}
 
+	var gbyExprs []ast.ExprNode
 	if sel.GroupBy != nil {
-		p, gbyCols, rollup, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
+		gbyExprs, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
 	}
 
+	// `checkOnlyFullGroupBy` should be executed before rewrite gbyExprs, because the field type of the fields
+	// may change. For example, the length of a string field may change in `adjustRetFtForCastString`
 	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
 		err = b.checkOnlyFullGroupBy(p, sel)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if sel.GroupBy != nil {
+		p, gbyCols, rollup, err = b.rewriteGbyExprs(ctx, p, sel.GroupBy, gbyExprs)
 		if err != nil {
 			return nil, err
 		}
@@ -4099,7 +4123,11 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
 func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	var statsHandle *handle.Handle
+	dom := domain.GetDomain(ctx)
+	if dom != nil {
+		statsHandle = dom.StatsHandle()
+	}
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -4863,9 +4891,9 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 
 	// Some memory tables can receive some predicates
 	switch dbName.L {
-	case util2.MetricSchemaName.L:
+	case metadef.MetricSchemaName.L:
 		p.Extractor = newMetricTableExtractor()
-	case util2.InformationSchemaName.L:
+	case metadef.InformationSchemaName.L:
 		switch upTbl := strings.ToUpper(tableInfo.Name.O); upTbl {
 		case infoschema.TableClusterConfig, infoschema.TableClusterLoad, infoschema.TableClusterHardware, infoschema.TableClusterSystemInfo:
 			p.Extractor = &ClusterTableExtractor{}
@@ -5133,7 +5161,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp logicalop.JoinType, markNoDecorrelate bool) base.LogicalPlan {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin | rule.FlagConstantPropagation
 	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
@@ -5848,20 +5876,23 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if err != nil {
 				return nil, nil, false, err
 			}
-			// check if the column is modified
+			// check if the column may be modified.
 			dependentColumns := expression.ExtractDependentColumns(newExpr)
-			var isModified bool
+			var mayModified bool
 			for _, col := range dependentColumns {
-				if dependentColumnsModified[col.UniqueID] {
-					isModified = true
+				colTp := col.GetType(b.ctx.GetExprCtx().GetEvalCtx()).GetFlag()
+				// If any of the dependent column has on-update-now flag,
+				// this virtual generated column may be modified too.
+				if mysql.HasOnUpdateNowFlag(colTp) || dependentColumnsModified[col.UniqueID] {
+					mayModified = true
 					break
 				}
 			}
-			if isModified {
+			if mayModified {
 				dependentColumnsModified[col.UniqueID] = true
 			}
 			// skip unmodified generated columns
-			if !isModified {
+			if !mayModified {
 				continue
 			}
 		}

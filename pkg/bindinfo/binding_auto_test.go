@@ -127,6 +127,8 @@ func TestIsSimplePointPlan(t *testing.T) {
 	require.False(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         HashJoin    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
         └─Point_Get_5   root    1       table:t, handle:2               0       time:143.2µs, open:1.71µs, close:5.92µs, loops:1, Get:{num_rpc:1, total_time:40µs}      N/A             N/A`))
+	require.False(t, bindinfo.IsSimplePointPlan(``))
+	require.False(t, bindinfo.IsSimplePointPlan(`  \n   `))
 }
 
 func TestRelevantOptVarsAndFixes(t *testing.T) {
@@ -164,8 +166,9 @@ func TestExplainExploreInStmtStats(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, key(a))`)
 	tk.MustQuery(`explain explore select count(1) from t where a=1`)
-	rs := tk.MustQuery("select digest_text from information_schema.tidb_statements_stats where digest_text = 'select count ( ? ) from `t` where `a` = ?'").Rows()
+	rs := tk.MustQuery("select digest_text, sample_user from information_schema.tidb_statements_stats where digest_text = 'select count ( ? ) from `t` where `a` = ?'").Rows()
 	require.True(t, len(rs) > 0)
+	require.True(t, rs[0][1].(string) != "") // user name is not empty
 }
 
 func TestExplainExploreAnalyze(t *testing.T) {

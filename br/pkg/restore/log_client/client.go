@@ -887,8 +887,16 @@ func (rc *LogClient) RestoreKVFiles(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	var applyWg sync.WaitGroup
-	eg, ectx := errgroup.WithContext(ctx)
+	var (
+		applyWg  sync.WaitGroup
+		eg, ectx = errgroup.WithContext(ctx)
+
+		skipped    = metrics.KVApplyTasksEvents.WithLabelValues("skipped")
+		submitted  = metrics.KVApplyTasksEvents.WithLabelValues("submitted")
+		started    = metrics.KVApplyTasksEvents.WithLabelValues("started")
+		finished   = metrics.KVApplyTasksEvents.WithLabelValues("finished")
+		memApplied = metrics.KVLogFileEmittedMemory.WithLabelValues("2-applied")
+	)
 	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
 			return
@@ -897,16 +905,23 @@ func (rc *LogClient) RestoreKVFiles(
 		// because the tableID of files is the same.
 		rule, ok := rules[files[0].TableId]
 		if !ok {
+			skipped.Add(float64(len(files)))
 			onProgress(kvCount)
 			summary.CollectInt("FileSkip", len(files))
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
+			submitted.Add(float64(len(files)))
 			applyWg.Add(1)
 			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+				started.Add(float64(len(files)))
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
+					for _, file := range files {
+						memApplied.Add(float64(file.Size()))
+					}
+					finished.Add(float64(len(files)))
 					onProgress(kvCount)
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
@@ -1909,18 +1924,18 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		if len(tableIDsSet) > 0 {
 			// handle table deletions
 			for tableID := range tableIDsSet {
-				args := &model.RefreshMetaArgs{
-					SchemaID: dbID,
-					TableID:  tableID,
-				}
-
-				// Get table and database names for logging
 				var dbName, tableName string
 				if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
 					dbName = dbReplace.Name
 					if tableReplace, ok := dbReplace.TableMap[tableID]; ok {
 						tableName = tableReplace.Name
 					}
+				}
+				args := &model.RefreshMetaArgs{
+					SchemaID:      dbID,
+					TableID:       tableID,
+					InvolvedDB:    dbName,
+					InvolvedTable: tableName,
 				}
 
 				log.Info("refreshing deleted table meta",
@@ -1940,15 +1955,16 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 
 	// Then, delete databases if needed
 	for dbID := range deletedTablesMap {
-		args := &model.RefreshMetaArgs{
-			SchemaID: dbID,
-			TableID:  0, // 0 for database-only refresh
-		}
-
 		// Get database name for logging
 		var dbName string
 		if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
 			dbName = dbReplace.Name
+		}
+		args := &model.RefreshMetaArgs{
+			SchemaID:      dbID,
+			TableID:       0, // 0 for database-only refresh
+			InvolvedDB:    dbName,
+			InvolvedTable: model.InvolvingAll,
 		}
 
 		log.Info("refreshing potential deleted database meta",
@@ -1978,8 +1994,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		}
 
 		args := &model.RefreshMetaArgs{
-			SchemaID: dbReplace.DbID,
-			TableID:  0, // tableID = 0 for database-only refresh
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // tableID = 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
 		}
 		log.Info("refreshing database-only meta",
 			zap.Int64("schemaID", dbReplace.DbID),
@@ -2010,8 +2028,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 				}
 
 				args := &model.RefreshMetaArgs{
-					SchemaID: dbReplace.DbID,
-					TableID:  tableReplace.TableID,
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
 				}
 				log.Info("refreshing regular table meta",
 					zap.Int64("schemaID", dbReplace.DbID),

@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -45,7 +47,7 @@ var RecordRelevantOptVarsAndFixes func(sctx sessionctx.Context, stmt ast.StmtNod
 var GenBriefPlanWithSCtx func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
-// "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
+// "EXPLAIN EXPLORE <SQL>" to help users understand the historical plans for a specific SQL.
 type BindingPlanInfo struct {
 	*Binding
 
@@ -68,7 +70,7 @@ type BindingPlanEvolution interface {
 	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
 
 	// ExplorePlansForSQL explores plans for this SQL.
-	ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string, analyze bool) ([]*BindingPlanInfo, error)
+	ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest string, analyze bool) ([]*BindingPlanInfo, error)
 }
 
 type bindingAuto struct {
@@ -91,7 +93,9 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingPlanEvolution {
 // 1. get historical plan candidates.
 // 2. generate new plan candidates.
 // 3. score all historical and newly-generated plan candidates and recommend the best one.
-func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, collation string, analyze bool) ([]*BindingPlanInfo, error) {
+func (ba *bindingAuto) ExplorePlansForSQL(stmtSCtx base.PlanContext, sqlOrDigest string, analyze bool) ([]*BindingPlanInfo, error) {
+	currentDB := stmtSCtx.GetSessionVars().CurrentDB
+	charset, collation := stmtSCtx.GetSessionVars().GetCharsetInfo()
 	historicalPlans, err := ba.getBindingPlanInfo(currentDB, sqlOrDigest, charset, collation)
 	if err != nil {
 		return nil, err
@@ -101,7 +105,7 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 	if err != nil {
 		return nil, err
 	}
-	generatedPlans, err = ba.recordIntoStmtStats(generatedPlans)
+	generatedPlans, err = ba.recordIntoStmtStats(stmtSCtx, generatedPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -122,19 +126,22 @@ func (ba *bindingAuto) ExplorePlansForSQL(currentDB, sqlOrDigest, charset, colla
 }
 
 // recordIntoStmtStats records these plans into information_schema.tidb_statements_stats table for later usage.
-func (ba *bindingAuto) recordIntoStmtStats(plans []*BindingPlanInfo) (reproduciblePlans []*BindingPlanInfo, err error) {
+func (ba *bindingAuto) recordIntoStmtStats(stmtSCtx base.PlanContext, plans []*BindingPlanInfo) (reproduciblePlans []*BindingPlanInfo, err error) {
+	currentUser := stmtSCtx.GetSessionVars().User
 	reproduciblePlans = make([]*BindingPlanInfo, 0, len(plans))
 	for _, plan := range plans {
 		if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
 			vars := sctx.GetSessionVars()
-			defer func(db string, usePlanBaselines, inExplainExplore bool) {
+			defer func(db string, usePlanBaselines, inExplainExplore bool, user *auth.UserIdentity) {
 				vars.CurrentDB = db
 				vars.UsePlanBaselines = usePlanBaselines
 				vars.InExplainExplore = inExplainExplore
-			}(vars.CurrentDB, vars.UsePlanBaselines, vars.InExplainExplore)
+				vars.User = user
+			}(vars.CurrentDB, vars.UsePlanBaselines, vars.InExplainExplore, vars.User)
 			vars.CurrentDB = plan.Binding.Db
 			vars.UsePlanBaselines = false
 			vars.InExplainExplore = true
+			vars.User = currentUser
 			_, _, err := execRows(sctx, plan.BindSQL)
 			if err != nil {
 				return err
@@ -161,6 +168,7 @@ func (ba *bindingAuto) recordIntoStmtStats(plans []*BindingPlanInfo) (reproducib
 // runToGetExecInfo runs these plans to get their execution info.
 func (ba *bindingAuto) runToGetExecInfo(plans []*BindingPlanInfo) error {
 	// TODO: support setting timeout
+	// TODO: support killing since this process might be very time-consuming.
 	for _, plan := range plans {
 		if plan.ExecTimes > 0 {
 			// already has execution info, no need to run again.
@@ -333,6 +341,7 @@ type planExecInfo struct {
 // IsSimplePointPlan checks whether the plan is a simple point plan.
 // Expose this function for testing.
 func IsSimplePointPlan(plan string) bool {
+	empty := true
 	// if the plan only contains Point_Get, Batch_Point_Get, Selection and Projection, it's a simple point plan.
 	lines := strings.Split(plan, "\n")
 	for _, line := range lines {
@@ -340,6 +349,7 @@ func IsSimplePointPlan(plan string) bool {
 		if line == "" {
 			continue
 		}
+		empty = false
 		operatorName := strings.Split(line, " ")[0]
 		// TODO: these hard-coding lines are a temporary implementation, refactor this part later.
 		if operatorName == "id" || // the first line with column names
@@ -351,5 +361,5 @@ func IsSimplePointPlan(plan string) bool {
 		}
 		return false
 	}
-	return true
+	return !empty
 }

@@ -35,7 +35,7 @@ func TestCascadesDrive(t *testing.T) {
 	tk.MustQuery("select 1").Check(testkit.Rows("1"))
 	tk.MustQuery("explain select 1").Check(testkit.Rows(""+
 		"Projection_3 1.00 root  1->Column#1",
-		"└─TableDual_4 1.00 root  rows:1"))
+		"└─TableDual_5 1.00 root  rows:1"))
 }
 
 func TestXFormedOperatorShouldDeriveTheirStatsOwn(t *testing.T) {

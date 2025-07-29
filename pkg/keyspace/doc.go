@@ -18,11 +18,14 @@
 // in next generation TiDB. Each keyspace represents a logical cluster on top of
 // the underlying physical cluster.
 //
-// There is a special keyspace named "SYSTEM", which is reserved for system-level
-// services and data, currently, only the DXF service uses this keyspace.
-// As user keyspace depends on SYSTEM keyspace, we need to make sure SYSTEM
-// keyspace exist before user keyspace start serving any user traffic. So for the
-// deployment of nextgen cluster, we need to:
+// There are two types of keyspace: user keyspace and reserved internal keyspace,
+// currently, only SYSTEM keyspace is reserved for internal use.
+//
+// SYSTEM keyspace is reserved for system-level services and data, currently,
+// only the DXF service uses this keyspace. As user keyspace depends on SYSTEM
+// keyspace, we need to make sure SYSTEM keyspace exist before user keyspace
+// start serving any user traffic. So for the deployment of nextgen cluster,
+// we need to:
 //   - Deploy PD/TiKV and other components, wait them to be ready to serve TiDB access.
 //   - Deploy SYSTEM keyspace, wait it fully bootstrapped.
 //   - Deploy other user keyspace, they can be deployed concurrently.

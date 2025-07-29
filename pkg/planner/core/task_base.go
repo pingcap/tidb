@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/context"
@@ -288,7 +289,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
 		// so this Selection will be executed in TiDB.
 		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
+		_, isSelection := t.p.(*physicalop.PhysicalSelection)
 		if isSelection {
 			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
 		}
@@ -304,8 +305,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
-		sel.fromDataSource = true
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
+		sel.FromDataSource = true
 		sel.SetChildren(rt.GetPlan())
 		rt.SetPlan(sel)
 	}
@@ -486,7 +487,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
@@ -528,7 +529,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}
 
 		if t.needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)

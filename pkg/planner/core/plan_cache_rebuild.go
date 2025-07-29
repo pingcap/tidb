@@ -34,8 +34,6 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 		return false // plan-cache is disabled for this query
 	}
 
-	sc.InPreparedPlanBuilding = true
-	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
 		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges

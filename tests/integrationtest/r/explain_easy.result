@@ -141,7 +141,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true, desc, stats:pseudo
+    └─TableFullScan	100.99	cop[tikv]	table:t1	keep order:true, desc, stats:pseudo
 explain format = 'brief' select * from t4 use index(idx) where a > 1 and b > 1 and c > 1 limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
@@ -261,57 +261,57 @@ StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
 explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
 dot contents
 
-digraph StreamAgg_10 {
-subgraph cluster10{
+digraph StreamAgg_15 {
+subgraph cluster15{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"StreamAgg_10" -> "Projection_33"
-"Projection_33" -> "HashJoin_32"
-"HashJoin_32" -> "TableReader_19"
-"HashJoin_32" -> "IndexReader_25"
-}
-subgraph cluster18{
-node [style=filled, color=lightgrey]
-color=black
-label = "cop"
-"TableFullScan_18"
+"StreamAgg_15" -> "Projection_42"
+"Projection_42" -> "HashJoin_40"
+"HashJoin_40" -> "TableReader_25"
+"HashJoin_40" -> "IndexReader_31"
 }
 subgraph cluster24{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexFullScan_24"
+"TableFullScan_24"
 }
-"TableReader_19" -> "TableFullScan_18"
-"IndexReader_25" -> "IndexFullScan_24"
+subgraph cluster30{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"IndexFullScan_30"
+}
+"TableReader_25" -> "TableFullScan_24"
+"IndexReader_31" -> "IndexFullScan_30"
 }
 
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_14 {
-subgraph cluster14{
+digraph HashJoin_16 {
+subgraph cluster16{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_14" -> "TableReader_16"
-"HashJoin_14" -> "TableReader_20"
+"HashJoin_16" -> "TableReader_18"
+"HashJoin_16" -> "TableReader_22"
 }
-subgraph cluster15{
+subgraph cluster17{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_15"
+"TableFullScan_17"
 }
-subgraph cluster19{
+subgraph cluster21{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_19"
+"TableFullScan_21"
 }
-"TableReader_16" -> "TableFullScan_15"
-"TableReader_20" -> "TableFullScan_19"
+"TableReader_18" -> "TableFullScan_17"
+"TableReader_22" -> "TableFullScan_21"
 }
 
 drop table if exists t1, t2, t3, t4;
@@ -769,20 +769,20 @@ create table t(a int, b int);
 explain format="dot" select * from t where a < 2;
 dot contents
 
-digraph TableReader_7 {
-subgraph cluster7{
+digraph TableReader_8 {
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"TableReader_7"
+"TableReader_8"
 }
-subgraph cluster6{
+subgraph cluster7{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_6" -> "TableFullScan_5"
+"Selection_7" -> "TableFullScan_6"
 }
-"TableReader_7" -> "Selection_6"
+"TableReader_8" -> "Selection_7"
 }
 
 drop table if exists t;
@@ -800,6 +800,7 @@ Update	N/A	root		N/A
   └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
+analyze table t;
 explain format = 'brief' select (select count(n.a) from t) from t n;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#11->Column#12

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1397,6 +1398,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
+	{name: stmtsummary.BindingDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of normalized statement for bindings"},
+	{name: stmtsummary.BindingDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Normalized statement for bindings"},
 	{name: stmtsummary.Charset, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
 	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled collation"},
 	{name: stmtsummary.PlanHint, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled plan hint"},
@@ -1481,6 +1484,8 @@ var tableTiDBStatementsStatsCols = []columnInfo{
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
 	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
+	{name: stmtsummary.BindingDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of normalized statement for bindings"},
+	{name: stmtsummary.BindingDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Normalized statement for bindings"},
 	{name: stmtsummary.Charset, tp: mysql.TypeVarchar, size: 64, comment: "Sampled charset"},
 	{name: stmtsummary.Collation, tp: mysql.TypeVarchar, size: 64, comment: "Sampled collation"},
 	{name: stmtsummary.PlanHint, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled plan hint"},
@@ -1518,6 +1523,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 21},
+	{name: "COLUMN_COUNT", tp: mysql.TypeLonglong, size: 21},
 	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 21},
 	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 21},
 	{name: "TOTAL_SIZE", tp: mysql.TypeLonglong, size: 21},
@@ -1526,6 +1532,7 @@ var tableTableTiFlashTablesCols = []columnInfo{
 	{name: "DELTA_RATE_SEGMENTS", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_PLACED_RATE", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_CACHE_ALLOC_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "DELTA_CACHE_RATE", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_CACHE_WASTED_RATE", tp: mysql.TypeDouble, size: 64},
 	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 21},
@@ -1593,6 +1600,7 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "DELTA_PERSISTED_COLUMN_FILES", tp: mysql.TypeLonglong, size: 21},
 	{name: "DELTA_PERSISTED_DELETE_RANGES", tp: mysql.TypeLonglong, size: 21},
 	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "DELTA_CACHE_ALLOC_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 21},
 	{name: "STABLE_PAGE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "STABLE_ROWS", tp: mysql.TypeLonglong, size: 21},
@@ -1865,7 +1873,7 @@ var tableKeyspaceMetaCols = []columnInfo{
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
 func GetShardingInfo(dbInfo ast.CIStr, tableInfo *model.TableInfo) any {
-	if tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.L) {
+	if tableInfo == nil || tableInfo.IsView() || metadef.IsMemOrSysDB(dbInfo.L) {
 		return nil
 	}
 	shardingInfo := "NOT_SHARDED"
@@ -2523,7 +2531,7 @@ func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error)
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if IsClusterTableByName(util.InformationSchemaName.L, meta.Name.L) {
+	if IsClusterTableByName(metadef.InformationSchemaName.L, meta.Name.L) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil

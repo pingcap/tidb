@@ -244,6 +244,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		coprStore: coprStore,
 		codec:     codec,
 		clusterID: clusterID,
+		keyspace:  keyspaceName,
 	}
 
 	mc.cache[uuid] = store
@@ -261,6 +262,7 @@ type tikvStore struct {
 	codec     tikv.Codec
 	opts      sync.Map
 	clusterID uint64
+	keyspace  string
 }
 
 // GetOption wraps around sync.Map.
@@ -433,6 +435,10 @@ func (s *tikvStore) GetCodec() tikv.Codec {
 
 func (s *tikvStore) GetClusterID() uint64 {
 	return s.clusterID
+}
+
+func (s *tikvStore) GetKeyspace() string {
+	return s.keyspace
 }
 
 // injectTraceClient injects trace info to the tikv request

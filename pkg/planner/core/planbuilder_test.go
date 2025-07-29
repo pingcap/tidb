@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -213,8 +214,8 @@ func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
-	sort1 := &PhysicalSort{ByItems: byItems}
-	sort2 := &PhysicalSort{ByItems: byItems}
+	sort1 := &physicalop.PhysicalSort{ByItems: byItems}
+	sort2 := &physicalop.PhysicalSort{ByItems: byItems}
 	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
 		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, whiteList, nil)
@@ -336,33 +337,33 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
-	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &physicalop.PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
 
 	// maxOneRow
-	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow := &physicalop.PhysicalMaxOneRow{}
 	maxOneRow = maxOneRow.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
-	lim := &PhysicalLimit{Count: 1, Offset: 2}
+	lim := &physicalop.PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(lim))
 
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
-	sort := &PhysicalSort{ByItems: byItems}
+	sort := &physicalop.PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sort))
 
 	// topN
-	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
+	topN := &physicalop.PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
 	topN = topN.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
@@ -405,14 +406,14 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
 
 	// index join
-	baseJoin := basePhysicalJoin{
+	baseJoin := physicalop.BasePhysicalJoin{
 		LeftJoinKeys:    []*expression.Column{col},
 		RightJoinKeys:   nil,
 		OtherConditions: []expression.Expression{col},
 	}
 
 	indexJoin := &PhysicalIndexJoin{
-		basePhysicalJoin: baseJoin,
+		BasePhysicalJoin: baseJoin,
 		innerPlan:        indexScan,
 		Ranges:           ranger.Ranges{},
 	}

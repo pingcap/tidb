@@ -280,6 +280,10 @@ type PhysicalProperty struct {
 	}
 
 	IndexJoinProp *IndexJoinRuntimeProp
+
+	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
+	// It is true when the agg is in the outer child tree of apply.
+	NoCopPushDown bool
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -508,6 +512,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+	// encode NoCopPushDown into physical prop's hashcode.
+	if p.NoCopPushDown {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
 	return p.hashcode
 }
 
@@ -527,6 +537,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		NoCopPushDown:         p.NoCopPushDown,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}

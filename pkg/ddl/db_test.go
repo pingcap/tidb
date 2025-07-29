@@ -45,12 +45,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -759,7 +759,7 @@ func TestSchemaValidator(t *testing.T) {
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	is := dom.InfoSchema()
-	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil, true)
+	schemaChecker := domain.NewSchemaChecker(dom.GetSchemaValidator(), is.SchemaMetaVersion(), nil, true)
 	// Make sure it will retry one time and doesn't take a long time.
 	domain.SchemaOutOfDateRetryTimes.Store(1)
 	domain.SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)
@@ -820,25 +820,25 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 
 	infoSyncer := dom.InfoSyncer()
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
-	infoSyncer.ReportMinStartTS(dom.Store())
+	infoSyncer.ReportMinStartTS(dom.Store(), nil)
 	afterTS := oracle.GoTimeToTS(time.Now())
 	require.False(t, infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS)
 
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
-	sm.PS = []*util.ProcessInfo{
+	sm.PS = []*sessmgr.ProcessInfo{
 		{CurTxnStartTS: 0},
 		{CurTxnStartTS: math.MaxUint64},
 		{CurTxnStartTS: lowerLimit},
 		{CurTxnStartTS: validTS},
 	}
 	infoSyncer.SetSessionManager(sm)
-	infoSyncer.ReportMinStartTS(dom.Store())
+	infoSyncer.ReportMinStartTS(dom.Store(), nil)
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
 
@@ -1351,4 +1351,18 @@ func TestGetAllTableInfos(t *testing.T) {
 		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
 		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
+}
+
+func TestGetVersionFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	// Simulate the failure of getting the current version twice.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)")
+
+	tk.MustExec("alter table t add column b int")
 }

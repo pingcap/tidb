@@ -20,7 +20,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,9 +40,13 @@ import (
 )
 
 func TestIsRetryableError(t *testing.T) {
+	// url errors
 	require.True(t, IsRetryableError(&url.Error{}))
 	require.True(t, IsRetryableError(&url.Error{Err: io.EOF}))
-	require.False(t, IsRetryableError(&url.Error{Err: context.Canceled}))
+	require.False(t, IsRetryableError(&url.Error{Err: fmt.Errorf("net/http: request canceled")}))
+	require.False(t, IsRetryableError(&url.Error{Err: fmt.Errorf("net/http: request canceled while waiting for connection")}))
+	require.True(t, IsRetryableError(&url.Error{Err: fmt.Errorf("dummy error")}))
+	require.True(t, IsRetryableError(&url.Error{Err: fmt.Errorf("use of closed network connection")}))
 
 	require.False(t, IsRetryableError(context.Canceled))
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
@@ -49,6 +56,17 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTemporary: true}))
+
+	// inner syscall errors
+	require.True(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.ECONNREFUSED}}))
+	require.True(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.EPIPE}}))
+	require.True(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.ECONNRESET}}))
+	require.False(t, IsRetryableError(&net.DNSError{UnwrapErr: &os.SyscallError{Err: syscall.ENETDOWN}}))
+
+	// request error
+	require.False(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusBadRequest})))
+	require.False(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusNotFound})))
+	require.True(t, IsRetryableError(errors.Trace(&errdef.HTTPStatusError{StatusCode: http.StatusInternalServerError})))
 
 	// kv errors
 	require.True(t, IsRetryableError(errdef.ErrKVNotLeader))

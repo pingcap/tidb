@@ -488,7 +488,7 @@ create table t (a varchar(255) charset gbk primary key /*T![clustered_index] clu
 insert into t values ('你好', 1);
 explain select * from t where a = 0xC4E3BAC3;
 id	estRows	task	access object	operator info
-Point_Get_5	1.00	root	table:t, clustered index:PRIMARY(a)	
+Point_Get_6	1.00	root	table:t, clustered index:PRIMARY(a)	
 select * from t where a = 0xC4E3BAC3;
 a	b
 你好	1

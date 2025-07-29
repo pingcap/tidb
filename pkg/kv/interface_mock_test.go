@@ -283,6 +283,10 @@ func (s *mockStorage) GetClusterID() uint64 {
 	return 1
 }
 
+func (s *mockStorage) GetKeyspace() string {
+	return ""
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
