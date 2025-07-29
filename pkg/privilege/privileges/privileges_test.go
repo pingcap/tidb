@@ -2192,6 +2192,7 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`DO (SELECT a FROM test.t1)`)
 	userTk.MustGetErrCode(`SELECT b FROM test.t1`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SET @res = (SELECT b FROM test.t1)`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`DO (SELECT b FROM test.t1)`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT a FROM test.t2`, errno.ErrColumnaccessDenied)
 	/* column accessed in WHERE clause */
 	userTk.MustGetErrCode(`SELECT a FROM test.t1 WHERE b = 2`, errno.ErrColumnaccessDenied)
@@ -2222,6 +2223,8 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	tk.MustExec(`ALTER TABLE test.t1 ADD COLUMN c int`)
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`SET @res = (SELECT b FROM test.t1)`)
+	userTk.MustExec(`DO (SELECT b FROM test.t1)`)
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t4 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`SELECT a FROM test.t1 NATURAL JOIN test.t4`)
