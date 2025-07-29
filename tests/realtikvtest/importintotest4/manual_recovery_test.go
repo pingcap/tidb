@@ -75,7 +75,7 @@ func (s *mockGCSSuite) TestResolutionFailTheTask() {
 	require.Eventually(s.T(), func() bool {
 		err := s.tk.ExecToErr("SELECT * FROM t;")
 		if err != nil {
-			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			require.ErrorContains(s.T(), err, "Table t is in mode Import")
 			return false
 		}
 		return true
@@ -93,7 +93,7 @@ func (s *mockGCSSuite) TestResolutionCancelTheTask() {
 	require.Eventually(s.T(), func() bool {
 		err := s.tk.ExecToErr("SELECT * FROM t;")
 		if err != nil {
-			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			require.ErrorContains(s.T(), err, "Table t is in mode Import")
 			return false
 		}
 		return true
