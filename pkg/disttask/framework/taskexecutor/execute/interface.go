@@ -64,49 +64,67 @@ type StepExecutor interface {
 	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
-// MaxDataPoints is the number of data points for subtask summary
-const MaxDataPoints = 5
+const (
+	// UpdateSubtaskSummaryInterval is the interval for updating the subtask summary to
+	// subtask table.
+	UpdateSubtaskSummaryInterval = 3 * time.Second
+
+	// maxProgressInSummary is the number of progress stored in subtask summary
+	maxProgressInSummary = 5
+
+	// SubtaskSpeedDuration is the duration for calculating the speed of a subtask.
+	SubtaskSpeedDuration = UpdateSubtaskSummaryInterval * maxProgressInSummary / 2
+)
+
+type progress struct {
+	RowCnt     int64     `json:"row_count,omitempty"`
+	Bytes      int64     `json:"bytes,omitempty"`
+	UpdateTime time.Time `json:"update_time,omitempty"`
+}
 
 // SubtaskSummary contains the summary of a subtask.
 // It tracks the progress in terms of rows and bytes processed.
 type SubtaskSummary struct {
+	// RowCnt and Bytes are updated by the collector.
 	RowCnt atomic.Int64 `json:"row_count,omitempty"`
 	Bytes  atomic.Int64 `json:"bytes,omitempty"`
 
-	// UpdateBytes and UpdateTimes are the history of bytes processed
-	// They are used to calculate a smoother speed of the subtask.
-	UpdateBytes []int64     `json:"update_bytes,omitempty"`
-	UpdateTimes []time.Time `json:"update_times,omitempty"`
+	// Progresses are the history of data processed, which is used to get a
+	// smoother speed for each subtask.
+	// It's updated each time we store the latest summary into subtask table.
+	Progresses []progress `json:"progresses,omitempty"`
 }
 
-// Update updates the summary with the current time.
+// Update stores the latest progress of the subtask.
 func (s *SubtaskSummary) Update() {
-	s.UpdateBytes = append(s.UpdateBytes, s.Bytes.Load())
-	s.UpdateTimes = append(s.UpdateTimes, time.Now())
+	s.Progresses = append(s.Progresses, progress{
+		RowCnt:     s.RowCnt.Load(),
+		Bytes:      s.Bytes.Load(),
+		UpdateTime: time.Now(),
+	})
 
-	if len(s.UpdateBytes) > MaxDataPoints {
-		s.UpdateBytes = s.UpdateBytes[len(s.UpdateBytes)-MaxDataPoints:]
-		s.UpdateTimes = s.UpdateTimes[len(s.UpdateTimes)-MaxDataPoints:]
+	if len(s.Progresses) > maxProgressInSummary {
+		s.Progresses = s.Progresses[len(s.Progresses)-maxProgressInSummary:]
 	}
 }
 
 // GetSpeedInTimeRange returns the speed in the specified time range.
 func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Duration) int64 {
-	if len(s.UpdateBytes) < 2 {
+	if len(s.Progresses) < 2 {
 		return 0
 	}
 
 	startTime := endTime.Add(-duration)
-	if endTime.Before(s.UpdateTimes[0]) || startTime.After(s.UpdateTimes[len(s.UpdateTimes)-1]) {
+	if endTime.Before(s.Progresses[0].UpdateTime) || startTime.After(s.Progresses[len(s.Progresses)-1].UpdateTime) {
 		return 0
 	}
 
 	// The number of point is small, so we can afford to iterate through all points.
 	var totalBytes float64
-	for i := range len(s.UpdateTimes) - 1 {
-		rangeStart := s.UpdateTimes[i]
-		rangeEnd := s.UpdateTimes[i+1]
-		rangeBytes := float64(s.UpdateBytes[i+1] - s.UpdateBytes[i])
+	for i := range len(s.Progresses) - 1 {
+		rangeStart := s.Progresses[i].UpdateTime
+		rangeEnd := s.Progresses[i+1].UpdateTime
+		rangeBytes := float64(s.Progresses[i+1].Bytes - s.Progresses[i].Bytes)
 		if endTime.Before(rangeStart) || startTime.After(rangeEnd) {
 			continue
 		} else if startTime.Before(rangeStart) && endTime.After(rangeEnd) {
@@ -132,18 +150,17 @@ func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Du
 
 // UpdateTime returns the last update time of the summary.
 func (s *SubtaskSummary) UpdateTime() time.Time {
-	if len(s.UpdateTimes) == 0 {
+	if len(s.Progresses) == 0 {
 		return time.Time{}
 	}
-	return s.UpdateTimes[len(s.UpdateTimes)-1]
+	return s.Progresses[len(s.Progresses)-1].UpdateTime
 }
 
 // Reset resets the summary to zero values and clears history data.
 func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
 	s.Bytes.Store(0)
-	s.UpdateBytes = s.UpdateBytes[:0]
-	s.UpdateTimes = s.UpdateTimes[:0]
+	s.Progresses = s.Progresses[:0]
 	s.Update()
 }
 

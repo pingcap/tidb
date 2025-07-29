@@ -33,8 +33,9 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 		{
 			name: "insufficient data points",
 			setup: func(s *SubtaskSummary) {
-				s.UpdateBytes = []int64{100}
-				s.UpdateTimes = []time.Time{time.Unix(1000, 0)}
+				s.Progresses = []progress{
+					{Bytes: 100, UpdateTime: time.Unix(1000, 0)},
+				}
 			},
 			endTime:     time.Unix(1010, 0),
 			duration:    time.Second * 10,
@@ -45,10 +46,9 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "no overlap with data range",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.UpdateBytes = []int64{0, 100}
-				s.UpdateTimes = []time.Time{
-					baseTime,
-					baseTime.Add(1 * time.Second),
+				s.Progresses = []progress{
+					{Bytes: 0, UpdateTime: baseTime},
+					{Bytes: 100, UpdateTime: baseTime.Add(1 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1010, 0),
@@ -60,12 +60,11 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "partial time range overlap",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.UpdateBytes = []int64{0, 50, 100, 150}
-				s.UpdateTimes = []time.Time{
-					baseTime,
-					baseTime.Add(1 * time.Second),
-					baseTime.Add(2 * time.Second),
-					baseTime.Add(3 * time.Second),
+				s.Progresses = []progress{
+					{Bytes: 0, UpdateTime: baseTime},
+					{Bytes: 50, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Bytes: 100, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Bytes: 150, UpdateTime: baseTime.Add(3 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1002, 500000000),
@@ -74,16 +73,31 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			description: "should handle partial time range overlap correctly",
 		},
 		{
+			name: "partial time range overlap",
+			setup: func(s *SubtaskSummary) {
+				baseTime := time.Unix(1000, 0)
+				s.Progresses = []progress{
+					{Bytes: 0, UpdateTime: baseTime},
+					{Bytes: 30, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Bytes: 60, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Bytes: 90, UpdateTime: baseTime.Add(3 * time.Second)},
+				}
+			},
+			endTime:     time.Unix(1004, 0),
+			duration:    time.Millisecond * 1500, // [2.5, 4]
+			expected:    10,
+			description: "should handle partial time range overlap correctly",
+		},
+		{
 			name: "multiple overlapping",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1000, 0)
-				s.UpdateBytes = []int64{0, 60, 120, 180, 240}
-				s.UpdateTimes = []time.Time{
-					baseTime,
-					baseTime.Add(1 * time.Second),
-					baseTime.Add(2 * time.Second),
-					baseTime.Add(3 * time.Second),
-					baseTime.Add(4 * time.Second),
+				s.Progresses = []progress{
+					{Bytes: 0, UpdateTime: baseTime},
+					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Bytes: 180, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Bytes: 240, UpdateTime: baseTime.Add(4 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1004, 500000000),
@@ -95,13 +109,12 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 			name: "whole range",
 			setup: func(s *SubtaskSummary) {
 				baseTime := time.Unix(1001, 0)
-				s.UpdateBytes = []int64{0, 60, 120, 180, 240}
-				s.UpdateTimes = []time.Time{
-					baseTime,
-					baseTime.Add(1 * time.Second),
-					baseTime.Add(2 * time.Second),
-					baseTime.Add(3 * time.Second),
-					baseTime.Add(4 * time.Second),
+				s.Progresses = []progress{
+					{Bytes: 0, UpdateTime: baseTime},
+					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Bytes: 180, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Bytes: 240, UpdateTime: baseTime.Add(4 * time.Second)},
 				}
 			},
 			endTime:     time.Unix(1006, 500000000),

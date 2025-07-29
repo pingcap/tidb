@@ -46,9 +46,6 @@ var (
 	// subtasks balance to/away from this node.
 	checkBalanceSubtaskInterval = 2 * time.Second
 
-	// UpdateSubtaskSummaryInterval is the interval for updating the subtask summary to
-	// subtask table.
-	UpdateSubtaskSummaryInterval = 3 * time.Second
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
@@ -196,7 +193,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
 	taskMgr := e.taskTable.(*storage.TaskManager)
-	ticker := time.NewTicker(UpdateSubtaskSummaryInterval)
+	ticker := time.NewTicker(execute.UpdateSubtaskSummaryInterval)
 	defer ticker.Stop()
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {

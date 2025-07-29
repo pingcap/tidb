@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -283,7 +282,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	currentTime := time.Now()
-	timeRange := taskexecutor.UpdateSubtaskSummaryInterval * execute.MaxDataPoints
+	timeRange := execute.SubtaskSpeedDuration
 
 	failpoint.Inject("mockSpeedDuration", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
