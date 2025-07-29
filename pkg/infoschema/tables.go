@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -2377,6 +2378,9 @@ func GetTiCDCServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 // SysVarHiddenForSem checks if a given sysvar is hidden according to SEM and privileges.
 func SysVarHiddenForSem(ctx sessionctx.Context, sysVarNameInLower string) bool {
 	if !sem.IsEnabled() || !sem.IsInvisibleSysVar(sysVarNameInLower) {
+		return false
+	}
+	if disttaskutil.IsNextGenInvisibleSysVar(sysVarNameInLower) {
 		return false
 	}
 	checker := privilege.GetPrivilegeManager(ctx)

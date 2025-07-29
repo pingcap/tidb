@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -4952,6 +4953,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 
 // GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
 func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
+	if kerneltype.IsNextGen() {
+		// For next-gen, DXF tasks are executed on SYSTEM keyspace.
+		return 0
+	}
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
 		logutil.DDLLogger().Warn("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
