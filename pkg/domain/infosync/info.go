@@ -583,7 +583,7 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	}
 	err := util.DeleteKeyFromEtcd(is.minStartTSPath, cli, serverinfo.KeyOpDefaultRetryCnt, serverinfo.KeyOpDefaultTimeout)
 	if err != nil {
-		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("remove minStartTS failed", zap.Error(err))
 	}
 }
 
@@ -599,7 +599,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("update minStartTS failed", zap.Error(err))
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
@@ -644,7 +644,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 
 	err = is.storeMinStartTS(context.Background(), session)
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		logutil.BgLogger().Warn("update minStartTS failed", zap.Error(err))
 	}
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
 }
