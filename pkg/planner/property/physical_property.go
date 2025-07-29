@@ -224,12 +224,15 @@ const (
 type SortPropMatchResult int
 
 const (
+	// SortPropNotSatisfied xxx
 	SortPropNotSatisfied SortPropMatchResult = iota
+	// SortPropSatisfiedUnconditionally xxx
 	SortPropSatisfiedUnconditionally
+	// SortPropSatisfiedByMergeSort xxx
 	SortPropSatisfiedByMergeSort
 )
 
-// xxx
+// Matched xxx
 func (r SortPropMatchResult) Matched() bool {
 	return r == SortPropSatisfiedUnconditionally || r == SortPropSatisfiedByMergeSort
 }
