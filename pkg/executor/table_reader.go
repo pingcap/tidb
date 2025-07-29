@@ -28,6 +28,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -87,14 +88,14 @@ type tableReaderExecutorContext struct {
 	stmtMemTracker *memory.Tracker
 
 	infoSchema  isctx.MetaOnlyInfoSchema
-	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
+	getDDLOwner func(context.Context) (*serverinfo.ServerInfo, error)
 }
 
 func (treCtx *tableReaderExecutorContext) GetInfoSchema() isctx.MetaOnlyInfoSchema {
 	return treCtx.infoSchema
 }
 
-func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*infosync.ServerInfo, error) {
+func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*serverinfo.ServerInfo, error) {
 	if treCtx.getDDLOwner != nil {
 		return treCtx.getDDLOwner(ctx)
 	}
@@ -106,12 +107,12 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 	// Explicitly get `ownerManager` out of the closure to show that the `tableReaderExecutorContext` itself doesn't
 	// depend on `sctx` directly.
 	// The context of some tests don't have `DDL`, so make it optional
-	var getDDLOwner func(ctx context.Context) (*infosync.ServerInfo, error)
+	var getDDLOwner func(ctx context.Context) (*serverinfo.ServerInfo, error)
 	dom := domain.GetDomain(sctx)
 	if dom != nil && dom.DDL() != nil {
 		ddl := dom.DDL()
 		ownerManager := ddl.OwnerManager()
-		getDDLOwner = func(ctx context.Context) (*infosync.ServerInfo, error) {
+		getDDLOwner = func(ctx context.Context) (*serverinfo.ServerInfo, error) {
 			ddlOwnerID, err := ownerManager.GetOwnerID(ctx)
 			if err != nil {
 				return nil, err

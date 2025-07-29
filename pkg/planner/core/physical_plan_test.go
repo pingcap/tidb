@@ -546,21 +546,21 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 		return p
 	}
 
-	var findProjBelowUnion func(p base.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection)
-	findProjBelowUnion = func(p base.Plan) (projsBelowUnion, normalProjs []*core.PhysicalProjection) {
+	var findProjBelowUnion func(p base.Plan) (projsBelowUnion, normalProjs []*physicalop.PhysicalProjection)
+	findProjBelowUnion = func(p base.Plan) (projsBelowUnion, normalProjs []*physicalop.PhysicalProjection) {
 		if p == nil {
 			return projsBelowUnion, normalProjs
 		}
 		switch v := p.(type) {
 		case *physicalop.PhysicalUnionAll:
 			for _, child := range v.Children() {
-				if proj, ok := child.(*core.PhysicalProjection); ok {
+				if proj, ok := child.(*physicalop.PhysicalProjection); ok {
 					projsBelowUnion = append(projsBelowUnion, proj)
 				}
 			}
 		default:
 			for _, child := range p.(base.PhysicalPlan).Children() {
-				if proj, ok := child.(*core.PhysicalProjection); ok {
+				if proj, ok := child.(*physicalop.PhysicalProjection); ok {
 					normalProjs = append(normalProjs, proj)
 				}
 				subProjsBelowUnion, subNormalProjs := findProjBelowUnion(child)
@@ -574,7 +574,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 	checkResult := func(sql string) {
 		p := getPhysicalPlan(sql)
 		projsBelowUnion, normalProjs := findProjBelowUnion(p)
-		if proj, ok := p.(*core.PhysicalProjection); ok {
+		if proj, ok := p.(*physicalop.PhysicalProjection); ok {
 			normalProjs = append(normalProjs, proj)
 		}
 		require.NotEmpty(t, projsBelowUnion)

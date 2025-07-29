@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -241,10 +241,10 @@ type sessionCtxKeyType struct{}
 var sessionKey = sessionCtxKeyType{}
 
 // TryRetrieveSession tries retrieve session from context.
-func TryRetrieveSession(ctx context.Context) sessiontypes.Session {
+func TryRetrieveSession(ctx context.Context) sessionapi.Session {
 	s := ctx.Value(sessionKey)
 	if s == nil {
 		return nil
 	}
-	return s.(sessiontypes.Session)
+	return s.(sessionapi.Session)
 }

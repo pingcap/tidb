@@ -50,7 +50,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
-	github.com/golangci/golangci-lint/v2 v2.2.1
+	github.com/golangci/golangci-lint/v2 v2.3.0
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.7.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -61,7 +61,7 @@ require (
 	github.com/gordonklaus/ineffassign v0.1.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.2.0
-	github.com/grafana/pyroscope-go v1.2.3
+	github.com/grafana/pyroscope-go v1.2.4
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/hashicorp/go-version v1.7.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
@@ -105,7 +105,7 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.9.1
-	github.com/spf13/pflag v1.0.6
+	github.com/spf13/pflag v1.0.7
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.10.0
@@ -179,8 +179,6 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
-	golang.org/x/tools/go/expect v0.1.1-deprecated // indirect
-	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated // indirect
 )
 
 require (
@@ -310,7 +308,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
-	golang.org/x/exp/typeparams v0.0.0-20250210185358-939b2ce775ac // indirect
+	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.26.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto v0.0.0-20240401170217-c3f982113cda // indirect
