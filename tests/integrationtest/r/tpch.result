@@ -440,12 +440,21 @@ supp_nation,
 cust_nation,
 l_year;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Sort	769.96	root		tpch.nation.n_name, tpch.nation.n_name, Column#50
 └─Projection	769.96	root		tpch.nation.n_name, tpch.nation.n_name, Column#50, Column#52
   └─HashAgg	769.96	root		group by:Column#59, Column#60, Column#61, funcs:sum(Column#55)->Column#52, funcs:firstrow(Column#56)->tpch.nation.n_name, funcs:firstrow(Column#57)->tpch.nation.n_name, funcs:firstrow(Column#58)->Column#50
     └─Projection	1957240.42	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#55, tpch.nation.n_name->Column#56, tpch.nation.n_name->Column#57, extract(YEAR, tpch.lineitem.l_shipdate)->Column#58, tpch.nation.n_name->Column#59, tpch.nation.n_name->Column#60, extract(YEAR, tpch.lineitem.l_shipdate)->Column#61
       └─Projection	1957240.42	root		tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount, tpch.lineitem.l_shipdate, tpch.nation.n_name, tpch.nation.n_name
         └─HashJoin	1957240.42	root		inner join, equal:[eq(tpch.customer.c_nationkey, tpch.nation.n_nationkey)], other cond:or(and(eq(tpch.nation.n_name, "JAPAN"), eq(tpch.nation.n_name, "INDIA")), and(eq(tpch.nation.n_name, "INDIA"), eq(tpch.nation.n_name, "JAPAN")))
+=======
+Sort	766.31	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50
+└─Projection	766.31	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50, Column#52
+  └─HashAgg	766.31	root		group by:Column#56, Column#57, Column#58, funcs:sum(Column#55)->Column#52, funcs:firstrow(Column#56)->tpch50.nation.n_name, funcs:firstrow(Column#57)->tpch50.nation.n_name, funcs:firstrow(Column#58)->Column#50
+    └─Projection	1953718.78	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#55, tpch50.nation.n_name->Column#56, tpch50.nation.n_name->Column#57, extract(YEAR, tpch50.lineitem.l_shipdate)->Column#58
+      └─Projection	1953718.78	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.lineitem.l_shipdate, tpch50.nation.n_name, tpch50.nation.n_name
+        └─HashJoin	1953718.78	root		inner join, equal:[eq(tpch50.customer.c_nationkey, tpch50.nation.n_nationkey)], other cond:or(and(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA")), and(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN")))
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
           ├─TableReader(Build)	2.00	root		data:Selection
           │ └─Selection	2.00	cop[tikv]		or(eq(tpch.nation.n_name, "INDIA"), eq(tpch.nation.n_name, "JAPAN"))
           │   └─TableFullScan	25.00	cop[tikv]	table:n2	keep order:false
@@ -513,12 +522,21 @@ o_year
 order by
 o_year;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Sort	719.02	root		Column#62
 └─Projection	719.02	root		Column#62, div(Column#64, Column#65)->Column#66
   └─HashAgg	719.02	root		group by:Column#78, funcs:sum(Column#75)->Column#64, funcs:sum(Column#76)->Column#65, funcs:firstrow(Column#77)->Column#62
     └─Projection	563136.02	root		case(eq(tpch.nation.n_name, INDIA), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), 0.0000)->Column#75, mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#76, extract(YEAR, tpch.orders.o_orderdate)->Column#77, extract(YEAR, tpch.orders.o_orderdate)->Column#78
       └─Projection	563136.02	root		tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount, tpch.orders.o_orderdate, tpch.nation.n_name
         └─HashJoin	563136.02	root		inner join, equal:[eq(tpch.supplier.s_nationkey, tpch.nation.n_nationkey)]
+=======
+Sort	724.08	root		Column#62
+└─Projection	724.08	root		Column#62, div(Column#64, Column#65)->Column#66
+  └─HashAgg	724.08	root		group by:Column#74, funcs:sum(Column#72)->Column#64, funcs:sum(Column#73)->Column#65, funcs:firstrow(Column#74)->Column#62
+    └─Projection	632534.06	root		case(eq(tpch50.nation.n_name, INDIA), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column#72, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#73, extract(YEAR, tpch50.orders.o_orderdate)->Column#74
+      └─Projection	632534.06	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.orders.o_orderdate, tpch50.nation.n_name
+        └─HashJoin	632534.06	root		inner join, equal:[eq(tpch50.supplier.s_nationkey, tpch50.nation.n_nationkey)]
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
           ├─TableReader(Build)	25.00	root		data:TableFullScan
           │ └─TableFullScan	25.00	cop[tikv]	table:n2	keep order:false
           └─HashJoin(Probe)	563136.02	root		inner join, equal:[eq(tpch.lineitem.l_suppkey, tpch.supplier.s_suppkey)]
@@ -589,6 +607,7 @@ order by
 nation,
 o_year desc;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Sort	2406.00	root		tpch.nation.n_name, Column#53:desc
 └─Projection	2406.00	root		tpch.nation.n_name, Column#53, Column#55
   └─HashAgg	2406.00	root		group by:Column#67, Column#68, funcs:sum(Column#64)->Column#55, funcs:firstrow(Column#65)->tpch.nation.n_name, funcs:firstrow(Column#66)->Column#53
@@ -613,6 +632,31 @@ Sort	2406.00	root		tpch.nation.n_name, Column#53:desc
           │   └─TableRowIDScan(Probe)	241379546.70	cop[tikv]	table:partsupp	keep order:false
           └─TableReader(Probe)	241379546.70	root		data:TableRangeScan
             └─TableRangeScan	241379546.70	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false
+=======
+Sort	2406.00	root		tpch50.nation.n_name, Column#53:desc
+└─Projection	2406.00	root		tpch50.nation.n_name, Column#53, Column#55
+  └─HashAgg	2406.00	root		group by:Column#60, Column#61, funcs:sum(Column#59)->Column#55, funcs:firstrow(Column#60)->tpch50.nation.n_name, funcs:firstrow(Column#61)->Column#53
+    └─Projection	247789900.85	root		minus(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), mul(tpch50.partsupp.ps_supplycost, tpch50.lineitem.l_quantity))->Column#59, tpch50.nation.n_name->Column#60, extract(YEAR, tpch50.orders.o_orderdate)->Column#61
+      └─Projection	247789900.85	root		tpch50.lineitem.l_quantity, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.partsupp.ps_supplycost, tpch50.orders.o_orderdate, tpch50.nation.n_name
+        └─HashJoin	247789900.85	root		inner join, equal:[eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)]
+          ├─TableReader(Build)	75000000.00	root		data:TableFullScan
+          │ └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
+          └─HashJoin(Probe)	244182819.96	root		inner join, equal:[eq(tpch50.lineitem.l_suppkey, tpch50.partsupp.ps_suppkey) eq(tpch50.lineitem.l_partkey, tpch50.partsupp.ps_partkey)]
+            ├─TableReader(Build)	40000000.00	root		data:TableFullScan
+            │ └─TableFullScan	40000000.00	cop[tikv]	table:partsupp	keep order:false
+            └─HashJoin(Probe)	241491729.94	root		inner join, equal:[eq(tpch50.lineitem.l_partkey, tpch50.part.p_partkey)]
+              ├─TableReader(Build)	8000000.00	root		data:Selection
+              │ └─Selection	8000000.00	cop[tikv]		like(tpch50.part.p_name, "%dim%", 92)
+              │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
+              └─HashJoin(Probe)	300825282.01	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
+                ├─HashJoin(Build)	499986.00	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
+                │ ├─TableReader(Build)	25.00	root		data:TableFullScan
+                │ │ └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
+                │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
+                │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
+                └─TableReader(Probe)	300005811.00	root		data:TableFullScan
+                  └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 /*
 Q10 Returned Item Reporting Query
 The query identifies customers who might be having problems with the parts that are shipped to them.
@@ -1293,6 +1337,7 @@ cntrycode;
 id	estRows	task	access object	operator info
 Sort	1.00	root		Column#31
 └─Projection	1.00	root		Column#31, Column#32, Column#33
+<<<<<<< HEAD
   └─HashAgg	1.00	root		group by:Column#37, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
     └─Projection	0.00	root		tpch.customer.c_acctbal->Column#35, substring(tpch.customer.c_phone, 1, 2)->Column#36, substring(tpch.customer.c_phone, 1, 2)->Column#37
       └─HashJoin	0.00	root		anti semi join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
@@ -1301,3 +1346,8 @@ Sort	1.00	root		Column#31
         └─TableReader(Probe)	0.00	root		data:Selection
           └─Selection	0.00	cop[tikv]		gt(tpch.customer.c_acctbal, NULL), in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
             └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+=======
+  └─HashAgg	1.00	root		group by:Column#36, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
+    └─Projection	0.00	root		tpch50.customer.c_acctbal->Column#35, substring(tpch50.customer.c_phone, 1, 2)->Column#36
+      └─TableDual	0.00	root		rows:0
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))

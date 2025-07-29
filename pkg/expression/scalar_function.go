@@ -178,10 +178,20 @@ func typeInferForNull(args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
+<<<<<<< HEAD
 	for _, arg := range args {
 		if isNull(arg) {
 			*arg.GetType() = *retFieldTp
 			arg.GetType().DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+=======
+	for i, arg := range args {
+		argflags := arg.GetType(ctx)
+		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
+			newarg := arg.Clone()
+			*newarg.GetType(ctx) = *retFieldTp.Clone()
+			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			args[i] = newarg
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 		}
 	}
 }

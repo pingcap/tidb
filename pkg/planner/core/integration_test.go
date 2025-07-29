@@ -2211,10 +2211,16 @@ func TestIssue46556(t *testing.T) {
 		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#9, Column#10)]`,
 			`├─Projection(Build) 0.00 root  <nil>->Column#9`,
 			`│ └─TableDual 0.00 root  rows:0`,
+<<<<<<< HEAD
 			`└─Projection(Probe) 9990.00 root  test.t0.c0, cast(test.t0.c0, double BINARY)->Column#10`,
 			`  └─TableReader 9990.00 root  data:Selection`,
 			`    └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
 			`      └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
+=======
+			`└─TableReader(Probe) 9990.00 root  data:Selection`,
+			`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
+			`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
+>>>>>>> 35c1e21115c (planner,expression: fix wrong copy args to avoid breaking origin expression when to EvaluateExprWithNull (#61630))
 }
 
 // https://github.com/pingcap/tidb/issues/41458
