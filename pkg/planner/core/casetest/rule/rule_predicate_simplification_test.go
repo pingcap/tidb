@@ -21,27 +21,28 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
-func TestPredicateSimplification(tt *testing.T) {
-	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec(`CREATE TABLE t1 (
+func TestPredicateSimplification(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (
     id VARCHAR(64) PRIMARY KEY
 );`)
-		tk.MustExec(`CREATE TABLE t2 (
+	tk.MustExec(`CREATE TABLE t2 (
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     c3 VARCHAR(64) NOT NULL,
     PRIMARY KEY (c1, c2, c3),
     KEY c3 (c3)
 );`)
-		tk.MustExec(`CREATE TABLE t3 (
+	tk.MustExec(`CREATE TABLE t3 (
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     c3 VARCHAR(64) NOT NULL,
     PRIMARY KEY (c1, c2, c3),
     KEY c3 (c3)
 );`)
-		tk.MustExec(`CREATE TABLE t4 (
+	tk.MustExec(`CREATE TABLE t4 (
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     c3 VARCHAR(64) NOT NULL,
@@ -49,26 +50,26 @@ func TestPredicateSimplification(tt *testing.T) {
     PRIMARY KEY (c1, c2, c3),
     KEY c3 (c3)
 );`)
-		tk.MustExec(`CREATE TABLE t5 (
+	tk.MustExec(`CREATE TABLE t5 (
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     PRIMARY KEY (c1, c2)
 );`)
-		// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.
-		var input []string
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		suite := GetPredicateSimplificationSuiteData()
-		suite.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, tt := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
-			})
-			res := tk.MustQuery("explain format=brief " + tt)
-			res.Check(testkit.Rows(output[i].Plan...))
-		}
-	})
+	// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	suite := GetPredicateSimplificationSuiteData()
+	suite.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+		})
+		res := tk.MustQuery("explain format=brief " + tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+
 }

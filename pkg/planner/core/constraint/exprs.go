@@ -33,7 +33,7 @@ func DeleteTrueExprs(buildCtx expression.BuildContext, stmtCtx *stmtctx.Statemen
 		if !ok {
 			return false
 		}
-		if expression.MaybeOverOptimized4PlanCache(buildCtx, con) {
+		if expression.MaybeOverOptimized4PlanCache(buildCtx, []expression.Expression{con}) {
 			return false
 		}
 		isTrue, err := con.Value.ToBool(stmtCtx.TypeCtx())
@@ -61,7 +61,7 @@ func isNullWithNotNullColumn(ctx expression.EvalContext, schema *expression.Sche
 		if args := e.GetArgs(); len(args) == 1 {
 			if col, ok := args[0].(*expression.Column); ok {
 				if retrieveColumn := schema.RetrieveColumn(col); retrieveColumn != nil {
-					return mysql.HasNotNullFlag(retrieveColumn.GetType(ctx).GetFlag())
+					return mysql.HasNotNullFlag(retrieveColumn.GetType().GetFlag())
 				}
 			}
 		}
