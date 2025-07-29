@@ -393,6 +393,10 @@ type Job struct {
 	// SessionVars store system variables used in the DDL execution.
 	// To keep the backward compatibility, we still name it SessionVars.
 	SessionVars map[string]string `json:"session_vars,omitempty"`
+
+	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
+	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
+	LastSchemaVersion int64 `json:"last_schema_version"`
 }
 
 // FinishTableJob is called when a job is finished.
