@@ -15,6 +15,7 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
@@ -73,7 +74,7 @@ func TestTick(t *testing.T) {
 }
 
 func TestWithFailure(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer func() {
 		fmt.Println(c)
@@ -118,7 +119,7 @@ func shouldFinishInTime(t *testing.T, d time.Duration, name string, f func()) {
 }
 
 func TestCollectorFailure(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	c.onGetClient = func(u uint64) error {
 		return status.Error(codes.DataLoss,
@@ -165,7 +166,7 @@ func oneStoreFailure() func(uint64) error {
 }
 
 func TestOneStoreFailure(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 1000)
@@ -218,7 +219,7 @@ func TestGCServiceSafePoint(t *testing.T) {
 }
 
 func TestTaskRanges(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer fmt.Println(c)
 	ctx := context.Background()
@@ -237,7 +238,7 @@ func TestTaskRanges(t *testing.T) {
 }
 
 func TestTaskRangesWithSplit(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer fmt.Println(c)
 	ctx := context.Background()
@@ -302,7 +303,7 @@ func TestClearCache(t *testing.T) {
 }
 
 func TestBlocked(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	req := require.New(t)
@@ -457,7 +458,7 @@ func TestOwnerDropped(t *testing.T) {
 
 // TestRemoveTaskAndFlush tests the bug has been described in #50839.
 func TestRemoveTaskAndFlush(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	ctx := context.Background()
 	c := createFakeCluster(t, 4, true)
 	installSubscribeSupport(c)

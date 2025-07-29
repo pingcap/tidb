@@ -1131,7 +1131,7 @@ func (e *executor) createTableWithInfoJob(
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 		SessionVars:         make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1185,7 +1185,7 @@ func (e *executor) CreateTableWithInfo(
 		}
 	} else {
 		var scatterScope string
-		if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+		if val, ok := jobW.GetSystemVars(vardef.TiDBScatterRegion); ok {
 			scatterScope = val
 		}
 
@@ -1214,7 +1214,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 
 	var err error
 
@@ -1281,7 +1281,7 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	var scatterScope string
-	if val, ok := jobW.GetSessionVars(vardef.TiDBScatterRegion); ok {
+	if val, ok := jobW.GetSystemVars(vardef.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
 	for _, tblArgs := range args.Tables {
@@ -2245,7 +2245,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TablePartitionArgs{
 		PartInfo: partInfo,
 	}
@@ -2758,7 +2758,7 @@ func (e *executor) TruncateTablePartition(ctx sessionctx.Context, ident ast.Iden
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		OldPartitionIDs: pids,
 		// job submitter will fill new partition IDs.
@@ -4262,7 +4262,7 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
-	job.AddSessionVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	args := &model.TruncateTableArgs{
 		FKCheck:         fkCheck,
 		OldPartitionIDs: oldPartitionIDs,
@@ -5722,6 +5722,7 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     schema.Name.O,
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
@@ -6730,6 +6731,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
+	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	e.deliverJobTask(jobW)
@@ -7035,16 +7037,15 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     args.InvolvedDB,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
 			{
-				// For RefreshMeta, the table/schema might not exist anymore.
-				// Since we can't determine the exact target, use model.InvolvingAll to block concurrent DDLs as a safe default.
-				Database: model.InvolvingAll,
-				Table:    model.InvolvingAll,
+				Database: args.InvolvedDB,
+				Table:    args.InvolvedTable,
 			},
 		},
 	}
