@@ -1177,7 +1177,13 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		lenTopN = float64(idx.TopN.Num())
 	}
 	if fullNDV > 0 {
-		fullResult = fullRowCount / fullNDV
+		if fullRowCount > 0 {
+			fullResult = fullRowCount / fullNDV
+			maxEstimate = fullRowCount - (fullNDV - 1)
+		} else if realtimeRowCount > 0 {
+			fullResult = realtimeRowCount / fullNDV
+			maxEstimate = realtimeRowCount - (fullNDV - 1)
+		}
 	}
 	addedRows := realtimeRowCount - fullRowCount
 	// We may be missing stats if we've added rows since the last analysis, or if we have no histogram buckets
@@ -1192,7 +1198,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		if fullRowCount > 0 {
 			if fullNDV > 0 {
 				result = fullResult
-				maxEstimate = fullRowCount - (fullNDV - 1)
+
 			} else {
 				// If we stil haven't derived a result - it's because we didn't have a valid NDV.
 				// Use sqrt to derive a default NDV.

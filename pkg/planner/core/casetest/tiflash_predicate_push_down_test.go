@@ -45,8 +45,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		// Create virtual `tiflash` replica info.
 		testkit.SetTiFlashReplica(t, dom, "test", "t1")
 		// Enable late materialization.
-		testKit.MustExec("set @@tidb_opt_enable_late_materialization = on")
-		testKit.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+		testKit.MustExec("set @@session.tidb_opt_enable_late_materialization = on")
+		testKit.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
 		var input []string
 		var output []struct {
