@@ -19,7 +19,7 @@
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
 # - tikv-worker: 1900
 function main() {
-    local self_dir=$(realpath $(dirname $(dirname "${BASH_SOURCE[0]}")))
+    local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
     export TIDB_TEST_STORE_NAME="tikv"
     export TIKV_PATH="127.0.0.1:2379"
     "${self_dir}/../realtikvtest/scripts/next-gen/bootstrap-test-with-cluster.sh" "${self_dir}/run-tests.sh" "$@"
