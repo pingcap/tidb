@@ -84,7 +84,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 				}
 			},
 			endTime:     time.Unix(1004, 0),
-			duration:    time.Millisecond * 1500, // [2.5, 4]
+			duration:    time.Millisecond * 1500, // [1002.5, 1004]
 			expected:    10,
 			description: "should handle partial time range overlap correctly",
 		},
@@ -101,9 +101,26 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 				}
 			},
 			endTime:     time.Unix(1004, 500000000),
-			duration:    time.Second * 2, // [2.5, 4.5]
+			duration:    time.Second * 2, // [1002.5, 1004.5]
 			expected:    45,
 			description: "should handle multiple overlapping segments correctly",
+		},
+		{
+			name: "exact match the range",
+			setup: func(s *SubtaskSummary) {
+				baseTime := time.Unix(1000, 0)
+				s.Progresses = []Progress{
+					{Bytes: 0, UpdateTime: baseTime},
+					{Bytes: 60, UpdateTime: baseTime.Add(1 * time.Second)},
+					{Bytes: 120, UpdateTime: baseTime.Add(2 * time.Second)},
+					{Bytes: 180, UpdateTime: baseTime.Add(3 * time.Second)},
+					{Bytes: 240, UpdateTime: baseTime.Add(4 * time.Second)},
+				}
+			},
+			endTime:     time.Unix(1004, 0),
+			duration:    time.Second * 4, // [1000, 1004]
+			expected:    60,
+			description: "should handle range correctly",
 		},
 		{
 			name: "whole range",
@@ -118,7 +135,7 @@ func TestSubtaskSummaryGetSpeed(t *testing.T) {
 				}
 			},
 			endTime:     time.Unix(1006, 500000000),
-			duration:    time.Second * 6, // [0, 6]
+			duration:    time.Second * 6, // [1000, 1006]
 			expected:    40,
 			description: "should handle multiple overlapping segments correctly",
 		},

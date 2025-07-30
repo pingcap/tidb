@@ -73,7 +73,7 @@ const (
 	maxProgressInSummary = 5
 
 	// SubtaskSpeedUpdateInterval is the interval for updating the subtasks' speed.
-	SubtaskSpeedUpdateInterval = UpdateSubtaskSummaryInterval * maxProgressInSummary / 2
+	SubtaskSpeedUpdateInterval = UpdateSubtaskSummaryInterval * maxProgressInSummary
 )
 
 // Progress represents the progress of a subtask at a specific time.
