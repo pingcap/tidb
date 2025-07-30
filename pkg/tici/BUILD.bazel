@@ -58,6 +58,7 @@ go_test(
         "@com_github_stretchr_testify//mock",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//test/bufconn",
+        "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zaptest",
     ],
 )
