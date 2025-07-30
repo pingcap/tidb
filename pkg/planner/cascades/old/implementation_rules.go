@@ -583,7 +583,7 @@ func (*ImplMaxOneRow) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) 
 // OnImplement implements ImplementationRule OnImplement interface
 func (*ImplMaxOneRow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty) ([]memo.Implementation, error) {
 	mor := expr.ExprNode.(*logicalop.LogicalMaxOneRow)
-	physicalMaxOneRow := plannercore.PhysicalMaxOneRow{}.Init(
+	physicalMaxOneRow := physicalop.PhysicalMaxOneRow{}.Init(
 		mor.SCtx(),
 		expr.Group.Prop.Stats,
 		mor.QueryBlockOffset(),

@@ -747,13 +747,13 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	switch join := pp.(type) {
 	case *PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
-		plan = join.innerPlan
+		plan = join.InnerPlan
 	case *PhysicalIndexHashJoin:
 		index = join.InnerChildIdx
-		plan = join.innerPlan
-	case *PhysicalIndexJoin:
+		plan = join.InnerPlan
+	case *physicalop.PhysicalIndexJoin:
 		index = join.InnerChildIdx
-		plan = join.innerPlan
+		plan = join.InnerPlan
 	}
 	if index != -1 && plan != nil {
 		child := lp.(*logicalop.BaseLogicalPlan).Children()[index]
@@ -3391,11 +3391,13 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess
+	origRowCount := ds.StatsInfo().RowCount
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
+	if (prop.ExpectedCnt+cost.ToleranceFactor) < origRowCount ||
+		(isMatchProp && min(origRowCount, prop.ExpectedCnt) < rowCount && len(path.AccessConds) > 0) {
 		rowCount = cardinality.AdjustRowCountForTableScanByLimit(ds.SCtx(),
 			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
-			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+			path, prop.ExpectedCnt, isMatchProp, isMatchProp && prop.SortItems[0].Desc)
 	}
 	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
 	// we should track NDV of each histogram bucket, and sum up the NDV of buckets we actually need
@@ -3456,6 +3458,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
 			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 	}
+
 	// ScaleByExpectCnt only allows to scale the row count smaller than the table total row count.
 	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
 	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
