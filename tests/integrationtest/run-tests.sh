@@ -215,10 +215,9 @@ status=${ports[1]}
 
 function start_tidb_server()
 {
-    self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
-    config_file="${self_dir}/config.toml"
+    config_file="config.toml"
     if [[ $enabled_new_collation = 0 ]]; then
-        config_file="${self_dir}/disable_new_collation.toml"
+        config_file="disable_new_collation.toml"
     fi
     echo "start tidb-server, log file: $mysql_tester_log"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
