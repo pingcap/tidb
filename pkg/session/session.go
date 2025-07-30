@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1247,9 +1246,9 @@ func getSessionFactoryWithDom(store kv.Storage) func(*domain.Domain) (pools.Reso
 	return getSessionFactoryInternal(store, CreateSessionWithDomain)
 }
 
-func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string) pools.Factory {
+func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string, schemaValidator validatorapi.Validator) pools.Factory {
 	facWithDom := getSessionFactoryInternal(currKSStore, func(store kv.Storage, _ *domain.Domain) (*session, error) {
-		return createCrossKSSession(store, targetKS)
+		return createCrossKSSession(store, targetKS, schemaValidator)
 	})
 	return func() (pools.Resource, error) {
 		return facWithDom(nil)
@@ -3885,7 +3884,7 @@ func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, dom, dom.GetSchemaValidator(), dom.InfoCache(), nil)
 }
 
-func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, error) {
+func createCrossKSSession(currKSStore kv.Storage, targetKS string, validator validatorapi.Validator) (*session, error) {
 	if currKSStore.GetKeyspace() == targetKS {
 		return nil, errors.New("cannot create session for the same keyspace")
 	}
@@ -3904,7 +3903,7 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, er
 	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
-	return createSessionWithOpt(store, nil, isvalidator.NewNoop(), infoCache, nil)
+	return createSessionWithOpt(store, nil, validator, infoCache, nil)
 }
 
 func createSessionWithOpt(

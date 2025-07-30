@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
@@ -226,7 +227,7 @@ type Domain struct {
 
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory
+	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -534,7 +535,7 @@ func NewDomainWithEtcdClient(
 	statsLease time.Duration,
 	dumpFileGcLease time.Duration,
 	factory pools.Factory,
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory,
+	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
@@ -598,6 +599,7 @@ func NewDomainWithEtcdClient(
 		do.infoCache,
 		do.schemaLease,
 		do.sysSessionPool,
+		isvalidator.New(do.schemaLease),
 	)
 	do.initDomainSysVars()
 

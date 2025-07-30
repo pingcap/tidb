@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -97,8 +98,8 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 		factory := getSessionFactory(store)
 		sysFactory := getSessionFactoryWithDom(store)
 		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory,
-			func(targetKS string) pools.Factory {
-				return getCrossKSSessionFactory(store, targetKS)
+			func(targetKS string, schemaValidator validatorapi.Validator) pools.Factory {
+				return getCrossKSSessionFactory(store, targetKS, schemaValidator)
 			},
 			etcdClient,
 		)

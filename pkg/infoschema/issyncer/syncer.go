@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
-	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -87,6 +86,7 @@ func New(
 	infoCache *infoschema.InfoCache,
 	schemaLease time.Duration,
 	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
 ) *Syncer {
 	do := &Syncer{
 		store:          store,
@@ -99,7 +99,7 @@ func New(
 			jobs: make(map[int64]*mdldef.JobMDL),
 		},
 	}
-	do.schemaValidator = isvalidator.New(schemaLease)
+	do.schemaValidator = isValidator
 	mode := LoadModeAuto
 	do.loader = &Loader{
 		mode:      mode,
