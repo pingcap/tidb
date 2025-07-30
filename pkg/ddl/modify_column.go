@@ -226,13 +226,17 @@ func getModifyColumnInfo(
 	}
 
 	var oldCol *model.ColumnInfo
+	// Use column ID to locate the old column.
+	// It is persisted to job arguments after the first execution.
 	if args.OldColumnID > 0 {
 		oldCol = model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
 	} else {
 		oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
 		if oldCol != nil {
 			args.OldColumnID = oldCol.ID
-			logutil.DDLLogger().Info("init old column id", zap.String("oldColumnName", args.OldColumnName.L), zap.Int64("oldColumnID", oldCol.ID))
+			logutil.DDLLogger().Info("run modify column job, init old column id",
+				zap.String("oldColumnName", args.OldColumnName.L),
+				zap.Int64("oldColumnID", oldCol.ID))
 		}
 	}
 	if oldCol == nil {
@@ -570,14 +574,18 @@ func (w *worker) doModifyColumnTypeWithData(
 
 		job.SchemaState = model.StatePublic
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-		return ver, errors.Trace(err)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	case model.StatePublic:
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		switch oldCol.State {
 		case model.StateWriteOnly:
 			updateChangingObjState(oldCol, oldIdxInfos, model.StateDeleteOnly)
 			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-			return ver, err
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol})
@@ -586,6 +594,10 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, errors.Trace(err)
 			}
 
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 			// Finish this job.
 			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 			// Refactor the job args to add the old index ids into delete range table.
@@ -593,10 +605,10 @@ func (w *worker) doModifyColumnTypeWithData(
 			args.IndexIDs = rmIdxs
 			args.PartitionIDs = getPartitionIDs(tblInfo)
 			job.FillFinishedArgs(args)
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-			return ver, err
 		default:
-			panic("unexpected column state in modify column job")
+			errMsg := fmt.Sprintf("unexpected column state %s in modify column job", oldCol.State)
+			intest.Assert(false, errMsg)
+			return ver, errors.Errorf(errMsg)
 		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
