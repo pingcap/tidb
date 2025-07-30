@@ -289,6 +289,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = append(p.RightConditions, rightPushCond...)
 		p.RightConditions = nil
+		p.EqualConditions = equalCond
 	}
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
