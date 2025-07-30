@@ -64,6 +64,9 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), con) {
 		return otherPredicate
 	}
+	if con.Value.IsNull() {
+		return falsePredicate
+	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
 	if err == nil {
 		if isTrue == 0 {
@@ -195,10 +198,11 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 			}
 		}
 	}
-	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
+	//simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
