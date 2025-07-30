@@ -71,13 +71,13 @@ func (p BasePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, o
 }
 
 // InitForHash initializes BasePhysicalAgg for hash aggregation.
-func (p BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForHash(&p, ctx, stats, offset, schema, props...)
+func (p *BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	return utilfuncp.InitForHash(p, ctx, stats, offset, schema, props...)
 }
 
 // InitForStream initializes BasePhysicalAgg for stream aggregation.
-func (p BasePhysicalAgg) InitForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForStream(&p, ctx, stats, offset, schema, props...)
+func (p *BasePhysicalAgg) InitForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	return utilfuncp.InitForStream(p, ctx, stats, offset, schema, props...)
 }
 
 // IsFinalAgg checks whether the aggregation is a final aggregation.
@@ -302,19 +302,21 @@ func (p *BasePhysicalAgg) NewPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	// Create physical "final" aggregation.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	if p.TP() == plancodec.TypeStreamAgg {
-		finalAgg := BasePhysicalAgg{
+		baseAgg := &BasePhysicalAgg{
 			AggFuncs:     finalPref.AggFuncs,
 			GroupByItems: finalPref.GroupByItems,
 			MppRunMode:   p.MppRunMode,
-		}.InitForStream(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), finalPref.Schema, prop)
+		}
+		finalAgg := baseAgg.InitForStream(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), finalPref.Schema, prop)
 		return partialAgg, finalAgg
 	}
 
-	finalAgg := BasePhysicalAgg{
+	baseAgg := &BasePhysicalAgg{
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
 		MppRunMode:   p.MppRunMode,
-	}.InitForHash(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), finalPref.Schema, prop)
+	}
+	finalAgg := baseAgg.InitForHash(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), finalPref.Schema, prop)
 	// partialAgg and finalAgg use the same ref of stats
 	return partialAgg, finalAgg
 }

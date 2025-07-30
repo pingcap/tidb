@@ -1719,11 +1719,12 @@ func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.Sta
 	for i, aggFunc := range la.AggFuncs {
 		newAggFuncs[i] = aggFunc.Clone()
 	}
-	agg := physicalop.BasePhysicalAgg{
+	agg := &physicalop.BasePhysicalAgg{
 		GroupByItems: newGbyItems,
 		AggFuncs:     newAggFuncs,
-	}.InitForHash(la.SCtx(), newStats, la.QueryBlockOffset(), nil, prop)
-	return agg.(*PhysicalHashAgg)
+	}
+	hashAgg := agg.InitForHash(la.SCtx(), newStats, la.QueryBlockOffset(), nil, prop)
+	return hashAgg.(*PhysicalHashAgg)
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
