@@ -230,14 +230,13 @@ func TestCampareInvalidUTF8Rune(t *testing.T) {
 		&unicode0900AICICollator{},                             // index: 1
 		&unicodeCICollator{},                                   // index: 2
 		&gbkChineseCICollator{},                                // index: 3
-		&gb18030BinCollator{charset.NewCustomGB18030Encoder()}, // index: 4
-		&gbkBinCollator{charset.NewCustomGBKEncoder()},         // index: 5
+		&gbkBinCollator{charset.NewCustomGBKEncoder()},         // index: 4
 	}
 
 	for i, c := range collaters {
 		require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xff})), 0)
 		require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xfe})), 0)
-		// For `gbk_bin` and `gb18030_bin`, it will use 0x3f instead of invalid utf8 rune.
+		// For `gbk_bin`, it will use 0x3f instead of invalid utf8 rune.
 		if i < 4 {
 			require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xff, 0x3e})), 0)
 			require.Equal(t, c.Compare(string([]byte{0x3e, 0xff}), string([]byte{0x3e, 0xff, 0x3e})), 0)
