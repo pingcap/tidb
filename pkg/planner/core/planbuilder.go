@@ -1163,6 +1163,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
 
+	if !ctx.GetSessionVars().InRestrictedSQL && !vardef.EnableSeqScan.Load() {
+		publicPaths = publicPaths[:0]
+	}
+
 	if tblInfo.TiFlashReplica == nil {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
 	} else if !tblInfo.TiFlashReplica.Available {
@@ -1191,6 +1195,15 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
+			if !ctx.GetSessionVars().InRestrictedSQL { // not an internal SQL
+				if !vardef.EnableSeqScan.Load() && index.Primary {
+					continue
+				}
+				if !vardef.EnableIndexScan.Load() && !index.Primary {
+					continue
+				}
+				// TODO: indexonlyscan
+			}
 			// Filter out invisible index, because they are not visible for optimizer
 			if !optimizerUseInvisibleIndexes && index.Invisible {
 				continue
@@ -1224,6 +1237,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
 		}
+	}
+
+	if !ctx.GetSessionVars().InRestrictedSQL && len(publicPaths) == 0 {
+		publicPaths = append(publicPaths, tablePath) // keep at least one path
 	}
 
 	// consider hypo-indexes

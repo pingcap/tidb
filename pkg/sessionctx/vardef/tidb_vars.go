@@ -890,6 +890,13 @@ const (
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
+	TiDBEnableHashJoin      = "enable_hashjoin"
+	TiDBEnableMergeJoin     = "enable_mergejoin"
+	TiDBEnableNestLoop      = "enable_nestloop"
+	TiDBEnableIndexScan     = "enable_indexscan"
+	TiDBEnableSeqScan       = "enable_seqscan"
+	TiDBEnableIndexOnlyScan = "enable_indexonlyscan"
+
 	// TiDBEnableInstancePlanCache indicates whether to enable instance plan cache.
 	// If this variable is false, session-level plan cache will be used.
 	TiDBEnableInstancePlanCache = "tidb_enable_instance_plan_cache"
@@ -1707,6 +1714,14 @@ var (
 	StatsCacheMemQuota                   = atomic.NewInt64(DefTiDBStatsCacheMemQuota)
 	OOMAction                            = atomic.NewString(DefTiDBMemOOMAction)
 	MaxAutoAnalyzeTime                   = atomic.NewInt64(DefTiDBMaxAutoAnalyzeTime)
+
+	EnableHashJoin      = atomic.NewBool(true)
+	EnableMergeJoin     = atomic.NewBool(true)
+	EnableNestLoop      = atomic.NewBool(true)
+	EnableIndexScan     = atomic.NewBool(true)
+	EnableSeqScan       = atomic.NewBool(true)
+	EnableIndexOnlyScan = atomic.NewBool(true)
+
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio   = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableInstancePlanCache             = atomic.NewBool(false)
