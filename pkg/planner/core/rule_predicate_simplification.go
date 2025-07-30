@@ -198,7 +198,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 			}
 		}
 	}
-	//simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
