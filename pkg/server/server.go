@@ -1079,6 +1079,13 @@ func (s *Server) ContainsInternalSession(se any) bool {
 	return ok
 }
 
+// InternalSessionCount implements sessionmgr.InfoSchemaCoordinator interface.
+func (s *Server) InternalSessionCount() int {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	return len(s.internalSessions)
+}
+
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) DeleteInternalSession(se any) {

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -53,7 +54,9 @@ func NewManager() *Manager {
 	}
 }
 
-func (m *Manager) get(ks string) (*SessionManager, bool) {
+// Get gets a session manager for the specified keyspace.
+// exported for test only.
+func (m *Manager) Get(ks string) (*SessionManager, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.getWithoutLock(ks)
@@ -76,7 +79,7 @@ func (m *Manager) GetOrCreate(
 	if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == ks {
 		return nil, errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
 	}
-	if mgr, ok := m.get(ks); ok {
+	if mgr, ok := m.Get(ks); ok {
 		return mgr, nil
 	}
 	m.mu.Lock()
@@ -196,4 +199,9 @@ func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 // SessPool returns the session pool used by the session manager.
 func (m *SessionManager) SessPool() util.DestroyableSessionPool {
 	return m.sessPool
+}
+
+// Coordinator returns the InfoSchemaCoordinator used by the session manager.
+func (m *SessionManager) Coordinator() sessmgr.InfoSchemaCoordinator {
+	return m.coordinator
 }

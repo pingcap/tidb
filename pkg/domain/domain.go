@@ -850,6 +850,12 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 	return mgr.SessPool(), nil
 }
 
+// GetCrossKSMgr returns the cross keyspace session manager.
+// it's exported for test only.
+func (do *Domain) GetCrossKSMgr() *crossks.Manager {
+	return do.crossKSSessMgr
+}
+
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease

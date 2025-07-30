@@ -23,4 +23,5 @@ type minStartTSReporter struct {
 }
 
 func (r *minStartTSReporter) ReportMinStartTS(store tidbkv.Storage, session *concurrency.Session) {
+	// TODO implement it.
 }

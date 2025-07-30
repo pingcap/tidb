@@ -48,6 +48,19 @@ func (c *schemaCoordinator) DeleteInternalSession(se any) {
 	delete(c.sessions, se.(sessionctx.Context))
 }
 
+func (c *schemaCoordinator) ContainsInternalSession(se any) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.sessions[se.(sessionctx.Context)]
+	return ok
+}
+
+func (c *schemaCoordinator) InternalSessionCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.sessions)
+}
+
 func (c *schemaCoordinator) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

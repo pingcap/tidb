@@ -148,6 +148,13 @@ func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
 	return ok
 }
 
+// InternalSessionCount implements the Manager.InternalSessionCount interface.
+func (msm *MockSessionManager) InternalSessionCount() int {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	return len(msm.internalSessions)
+}
+
 // DeleteInternalSession is to delete the internal session pointer from the map in the Manager
 func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()

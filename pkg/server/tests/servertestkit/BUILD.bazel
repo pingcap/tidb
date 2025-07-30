@@ -14,6 +14,7 @@ go_library(
         "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/util/cpuprofile",

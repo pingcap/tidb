@@ -216,6 +216,12 @@ type InfoSchemaCoordinator interface {
 	StoreInternalSession(se any)
 	// DeleteInternalSession deletes the internal session pointer from the map in the Manager.
 	DeleteInternalSession(se any)
+	// ContainsInternalSession checks if the internal session pointer is in the map in the Manager.
+	// it's for test only.
+	ContainsInternalSession(se any) bool
+	// InternalSessionCount returns the number of internal sessions in the Manager.
+	// it's for test only.
+	InternalSessionCount() int
 	// CheckOldRunningTxn checks if there are old transactions accessing tables
 	// in the DDL jobs with older schema version, if so, we remove the jobs from
 	// the input param.
@@ -237,8 +243,6 @@ type Manager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// ContainsInternalSession checks if the internal session pointer is in the map in the Manager.
-	ContainsInternalSession(se any) bool
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
 	// GetConAttrs gets the connection attributes
