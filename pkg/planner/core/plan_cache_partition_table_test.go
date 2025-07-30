@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -89,14 +89,14 @@ func TestPreparedPlanCachePartitions(t *testing.T) {
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"Point_Get", "partition:dual", "handle:2000000"})
 	tk.MustExec(`set @a=1999999`)
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
+	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"Point_Get", "partition:p1M", "handle:1999999"})
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
@@ -124,7 +124,7 @@ func TestPreparedPlanCachePartitionIndex(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
 		{"IndexLookUp"},
@@ -248,7 +248,7 @@ func TestPlanCachePartitionDuplicates(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20001 20001", "3 3"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_1"}})
 	tk.MustExec(`set @a0 = 30003, @a1 = 20002, @a2 = 4`)
@@ -283,7 +283,7 @@ partition by hash (a) partitions 3`)
 	tk.MustQuery(`execute stmt`)
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"PartitionUnion", "Batch_Point_Get", "partition:p0", "partition:p1"})
 	tk.MustQuery(`execute stmt`)
@@ -594,7 +594,7 @@ func preparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl 
 		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect...))
 		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		res := tk.MustQuery(fmt.Sprintf("explain for connection %d "+comment, tkProcess.ID))
 		if len(testTbl.pointGetExplain) > 0 {
@@ -712,7 +712,7 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		res := tk.MustQuery(fmt.Sprintf("explain for connection %d "+comment, tkProcess.ID))
 		if q.usesBatchPointGet &&

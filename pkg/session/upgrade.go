@@ -1711,7 +1711,7 @@ func writeDDLTableVersion(s sessionapi.Session) {
 	var ddlTableVersion meta.DDLTableVersion
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
-		ddlTableVersion, err = t.CheckDDLTableVersion()
+		ddlTableVersion, err = t.GetDDLTableVersion()
 		return err
 	})
 	terror.MustNil(err)

@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -57,11 +58,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -91,6 +94,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -182,7 +186,7 @@ func (h *StmtHistory) Count() int {
 
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
-	processInfo atomic.Pointer[util.ProcessInfo]
+	processInfo atomic.Pointer[sessmgr.ProcessInfo]
 	txn         LazyTxn
 
 	mu struct {
@@ -205,7 +209,7 @@ type session struct {
 	sessionPlanCache sessionctx.SessionPlanCache
 
 	sessionVars    *variable.SessionVars
-	sessionManager util.SessionManager
+	sessionManager sessmgr.Manager
 
 	pctx    *planContextImpl
 	exprctx *sessionexpr.ExprContext
@@ -431,11 +435,11 @@ func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return s.sessionPlanCache
 }
 
-func (s *session) SetSessionManager(sm util.SessionManager) {
+func (s *session) SetSessionManager(sm sessmgr.Manager) {
 	s.sessionManager = sm
 }
 
-func (s *session) GetSessionManager() util.SessionManager {
+func (s *session) GetSessionManager() sessmgr.Manager {
 	return s.sessionManager
 }
 
@@ -1479,7 +1483,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		sqlCPUUsages = nil
 	}
 
-	pi := util.ProcessInfo{
+	pi := sessmgr.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
 		DB:                    s.sessionVars.CurrentDB,
@@ -1558,8 +1562,8 @@ func (s *session) UpdateProcessInfo() {
 	s.processInfo.Store(shallowCP)
 }
 
-func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
-	return util.OOMAlarmVariablesInfo{
+func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
+	return sessmgr.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
@@ -3273,8 +3277,9 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 
 // DatabaseBasicInfo contains the basic information of a database.
 type DatabaseBasicInfo struct {
-	ID   int64
-	Name string
+	ID     int64
+	Name   string
+	Tables []TableBasicInfo
 }
 
 // TableBasicInfo contains the basic information of a table used in DDL.
@@ -3324,14 +3329,19 @@ var (
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
 	if s, ok := store.(kv.SplittableStore); ok && atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1 {
 		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), vardef.DefWaitSplitRegionTimeout*time.Second)
-		var regionIDs []uint64
+		defer cancel()
+		keys := make([][]byte, 0, len(tableIDs))
 		for _, id := range tableIDs {
-			regionIDs = append(regionIDs, ddl.SplitRecordRegion(ctxWithTimeout, s, id, id, vardef.DefTiDBScatterRegion))
+			keys = append(keys, tablecodec.GenTablePrefix(id))
 		}
-		if vardef.DefTiDBScatterRegion != vardef.ScatterOff {
-			ddl.WaitScatterRegionFinish(ctxWithTimeout, s, regionIDs...)
+		gid := ddl.GlobalScatterGroupID
+		// tables created through DDL during bootstrap also don't scatter, we keep
+		// the same behavior here.
+		_, err := s.SplitRegions(ctxWithTimeout, keys, false, &gid)
+		if err != nil {
+			// It will be automatically split by TiKV later.
+			logutil.BgLogger().Warn("split table region failed", zap.Error(err))
 		}
-		cancel()
 	}
 }
 
@@ -3341,7 +3351,7 @@ func InitDDLTables(store kv.Storage) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
-		currVer, err := t.CheckDDLTableVersion()
+		currVer, err := t.GetDDLTableVersion()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3381,7 +3391,12 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
+		// bootstrap session set sessionctx.Initing = true, and uses None SQL mode,
+		// we also use it here.
+		evalCtx := exprstatic.NewEvalContext(exprstatic.WithSQLMode(mysql.ModeNone))
+		exprCtx := exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
+		mbCtx := metabuild.NewContext(metabuild.WithExprCtx(exprCtx))
+		tblInfo, err := ddl.BuildTableInfoFromAST(mbCtx, stmt.(*ast.CreateTableStmt))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3524,6 +3539,11 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			PluginDir: cfg.Instance.PluginDir,
 		})
 		if err != nil {
+			return nil, err
+		}
+	}
+	if kerneltype.IsNextGen() {
+		if err := bootstrapSchemas(store); err != nil {
 			return nil, err
 		}
 	}
@@ -4156,7 +4176,7 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() *util.ProcessInfo {
+func (s *session) ShowProcess() *sessmgr.ProcessInfo {
 	return s.processInfo.Load()
 }
 
@@ -4861,8 +4881,8 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	return true
 }
 
-// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s sessionapi.Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
+func RemoveLockDDLJobs(s sessionapi.Session, jobs map[int64]*mdldef.JobMDL, printLog bool) {
 	sv := s.GetSessionVars()
 	if sv.InRestrictedSQL {
 		return
@@ -4873,16 +4893,19 @@ func RemoveLockDDLJobs(s sessionapi.Session, job2ver map[int64]int64, job2ids ma
 		return
 	}
 	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
-		for jobID, ver := range job2ver {
-			ids := util.Str2Int64Map(job2ids[jobID])
-			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
-				delete(job2ver, jobID)
+		for jobID, jobMDL := range jobs {
+			if _, ok := jobMDL.TableIDs[tblID.(int64)]; ok && value.(int64) < jobMDL.Ver {
+				delete(jobs, jobID)
 				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
+				logFn := logutil.BgLogger().Debug
 				if elapsedTime > time.Minute && printLog {
-					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
-				} else {
-					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+					logFn = logutil.BgLogger().Info
 				}
+				logFn("old running transaction block DDL",
+					zap.Int64("table ID", tblID.(int64)),
+					zap.Int64("jobID", jobID),
+					zap.Uint64("connection ID", sv.ConnectionID),
+					zap.Duration("elapsed time", elapsedTime))
 			}
 		}
 		return true
