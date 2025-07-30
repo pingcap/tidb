@@ -481,8 +481,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 }
 
 func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
-	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() ||
-		(sctx.GetSessionVars().InRestrictedSQL && !sctx.GetSessionVars().InternalSQLScanUserTable) {
+	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() || sctx.GetSessionVars().InRestrictedSQL {
 		return
 	}
 	logutil.BgLogger().Debug("Start runtime filter generator")
