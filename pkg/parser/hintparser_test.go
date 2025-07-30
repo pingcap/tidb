@@ -143,7 +143,7 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
-			input: "USE_INDEX_MERGE(@qb1 tbl1 x, y, z) IGNORE_INDEX(tbl2@qb2) USE_INDEX(tbl3 PRIMARY) FORCE_INDEX(tbl4@qb3 c1)",
+			input: "USE_INDEX_MERGE(@qb1 tbl1 x, y, z) IGNORE_INDEX(tbl2@qb2) USE_INDEX(tbl3 PRIMARY) FORCE_INDEX(tbl4@qb3 c1) INDEX_LOOKUP_PUSHDOWN(tbl5@qb6 c3)",
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: ast.NewCIStr("USE_INDEX_MERGE"),
@@ -164,6 +164,11 @@ func TestParseHint(t *testing.T) {
 					HintName: ast.NewCIStr("FORCE_INDEX"),
 					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl4"), QBName: ast.NewCIStr("qb3")}},
 					Indexes:  []ast.CIStr{ast.NewCIStr("c1")},
+				},
+				{
+					HintName: ast.NewCIStr("INDEX_LOOKUP_PUSHDOWN"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl5"), QBName: ast.NewCIStr("qb6")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("c3")},
 				},
 			},
 		},
