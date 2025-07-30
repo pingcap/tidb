@@ -468,7 +468,7 @@ type propSpecialJoinConstSolver struct {
 	innerSchema *Schema
 	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
 	// additional `col is not null` condition from column equal conditions. Specifically, this value
-	// is true for LeftOuterSemiJoin, AntiLeftOuterSemiJoin and anti semi join.
+	// is true for LeftOuterSemiJoin, AntiLeftOuterSemiJoin and AntiSemiJoin.
 	nullSensitive bool
 }
 
