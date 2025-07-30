@@ -71,7 +71,7 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	ctx = copHandlerCtx(ctx, req)
 
-	e, err := h.buildDAGExecutor(req)
+	e, err := h.buildDAGExecutor(ctx, req)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
@@ -114,7 +114,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	ctx = copHandlerCtx(ctx, req)
 	logutil.Logger(ctx).Debug("handle coprocessor stream request")
 
-	e, err := h.buildDAGExecutor(req)
+	e, err := h.buildDAGExecutor(ctx, req)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
@@ -155,7 +155,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 	return nil
 }
 
-func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec.Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *coprocessor.Request) (exec.Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -172,11 +172,11 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 				Username: dagReq.User.UserName,
 				Hostname: dagReq.User.UserHost,
 			}
-			authName, authHost, success := pm.MatchIdentity(dagReq.User.UserName, dagReq.User.UserHost, false)
+			authName, authHost, success := pm.MatchIdentity(ctx, dagReq.User.UserName, dagReq.User.UserHost, false)
 			if success && pm.GetAuthWithoutVerification(authName, authHost) {
 				h.sctx.GetSessionVars().User.AuthUsername = authName
 				h.sctx.GetSessionVars().User.AuthHostname = authHost
-				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
+				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(ctx, authName, authHost)
 			}
 		}
 	}

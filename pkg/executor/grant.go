@@ -165,6 +165,10 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	// Check which user is not exist.
 	for _, user := range e.Users {
+		if user.User.CurrentUser {
+			user.User.Username = e.Ctx().GetSessionVars().User.AuthUsername
+			user.User.Hostname = e.Ctx().GetSessionVars().User.AuthHostname
+		}
 		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
@@ -261,8 +265,16 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	isCommit = true
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	users := userSpecToUserList(e.Users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
+}
+
+func userSpecToUserList(specs []*ast.UserSpec) []string {
+	users := make([]string, 0, len(specs))
+	for _, user := range specs {
+		users = append(users, user.User.Username)
+	}
+	return users
 }
 
 func containsNonDynamicPriv(privList []*ast.PrivElem) bool {
