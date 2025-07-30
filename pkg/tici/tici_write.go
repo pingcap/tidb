@@ -66,6 +66,7 @@ type DataWriter struct {
 	schema         string
 	s3Path         string      // stores the S3 URI for this writer
 	ticiFileWriter *FileWriter // handles writing to S3 file for this writer
+	logger         *zap.Logger // logger with table/index fields
 }
 
 // NewTiCIDataWriter creates a new TiCIDataWriter.
@@ -76,12 +77,14 @@ func NewTiCIDataWriter(
 	idxInfo *model.IndexInfo,
 	schema string,
 ) *DataWriter {
-	logger := logutil.Logger(ctx)
-	logger.Info("building TiCIDataWriter",
+	baseLogger := logutil.Logger(ctx)
+	logger := baseLogger.With(
 		zap.Int64("tableID", tblInfo.ID),
 		zap.String("tableName", tblInfo.Name.O),
 		zap.Int64("indexID", idxInfo.ID),
 		zap.String("indexName", idxInfo.Name.O),
+	)
+	logger.Info("building TiCIDataWriter",
 		zap.String("schema", schema),
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
@@ -89,6 +92,7 @@ func NewTiCIDataWriter(
 		tblInfo: tblInfo,
 		idxInfo: idxInfo,
 		schema:  schema,
+		logger:  logger,
 	}
 }
 
@@ -147,15 +151,11 @@ func (w *DataWriter) FetchCloudStoragePath(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) (string, error) {
-	logger := logutil.Logger(ctx)
+	logger := w.logger
 	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
 		logger.Error("failed to create TiCI manager",
 			zap.Error(err),
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
 			zap.Binary("startKey", lowerBound),
 			zap.Binary("endKey", upperBound),
 		)
@@ -171,10 +171,6 @@ func (w *DataWriter) FetchCloudStoragePath(
 	if err != nil {
 		logger.Error("failed to get TiCI cloud storage path",
 			zap.Error(err),
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
 			zap.Binary("startKey", lowerBound),
 			zap.Binary("endKey", upperBound),
 		)
@@ -182,10 +178,6 @@ func (w *DataWriter) FetchCloudStoragePath(
 	}
 	logger.Info("got TiCI cloud storage path",
 		zap.String("s3Path", s3Path),
-		zap.Int64("tableID", w.tblInfo.ID),
-		zap.String("tableName", w.tblInfo.Name.O),
-		zap.Int64("indexID", w.idxInfo.ID),
-		zap.String("indexName", w.idxInfo.Name.O),
 		zap.Binary("startKey", lowerBound),
 		zap.Binary("endKey", upperBound),
 	)
@@ -199,29 +191,18 @@ func (w *DataWriter) MarkPartitionUploadFinished(
 	ctx context.Context,
 	s3PathOpt ...string,
 ) error {
-	logger := logutil.Logger(ctx)
+	logger := w.logger
 	s3Path := w.s3Path
 	if len(s3PathOpt) > 0 && s3PathOpt[0] != "" {
 		s3Path = s3PathOpt[0]
 	}
 	if s3Path == "" {
-		logger.Warn("no s3Path set for MarkPartitionUploadFinished",
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
-		)
+		logger.Warn("no s3Path set for MarkPartitionUploadFinished")
 		return nil // or return an error if s3Path is required
 	}
 	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
-		logger.Error("failed to create TiCI manager",
-			zap.Error(err),
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
-		)
+		logger.Error("failed to create TiCI manager", zap.Error(err))
 		return err
 	}
 	defer func() {
@@ -235,18 +216,10 @@ func (w *DataWriter) MarkPartitionUploadFinished(
 		logger.Error("failed to mark partition upload finished",
 			zap.String("s3Path", s3Path),
 			zap.Error(err),
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
 		)
 	} else {
 		logger.Info("successfully marked partition upload finished",
 			zap.String("s3Path", s3Path),
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
 		)
 	}
 	return err
@@ -256,16 +229,10 @@ func (w *DataWriter) MarkPartitionUploadFinished(
 func (w *DataWriter) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
-	logger := logutil.Logger(ctx)
+	logger := w.logger
 	ticiMgr, err := NewTiCIManager(defaultTiCIHost, defaultTiCIPort)
 	if err != nil {
-		logger.Error("failed to create TiCI manager",
-			zap.Error(err),
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
-		)
+		logger.Error("failed to create TiCI manager", zap.Error(err))
 		return err
 	}
 	defer func() {
@@ -276,13 +243,7 @@ func (w *DataWriter) MarkTableUploadFinished(
 	}()
 	err = ticiMgr.MarkTableUploadFinished(ctx, w.tblInfo.ID, w.idxInfo.ID)
 	if err != nil {
-		logger.Error("failed to mark table upload finished",
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
-			zap.Error(err),
-		)
+		logger.Error("failed to mark table upload finished", zap.Error(err))
 	}
 	return err
 }
@@ -339,15 +300,11 @@ func (w *DataWriter) WritePairs(ctx context.Context, pairs []*sst.Pair, count in
 // CloseFileWriter closes the underlying TICIFileWriter if it is initialized.
 // It logs before closing, and flushes the writer before return.
 func (w *DataWriter) CloseFileWriter(ctx context.Context) error {
-	logger := logutil.Logger(ctx)
+	logger := w.logger
 	if w.ticiFileWriter == nil {
 		return nil
 	}
 	logger.Info("closing TICIFileWriter",
-		zap.Int64("tableID", w.tblInfo.ID),
-		zap.String("tableName", w.tblInfo.Name.O),
-		zap.Int64("indexID", w.idxInfo.ID),
-		zap.String("indexName", w.idxInfo.Name.O),
 		zap.String("s3Path", w.s3Path),
 	)
 	// If there is a flush method, call it here. Otherwise, just close.
@@ -382,15 +339,10 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, cou
 	if !g.writable.Load() {
 		return nil
 	}
-	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		if err := w.WritePairs(ctx, pairs, count); err != nil {
-			logger.Error("failed to write pairs to TICIDataWriter",
+			w.logger.Error("failed to write pairs to TICIDataWriter",
 				zap.Error(err),
-				zap.Int64("tableID", w.tblInfo.ID),
-				zap.String("tableName", w.tblInfo.Name.O),
-				zap.Int64("indexID", w.idxInfo.ID),
-				zap.String("indexName", w.idxInfo.Name.O),
 			)
 			return err
 		}
@@ -458,7 +410,7 @@ func SetTiCIDataWriterGroupWritable(
 }
 
 // InitTICIFileWriters initializes the ticiFileWriter for all writers in the group.
-// cloudStoreURI is the S3 URI, logger is taken from context.
+// cloudStoreURI is the S3 URI, logger is taken from DataWriters.
 func (g *DataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
 	if !g.writable.Load() {
 		return nil
@@ -467,12 +419,8 @@ func (g *DataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
 	for _, w := range g.writers {
 		err := w.InitTICIFileWriter(ctx, logger)
 		if err != nil {
-			logger.Error("failed to initialize TICIFileWriter",
+			w.logger.Error("failed to initialize TICIFileWriter",
 				zap.Error(err),
-				zap.Int64("tableID", w.tblInfo.ID),
-				zap.String("tableName", w.tblInfo.Name.O),
-				zap.Int64("indexID", w.idxInfo.ID),
-				zap.String("indexName", w.idxInfo.Name.O),
 				zap.String("cloudStoreURI", w.s3Path),
 			)
 			return err
@@ -519,17 +467,11 @@ func (g *DataWriterGroup) MarkPartitionUploadFinished(
 func (g *DataWriterGroup) MarkTableUploadFinished(
 	ctx context.Context,
 ) error {
-	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		if err := w.MarkTableUploadFinished(ctx); err != nil {
 			return err
 		}
-		logger.Info("successfully marked table upload finished for TICIDataWriter",
-			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
-		)
+		w.logger.Info("successfully marked table upload finished for TICIDataWriter")
 	}
 	return nil
 }
@@ -539,24 +481,15 @@ func (g *DataWriterGroup) CloseFileWriters(ctx context.Context) error {
 	if !g.writable.Load() {
 		return nil
 	}
-	logger := logutil.Logger(ctx)
 	for _, w := range g.writers {
 		if err := w.CloseFileWriter(ctx); err != nil {
-			logger.Error("failed to close TICIFileWriter",
+			w.logger.Error("failed to close TICIFileWriter",
 				zap.Error(err),
-				zap.Int64("tableID", w.tblInfo.ID),
-				zap.String("tableName", w.tblInfo.Name.O),
-				zap.Int64("indexID", w.idxInfo.ID),
-				zap.String("indexName", w.idxInfo.Name.O),
 			)
 			return err
 		}
-		logger.Info("successfully closed TICIFileWriter in group",
+		w.logger.Info("successfully closed TICIFileWriter in group",
 			zap.Int64("tableID", w.tblInfo.ID),
-			zap.String("tableName", w.tblInfo.Name.O),
-			zap.Int64("indexID", w.idxInfo.ID),
-			zap.String("indexName", w.idxInfo.Name.O),
-			zap.String("s3Path", w.s3Path),
 		)
 	}
 	return nil

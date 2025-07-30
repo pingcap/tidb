@@ -85,9 +85,6 @@ func NewTICIFileWriter(ctx context.Context, store storage.ExternalStorage, dataF
 		dataFile:   dataFile,
 		dataWriter: dataWriter,
 		kvBuffer:   p.NewBuffer(membuf.WithBufferMemoryLimit(ticiFileWriterMemSizeLimit)),
-		closed:     false,
-		totalSize:  0,
-		totalCnt:   0,
 		logger:     logger,
 		partSize:   partSize,
 	}, nil

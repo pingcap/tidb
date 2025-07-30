@@ -17,6 +17,7 @@ package tici
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -41,7 +42,7 @@ func NewTiCIManager(host, port string) (*ManagerCtx, error) {
 
 // defaultNewTiCIManager is the default implementation of NewTiCIManager.
 func defaultNewTiCIManager(ticiHost string, ticiPort string) (*ManagerCtx, error) {
-	conn, err := grpc.NewClient(fmt.Sprintf("%s:%s", ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(net.JoinHostPort(ticiHost, ticiPort), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
