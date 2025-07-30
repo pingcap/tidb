@@ -17,12 +17,12 @@
 # It need TCP ports:
 # - pd: 2379, 2380, 2381, 2383, 2384
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
-# - tikv-worker: 1900
+# - tikv-worker: 19000
 function main() {
     local make_test_task="$1"
 
     local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
-    "${self_dir}/bootstrap-test-with-cluster" make ${make_test_task}
+    "${self_dir}/bootstrap-test-with-cluster.sh" make ${make_test_task}
 }
 
 main "$@"

@@ -22,7 +22,7 @@ function main() {
     local suite_timeout="${2:-40m}"
 
     local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
-    "${self_dir}/bootstrap-test-with-cluster" go test ./tests/realtikvtest/${test_suite} -v --tags=intest -with-real-tikv -timeout ${suite_timeout}
+    "${self_dir}/bootstrap-test-with-cluster.sh" go test ./tests/realtikvtest/${test_suite} -v --tags=intest -with-real-tikv -timeout ${suite_timeout}
 }
 
 main "$@"

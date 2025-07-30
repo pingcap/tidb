@@ -17,7 +17,7 @@
 # It need TCP ports:
 # - pd: 2379, 2380, 2381, 2383, 2384
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
-# - tikv-worker: 20001
+# - tikv-worker: 19000
 function main() {
     local data_base_dir=$(mktemp -d)
     mkdir -pv ${data_base_dir}/pd-{0,1,2}/data
