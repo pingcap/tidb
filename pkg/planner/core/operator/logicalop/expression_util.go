@@ -31,11 +31,19 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	for _, cond := range conds {
-		if expression.IsConstNull(cond) || isConstFalse(sc, cond) {
+		if expression.IsConstNull(cond) {
 			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 			dual.SetSchema(p.Schema())
 			return dual
 		}
+	}
+	if len(conds) != 1 {
+		return nil
+	}
+	if isConstFalse(sc, conds[0]) {
+		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
+		dual.SetSchema(p.Schema())
+		return dual
 	}
 	return nil
 }
