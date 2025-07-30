@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -39,7 +40,8 @@ import (
 )
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
-func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, corrResult float64, err error) {
+// idxCols used when index statistics are invalid, because coll may not have index info, can be nil whenever index statistics are valid.
+func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range, idxCols []*expression.Column) (result float64, corrResult float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -61,16 +63,26 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
+	corrResult = float64(0)
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
-		colsLen := -1
-		if idx != nil && idx.Info.Unique {
-			colsLen = len(idx.Info.Columns)
+		if hasColumnStats(sctx, coll, idxCols) {
+			// If it is a single column index and there are column stats, use column estimation instead.
+			if len(idxCols) == 1 {
+				result, err = GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
+			} else {
+				result, corrResult, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
+			}
+		} else {
+			colsLen := -1
+			if idx != nil && idx.Info.Unique {
+				colsLen = len(idx.Info.Columns)
+			}
+			result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
+			if err == nil && sc.EnableOptimizerCETrace && idx != nil {
+				ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
+			}
 		}
-		result, err = getPseudoRowCountByIndexRanges(sc.TypeCtx(), indexRanges, float64(coll.RealtimeCount), colsLen)
-		if err == nil && sc.EnableOptimizerCETrace && idx != nil {
-			ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats-Pseudo", uint64(result))
-		}
-		return result, 0, err
+		return result, corrResult, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -80,8 +92,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 			"Increase Factor", idx.GetIncreaseFactor(realtimeCnt),
 		)
 	}
-	corrResult = float64(0)
-	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
+	if idx != nil && idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
 		result, corrResult, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
@@ -183,7 +194,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			// prefer index stats over column stats
 			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
+				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang}, nil)
 			} else {
 				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
 			}
@@ -523,7 +534,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 					continue
 				}
 				foundStats = true
-				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
+				count, _, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
 				if err == nil {
 					break
 				}
@@ -623,4 +634,14 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// hasColumnStats checks if we have collected stats on any of the given columns.
+func hasColumnStats(sctx planctx.PlanContext, coll *statistics.HistColl, idxCols []*expression.Column) bool {
+	for i := range idxCols {
+		if !statistics.ColumnStatsIsInvalid(coll.GetCol(idxCols[i].UniqueID), sctx, coll, idxCols[i].UniqueID) {
+			return true
+		}
+	}
+	return false
 }
