@@ -18,6 +18,9 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = "/tmp/tidb-{Port}.sock"
 
+# The Keyspace Name of the tidb
+keyspace-name = "SYSTEM"
+
 # Schema lease duration, very dangerous to change only if you know what you do.
 lease = "45s"
 
