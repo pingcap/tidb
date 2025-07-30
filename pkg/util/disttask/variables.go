@@ -22,11 +22,7 @@ import (
 // IsNextGenInvisibleSysVar returns true if the sysvar needs to be hidden.
 func IsNextGenInvisibleSysVar(varNameInLower string) bool {
 	if keyspace.IsRunningOnUser() {
-		switch varNameInLower {
-		case vardef.TiDBMaxDistTaskNodes:
-			return true
-		}
-		return false
+		return varNameInLower == vardef.TiDBMaxDistTaskNodes
 	}
 	return false
 }
