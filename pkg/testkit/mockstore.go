@@ -72,7 +72,7 @@ func WithCascades(on bool) TestOption {
 }
 
 // RunTestUnderCascades run the basic test body among two different planner mode.
-func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string)) {
+func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
@@ -89,7 +89,7 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 	// iter the options
 	for _, val := range options {
 		t.Run(val.name, func(t *testing.T) {
-			store := CreateMockStore(t)
+			store := CreateMockStore(t, opts...)
 			tk := NewTestKit(t, store)
 			val.opt(tk)
 			testFunc(t, tk, val.name, funcName)
@@ -98,7 +98,7 @@ func RunTestUnderCascades(t *testing.T, testFunc func(t *testing.T, tk *TestKit,
 }
 
 // RunTestUnderCascadesWithDomain run the basic test body among two different planner mode.
-func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
+func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string), opts ...mockstore.MockTiKVStoreOption) {
 	options := []struct {
 		name string
 		opt  TestOption
@@ -115,7 +115,33 @@ func RunTestUnderCascadesWithDomain(t *testing.T, testFunc func(t *testing.T, tk
 	// iter the options
 	for _, val := range options {
 		t.Run(val.name, func(t *testing.T) {
-			store, do := CreateMockStoreAndDomain(t)
+			store, do := CreateMockStoreAndDomain(t, opts...)
+			tk := NewTestKit(t, store)
+			val.opt(tk)
+			testFunc(t, tk, do, val.name, funcName)
+		})
+	}
+}
+
+// RunTestUnderCascadesAndDomainWithSchemaLease runs the basic test body among two different planner modes. It can be used to set schema lease and store options.
+func RunTestUnderCascadesAndDomainWithSchemaLease(t *testing.T, lease time.Duration, opts []mockstore.MockTiKVStoreOption, testFunc func(t *testing.T, tk *TestKit, domain *domain.Domain, cascades, caller string)) {
+	options := []struct {
+		name string
+		opt  TestOption
+	}{
+		{"off", WithCascades(false)},
+		{"on", WithCascades(true)},
+	}
+	// get func name
+	pc, _, _, ok := runtime.Caller(1)
+	require.True(t, ok)
+	details := runtime.FuncForPC(pc)
+	funcNameIdx := strings.LastIndex(details.Name(), ".")
+	funcName := details.Name()[funcNameIdx+1:]
+	// iter the options
+	for _, val := range options {
+		t.Run(val.name, func(t *testing.T) {
+			store, do := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
 			tk := NewTestKit(t, store)
 			val.opt(tk)
 			testFunc(t, tk, do, val.name, funcName)
@@ -380,15 +406,15 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 
 // CreateMockStoreWithSchemaLease return a new mock kv.Storage.
 func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
-	if kerneltype.IsNextGen() {
-		updateConfigForNextgen(t)
-	}
 	store, _ := CreateMockStoreAndDomainWithSchemaLease(t, lease, opts...)
 	return schematracker.UnwrapStorage(store)
 }
 
 // CreateMockStoreAndDomainWithSchemaLease return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	if kerneltype.IsNextGen() {
+		updateConfigForNextgen(t)
+	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom := bootstrap(t, store, lease)

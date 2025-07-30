@@ -228,6 +228,7 @@ func TestDDLColumnOptionRestore(t *testing.T) {
 		{"DEFAULT ''", "DEFAULT _UTF8MB4''"},
 		{"DEFAULT TRUE", "DEFAULT TRUE"},
 		{"DEFAULT FALSE", "DEFAULT FALSE"},
+		{"DEFAULT (colA)", "DEFAULT (`colA`)"},
 		{"UNIQUE KEY", "UNIQUE KEY"},
 		{"on update CURRENT_TIMESTAMP", "ON UPDATE CURRENT_TIMESTAMP()"},
 		{"comment 'hello'", "COMMENT 'hello'"},

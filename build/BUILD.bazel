@@ -153,6 +153,7 @@ nogo(
                "//build/linter/etcdconfig",
                "//build/linter/forcetypeassert",
                "//build/linter/gofmt",
+               "//build/linter/forbidigo",
                "//build/linter/gci",
                "//build/linter/gosec",
                "//build/linter/ineffassign",

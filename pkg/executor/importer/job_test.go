@@ -35,6 +35,7 @@ func jobInfoEqual(t *testing.T, expected, got *importer.JobInfo) {
 	cloned := *expected
 	cloned.CreateTime = got.CreateTime
 	cloned.StartTime = got.StartTime
+	cloned.UpdateTime = got.UpdateTime
 	cloned.EndTime = got.EndTime
 	require.Equal(t, &cloned, got)
 }

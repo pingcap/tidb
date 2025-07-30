@@ -16,6 +16,7 @@ go_library(
         "//pkg/ddl/systable",
         "//pkg/domain/infosync",
         "//pkg/infoschema",
+        "//pkg/infoschema/issyncer/mdldef",
         "//pkg/infoschema/isvalidator",
         "//pkg/infoschema/metrics",
         "//pkg/infoschema/validatorapi",

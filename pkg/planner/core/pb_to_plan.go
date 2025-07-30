@@ -168,7 +168,7 @@ func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := PhysicalProjection{
+	p := physicalop.PhysicalProjection{
 		Exprs: exprs,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
