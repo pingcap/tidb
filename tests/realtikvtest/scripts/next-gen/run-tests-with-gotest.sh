@@ -17,13 +17,13 @@
 # It need TCP ports:
 # - pd: 2379, 2380, 2381, 2383, 2384
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
-# - tikv-worker: 1900
+# - tikv-worker: 19000
 function main() {
     local test_suite="$1"
     local suite_timeout="${2:-40m}"
 
     local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
-    "${self_dir}/bootstrap-test-with-cluster" go test ./tests/realtikvtest/${test_suite} -v --tags=intest -with-real-tikv -timeout ${suite_timeout}
+    "${self_dir}/bootstrap-test-with-cluster.sh" go test ./tests/realtikvtest/${test_suite} -v --tags=intest,nextgen -with-real-tikv -timeout ${suite_timeout}
 }
 
 main "$@"
