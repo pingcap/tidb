@@ -16,6 +16,7 @@ package tici
 
 import (
 	"context"
+	"path"
 	"strings"
 	"sync/atomic"
 
@@ -34,7 +35,8 @@ const (
 	defaultTiCIHost = "0.0.0.0"
 	defaultTiCIPort = "50061"
 
-	// IndexEngineID is the engine ID for index engine, referring to common.IndexEngineID.
+	// Temp redefinition to avoid import cycle; will revert to common.IndexEngineID
+	// after moving tici-dependent code out of infosync.
 	IndexEngineID = -1
 )
 
@@ -123,7 +125,7 @@ func (w *DataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Logger)
 
 	// Extract the filename and reconstruct the base URI path
 	filename := segments[len(segments)-1]
-	u.Path = "/" + strings.Join(segments[:len(segments)-1], "/") // strip the filename
+	u.Path = "/" + path.Join(segments[:len(segments)-1]...) // strip the filename
 	baseURI := u.String()
 
 	storeBackend, err := storage.ParseBackend(baseURI, nil)
