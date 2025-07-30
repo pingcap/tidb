@@ -230,8 +230,10 @@ func getModifyColumnInfo(
 		oldCol = model.FindColumnInfoByID(tblInfo.Columns, args.OldColumnID)
 	} else {
 		oldCol = model.FindColumnInfo(tblInfo.Columns, args.OldColumnName.L)
-		args.OldColumnID = oldCol.ID
-		logutil.DDLLogger().Info("init old column id", zap.String("oldColumnName", args.OldColumnName.L), zap.Int64("oldColumnID", oldCol.ID))
+		if oldCol != nil {
+			args.OldColumnID = oldCol.ID
+			logutil.DDLLogger().Info("init old column id", zap.String("oldColumnName", args.OldColumnName.L), zap.Int64("oldColumnID", oldCol.ID))
+		}
 	}
 	if oldCol == nil {
 		job.State = model.JobStateCancelled

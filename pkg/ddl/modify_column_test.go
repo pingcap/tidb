@@ -272,6 +272,9 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 		if job.State != model.JobStateRunning {
 			return
 		}
+		if job.SchemaState == model.StatePublic {
+			return
+		}
 		// now c2 has PreventNullInsertFlag, an error is expected.
 		checkErr = tk2.ExecToErr("insert into t1 values ()")
 	})
