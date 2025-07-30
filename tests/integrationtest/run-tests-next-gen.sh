@@ -25,7 +25,13 @@ function main() {
     local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
     export TIDB_TEST_STORE_NAME="tikv"
     export TIKV_PATH="127.0.0.1:2379"
-    "${self_dir}/../realtikvtest/scripts/next-gen/bootstrap-test-with-cluster.sh" "${self_dir}/run-tests.sh" "$@"
+
+    if [ -d bin ]; then
+        ln -s "$(realpath bin)" "${self_dir}/bin"
+    fi
+    pushd "${self_dir}"
+        ../realtikvtest/scripts/next-gen/bootstrap-test-with-cluster.sh ./run-tests.sh "$@"
+    popd
 }
 
 main "$@"
