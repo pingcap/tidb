@@ -447,6 +447,18 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
 	}
+
+	if local.ticiWriteGroup != nil {
+		// Call FetchCloudStoragePath for all tici writers in the group.
+		if err = local.ticiWriteGroup.FetchCloudStoragePath(ctx, firstKey, lastKey); err != nil {
+			return nil, errors.Annotate(err, "ticiWriteGroup.FetchCloudStoragePath failed")
+		}
+		// Initialize TICI file writers for each full-text index in the group.
+		if err = local.ticiWriteGroup.InitTICIFileWriters(ctx); err != nil {
+			return nil, errors.Annotate(err, "ticiWriteGroup.InitTICIFileWriters failed")
+		}
+	}
+
 	dataCommitTS := j.ingestData.GetTS()
 	intest.AssertFunc(func() bool {
 		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
@@ -466,6 +478,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,
 		},
+	}
+
+	if local.ticiWriteGroup != nil {
+		// Write file headers for all tici writers in the group.
+		if err = local.ticiWriteGroup.WriteHeader(ctx, dataCommitTS); err != nil {
+			return nil, errors.Annotate(err, "ticiWriteGroup.WriteHeader failed")
+		}
 	}
 
 	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
@@ -533,9 +552,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
-
 		if local.collector != nil {
 			local.collector.Add(size, int64(count))
+		}
+
+		// If TiCI is enabled, write the batch to all TiCI writers.
+		if local.ticiWriteGroup != nil {
+			if err := local.ticiWriteGroup.WritePairs(ctx, pairs, count); err != nil {
+				return errors.Annotate(err, "ticiWriteGroup.WritePairs failed")
+			}
 		}
 
 		failpoint.Inject("afterFlushKVs", func() {
@@ -619,6 +644,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
 			tidblogutil.Logger(ctx).Debug("get metas after write kv stream to tikv", zap.Reflect("metas", leaderPeerMetas))
+		}
+	}
+
+	if local.ticiWriteGroup != nil {
+		if err := local.ticiWriteGroup.CloseFileWriters(ctx); err != nil {
+			return nil, errors.Annotate(err, "ticiWriteGroup.CloseFileWriters failed")
+		}
+		if err := local.ticiWriteGroup.MarkPartitionUploadFinished(ctx); err != nil {
+			return nil, errors.Annotate(err, "ticiWriteGroup.MarkPartitionUploadFinished failed")
 		}
 	}
 

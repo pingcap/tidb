@@ -2336,6 +2336,7 @@ func TestExternalEngine(t *testing.T) {
 		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
+	engineID := int32(common.IndexEngineID) // dummy engine ID, marked as an index engine
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
@@ -2368,7 +2369,7 @@ func TestExternalEngine(t *testing.T) {
 			engineUUID,
 		)
 		require.NoError(t, err2)
-		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		err2 = local.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
 		close(done)
 	}()

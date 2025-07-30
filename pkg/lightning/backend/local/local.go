@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -532,6 +533,8 @@ type Backend struct {
 	logger        log.Logger
 
 	nextgenHTTPCli *http.Client
+
+	ticiWriteGroup *tici.DataWriterGroup // TiCI writer group
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -1146,6 +1149,7 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 func (local *Backend) ImportEngine(
 	ctx context.Context,
 	engineUUID uuid.UUID,
+	engineID int32,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
 	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
@@ -1174,6 +1178,11 @@ func (local *Backend) ImportEngine(
 		localEngine.regionSplitKeyCnt = regionSplitKeys
 		e = localEngine
 	}
+
+	if local.ticiWriteGroup != nil {
+		tici.SetTiCIDataWriterGroupWritable(ctx, local.ticiWriteGroup, engineUUID, engineID)
+	}
+
 	lfTotalSize, lfLength := e.KVStatistics()
 	if lfTotalSize == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
@@ -1455,7 +1464,17 @@ func (local *Backend) doImport(
 	if err != nil && !common.IsContextCanceledError(err) {
 		tidblogutil.Logger(ctx).Error("do import meets error", zap.Error(err))
 	}
-	return err
+
+	if err != nil {
+		return err
+	}
+
+	if local.ticiWriteGroup != nil {
+		// If the import is done, we can close the write group.
+		return local.ticiWriteGroup.MarkTableUploadFinished(ctx)
+	}
+
+	return nil
 }
 
 func (local *Backend) newRegionJobWorker(
@@ -1750,4 +1769,9 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		tidblogutil.Logger(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
+}
+
+// InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) {
+	local.ticiWriteGroup = tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
 }
