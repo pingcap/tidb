@@ -248,7 +248,7 @@ func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, co
 
 // getPseudoRowCountWithPartialStats calculates the row count if there are no statistics on the index, but there are column stats available.
 func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
-	tableRowCount float64, idxCols []*expression.Column) (float64, float64, error) {
+	tableRowCount float64, idxCols []*expression.Column) (totalCount float64, corrCount float64, err error) {
 	if tableRowCount == 0 {
 		return 0, 0, nil
 	}
@@ -262,10 +262,9 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	var (
 		count float64
 		colID int64
-		err   error
 	)
-	totalCount := float64(0)
-	corrCount := float64(0)
+	totalCount = float64(0)
+	corrCount = float64(0)
 	for _, indexRange := range indexRanges {
 		selectivity := float64(1.0)
 		corrSelectivity := float64(1.0)
