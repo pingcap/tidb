@@ -890,6 +890,7 @@ func NewParquetParser(
 	if readerMemoryLimiter != nil {
 		readerMemoryLimiter.Acquire(memoryUsage)
 	}
+	meta.UseStreaming = true
 	logutil.Logger(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),

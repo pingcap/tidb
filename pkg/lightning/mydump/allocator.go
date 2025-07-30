@@ -107,22 +107,24 @@ func ReleaseMemoryForParquet() {
 // AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
 // It's used for IMPORT INTO.
 func AdjustEncodeThreadCnt(
-	memoryUsageStream, memoryUsageFull, threadCnt int,
+	memoryUsageStream, _, threadCnt int,
 ) (memoryUsage, adjustCnt int, useStream bool) {
-	memTotal, err := tidbmemory.MemTotal()
-	if err != nil {
-		return memoryUsage, threadCnt, true
-	}
+	return memoryUsageStream, threadCnt, true
 
-	streamThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageStream, threadCnt), 1)
-	fullThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageFull, threadCnt), 1)
+	// memTotal, err := tidbmemory.MemTotal()
+	// if err != nil {
+	// 	return memoryUsage, threadCnt, true
+	// }
 
-	// TODO(joechenrh): use a more proper way to choose mode.
-	if streamThreadCnt == fullThreadCnt {
-		return memoryUsageFull, fullThreadCnt, false
-	}
+	// streamThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageStream, threadCnt), 1)
+	// fullThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageFull, threadCnt), 1)
 
-	return memoryUsageStream, streamThreadCnt, true
+	// // TODO(joechenrh): use a more proper way to choose mode.
+	// if streamThreadCnt == fullThreadCnt {
+	// 	return memoryUsageFull, fullThreadCnt, false
+	// }
+
+	// return memoryUsageStream, streamThreadCnt, true
 }
 
 func init() {
