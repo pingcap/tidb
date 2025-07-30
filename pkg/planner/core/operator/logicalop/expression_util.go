@@ -31,7 +31,7 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	for _, cond := range conds {
-		if expression.IsConstNull(cond) || isConstFalse(sc, exprCtx, cond) {
+		if expression.IsConstNull(cond) || isConstFalse(sc, cond) {
 			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 			dual.SetSchema(p.Schema())
 			return dual
@@ -40,23 +40,10 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	if len(conds) != 1 {
 		return nil
 	}
-
-	con, ok := conds[0].(*expression.Constant)
-	if !ok {
-		return nil
-	}
-	if expression.MaybeOverOptimized4PlanCache(exprCtx, con) {
-		return nil
-	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
-		dual.SetSchema(p.Schema())
-		return dual
-	}
 	return nil
 }
 
-func isConstFalse(sc *stmtctx.StatementContext, exprCtx expression.BuildContext, cond expression.Expression) bool {
+func isConstFalse(sc *stmtctx.StatementContext, cond expression.Expression) bool {
 	con, ok := cond.(*expression.Constant)
 	if !ok {
 		return false
