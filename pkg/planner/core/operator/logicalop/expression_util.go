@@ -17,6 +17,7 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 )
 
 // Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
@@ -25,11 +26,12 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return nil
 	}
 	exprCtx := p.SCtx().GetExprCtx()
+	if expression.MaybeOverOptimized4PlanCache(exprCtx, conds...) {
+		return nil
+	}
+	sc := p.SCtx().GetSessionVars().StmtCtx
 	for _, cond := range conds {
-		if expression.IsConstNull(cond) {
-			if expression.MaybeOverOptimized4PlanCache(exprCtx, conds...) {
-				return nil
-			}
+		if expression.IsConstNull(cond) || isConstFalse(sc, exprCtx, cond) {
 			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 			dual.SetSchema(p.Schema())
 			return dual
@@ -43,7 +45,6 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	if !ok {
 		return nil
 	}
-	sc := p.SCtx().GetSessionVars().StmtCtx
 	if expression.MaybeOverOptimized4PlanCache(exprCtx, con) {
 		return nil
 	}
@@ -53,4 +54,16 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return dual
 	}
 	return nil
+}
+
+func isConstFalse(sc *stmtctx.StatementContext, exprCtx expression.BuildContext, cond expression.Expression) bool {
+	con, ok := cond.(*expression.Constant)
+	if !ok {
+		return false
+	}
+	if expression.MaybeOverOptimized4PlanCache(exprCtx, con) {
+		return false
+	}
+	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
+	return (err == nil && isTrue == 0) || con.Value.IsNull()
 }
