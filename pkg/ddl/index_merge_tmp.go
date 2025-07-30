@@ -276,8 +276,13 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 		}
 		break
 	}
+<<<<<<< HEAD
 	metrics.DDLSetTempIndexScan(w.table.Meta().ID, uint64(taskCtx.scanCount))
 	metrics.DDLSetTempIndexMerge(w.table.Meta().ID, uint64(taskCtx.addedCount))
+=======
+
+	metrics.DDLSetTempIndexScanAndMerge(w.table.Meta().ID, uint64(taskCtx.scanCount), uint64(taskCtx.addedCount))
+>>>>>>> 69738701ab7 (ddl/ingest: record merge temp index rate and refine metrics (#62586))
 	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionMerging != nil {
@@ -288,7 +293,8 @@ func (w *mergeIndexWorker) BackfillData(ctx context.Context, taskRange reorgBack
 	return
 }
 
-func (*mergeIndexWorker) AddMetricInfo(float64) {
+func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
+	w.metricCounter.Add(cnt)
 }
 
 func (*mergeIndexWorker) String() string {
