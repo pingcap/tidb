@@ -63,10 +63,10 @@ func startStubMetaService(t *testing.T) (cleanup func(), dialOpt grpc.DialOption
 	return cleanup, dialOpt, "bufnet" // “target” can be any string
 }
 
-func newTestTiCIDataWriter() *DataWriter {
+func newTestTiCIDataWriter(t *testing.T) *DataWriter {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{}}
 	idx := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx")}
-	logger := zaptest.NewLogger(nil).With(
+	logger := zaptest.NewLogger(t).With(
 		zap.Int64("tableID", tbl.ID),
 		zap.String("tableName", tbl.Name.O),
 		zap.Int64("indexID", idx.ID),
@@ -98,7 +98,7 @@ func newStubTICIFileWriter(t *testing.T, failWrite bool) (*FileWriter, *mockExte
 }
 
 func TestDataWriterWriteHeader(t *testing.T) {
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
 	w.ticiFileWriter = mockFileWriter
 	err := w.WriteHeader(context.Background(), uint64(time.Now().UnixNano()))
@@ -107,14 +107,14 @@ func TestDataWriterWriteHeader(t *testing.T) {
 }
 
 func TestDataWriterWriteHeader_NotInit(t *testing.T) {
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 	err := w.WriteHeader(context.Background(), 1)
 	assert.Error(t, err)
 }
 
 func TestDataWriterWriteHeader_ProtoFail(t *testing.T) {
 	// Simulate a table/index that cannot be marshaled (e.g., nil)
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 	w.tblInfo = nil
 	w.idxInfo = nil
 	w.logger = zaptest.NewLogger(t) // ensure logger is not nil
@@ -125,7 +125,7 @@ func TestDataWriterWriteHeader_ProtoFail(t *testing.T) {
 }
 
 func TestWritePairs(t *testing.T) {
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 
 	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
 	w.ticiFileWriter = mockFileWriter
@@ -142,7 +142,7 @@ func TestWritePairs(t *testing.T) {
 }
 
 func TestWritePairs_WriteRowFail(t *testing.T) {
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 
 	mockFileWriter, _ := newStubTICIFileWriter(t, true)
 	w.ticiFileWriter = mockFileWriter
@@ -155,7 +155,7 @@ func TestWritePairs_WriteRowFail(t *testing.T) {
 }
 
 func TestCloseFileWriter(t *testing.T) {
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
 	w.ticiFileWriter = mockFileWriter
 	err := w.CloseFileWriter(context.Background())
@@ -164,13 +164,13 @@ func TestCloseFileWriter(t *testing.T) {
 }
 
 func TestCloseFileWriter_NotInit(t *testing.T) {
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 	err := w.CloseFileWriter(context.Background())
 	assert.NoError(t, err)
 }
 
 func TestCloseFileWriter_CloseFail(t *testing.T) {
-	w := newTestTiCIDataWriter()
+	w := newTestTiCIDataWriter(t)
 	mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
 	w.ticiFileWriter = mockFileWriter
 	mockWriter.fail = true
