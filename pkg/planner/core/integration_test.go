@@ -1445,9 +1445,8 @@ func TestIssue36194(t *testing.T) {
 		"Limit 100.00 root  offset:0, count:100",
 		"└─TableReader 100.00 root  MppVersion: 3, data:ExchangeSender",
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
-		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
-		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+		"    └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
+		"      └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
 }
 
 func TestGetFormatPushDownToTiFlash(t *testing.T) {
