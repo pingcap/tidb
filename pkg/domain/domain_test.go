@@ -157,7 +157,7 @@ func TestInfo(t *testing.T) {
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
 	// Test for RemoveServerInfo.
-	dom.info.RemoveServerInfo()
+	dom.info.ServerInfoSyncer().RemoveServerInfo()
 	infos, err = infosync.GetAllServerInfo(goCtx)
 	require.NoError(t, err)
 	require.Len(t, infos, 0)
