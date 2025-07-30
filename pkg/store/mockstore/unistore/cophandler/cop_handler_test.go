@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/badger"
@@ -166,15 +167,7 @@ func convertToPrefixNext(key []byte) []byte {
 // return whether these two keys are equal.
 func isPrefixNext(key []byte, expected []byte) bool {
 	key = convertToPrefixNext(key)
-	if len(key) != len(expected) {
-		return false
-	}
-	for i := range key {
-		if key[i] != expected[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(key, expected)
 }
 
 // return a dag context according to dagReq and key ranges.

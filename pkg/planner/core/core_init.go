@@ -91,6 +91,11 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalProjection = getPlanCostVer14PhysicalProjection
 	utilfuncp.GetPlanCostVer24PhysicalProjection = getPlanCostVer24PhysicalProjection
 	utilfuncp.ResolveIndices4PhysicalProjection = resolveIndices4PhysicalProjection
+	// for physical index join
+	utilfuncp.GetCost4PhysicalIndexJoin = getCost4PhysicalIndexJoin
+	utilfuncp.GetPlanCostVer14PhysicalIndexJoin = getPlanCostVer14PhysicalIndexJoin
+	utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin = getIndexJoinCostVer24PhysicalIndexJoin
+	utilfuncp.Attach2Task4PhysicalIndexJoin = attach2Task4PhysicalIndexJoin
 	// for physical aggregation.
 	utilfuncp.InitForHash = initForHash
 	utilfuncp.InitForStream = initForStream
@@ -110,6 +115,7 @@ func init() {
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
 	utilfuncp.CloneColumnsForPlanCache = cloneColumnsForPlanCache
+	utilfuncp.CloneConstantsForPlanCache = cloneConstantsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

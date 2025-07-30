@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -619,8 +620,8 @@ func GetLiveExecIDs(ctx context.Context) ([]string, error) {
 	return execIDs, nil
 }
 
-func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
-	var serverInfos map[string]*infosync.ServerInfo
+func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*serverinfo.ServerInfo, err error) {
+	var serverInfos map[string]*serverinfo.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
 	if intest.InTest && !etcd {
 		serverInfos = infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
@@ -634,7 +635,7 @@ func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 		return nil, errors.New("not found instance")
 	}
 
-	serverNodes = make([]*infosync.ServerInfo, 0, len(serverInfos))
+	serverNodes = make([]*serverinfo.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
 		serverNodes = append(serverNodes, serverInfo)
 	}

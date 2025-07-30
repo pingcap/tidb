@@ -27,18 +27,16 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // ExplainInfo implements Plan interface.
@@ -458,78 +456,13 @@ func (p *PhysicalExpand) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexJoin) ExplainInfo() string {
-	return p.explainInfo(false, false)
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
-	return p.explainInfo(false, true)
-}
-
-func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
-	sortedExplainExpressionList := expression.SortedExplainExpressionList
-	if normalized {
-		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
-			return expression.SortedExplainNormalizedExpressionList(exprs)
-		}
-	}
-
-	exprCtx := p.SCtx().GetExprCtx()
-	evalCtx := exprCtx.GetEvalCtx()
-	buffer := new(strings.Builder)
-	buffer.WriteString(p.JoinType.String())
-	buffer.WriteString(", inner:")
-	if normalized {
-		buffer.WriteString(p.Children()[p.InnerChildIdx].TP())
-	} else {
-		buffer.WriteString(p.Children()[p.InnerChildIdx].ExplainID().String())
-	}
-	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
-	if len(p.OuterJoinKeys) > 0 {
-		buffer.WriteString(", outer key:")
-		buffer.Write(expression.ExplainColumnList(evalCtx, p.OuterJoinKeys))
-	}
-	if len(p.InnerJoinKeys) > 0 {
-		buffer.WriteString(", inner key:")
-		buffer.Write(expression.ExplainColumnList(evalCtx, p.InnerJoinKeys))
-	}
-
-	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
-		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
-		for i := range p.OuterHashKeys {
-			expr, err := expression.NewFunctionBase(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
-			if err != nil {
-				logutil.BgLogger().Warn("fail to NewFunctionBase", zap.Error(err))
-			}
-			exprs = append(exprs, expr)
-		}
-		buffer.WriteString(", equal cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, exprs))
-	}
-	if len(p.LeftConditions) > 0 {
-		buffer.WriteString(", left cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		buffer.WriteString(", right cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		buffer.WriteString(", other cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true, false)
+	return p.PhysicalIndexJoin.ExplainInfoInternal(false, true)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true, true)
+	return p.PhysicalIndexJoin.ExplainInfoInternal(true, true)
 }
 
 // ExplainInfo implements Plan interface.
@@ -561,7 +494,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
+	physicalop.ExplainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.EqualConditions) > 0 {
 		if normalized {
@@ -633,17 +566,6 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
-func explainJoinLeftSide(buffer *strings.Builder, isInnerJoin bool, normalized bool, leftSide base.PhysicalPlan) {
-	if !isInnerJoin {
-		buffer.WriteString(", left side:")
-		if normalized {
-			buffer.WriteString(leftSide.TP())
-		} else {
-			buffer.WriteString(leftSide.ExplainID().String())
-		}
-	}
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainInfo() string {
 	return p.explainInfo(false)
@@ -660,7 +582,7 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := new(strings.Builder)
 	buffer.WriteString(p.JoinType.String())
-	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
+	physicalop.ExplainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
 			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))
