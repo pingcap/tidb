@@ -45,6 +45,9 @@ func isConstFalse(sc *stmtctx.StatementContext, cond expression.Expression) bool
 	if !ok {
 		return false
 	}
+	if con.Value.IsNull() {
+		return true
+	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
-	return (err == nil && isTrue == 0) || con.Value.IsNull()
+	return (err == nil && isTrue == 0)
 }
