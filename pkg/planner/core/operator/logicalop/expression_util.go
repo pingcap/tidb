@@ -61,9 +61,6 @@ func isConstFalse(sc *stmtctx.StatementContext, exprCtx expression.BuildContext,
 	if !ok {
 		return false
 	}
-	if expression.MaybeOverOptimized4PlanCache(exprCtx, con) {
-		return false
-	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
 	return (err == nil && isTrue == 0) || con.Value.IsNull()
 }
