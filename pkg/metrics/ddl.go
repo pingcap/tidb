@@ -186,6 +186,24 @@ func InitDDLMetrics() {
 	}, []string{LblType})
 }
 
+<<<<<<< HEAD
+=======
+var (
+	// DDLAddOneTempIndexWrite records the number of writes to a temporary index.
+	DDLAddOneTempIndexWrite = func(connID uint64, tableID int64, doubleWrite bool) {}
+	// DDLCommitTempIndexWrite commits the writes to a temporary index.
+	DDLCommitTempIndexWrite = func(connID uint64) {}
+	// DDLRollbackTempIndexWrite rolls back the writes to a temporary index.
+	DDLRollbackTempIndexWrite = func(connID uint64) {}
+	// DDLResetTempIndexWrite resets the write count for a temporary index.
+	DDLResetTempIndexWrite = func(tblID int64) {}
+	// DDLClearTempIndexWrite clears the write count for a temporary index.
+	DDLClearTempIndexWrite = func(connID uint64) {}
+	// DDLSetTempIndexScanAndMerge sets the scan count and merge count for a temporary index.
+	DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {}
+)
+
+>>>>>>> 69738701ab7 (ddl/ingest: record merge temp index rate and refine metrics (#62586))
 // Label constants.
 const (
 	LblAction = "action"
