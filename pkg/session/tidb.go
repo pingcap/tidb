@@ -20,7 +20,6 @@ package session
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -39,6 +38,7 @@ import (
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
@@ -86,9 +86,9 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 		return
 	}
 
-	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
-	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	planReplayerGCLease := GetPlanReplayerGCLease()
+	ddlLease := vardef.GetSchemaLease()
+	statisticLease := vardef.GetStatsLease()
+	planReplayerGCLease := vardef.GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -137,19 +137,6 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-
-	// schemaLease is lease of info schema, we use this to check whether info schema
-	// is valid in SchemaChecker. we also use half of it as info schema reload interval.
-	// Default info schema lease 45s which is init at main, we set it to 1 second
-	// here for tests. you can change it with a proper time, but you must know that
-	// too little may cause badly performance degradation.
-	schemaLease = int64(1 * time.Second)
-
-	// statsLease is the time for reload stats table.
-	statsLease = int64(3 * time.Second)
-
-	// planReplayerGCLease is the time for plan replayer gc.
-	planReplayerGCLease = int64(10 * time.Minute)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -159,31 +146,9 @@ func ResetStoreForWithTiKVTest(store kv.Storage) {
 	store.SetOption(StoreBootstrappedKey, nil)
 }
 
-// SetSchemaLease changes the default schema lease time for DDL.
-// This function is very dangerous, don't use it if you really know what you do.
-// SetSchemaLease only affects not local storage after bootstrapped.
-func SetSchemaLease(lease time.Duration) {
-	atomic.StoreInt64(&schemaLease, int64(lease))
-}
-
-// SetStatsLease changes the default stats lease time for loading stats info.
-func SetStatsLease(lease time.Duration) {
-	atomic.StoreInt64(&statsLease, int64(lease))
-}
-
-// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
-func SetPlanReplayerGCLease(lease time.Duration) {
-	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
-}
-
-// GetPlanReplayerGCLease returns the plan replayer gc lease time.
-func GetPlanReplayerGCLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
-}
-
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
-	SetStatsLease(-1)
+	vardef.SetStatsLease(-1)
 }
 
 // Parse parses a query string to raw ast.StmtNode.

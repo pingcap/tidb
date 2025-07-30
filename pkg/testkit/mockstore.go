@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -219,7 +220,7 @@ func tryMakeImageOnce() (retry bool, err error) {
 		return false, err
 	}
 
-	session.SetSchemaLease(500 * time.Millisecond)
+	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
@@ -373,7 +374,7 @@ func CreateMockStoreAndDomainForKS(t testing.TB, ks string, opts ...mockstore.Mo
 }
 
 func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()
@@ -385,7 +386,7 @@ func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
 	domain.DisableDumpHistoricalStats4Test()

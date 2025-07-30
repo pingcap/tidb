@@ -29,6 +29,13 @@ type schemaCoordinator struct {
 	sessions        map[sessionctx.Context]struct{}
 }
 
+func newSchemaCoordinator() *schemaCoordinator {
+	return &schemaCoordinator{
+		printMDLLogTime: time.Now(),
+		sessions:        make(map[sessionctx.Context]struct{}),
+	}
+}
+
 func (c *schemaCoordinator) StoreInternalSession(se any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
