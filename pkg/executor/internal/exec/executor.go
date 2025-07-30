@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -235,7 +236,7 @@ func newExecutorStats(stmtCtx *stmtctx.StatementContext, id int) executorStats {
 
 	if stmtCtx.RuntimeStatsColl != nil {
 		if id > 0 {
-			e.runtimeStats = stmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(id)
+			e.runtimeStats = stmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(id, true)
 		}
 	}
 
@@ -276,6 +277,8 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 
 // BaseExecutorV2 is a simplified version of `BaseExecutor`, which doesn't contain a full session context
 type BaseExecutorV2 struct {
+	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
+
 	executorMeta
 	executorKillerHandler
 	executorStats
@@ -335,7 +338,7 @@ func (e *BaseExecutorV2) BuildNewBaseExecutorV2(stmtRuntimeStatsColl *execdetail
 	newExecutorStats := e.executorStats
 	if stmtRuntimeStatsColl != nil {
 		if id > 0 {
-			newExecutorStats.runtimeStats = stmtRuntimeStatsColl.GetBasicRuntimeStats(id)
+			newExecutorStats.runtimeStats = stmtRuntimeStatsColl.GetBasicRuntimeStats(id, true)
 		}
 	}
 
@@ -352,6 +355,8 @@ func (e *BaseExecutorV2) BuildNewBaseExecutorV2(stmtRuntimeStatsColl *execdetail
 
 // BaseExecutor holds common information for executors.
 type BaseExecutor struct {
+	_ constructor.Constructor `ctor:"NewBaseExecutor"`
+
 	ctx sessionctx.Context
 
 	BaseExecutorV2
@@ -373,7 +378,7 @@ func (e *BaseExecutor) Ctx() sessionctx.Context {
 // UpdateDeltaForTableID updates the delta info for the table with tableID.
 func (e *BaseExecutor) UpdateDeltaForTableID(id int64) {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	txnCtx.UpdateDeltaForTable(id, 0, 0, nil)
+	txnCtx.UpdateDeltaForTable(id, 0, 0)
 }
 
 // GetSysSession gets a system session context from executor.
@@ -425,6 +430,10 @@ func Open(ctx context.Context, e Executor) (err error) {
 			err = util.GetRecoverError(r)
 		}
 	}()
+	if e.RuntimeStats() != nil {
+		start := time.Now()
+		defer func() { e.RuntimeStats().RecordOpen(time.Since(start)) }()
+	}
 	return e.Open(ctx)
 }
 
@@ -464,5 +473,9 @@ func Close(e Executor) (err error) {
 			err = util.GetRecoverError(r)
 		}
 	}()
+	if e.RuntimeStats() != nil {
+		start := time.Now()
+		defer func() { e.RuntimeStats().RecordClose(time.Since(start)) }()
+	}
 	return e.Close()
 }

@@ -17,6 +17,7 @@ package ingest
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -24,13 +25,22 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
 )
 
+// ResourceTracker has the method of GetUsage.
+type ResourceTracker interface {
+	GetDiskUsage() uint64
+}
+
 // DiskRoot is used to track the disk usage for the lightning backfill process.
 type DiskRoot interface {
+	Add(id int64, tracker ResourceTracker)
+	Remove(id int64)
+	Count() int
+
 	UpdateUsage()
 	ShouldImport() bool
 	UsageInfo() string
@@ -46,17 +56,43 @@ type diskRootImpl struct {
 	capacity uint64
 	used     uint64
 	bcUsed   uint64
-	bcCtx    *litBackendCtxMgr
 	mu       sync.RWMutex
+	items    map[int64]ResourceTracker
 	updating atomic.Bool
 }
 
 // NewDiskRootImpl creates a new DiskRoot.
-func NewDiskRootImpl(path string, bcCtx *litBackendCtxMgr) DiskRoot {
+func NewDiskRootImpl(path string) DiskRoot {
 	return &diskRootImpl{
 		path:  path,
-		bcCtx: bcCtx,
+		items: make(map[int64]ResourceTracker),
 	}
+}
+
+// TrackerCountForTest is only used for test.
+var TrackerCountForTest = atomic.Int64{}
+
+// Add adds a tracker to disk root.
+func (d *diskRootImpl) Add(id int64, tracker ResourceTracker) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.items[id] = tracker
+	TrackerCountForTest.Add(1)
+}
+
+// Remove removes a tracker from disk root.
+func (d *diskRootImpl) Remove(id int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.items, id)
+	TrackerCountForTest.Add(-1)
+}
+
+// Count is only used for test.
+func (d *diskRootImpl) Count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.items)
 }
 
 // UpdateUsage implements DiskRoot interface.
@@ -64,7 +100,6 @@ func (d *diskRootImpl) UpdateUsage() {
 	if !d.updating.CompareAndSwap(false, true) {
 		return
 	}
-	bcUsed := d.bcCtx.TotalDiskUsage()
 	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
@@ -74,7 +109,11 @@ func (d *diskRootImpl) UpdateUsage() {
 	}
 	d.updating.Store(false)
 	d.mu.Lock()
-	d.bcUsed = bcUsed
+	var totalUsage uint64
+	for _, tracker := range d.items {
+		totalUsage += tracker.GetDiskUsage()
+	}
+	d.bcUsed = totalUsage
 	d.capacity = capacity
 	d.used = used
 	d.mu.Unlock()
@@ -84,9 +123,9 @@ func (d *diskRootImpl) UpdateUsage() {
 func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	if d.bcUsed > variable.DDLDiskQuota.Load() {
+	if d.bcUsed > vardef.DDLDiskQuota.Load() {
 		logutil.DDLIngestLogger().Info("disk usage is over quota",
-			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
+			zap.Uint64("quota", vardef.DDLDiskQuota.Load()),
 			zap.String("usage", d.usageInfo()))
 		return true
 	}
@@ -131,6 +170,10 @@ func (d *diskRootImpl) PreCheckUsage() error {
 		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
 			zap.String("sort path", d.path),
 			zap.String("usage", d.usageInfo()))
+		if runtime.GOOS == "darwin" {
+			// darwin's disk is too expensive and we only use it in the development environment. so we ignore the error.
+			return nil
+		}
 		msg := fmt.Sprintf("no enough space in %s", d.path)
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(msg)
 	}
@@ -143,7 +186,7 @@ func (d *diskRootImpl) StartupCheck() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	quota := variable.DDLDiskQuota.Load()
+	quota := vardef.DDLDiskQuota.Load()
 	if sz.Available < quota {
 		return errors.Errorf("the available disk space(%d) in %s should be greater than @@tidb_ddl_disk_quota(%d)",
 			sz.Available, d.path, quota)

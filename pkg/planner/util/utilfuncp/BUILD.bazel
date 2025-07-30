@@ -10,8 +10,9 @@ go_library(
         "//pkg/kv",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
-        "//pkg/planner/util",
+        "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",
         "//pkg/util/execdetails",
+        "@com_github_pingcap_tipb//go-tipb",
     ],
 )

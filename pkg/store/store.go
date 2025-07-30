@@ -15,33 +15,50 @@
 package store
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var stores = make(map[string]kv.Driver)
-var storesLock sync.RWMutex
+var (
+	storeDrivers    = make(map[config.StoreType]kv.Driver)
+	storeDriverLock sync.RWMutex
+
+	// systemStore is the kv.Storage for the SYSTEM keyspace.
+	// which is only initialized and used in nextgen kernel.
+	// for description of SYSTEM keyspace, see keyspace.System.
+	systemStore kv.Storage
+)
 
 // Register registers a kv storage with unique name and its associated Driver.
-func Register(name string, driver kv.Driver) error {
-	storesLock.Lock()
-	defer storesLock.Unlock()
+// TODO: remove this function and use driver directly, TiDB is not a SDK.
+func Register(tp config.StoreType, driver kv.Driver) error {
+	storeDriverLock.Lock()
+	defer storeDriverLock.Unlock()
 
-	name = strings.ToLower(name)
-
-	if _, ok := stores[name]; ok {
-		return errors.Errorf("%s is already registered", name)
+	if !tp.Valid() {
+		return errors.Errorf("invalid storage type %s", tp)
 	}
 
-	stores[name] = driver
+	if _, ok := storeDrivers[tp]; ok {
+		return errors.Errorf("%s is already registered", tp)
+	}
+
+	storeDrivers[tp] = driver
 	return nil
 }
 
@@ -66,15 +83,19 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
-	d, ok := loadDriver(name)
+	d, ok := loadDriver(config.StoreType(name))
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
 	var s kv.Storage
+	samLogger := logutil.SampleLoggerFactory(30*time.Second, 1, zap.String("path", path))()
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		logutil.BgLogger().Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
+		if err != nil {
+			samLogger.Info("open store failed, retrying", zap.Error(err))
+		}
 		return isNewStoreRetryableError(err), err
 	})
 
@@ -86,10 +107,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	return s, errors.Trace(err)
 }
 
-func loadDriver(name string) (kv.Driver, bool) {
-	storesLock.RLock()
-	defer storesLock.RUnlock()
-	d, ok := stores[name]
+func loadDriver(tp config.StoreType) (kv.Driver, bool) {
+	storeDriverLock.RLock()
+	defer storeDriverLock.RUnlock()
+	d, ok := storeDrivers[tp]
 	return d, ok
 }
 
@@ -120,4 +141,50 @@ func IsKeyspaceNotExistError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+}
+
+// MustInitStorage initializes the kv.Storage for this instance.
+func MustInitStorage(keyspaceName string) kv.Storage {
+	defaultStore := mustInitStorage(keyspaceName)
+	if kerneltype.IsNextGen() {
+		if keyspace.IsRunningOnUser() {
+			systemStore = mustInitStorage(keyspace.System)
+		} else {
+			systemStore = defaultStore
+		}
+	}
+	return defaultStore
+}
+
+// GetSystemStorage returns the kv.Storage for the SYSTEM keyspace.
+func GetSystemStorage() kv.Storage {
+	return systemStore
+}
+
+// SetSystemStorage returns the kv.Storage for the SYSTEM keyspace.
+// it's only used in test.
+func SetSystemStorage(s kv.Storage) {
+	if s != nil {
+		intest.Assert(systemStore == nil, "systemStore should not be set twice")
+		intest.Assert(s.GetKeyspace() == keyspace.System, "systemStore should be set with SYSTEM keyspace")
+	}
+	systemStore = s
+}
+
+func mustInitStorage(keyspaceName string) kv.Storage {
+	storage, err := InitStorage(keyspaceName)
+	terror.MustNil(err)
+	return storage
+}
+
+// InitStorage initializes the kv.Storage for the given keyspace name.
+func InitStorage(keyspaceName string) (kv.Storage, error) {
+	cfg := config.GetGlobalConfig()
+	var fullPath string
+	if keyspaceName == "" {
+		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
+	} else {
+		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
+	}
+	return New(fullPath)
 }

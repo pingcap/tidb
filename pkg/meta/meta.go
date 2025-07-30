@@ -16,6 +16,7 @@ package meta
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -29,14 +30,19 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
@@ -89,10 +95,19 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
-	mBDRRole             = []byte("BDRRole")
-	mMetaDataLock        = []byte("metadataLock")
-	mSchemaCacheSize     = []byte("SchemaCacheSize")
-	mRequestUnitStats    = []byte("RequestUnitStats")
+	// the name doesn't contain nextgen, as we might impl the same logic in classic
+	// kernel later, then we can reuse the same meta key.
+	mBootTableVersion = []byte("BootTableVersion")
+	mBDRRole          = []byte("BDRRole")
+	mMetaDataLock     = []byte("metadataLock")
+	mSchemaCacheSize  = []byte("SchemaCacheSize")
+	mRequestUnitStats = []byte("RequestUnitStats")
+
+	mIngestMaxBatchSplitRangesKey  = []byte("IngestMaxBatchSplitRanges")
+	mIngestMaxSplitRangesPerSecKey = []byte("IngestMaxSplitRangesPerSec")
+	mIngestMaxInflightKey          = []byte("IngestMaxInflight")
+	mIngestMaxPerSecKey            = []byte("IngestMaxReqPerSec")
+
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -101,10 +116,10 @@ var (
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate:     math.MaxInt32,
 			BurstLimit: -1,
-			Priority:   pmodel.MediumPriorityValue,
+			Priority:   ast.MediumPriorityValue,
 		},
 		ID:    defaultGroupID,
-		Name:  pmodel.NewCIStr(resourcegroup.DefaultResourceGroupName),
+		Name:  ast.NewCIStr(resourcegroup.DefaultResourceGroupName),
 		State: model.StatePublic,
 	}
 )
@@ -122,11 +137,6 @@ const (
 	typeUnknown int = 0
 	typeJSON    int = 1
 	// todo: customized handler.
-
-	// MaxInt48 is the max value of int48.
-	MaxInt48 = 0x0000FFFFFFFFFFFF
-	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
-	MaxGlobalID = MaxInt48 - 1000
 )
 
 var (
@@ -152,6 +162,21 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
+// NextGenBootTableVersion is the version of nextgen bootstrapping.
+// it serves the same purpose as DDLTableVersion, to avoid the same table created
+// twice, as we are creating those tables in meta kv directly, without going
+// through DDL.
+type NextGenBootTableVersion int
+
+const (
+	// InitNextGenBootTableVersion means it's a fresh cluster, we haven't bootstrapped yet.
+	InitNextGenBootTableVersion NextGenBootTableVersion = 0
+	// BaseNextGenBootTableVersion is the first version of nextgen bootstrapping, we
+	// will create 52 physical tables.
+	// Note: DDL related tables are created separately, see DDLTableVersion.
+	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
+)
+
 // DDLTableVersion is to display ddl related table versions
 type DDLTableVersion int
 
@@ -164,32 +189,33 @@ const (
 	MDLTableVersion DDLTableVersion = 2
 	// BackfillTableVersion is for support distributed reorg stage, it added tidb_background_subtask, tidb_background_subtask_history.
 	BackfillTableVersion DDLTableVersion = 3
+	// DDLNotifierTableVersion is for support ddl notifier, it added tidb_ddl_notifier.
+	DDLNotifierTableVersion DDLTableVersion = 4
 )
 
-// Bytes returns the byte slice.
-func (ver DDLTableVersion) Bytes() []byte {
-	return []byte(strconv.Itoa(int(ver)))
+func encodeIntVal(i int) []byte {
+	return []byte(strconv.Itoa(i))
 }
 
-// Option is for Meta option.
-type Option func(m *Meta)
+// Option is for Mutator option.
+type Option func(m *Mutator)
 
-// Meta is for handling meta information in a transaction.
-type Meta struct {
-	txn        *structure.TxStructure
-	StartTS    uint64 // StartTS is the txn's start TS.
-	jobListKey JobListKeyType
+// Mutator is for handling meta information in a transaction.
+type Mutator struct {
+	txn     *structure.TxStructure
+	StartTS uint64 // StartTS is the txn's start TS.
 }
 
-// NewMeta creates a Meta in transaction txn.
-// If the current Meta needs to handle a job, jobListKey is the type of the job's list.
-func NewMeta(txn kv.Transaction, options ...Option) *Meta {
+var _ Reader = (*Mutator)(nil)
+
+// NewMutator creates a meta Mutator in transaction txn.
+// If the current Mutator needs to handle a job, jobListKey is the type of the job's list.
+func NewMutator(txn kv.Transaction, options ...Option) *Mutator {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	m := &Meta{txn: t,
-		StartTS:    txn.StartTS(),
-		jobListKey: DefaultJobListKey,
+	m := &Mutator{txn: t,
+		StartTS: txn.StartTS(),
 	}
 	for _, opt := range options {
 		opt(m)
@@ -197,16 +223,8 @@ func NewMeta(txn kv.Transaction, options ...Option) *Meta {
 	return m
 }
 
-// NewSnapshotMeta creates a Meta with snapshot.
-func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
-	snapshot.SetOption(kv.RequestSourceInternal, true)
-	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
-	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
-	return &Meta{txn: t}
-}
-
 // GenGlobalID generates next id globally.
-func (m *Meta) GenGlobalID() (int64, error) {
+func (m *Mutator) GenGlobalID() (int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 
@@ -214,15 +232,15 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	return newID, err
 }
 
 // AdvanceGlobalIDs advances the global ID by n.
 // return the old global ID.
-func (m *Meta) AdvanceGlobalIDs(n int) (int64, error) {
+func (m *Mutator) AdvanceGlobalIDs(n int) (int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 
@@ -230,15 +248,15 @@ func (m *Meta) AdvanceGlobalIDs(n int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if newID > MaxGlobalID {
-		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	return origID, nil
 }
 
 // GenGlobalIDs generates the next n global IDs.
-func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
+func (m *Mutator) GenGlobalIDs(n int) ([]int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 
@@ -246,8 +264,8 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if newID > MaxGlobalID {
-		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	if newID > metadef.MaxUserGlobalID {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, metadef.MaxUserGlobalID)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)
@@ -258,12 +276,12 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 }
 
 // GlobalIDKey returns the key for the global ID.
-func (m *Meta) GlobalIDKey() []byte {
+func (m *Mutator) GlobalIDKey() []byte {
 	return m.txn.EncodeStringDataKey(mNextGlobalIDKey)
 }
 
 // GenPlacementPolicyID generates next placement policy id globally.
-func (m *Meta) GenPlacementPolicyID() (int64, error) {
+func (m *Mutator) GenPlacementPolicyID() (int64, error) {
 	policyIDMutex.Lock()
 	defer policyIDMutex.Unlock()
 
@@ -271,30 +289,30 @@ func (m *Meta) GenPlacementPolicyID() (int64, error) {
 }
 
 // GetGlobalID gets current global id.
-func (m *Meta) GetGlobalID() (int64, error) {
+func (m *Mutator) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
 }
 
 // GetPolicyID gets current policy global id.
-func (m *Meta) GetPolicyID() (int64, error) {
+func (m *Mutator) GetPolicyID() (int64, error) {
 	return m.txn.GetInt64(mPolicyGlobalID)
 }
 
-func (*Meta) policyKey(policyID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
+func (*Mutator) policyKey(policyID int64) []byte {
+	return fmt.Appendf(nil, "%s:%d", mPolicyPrefix, policyID)
 }
 
-func (*Meta) resourceGroupKey(groupID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mResourceGroupPrefix, groupID))
+func (*Mutator) resourceGroupKey(groupID int64) []byte {
+	return fmt.Appendf(nil, "%s:%d", mResourceGroupPrefix, groupID)
 }
 
-func (*Meta) dbKey(dbID int64) []byte {
+func (*Mutator) dbKey(dbID int64) []byte {
 	return DBkey(dbID)
 }
 
 // DBkey encodes the dbID into dbKey.
 func DBkey(dbID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
+	return fmt.Appendf(nil, "%s:%d", mDBPrefix, dbID)
 }
 
 // ParseDBKey decodes the dbkey to get dbID.
@@ -313,13 +331,13 @@ func IsDBkey(dbKey []byte) bool {
 	return strings.HasPrefix(string(dbKey), mDBPrefix+":")
 }
 
-func (*Meta) autoTableIDKey(tableID int64) []byte {
+func (*Mutator) autoTableIDKey(tableID int64) []byte {
 	return AutoTableIDKey(tableID)
 }
 
 // AutoTableIDKey decodes the auto tableID key.
 func AutoTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTableIDPrefix, tableID)
 }
 
 // IsAutoTableIDKey checks whether the key is auto tableID key.
@@ -338,13 +356,13 @@ func ParseAutoTableIDKey(key []byte) (int64, error) {
 	return int64(id), err
 }
 
-func (*Meta) autoIncrementIDKey(tableID int64) []byte {
+func (*Mutator) autoIncrementIDKey(tableID int64) []byte {
 	return AutoIncrementIDKey(tableID)
 }
 
 // AutoIncrementIDKey decodes the auto inc table key.
 func AutoIncrementIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mIncIDPrefix, tableID)
 }
 
 // IsAutoIncrementIDKey checks whether the key is auto increment key.
@@ -363,13 +381,13 @@ func ParseAutoIncrementIDKey(key []byte) (int64, error) {
 	return int64(id), err
 }
 
-func (*Meta) autoRandomTableIDKey(tableID int64) []byte {
+func (*Mutator) autoRandomTableIDKey(tableID int64) []byte {
 	return AutoRandomTableIDKey(tableID)
 }
 
 // AutoRandomTableIDKey encodes the auto random tableID key.
 func AutoRandomTableIDKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mRandomIDPrefix, tableID)
 }
 
 // IsAutoRandomTableIDKey checks whether the key is auto random tableID key.
@@ -388,13 +406,13 @@ func ParseAutoRandomTableIDKey(key []byte) (int64, error) {
 	return int64(id), err
 }
 
-func (*Meta) tableKey(tableID int64) []byte {
+func (*Mutator) tableKey(tableID int64) []byte {
 	return TableKey(tableID)
 }
 
 // TableKey encodes the tableID into tableKey.
 func TableKey(tableID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
+	return fmt.Appendf(nil, "%s:%d", mTablePrefix, tableID)
 }
 
 // IsTableKey checks whether the tableKey comes from TableKey().
@@ -413,13 +431,13 @@ func ParseTableKey(tableKey []byte) (int64, error) {
 	return int64(id), errors.Trace(err)
 }
 
-func (*Meta) sequenceKey(sequenceID int64) []byte {
+func (*Mutator) sequenceKey(sequenceID int64) []byte {
 	return SequenceKey(sequenceID)
 }
 
 // SequenceKey encodes the sequence key.
 func SequenceKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
+	return fmt.Appendf(nil, "%s:%d", mSequencePrefix, sequenceID)
 }
 
 // IsSequenceKey checks whether the key is sequence key.
@@ -438,24 +456,24 @@ func ParseSequenceKey(key []byte) (int64, error) {
 	return int64(id), errors.Trace(err)
 }
 
-func (*Meta) sequenceCycleKey(sequenceID int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSeqCyclePrefix, sequenceID))
+func (*Mutator) sequenceCycleKey(sequenceID int64) []byte {
+	return fmt.Appendf(nil, "%s:%d", mSeqCyclePrefix, sequenceID)
 }
 
 // DDLJobHistoryKey is only used for testing.
-func DDLJobHistoryKey(m *Meta, jobID int64) []byte {
+func DDLJobHistoryKey(m *Mutator, jobID int64) []byte {
 	return m.txn.EncodeHashDataKey(mDDLJobHistoryKey, m.jobIDKey(jobID))
 }
 
 // GenAutoTableIDKeyValue generates meta key by dbID, tableID and corresponding value by autoID.
-func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
+func (m *Mutator) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value []byte) {
 	dbKey := m.dbKey(dbID)
 	autoTableIDKey := m.autoTableIDKey(tableID)
 	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
 }
 
 // GetAutoIDAccessors gets the controller for auto IDs.
-func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
+func (m *Mutator) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 	return NewAutoIDAccessors(m, dbID, tableID)
 }
 
@@ -475,7 +493,7 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 // For `Reload`, we can also do this: if the newest version's diff is not set yet, it is ok to load the previous version's infoSchema, and wait for the next reload.
 // if there are multiple consecutive jobs failed or cancelled after the schema version
 // increased, the returned 'version - 1' might still not have diff.
-func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
+func (m *Mutator) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 	v, err := m.txn.GetInt64(mSchemaVersionKey)
 	if err != nil {
 		return 0, err
@@ -493,27 +511,27 @@ func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 }
 
 // EncodeSchemaDiffKey returns the raw kv key for a schema diff
-func (m *Meta) EncodeSchemaDiffKey(schemaVersion int64) kv.Key {
+func (m *Mutator) EncodeSchemaDiffKey(schemaVersion int64) kv.Key {
 	diffKey := m.schemaDiffKey(schemaVersion)
 	return m.txn.EncodeStringDataKey(diffKey)
 }
 
 // GetSchemaVersion gets current global schema version.
-func (m *Meta) GetSchemaVersion() (int64, error) {
+func (m *Mutator) GetSchemaVersion() (int64, error) {
 	return m.txn.GetInt64(mSchemaVersionKey)
 }
 
 // GenSchemaVersion generates next schema version.
-func (m *Meta) GenSchemaVersion() (int64, error) {
+func (m *Mutator) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
 // GenSchemaVersions increases the schema version.
-func (m *Meta) GenSchemaVersions(count int64) (int64, error) {
+func (m *Mutator) GenSchemaVersions(count int64) (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, count)
 }
 
-func (m *Meta) checkPolicyExists(policyKey []byte) error {
+func (m *Mutator) checkPolicyExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mPolicies, policyKey)
 	if err == nil && v == nil {
 		err = ErrPolicyNotExists.GenWithStack("policy doesn't exist")
@@ -521,7 +539,7 @@ func (m *Meta) checkPolicyExists(policyKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) checkPolicyNotExists(policyKey []byte) error {
+func (m *Mutator) checkPolicyNotExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mPolicies, policyKey)
 	if err == nil && v != nil {
 		err = ErrPolicyExists.GenWithStack("policy already exists")
@@ -529,7 +547,7 @@ func (m *Meta) checkPolicyNotExists(policyKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) checkResourceGroupNotExists(groupKey []byte) error {
+func (m *Mutator) checkResourceGroupNotExists(groupKey []byte) error {
 	v, err := m.txn.HGet(mResourceGroups, groupKey)
 	if err == nil && v != nil {
 		err = ErrResourceGroupExists.GenWithStack("group already exists")
@@ -537,7 +555,7 @@ func (m *Meta) checkResourceGroupNotExists(groupKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) checkResourceGroupExists(groupKey []byte) error {
+func (m *Mutator) checkResourceGroupExists(groupKey []byte) error {
 	v, err := m.txn.HGet(mResourceGroups, groupKey)
 	if err == nil && v == nil {
 		err = ErrResourceGroupNotExists.GenWithStack("group doesn't exist")
@@ -545,7 +563,7 @@ func (m *Meta) checkResourceGroupExists(groupKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) checkDBExists(dbKey []byte) error {
+func (m *Mutator) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v == nil {
 		err = ErrDBNotExists.GenWithStack("database doesn't exist")
@@ -553,7 +571,7 @@ func (m *Meta) checkDBExists(dbKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) checkDBNotExists(dbKey []byte) error {
+func (m *Mutator) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v != nil {
 		err = ErrDBExists.GenWithStack("database already exists")
@@ -561,7 +579,7 @@ func (m *Meta) checkDBNotExists(dbKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
+func (m *Mutator) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err == nil && v == nil {
 		err = ErrTableNotExists.GenWithStack("table doesn't exist")
@@ -569,7 +587,7 @@ func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
+func (m *Mutator) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err == nil && v != nil {
 		err = ErrTableExists.GenWithStack("table already exists")
@@ -578,7 +596,7 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 }
 
 // CreatePolicy creates a policy.
-func (m *Meta) CreatePolicy(policy *model.PolicyInfo) error {
+func (m *Mutator) CreatePolicy(policy *model.PolicyInfo) error {
 	if policy.ID == 0 {
 		return errors.New("policy.ID is invalid")
 	}
@@ -596,7 +614,7 @@ func (m *Meta) CreatePolicy(policy *model.PolicyInfo) error {
 }
 
 // UpdatePolicy updates a policy.
-func (m *Meta) UpdatePolicy(policy *model.PolicyInfo) error {
+func (m *Mutator) UpdatePolicy(policy *model.PolicyInfo) error {
 	policyKey := m.policyKey(policy.ID)
 
 	if err := m.checkPolicyExists(policyKey); err != nil {
@@ -611,7 +629,7 @@ func (m *Meta) UpdatePolicy(policy *model.PolicyInfo) error {
 }
 
 // AddResourceGroup creates a resource group.
-func (m *Meta) AddResourceGroup(group *model.ResourceGroupInfo) error {
+func (m *Mutator) AddResourceGroup(group *model.ResourceGroupInfo) error {
 	if group.ID == 0 {
 		return errors.New("group.ID is invalid")
 	}
@@ -628,7 +646,7 @@ func (m *Meta) AddResourceGroup(group *model.ResourceGroupInfo) error {
 }
 
 // UpdateResourceGroup updates a resource group.
-func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
+func (m *Mutator) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 	groupKey := m.resourceGroupKey(group.ID)
 	// do not check the default because it may not be persisted.
 	if group.ID != defaultGroupID {
@@ -645,7 +663,7 @@ func (m *Meta) UpdateResourceGroup(group *model.ResourceGroupInfo) error {
 }
 
 // DropResourceGroup drops a resource group.
-func (m *Meta) DropResourceGroup(groupID int64) error {
+func (m *Mutator) DropResourceGroup(groupID int64) error {
 	// Check if group exists.
 	groupKey := m.resourceGroupKey(groupID)
 	if err := m.txn.HDel(mResourceGroups, groupKey); err != nil {
@@ -655,7 +673,7 @@ func (m *Meta) DropResourceGroup(groupID int64) error {
 }
 
 // CreateDatabase creates a database with db info.
-func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
+func (m *Mutator) CreateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
 
 	if err := m.checkDBNotExists(dbKey); err != nil {
@@ -673,8 +691,19 @@ func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
 	return nil
 }
 
+// IsDatabaseExist checks whether a database exists by dbID.
+// exported for testing.
+func (m *Mutator) IsDatabaseExist(dbID int64) (bool, error) {
+	dbKey := m.dbKey(dbID)
+	v, err := m.txn.HGet(mDBs, dbKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return v != nil, nil
+}
+
 // UpdateDatabase updates a database with db info.
-func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
+func (m *Mutator) UpdateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
 
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -690,7 +719,7 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 }
 
 // CreateTableOrView creates a table with tableInfo in database.
-func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
+func (m *Mutator) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -715,12 +744,12 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // SetBDRRole write BDR role into storage.
-func (m *Meta) SetBDRRole(role string) error {
+func (m *Mutator) SetBDRRole(role string) error {
 	return errors.Trace(m.txn.Set(mBDRRole, []byte(role)))
 }
 
 // GetBDRRole get BDR role from storage.
-func (m *Meta) GetBDRRole() (string, error) {
+func (m *Mutator) GetBDRRole() (string, error) {
 	v, err := m.txn.Get(mBDRRole)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -729,33 +758,56 @@ func (m *Meta) GetBDRRole() (string, error) {
 }
 
 // ClearBDRRole clear BDR role from storage.
-func (m *Meta) ClearBDRRole() error {
+func (m *Mutator) ClearBDRRole() error {
 	return errors.Trace(m.txn.Clear(mBDRRole))
 }
 
-// SetDDLTables write a key into storage.
-func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
-	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
+// SetDDLTableVersion write a key into storage.
+func (m *Mutator) SetDDLTableVersion(ddlTableVersion DDLTableVersion) error {
+	return m.setTableVersion(mDDLTableVersion, int(ddlTableVersion))
 }
 
-// CheckDDLTableVersion check if the tables related to concurrent DDL exists.
-func (m *Meta) CheckDDLTableVersion() (DDLTableVersion, error) {
-	v, err := m.txn.Get(mDDLTableVersion)
+// SetNextGenBootTableVersion set the table version on initial bootstrap.
+func (m *Mutator) SetNextGenBootTableVersion(version NextGenBootTableVersion) error {
+	return m.setTableVersion(mBootTableVersion, int(version))
+}
+
+func (m *Mutator) setTableVersion(key []byte, version int) error {
+	return errors.Trace(m.txn.Set(key, encodeIntVal(version)))
+}
+
+// GetDDLTableVersion check if the tables related to concurrent DDL exists.
+func (m *Mutator) GetDDLTableVersion() (DDLTableVersion, error) {
+	v, err := m.getTableVersion(mDDLTableVersion)
+	return DDLTableVersion(v), err
+}
+
+// GetNextGenBootTableVersion checks the version of the bootstrapping tables.
+func (m *Mutator) GetNextGenBootTableVersion() (NextGenBootTableVersion, error) {
+	v, err := m.getTableVersion(mBootTableVersion)
+	return NextGenBootTableVersion(v), err
+}
+
+func (m *Mutator) getTableVersion(key []byte) (int, error) {
+	v, err := m.txn.Get(key)
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
 	if string(v) == "" {
-		return InitDDLTableVersion, nil
+		return 0, nil
 	}
 	ver, err := strconv.Atoi(string(v))
 	if err != nil {
 		return -1, errors.Trace(err)
 	}
-	return DDLTableVersion(ver), nil
+	return ver, nil
 }
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
-func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
+func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
+	if kerneltype.IsNextGen() {
+		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
+	}
 	id, err := m.GetSystemDBID()
 	if id != 0 || err != nil {
 		return id, err
@@ -765,19 +817,37 @@ func (m *Meta) CreateMySQLDatabaseIfNotExists() (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	return id, m.CreateSysDatabaseByID(mysql.SystemDB, id)
+}
+
+// CreateSysDatabaseByIDIfNotExists creates a system database with the given name
+// and ID if it does not already exist.
+func (m *Mutator) CreateSysDatabaseByIDIfNotExists(name string, id int64) error {
+	exist, err := m.IsDatabaseExist(id)
+	if err != nil {
+		return err
+	}
+	if exist {
+		return nil
+	}
+	return m.CreateSysDatabaseByID(name, id)
+}
+
+// CreateSysDatabaseByID creates a system database with the given name and ID.
+// exported for testing.
+func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 	db := model.DBInfo{
 		ID:      id,
-		Name:    pmodel.NewCIStr(mysql.SystemDB),
+		Name:    ast.NewCIStr(name),
 		Charset: mysql.UTF8MB4Charset,
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
 	}
-	err = m.CreateDatabase(&db)
-	return db.ID, err
+	return m.CreateDatabase(&db)
 }
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
-func (m *Meta) GetSystemDBID() (int64, error) {
+func (m *Mutator) GetSystemDBID() (int64, error) {
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return 0, err
@@ -791,7 +861,7 @@ func (m *Meta) GetSystemDBID() (int64, error) {
 }
 
 // SetMetadataLock sets the metadata lock.
-func (m *Meta) SetMetadataLock(b bool) error {
+func (m *Mutator) SetMetadataLock(b bool) error {
 	var data []byte
 	if b {
 		data = []byte("1")
@@ -802,7 +872,7 @@ func (m *Meta) SetMetadataLock(b bool) error {
 }
 
 // GetMetadataLock gets the metadata lock.
-func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
+func (m *Mutator) GetMetadataLock() (enable bool, isNull bool, err error) {
 	val, err := m.txn.Get(mMetaDataLock)
 	if err != nil {
 		return false, false, errors.Trace(err)
@@ -814,12 +884,12 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 }
 
 // SetSchemaCacheSize sets the schema cache size.
-func (m *Meta) SetSchemaCacheSize(size uint64) error {
+func (m *Mutator) SetSchemaCacheSize(size uint64) error {
 	return errors.Trace(m.txn.Set(mSchemaCacheSize, []byte(strconv.FormatUint(size, 10))))
 }
 
 // GetSchemaCacheSize gets the schema cache size.
-func (m *Meta) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
+func (m *Mutator) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
 	val, err := m.txn.Get(mSchemaCacheSize)
 	if err != nil {
 		return 0, false, errors.Trace(err)
@@ -833,7 +903,7 @@ func (m *Meta) GetSchemaCacheSize() (size uint64, isNull bool, err error) {
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIDs model.AutoIDGroup) error {
+func (m *Mutator) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIDs model.AutoIDGroup) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -858,7 +928,7 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, a
 }
 
 // CreateSequenceAndSetSeqValue creates sequence with tableInfo in database, and rebase the sequence seqValue.
-func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
+func (m *Mutator) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -868,7 +938,7 @@ func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableIn
 }
 
 // RestartSequenceValue resets the the sequence value.
-func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
+func (m *Mutator) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -884,7 +954,7 @@ func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqV
 }
 
 // DropPolicy drops the specified policy.
-func (m *Meta) DropPolicy(policyID int64) error {
+func (m *Mutator) DropPolicy(policyID int64) error {
 	// Check if policy exists.
 	policyKey := m.policyKey(policyID)
 	if err := m.txn.HClear(policyKey); err != nil {
@@ -897,7 +967,7 @@ func (m *Meta) DropPolicy(policyID int64) error {
 }
 
 // DropDatabase drops whole database.
-func (m *Meta) DropDatabase(dbID int64) error {
+func (m *Mutator) DropDatabase(dbID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.txn.HClear(dbKey); err != nil {
@@ -913,7 +983,7 @@ func (m *Meta) DropDatabase(dbID int64) error {
 
 // DropSequence drops sequence in database.
 // Sequence is made of table struct and kv value pair.
-func (m *Meta) DropSequence(dbID int64, tblID int64) error {
+func (m *Mutator) DropSequence(dbID int64, tblID int64) error {
 	err := m.DropTableOrView(dbID, tblID)
 	if err != nil {
 		return err
@@ -929,7 +999,7 @@ func (m *Meta) DropSequence(dbID int64, tblID int64) error {
 // DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTableOrView(dbID int64, tblID int64) error {
+func (m *Mutator) DropTableOrView(dbID int64, tblID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -949,7 +1019,7 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64) error {
 }
 
 // UpdateTable updates the table with table info.
-func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
+func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -974,7 +1044,7 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // IterTables iterates all the table at once, in order to avoid oom.
-func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
+func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
@@ -1000,10 +1070,91 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 	return errors.Trace(err)
 }
 
+func splitRangeInt64Max(n int64) [][]string {
+	ranges := make([][]string, n)
+
+	// 9999999999999999999 is the max number than maxInt64 in string format.
+	batch := 9999999999999999999 / uint64(n)
+
+	for k := range n {
+		start := batch * uint64(k)
+		end := batch * uint64(k+1)
+
+		startStr := fmt.Sprintf("%019d", start)
+		if k == 0 {
+			startStr = "0"
+		}
+		endStr := fmt.Sprintf("%019d", end)
+
+		ranges[k] = []string{startStr, endStr}
+	}
+
+	return ranges
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
+// This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+
+	if concurrency >= 15 {
+		concurrency = 15
+	}
+
+	kvRanges := splitRangeInt64Max(int64(concurrency))
+
+	mu := sync.Mutex{}
+	for i := range concurrency {
+		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
+		snapshot.SetOption(kv.RequestSourceInternal, true)
+		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+		workGroup.Go(func() error {
+			startKey := fmt.Appendf(nil, "%s:", mDBPrefix)
+			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
+			endKey := fmt.Appendf(nil, "%s:", mDBPrefix)
+			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
+
+			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				select {
+				case <-egCtx.Done():
+					return egCtx.Err()
+				default:
+				}
+				// only handle table meta
+				tableKey := string(field)
+				if !strings.HasPrefix(tableKey, mTablePrefix) {
+					return nil
+				}
+
+				tbInfo := &model.TableInfo{}
+				err := json.Unmarshal(value, tbInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				dbID, err := ParseDBKey(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tbInfo.DBID = dbID
+
+				mu.Lock()
+				err = fn(tbInfo)
+				mu.Unlock()
+				return errors.Trace(err)
+			})
+		})
+	}
+
+	return errors.Trace(workGroup.Wait())
+}
+
 // GetMetasByDBID return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109
-func (m *Meta) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
+func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
@@ -1064,7 +1215,7 @@ func Unescape(s string) string {
 // hasSpecialAttributes() is a subset of it, the difference is that:
 // If a table need to be resident in-memory, its table info MUST be loaded.
 // If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
-func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]int64, []*model.TableInfo, error) {
+func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, nil, errors.Trace(err)
@@ -1107,7 +1258,7 @@ func GetAllNameToIDAndTheMustLoadedTableInfo(m *Meta, dbID int64) (map[string]in
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
 // The filterAttrs are used to filter out any table that is not needed.
-func GetTableInfoWithAttributes(m *Meta, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
+func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
@@ -1135,7 +1286,7 @@ func GetTableInfoWithAttributes(m *Meta, dbID int64, filterAttrs ...string) ([]*
 }
 
 // ListTables shows all tables in database.
-func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+func (m *Mutator) ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1147,6 +1298,9 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			continue
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
 		}
 
 		tbInfo := &model.TableInfo{}
@@ -1163,7 +1317,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 }
 
 // ListSimpleTables shows all simple tables in database.
-func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
+func (m *Mutator) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1230,12 +1384,12 @@ func FastUnmarshalTableNameInfo(data []byte) (*model.TableNameInfo, error) {
 
 	return &model.TableNameInfo{
 		ID:   id,
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}, nil
 }
 
 // ListDatabases shows all databases.
-func (m *Meta) ListDatabases() ([]*model.DBInfo, error) {
+func (m *Mutator) ListDatabases() ([]*model.DBInfo, error) {
 	res, err := m.txn.HGetAll(mDBs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1254,7 +1408,7 @@ func (m *Meta) ListDatabases() ([]*model.DBInfo, error) {
 }
 
 // GetDatabase gets the database value with ID.
-func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
+func (m *Mutator) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	dbKey := m.dbKey(dbID)
 	value, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil || value == nil {
@@ -1267,7 +1421,7 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 }
 
 // ListPolicies shows all policies.
-func (m *Meta) ListPolicies() ([]*model.PolicyInfo, error) {
+func (m *Mutator) ListPolicies() ([]*model.PolicyInfo, error) {
 	res, err := m.txn.HGetAll(mPolicies)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1290,7 +1444,7 @@ func (m *Meta) ListPolicies() ([]*model.PolicyInfo, error) {
 }
 
 // GetPolicy gets the database value with ID.
-func (m *Meta) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
+func (m *Mutator) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 	policyKey := m.policyKey(policyID)
 	value, err := m.txn.HGet(mPolicies, policyKey)
 	if err != nil {
@@ -1311,7 +1465,7 @@ func (m *Meta) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 }
 
 // ListResourceGroups shows all resource groups.
-func (m *Meta) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
+func (m *Mutator) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 	res, err := m.txn.HGetAll(mResourceGroups)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1344,7 +1498,7 @@ func DefaultGroupMeta4Test() *model.ResourceGroupInfo {
 }
 
 // GetResourceGroup gets the database value with ID.
-func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error) {
+func (m *Mutator) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error) {
 	groupKey := m.resourceGroupKey(groupID)
 	value, err := m.txn.HGet(mResourceGroups, groupKey)
 	if err != nil {
@@ -1396,7 +1550,7 @@ func whichMagicType(b byte) int {
 }
 
 // GetTable gets the table value in database with tableID.
-func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
+func (m *Mutator) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -1416,7 +1570,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 }
 
 // CheckTableExists checks if the table is existed with dbID and tableID.
-func (m *Meta) CheckTableExists(dbID int64, tableID int64) (bool, error) {
+func (m *Mutator) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -1437,103 +1591,22 @@ func (m *Meta) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 }
 
 // DDL job structure
-//	DDLJobList: list jobs
 //	DDLJobHistory: hash
-//	DDLJobReorg: hash
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobListKey    = []byte("DDLJobList")
-	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 )
 
-var (
-	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
-	// this and below list are always appended, so the order is the same as the
-	// job's creation order.
-	DefaultJobListKey JobListKeyType = mDDLJobListKey
-	// AddIndexJobListKey only keeps the action of adding index.
-	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
-)
-
-func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
-	if err == nil {
-		err = m.txn.RPush(key, b)
-	}
-	return errors.Trace(err)
-}
-
-// EnQueueDDLJob adds a DDL job to the list.
-func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) error {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	return m.enQueueDDLJob(listKey, job)
-}
-
-// JobListKeyType is a key type of the DDL job queue.
-type JobListKeyType []byte
-
-func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
-	value, err := m.txn.LIndex(key, index)
-	if err != nil || value == nil {
-		return nil, errors.Trace(err)
-	}
-
-	job := &model.Job{
-		// For compatibility, if the job is enqueued by old version TiDB and Priority field is omitted,
-		// set the default priority to kv.PriorityLow.
-		Priority: kv.PriorityLow,
-	}
-	err = job.Decode(value)
-	// Check if the job.Priority is valid.
-	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
-		job.Priority = kv.PriorityLow
-	}
-	return job, errors.Trace(err)
-}
-
-// GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
-// The length of jobListKeys can only be 1 or 0.
-// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
-// Otherwise, we use m.jobListKey directly.
-func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	values, err := m.txn.LGetAll(listKey)
-	if err != nil || values == nil {
-		return nil, errors.Trace(err)
-	}
-
-	jobs := make([]*model.Job, 0, len(values))
-	for _, val := range values {
-		job := &model.Job{}
-		err = job.Decode(val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, job)
-	}
-
-	return jobs, nil
-}
-
-func (*Meta) jobIDKey(id int64) []byte {
+func (*Mutator) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	return b
 }
 
-func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
+func (m *Mutator) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err == nil {
 		err = m.txn.HSet(key, m.jobIDKey(job.ID), b)
@@ -1542,11 +1615,11 @@ func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs bool) 
 }
 
 // AddHistoryDDLJob adds DDL job to history.
-func (m *Meta) AddHistoryDDLJob(job *model.Job, updateRawArgs bool) error {
+func (m *Mutator) AddHistoryDDLJob(job *model.Job, updateRawArgs bool) error {
 	return m.addHistoryDDLJob(mDDLJobHistoryKey, job, updateRawArgs)
 }
 
-func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
+func (m *Mutator) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 	value, err := m.txn.HGet(key, m.jobIDKey(id))
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -1558,7 +1631,7 @@ func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 }
 
 // GetHistoryDDLJob gets a history DDL job.
-func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
+func (m *Mutator) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	startTime := time.Now()
 	job, err := m.getHistoryDDLJob(mDDLJobHistoryKey, id)
 	metrics.MetaHistogram.WithLabelValues(metrics.GetHistoryDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -1566,8 +1639,80 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 }
 
 // GetHistoryDDLCount the count of all history DDL jobs.
-func (m *Meta) GetHistoryDDLCount() (uint64, error) {
+func (m *Mutator) GetHistoryDDLCount() (uint64, error) {
 	return m.txn.HGetLen(mDDLJobHistoryKey)
+}
+
+// SetIngestMaxBatchSplitRanges sets the ingest max_batch_split_ranges.
+func (m *Mutator) SetIngestMaxBatchSplitRanges(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxBatchSplitRangesKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxBatchSplitRanges gets the ingest max_batch_split_ranges.
+func (m *Mutator) GetIngestMaxBatchSplitRanges() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxBatchSplitRangesKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxSplitRangesPerSec sets the max_split_ranges_per_sec.
+func (m *Mutator) SetIngestMaxSplitRangesPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxSplitRangesPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
+}
+
+// GetIngestMaxSplitRangesPerSec gets the max_split_ranges_per_sec.
+func (m *Mutator) GetIngestMaxSplitRangesPerSec() (val float64, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxSplitRangesPerSecKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.ParseFloat(string(sVal), 64)
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxInflight sets the max_ingest_concurrency.
+func (m *Mutator) SetIngestMaxInflight(val int) error {
+	return errors.Trace(m.txn.Set(mIngestMaxInflightKey, []byte(strconv.Itoa(val))))
+}
+
+// GetIngestMaxInflight gets the max_ingest_concurrency.
+func (m *Mutator) GetIngestMaxInflight() (val int, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxInflightKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.Atoi(string(sVal))
+	return val, false, errors.Trace(err)
+}
+
+// SetIngestMaxPerSec sets the max_ingest_per_sec.
+func (m *Mutator) SetIngestMaxPerSec(val float64) error {
+	return errors.Trace(m.txn.Set(mIngestMaxPerSecKey, []byte(strconv.FormatFloat(val, 'f', 2, 64))))
+}
+
+// GetIngestMaxPerSec gets the max_ingest_per_sec.
+func (m *Mutator) GetIngestMaxPerSec() (val float64, isNull bool, err error) {
+	sVal, err := m.txn.Get(mIngestMaxPerSecKey)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if sVal == nil {
+		return 0, true, nil
+	}
+	val, err = strconv.ParseFloat(string(sVal), 64)
+	return val, false, errors.Trace(err)
 }
 
 // LastJobIterator is the iterator for gets latest history.
@@ -1576,7 +1721,7 @@ type LastJobIterator interface {
 }
 
 // GetLastHistoryDDLJobsIterator gets latest history ddl jobs iterator.
-func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
+func (m *Mutator) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
 		return nil, err
@@ -1588,7 +1733,7 @@ func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 
 // GetLastHistoryDDLJobsIteratorWithFilter returns a iterator for getting latest history ddl jobs.
 // This iterator will also filter jobs using given schemaNames and tableNames
-func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
+func (m *Mutator) GetLastHistoryDDLJobsIteratorWithFilter(
 	schemaNames set.StringSet,
 	tableNames set.StringSet,
 ) (LastJobIterator, error) {
@@ -1604,7 +1749,7 @@ func (m *Meta) GetLastHistoryDDLJobsIteratorWithFilter(
 }
 
 // GetHistoryDDLJobsIterator gets the jobs iterator begin with startJobID.
-func (m *Meta) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error) {
+func (m *Mutator) GetHistoryDDLJobsIterator(startJobID int64) (LastJobIterator, error) {
 	field := m.jobIDKey(startJobID)
 	iter, err := structure.NewHashReverseIterBeginWithField(m.txn, mDDLJobHistoryKey, field)
 	if err != nil {
@@ -1703,13 +1848,13 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 
 // GetBootstrapVersion returns the version of the server which bootstrap the store.
 // If the store is not bootstraped, the version will be zero.
-func (m *Meta) GetBootstrapVersion() (int64, error) {
+func (m *Mutator) GetBootstrapVersion() (int64, error) {
 	value, err := m.txn.GetInt64(mBootstrapKey)
 	return value, errors.Trace(err)
 }
 
 // FinishBootstrap finishes bootstrap.
-func (m *Meta) FinishBootstrap(version int64) error {
+func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
 }
@@ -1770,12 +1915,12 @@ func DecodeElement(b []byte) (*Element, error) {
 	return &Element{ID: int64(id), TypeKey: tp}, nil
 }
 
-func (*Meta) schemaDiffKey(schemaVersion int64) []byte {
-	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
+func (*Mutator) schemaDiffKey(schemaVersion int64) []byte {
+	return fmt.Appendf(nil, "%s:%d", mSchemaDiffPrefix, schemaVersion)
 }
 
 // GetSchemaDiff gets the modification information on a given schema version.
-func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
+func (m *Mutator) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	diffKey := m.schemaDiffKey(schemaVersion)
 	startTime := time.Now()
 	data, err := m.txn.Get(diffKey)
@@ -1789,7 +1934,7 @@ func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 }
 
 // SetSchemaDiff sets the modification information on a given schema version.
-func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
+func (m *Mutator) SetSchemaDiff(diff *model.SchemaDiff) error {
 	data, err := json.Marshal(diff)
 	if err != nil {
 		return errors.Trace(err)
@@ -1821,7 +1966,7 @@ type RUStats struct {
 }
 
 // GetRUStats load the persisted RUStats data.
-func (m *Meta) GetRUStats() (*RUStats, error) {
+func (m *Mutator) GetRUStats() (*RUStats, error) {
 	data, err := m.txn.Get(mRequestUnitStats)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1837,7 +1982,7 @@ func (m *Meta) GetRUStats() (*RUStats, error) {
 }
 
 // SetRUStats persist new ru stats data to meta storage.
-func (m *Meta) SetRUStats(stats *RUStats) error {
+func (m *Mutator) SetRUStats(stats *RUStats) error {
 	data, err := json.Marshal(stats)
 	if err != nil {
 		return errors.Trace(err)
@@ -1845,4 +1990,26 @@ func (m *Meta) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
+// It works by checking the MVCC information (internal txn API) of the schema version meta key.
+// This function is only used by infoschema v2 currently.
+func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
+	ek := make([]byte, 0, len(mMetaPrefix)+len(mSchemaVersionKey)+24)
+	ek = append(ek, mMetaPrefix...)
+	ek = codec.EncodeBytes(ek, mSchemaVersionKey)
+	key := codec.EncodeUint(ek, uint64(structure.StringData))
+	mvccResp, err := h.GetMvccByEncodedKeyWithTS(key, math.MaxUint64)
+	if err != nil {
+		return 0, err
+	}
+	if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
+		return 0, errors.Errorf("There is no Write MVCC info for the schema version key")
+	}
+
+	v := mvccResp.Info.Writes[len(mvccResp.Info.Writes)-1]
+	var n int64
+	n, err = strconv.ParseInt(string(v.ShortValue), 10, 64)
+	return n, errors.Trace(err)
 }

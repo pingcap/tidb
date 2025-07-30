@@ -173,9 +173,9 @@ func (expr *Constant) format(dt types.Datum) string {
 		return "NULL"
 	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
 		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
-		return fmt.Sprintf("\"%v\"", dt.GetValue())
+		return fmt.Sprintf("\"%s\"", dt.TruncatedStringify())
 	}
-	return fmt.Sprintf("%v", dt.GetValue())
+	return dt.TruncatedStringify()
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
@@ -192,13 +192,7 @@ func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, 
 			}
 		case *Constant:
 			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
-			length := 64
-			if len(v) < length {
-				redact.WriteRedact(builder, v, redactMode)
-			} else {
-				redact.WriteRedact(builder, v[:length], redactMode)
-				fmt.Fprintf(builder, "(len:%d)", len(v))
-			}
+			redact.WriteRedact(builder, v, redactMode)
 			builder.WriteString("->")
 			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
 		default:

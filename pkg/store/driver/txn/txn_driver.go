@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -38,6 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -308,6 +310,10 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.GetUnionStore().SetEntrySizeLimit(limits.Entry, limits.Total)
 	case kv.SessionID:
 		txn.KVTxn.SetSessionID(val.(uint64))
+	case kv.BackgroundGoroutineLifecycleHooks:
+		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
+	case kv.PrewriteEncounterLockPolicy:
+		txn.KVTxn.SetPrewriteEncounterLockPolicy(val.(transaction.PrewriteEncounterLockPolicy))
 	}
 }
 
@@ -425,6 +431,9 @@ func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockC
 // TODO: Update the methods' signatures in client-go to avoid this adaptor functions.
 // TODO: Rename aggressive locking in client-go to fair locking.
 func (txn *tikvTxn) StartFairLocking() error {
+	if kerneltype.IsNextGen() {
+		return kv.ErrNotImplemented.GenWithStackByArgs()
+	}
 	txn.KVTxn.StartAggressiveLocking()
 	return nil
 }

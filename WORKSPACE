@@ -33,42 +33,61 @@ http_archive(
 )
 
 load("@bazel_skylib//lib:versions.bzl", "versions")
+
 versions.check(minimum_bazel_version = "6.0.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "f4a9314518ca6acfa16cc4ab43b0b8ce1e4ea64b81c38d8a3772883f153346b8",
+    sha256 = "9d72f7b8904128afb98d46bbef82ad7223ec9ff3718d419afb355fddd9f9484a",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
-        "http://ats.apps.svc/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
-        "https://github.com/bazelbuild/rules_go/releases/download/v0.50.1/rules_go-v0.50.1.zip",
+        "http://bazel-cache.pingcap.net:8080/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "http://ats.apps.svc/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
+        "https://github.com/bazel-contrib/rules_go/releases/download/v0.55.1/rules_go-v0.55.1.zip",
     ],
 )
 
 http_archive(
     name = "bazel_gazelle",
-    sha256 = "8ad77552825b078a10ad960bec6ef77d2ff8ec70faef2fd038db713f410f5d87",
+    sha256 = "7c40b746387cd0c9a4d5bb0b2035abd134b3f7511015710a5ee5e07591008dde",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/bazel-gazelle/releases/download/v0.38.0/bazel-gazelle-v0.38.0.tar.gz",
-        "https://github.com/bazelbuild/bazel-gazelle/releases/download/v0.38.0/bazel-gazelle-v0.38.0.tar.gz",
-        "http://ats.apps.svc/bazelbuild/bazel-gazelle/releases/download/v0.38.0/bazel-gazelle-v0.38.0.tar.gz",
+        "http://bazel-cache.pingcap.net:8080/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
+        "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
+        "http://ats.apps.svc/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
+        "https://cache.hawkingrei.com/bazel-contrib/bazel-gazelle/releases/download/v0.43.0/bazel-gazelle-v0.43.0.tar.gz",
     ],
 )
 
 http_archive(
     name = "rules_cc",
+    sha256 = "d62624b45e0912713dcd3b8e30ba6ae55418ed6bf99e6d135cd61b8addae312b",
+    strip_prefix = "rules_cc-0.1.2",
     urls = [
-        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_cc/releases/download/0.0.6/rules_cc-0.0.6.tar.gz",
-        "https://github.com/bazelbuild/rules_cc/releases/download/0.0.6/rules_cc-0.0.6.tar.gz",
-        "http://ats.apps.svc/bazelbuild/rules_cc/releases/download/0.0.6/rules_cc-0.0.6.tar.gz",
+        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_cc/releases/download/0.1.2/rules_cc-0.1.2.tar.gz",
+        "https://github.com/bazelbuild/rules_cc/releases/download/0.1.2/rules_cc-0.1.2.tar.gz",
+        "http://ats.apps.svc/bazelbuild/rules_cc/releases/download/0.1.2/rules_cc-0.1.2.tar.gz",
     ],
-    sha256 = "3d9e271e2876ba42e114c9b9bc51454e379cbf0ec9ef9d40e2ae4cec61a31b40",
-    strip_prefix = "rules_cc-0.0.6",
 )
 
-load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchains", "go_rules_dependencies")
+http_archive(
+    name = "rules_python",
+    sha256 = "9f9f3b300a9264e4c77999312ce663be5dee9a56e361a1f6fe7ec60e1beef9a3",
+    strip_prefix = "rules_python-1.4.1",
+    urls = [
+        "http://bazel-cache.pingcap.net:8080/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
+        "https://github.com/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
+        "http://ats.apps.svc/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
+        "https://cache.hawkingrei.com/bazel-contrib/rules_python/releases/download/1.4.1/rules_python-1.4.1.tar.gz",
+    ],
+)
+
+load("@rules_python//python:repositories.bzl", "py_repositories")
+
+py_repositories()
+
 load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
+load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchains", "go_rules_dependencies")
 load("//:DEPS.bzl", "go_deps")
 
 # gazelle:repository_macro DEPS.bzl%go_deps
@@ -85,24 +104,23 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.21.13",
+    version = "1.23.11",
 )
+
+gazelle_dependencies(go_sdk = "go_sdk")
 
 go_register_toolchains(
     nogo = "@//build:tidb_nogo",
 )
 
-gazelle_dependencies()
-
 http_archive(
     name = "com_google_protobuf",
-    sha256 = "bc3dbf1f09dba1b2eb3f2f70352ee97b9049066c9040ce0c9b67fb3294e91e4b",
-    strip_prefix = "protobuf-3.15.5",
+    integrity = "sha256-zl0At4RQoMpAC/NgrADA1ZnMIl8EnZhqJ+mk45bFqEo=",
+    strip_prefix = "protobuf-29.0-rc2",
     # latest, as of 2021-03-08
     urls = [
-        "http://bazel-cache.pingcap.net:8080/gomod/rules/protobuf-3.15.5.tar.gz ",
-        "https://mirror.bazel.build/github.com/protocolbuffers/protobuf/archive/v3.15.5.tar.gz",
-        "https://github.com/protocolbuffers/protobuf/archive/v3.15.5.tar.gz",
+        "https://github.com/protocolbuffers/protobuf/archive/v29.0-rc2.tar.gz",
+        "https://mirror.bazel.build/github.com/protocolbuffers/protobuf/archive/v29.0-rc2.tar.gz",
     ],
 )
 
@@ -114,10 +132,10 @@ http_archive(
     name = "remote_java_tools",
     sha256 = "f58a358ca694a41416a9b6a92b852935ad301d8882e5d22f4f11134f035317d5",
     urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/rules/java_tools-v12.6.zip",
-            "http://ats.apps.svc/gomod/rules/java_tools-v12.6.zip",
-            "https://mirror.bazel.build/bazel_java_tools/releases/java/v12.6/java_tools-v12.6.zip",
-            "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools-v12.6.zip",
+        "http://bazel-cache.pingcap.net:8080/gomod/rules/java_tools-v12.6.zip",
+        "http://ats.apps.svc/gomod/rules/java_tools-v12.6.zip",
+        "https://mirror.bazel.build/bazel_java_tools/releases/java/v12.6/java_tools-v12.6.zip",
+        "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools-v12.6.zip",
     ],
 )
 
@@ -125,10 +143,10 @@ http_archive(
     name = "remote_java_tools_linux",
     sha256 = "64294e91fe940c77e6d35818b4c3a1f07d78e33add01e330188d907032687066",
     urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/rules/java_tools_linux-v12.6.zip",
-            "http://ats.apps.svc/gomod/rules/java_tools_linux-v12.6.zip",
-            "https://mirror.bazel.build/bazel_java_tools/releases/java/v12.6/java_tools_linux-v12.6.zip",
-            "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools_linux-v12.6.zip",
+        "http://bazel-cache.pingcap.net:8080/gomod/rules/java_tools_linux-v12.6.zip",
+        "http://ats.apps.svc/gomod/rules/java_tools_linux-v12.6.zip",
+        "https://mirror.bazel.build/bazel_java_tools/releases/java/v12.6/java_tools_linux-v12.6.zip",
+        "https://github.com/bazelbuild/java_tools/releases/download/java_v12.6/java_tools_linux-v12.6.zip",
     ],
 )
 

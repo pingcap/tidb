@@ -15,12 +15,9 @@
 package variable
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
-	"encoding/json"
-	"fmt"
 	"maps"
 	"math"
 	"math/rand"
@@ -35,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -47,11 +45,11 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -61,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -340,38 +339,13 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// ColSize is a data struct to store the delta information for a table.
-type ColSize struct {
-	ColID int64
-	Size  int64
-}
-
-// DeltaCols is used to update the delta size for cols.
-type DeltaCols interface {
-	// UpdateColSizeMap is used to update delta map for cols.
-	UpdateColSizeMap(m map[int64]int64) map[int64]int64
-}
-
-// DeltaColsMap implements DeltaCols
-type DeltaColsMap map[int64]int64
-
-// UpdateColSizeMap implements DeltaCols
-func (cols DeltaColsMap) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
-	if m == nil && len(cols) > 0 {
-		m = make(map[int64]int64, len(cols))
-	}
-	for colID, size := range cols {
-		m[colID] += size
-	}
-	return m
-}
-
 // UpdateDeltaForTable updates the delta info for some table.
 // The `cols` argument is used to update the delta size for cols.
 // If `cols` is nil, it means that the delta size for cols is not changed.
 func (tc *TransactionContext) UpdateDeltaForTable(
-	physicalTableID int64, delta int64,
-	count int64, cols DeltaCols,
+	physicalTableID int64,
+	delta int64,
+	count int64,
 ) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
@@ -382,9 +356,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	if cols != nil {
-		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
-	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
@@ -496,7 +467,7 @@ func (tc *TransactionContext) DeleteSavepoint(name string) bool {
 	name = strings.ToLower(name)
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			tc.Savepoints = slices.Delete(tc.Savepoints, i, i+1)
 			return true
 		}
 	}
@@ -537,9 +508,7 @@ func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
 	if tc.pessimisticLockCache == nil {
 		tc.pessimisticLockCache = make(map[string][]byte)
 	}
-	for key, val := range tc.CurrentStmtPessimisticLockCache {
-		tc.pessimisticLockCache[key] = val
-	}
+	maps.Copy(tc.pessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
 	tc.CurrentStmtPessimisticLockCache = nil
 }
 
@@ -683,7 +652,7 @@ func validateReadConsistencyLevel(val string) error {
 	case ReadConsistencyStrict, ReadConsistencyWeak:
 		return nil
 	default:
-		return ErrWrongTypeForVar.GenWithStackByArgs(TiDBReadConsistency)
+		return ErrWrongTypeForVar.GenWithStackByArgs(vardef.TiDBReadConsistency)
 	}
 }
 
@@ -789,6 +758,7 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	PipelinedDMLConfig
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -811,6 +781,9 @@ type SessionVars struct {
 	// Parameter values for plan cache.
 	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
+
+	// The Cached Plan for this execution, it should be *plannercore.PlanCacheValue.
+	PlanCacheValue any
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -885,8 +858,14 @@ type SessionVars struct {
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
 
+	// InExplainExplore indicates if this statement is under EXPLAIN EXPLORE.
+	InExplainExplore bool
+
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
+
+	// LastCommitTS is the commit_ts of the last successful transaction in this session.
+	LastCommitTS uint64
 
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
 	TxnReadTS *TxnReadTS
@@ -1002,6 +981,10 @@ type SessionVars struct {
 	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
 	TiFlashQuerySpillRatio float64
 
+	// TiFlashHashJoinVersion controls the hash join version in TiFlash.
+	// "optimized" enables hash join v2, while "legacy" uses the original version.
+	TiFlashHashJoinVersion string
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -1030,6 +1013,12 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
+	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
+	RiskEqSkewRatio float64
+
+	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
+	RiskRangeSkewRatio float64
+
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
 	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1048,6 +1037,25 @@ type SessionVars struct {
 	diskFactor float64
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
+
+	// Optimizer cost model factors for each physical operator
+	IndexScanCostFactor        float64
+	IndexReaderCostFactor      float64
+	TableReaderCostFactor      float64
+	TableFullScanCostFactor    float64
+	TableRangeScanCostFactor   float64
+	TableRowIDScanCostFactor   float64
+	TableTiFlashScanCostFactor float64
+	IndexLookupCostFactor      float64
+	IndexMergeCostFactor       float64
+	SortCostFactor             float64
+	TopNCostFactor             float64
+	LimitCostFactor            float64
+	StreamAggCostFactor        float64
+	HashAggCostFactor          float64
+	MergeJoinCostFactor        float64
+	HashJoinCostFactor         float64
+	IndexJoinCostFactor        float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
@@ -1254,7 +1262,7 @@ type SessionVars struct {
 
 	mppVersion kv.MppVersion
 
-	mppExchangeCompressionMode kv.ExchangeCompressionMode
+	mppExchangeCompressionMode vardef.ExchangeCompressionMode
 
 	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
 
@@ -1304,7 +1312,7 @@ type SessionVars struct {
 	SelectLimit uint64
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
-	EnableClusteredIndex ClusteredIndexDefMode
+	EnableClusteredIndex vardef.ClusteredIndexDefMode
 
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
@@ -1426,8 +1434,6 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
-	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
-	EnableNewCostInterface bool
 	// CostModelVersion is a internal switch to indicates the Cost Model Version.
 	CostModelVersion int
 	// IndexJoinDoubleReadPenaltyCostRate indicates whether to add some penalty cost to IndexJoin and how much of it.
@@ -1603,6 +1609,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// EnhanceIndexJoinBuildV2 indicates whether to enhance index join build.
+	EnhanceIndexJoinBuildV2 bool
+
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
@@ -1632,6 +1641,15 @@ type SessionVars struct {
 	// Value 0 will estimate row(s) found immediately.
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
+
+	// RecordRelevantOptVarsAndFixes indicates whether to record optimizer variables/fixes relevant to this query.
+	RecordRelevantOptVarsAndFixes bool
+
+	// RelevantOptVars is a map of relevant optimizer variables to be recorded.
+	RelevantOptVars map[string]struct{}
+
+	// RelevantOptFixes is a map of relevant optimizer fixes to be recorded.
+	RelevantOptFixes map[uint64]struct{}
 
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
@@ -1708,6 +1726,41 @@ type SessionVars struct {
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
+
+	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
+	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
+}
+
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -1832,8 +1885,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &s.cachedStmtCtx[1]
 	}
 	if s.RefCountOfStmtCtx.TryFreeze() {
-		sc.Reset()
+		succ := sc.Reset()
 		s.RefCountOfStmtCtx.UnFreeze()
+		if !succ {
+			sc = stmtctx.NewStmtCtx()
+		}
 	} else {
 		sc = stmtctx.NewStmtCtx()
 	}
@@ -1864,10 +1920,10 @@ func (s *SessionVars) ChooseMppVersion() kv.MppVersion {
 }
 
 // ChooseMppExchangeCompressionMode indicates the data compression method in mpp exchange operator
-func (s *SessionVars) ChooseMppExchangeCompressionMode() kv.ExchangeCompressionMode {
-	if s.mppExchangeCompressionMode == kv.ExchangeCompressionModeUnspecified {
+func (s *SessionVars) ChooseMppExchangeCompressionMode() vardef.ExchangeCompressionMode {
+	if s.mppExchangeCompressionMode == vardef.ExchangeCompressionModeUnspecified {
 		// If unspecified, use recommended mode
-		return kv.RecommendedExchangeCompressionMode
+		return vardef.RecommendedExchangeCompressionMode
 	}
 	return s.mppExchangeCompressionMode
 }
@@ -1888,7 +1944,7 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
-	if s.InRestrictedSQL || !EnableLocalTxn.Load() {
+	if s.InRestrictedSQL || !vardef.EnableLocalTxn.Load() {
 		return kv.GlobalTxnScope
 	}
 	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
@@ -1933,13 +1989,6 @@ func (s *SessionVars) GetTotalCostDuration() time.Duration {
 func (s *SessionVars) GetExecuteDuration() time.Duration {
 	return time.Since(s.StartTime) - s.DurationCompile
 }
-
-const (
-	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
-	PlacementModeStrict string = "STRICT"
-	// PlacementModeIgnore indicates ignore all placement operations in ddl
-	PlacementModeIgnore string = "IGNORE"
-)
 
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
@@ -2125,147 +2174,175 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TxnCtx:                        &TransactionContext{},
 		RetryInfo:                     &RetryInfo{},
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
-		AutoIncrementIncrement:        DefAutoIncrementIncrement,
-		AutoIncrementOffset:           DefAutoIncrementOffset,
+		AutoIncrementIncrement:        vardef.DefAutoIncrementIncrement,
+		AutoIncrementOffset:           vardef.DefAutoIncrementOffset,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
-		AllowCartesianBCJ:             DefOptCartesianBCJ,
-		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
-		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   DefBroadcastJoinThresholdSize,
-		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
-		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
-		RetryLimit:                    DefTiDBRetryLimit,
-		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
+		RetryLimit:                    vardef.DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:              kv.PriorityLow,
-		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
-		preferRangeScan:               DefOptPreferRangeScan,
-		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
-		LimitPushDownThreshold:        DefOptLimitPushDownThreshold,
-		CorrelationThreshold:          DefOptCorrelationThreshold,
-		CorrelationExpFactor:          DefOptCorrelationExpFactor,
-		cpuFactor:                     DefOptCPUFactor,
-		copCPUFactor:                  DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor:   DefOptTiFlashConcurrencyFactor,
-		networkFactor:                 DefOptNetworkFactor,
-		scanFactor:                    DefOptScanFactor,
-		descScanFactor:                DefOptDescScanFactor,
-		seekFactor:                    DefOptSeekFactor,
-		memoryFactor:                  DefOptMemoryFactor,
-		diskFactor:                    DefOptDiskFactor,
-		concurrencyFactor:             DefOptConcurrencyFactor,
-		enableForceInlineCTE:          DefOptForceInlineCTE,
-		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+		allowInSubqToJoinAndAgg:       vardef.DefOptInSubqToJoinAndAgg,
+		preferRangeScan:               vardef.DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:   vardef.DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
+		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
+		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
+		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
+		RiskRangeSkewRatio:            vardef.DefOptRiskRangeSkewRatio,
+		cpuFactor:                     vardef.DefOptCPUFactor,
+		copCPUFactor:                  vardef.DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
+		networkFactor:                 vardef.DefOptNetworkFactor,
+		scanFactor:                    vardef.DefOptScanFactor,
+		descScanFactor:                vardef.DefOptDescScanFactor,
+		seekFactor:                    vardef.DefOptSeekFactor,
+		memoryFactor:                  vardef.DefOptMemoryFactor,
+		diskFactor:                    vardef.DefOptDiskFactor,
+		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
+		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:         vardef.DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:         vardef.DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:    vardef.DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
+		SortCostFactor:                vardef.DefOptSortCostFactor,
+		TopNCostFactor:                vardef.DefOptTopNCostFactor,
+		LimitCostFactor:               vardef.DefOptLimitCostFactor,
+		StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
+		HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
+		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
+		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
+		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThreshold:   vardef.DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
-		enableIndexMerge:              DefTiDBEnableIndexMerge,
-		NoopFuncsMode:                 TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
+		WaitSplitRegionFinish:         vardef.DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:        vardef.DefWaitSplitRegionTimeout,
+		enableIndexMerge:              vardef.DefTiDBEnableIndexMerge,
+		NoopFuncsMode:                 TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 		replicaRead:                   kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:            DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:              DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:           DefTiDBEvolvePlanBaselines,
+		AllowRemoveAutoInc:            vardef.DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:              vardef.DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:           vardef.DefTiDBEvolvePlanBaselines,
 		EnableExtendedStats:           false,
 		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:               DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:              DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:     DefTiDBMetricSchemaRangeDuration,
+		LockWaitTimeout:               vardef.DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:              vardef.DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:     vardef.DefTiDBMetricSchemaRangeDuration,
 		SequenceState:                 NewSequenceState(),
 		WindowingUseHighPrecision:     true,
-		PrevFoundInPlanCache:          DefTiDBFoundInPlanCache,
-		FoundInPlanCache:              DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:            DefTiDBFoundInBinding,
-		FoundInBinding:                DefTiDBFoundInBinding,
+		PrevFoundInPlanCache:          vardef.DefTiDBFoundInPlanCache,
+		FoundInPlanCache:              vardef.DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:            vardef.DefTiDBFoundInBinding,
+		FoundInBinding:                vardef.DefTiDBFoundInBinding,
 		SelectLimit:                   math.MaxUint64,
-		AllowAutoRandExplicitInsert:   DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:          DefTiDBEnableClusteredIndex,
-		EnableParallelApply:           DefTiDBEnableParallelApply,
-		ShardAllocateStep:             DefTiDBShardAllocateStep,
-		PartitionPruneMode:            *atomic2.NewString(DefTiDBPartitionPruneMode),
+		AllowAutoRandExplicitInsert:   vardef.DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:          vardef.DefTiDBEnableClusteredIndex,
+		EnableParallelApply:           vardef.DefTiDBEnableParallelApply,
+		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
+		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
+		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
-		EnabledRateLimitAction:        DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:             DefTiDBEnableAsyncCommit,
-		Enable1PC:                     DefTiDBEnable1PC,
-		GuaranteeLinearizability:      DefTiDBGuaranteeLinearizability,
-		AnalyzeVersion:                DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:          DefTiDBEnableIndexMergeJoin,
+		EnabledRateLimitAction:        vardef.DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:             vardef.DefTiDBEnableAsyncCommit,
+		Enable1PC:                     vardef.DefTiDBEnable1PC,
+		GuaranteeLinearizability:      vardef.DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                vardef.DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:          vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
-		CTEMaxRecursionDepth:          DefCTEMaxRecursionDepth,
-		TMPTableSize:                  DefTiDBTmpTableMaxSize,
-		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
+		CTEMaxRecursionDepth:          vardef.DefCTEMaxRecursionDepth,
+		TMPTableSize:                  vardef.DefTiDBTmpTableMaxSize,
+		MPPStoreFailTTL:               vardef.DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
-		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
-		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
-		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
-		Enable3StageDistinctAgg:       DefTiDB3StageDistinctAgg,
-		MaxAllowedPacket:              DefMaxAllowedPacket,
-		TiFlashFastScan:               DefTiFlashFastScan,
+		EnableLegacyInstanceScope:     vardef.DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:       vardef.DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:         vardef.DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:       vardef.DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:              vardef.DefMaxAllowedPacket,
+		TiFlashFastScan:               vardef.DefTiFlashFastScan,
 		EnableTiFlashReadForWriteStmt: true,
-		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
+		ForeignKeyChecks:              vardef.DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
-		EnableReuseChunk:              DefTiDBEnableReusechunk,
-		preUseChunkAlloc:              DefTiDBUseAlloc,
+		EnableReuseChunk:              vardef.DefTiDBEnableReusechunk,
+		preUseChunkAlloc:              vardef.DefTiDBUseAlloc,
 		chunkPool:                     nil,
-		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
+		mppExchangeCompressionMode:    vardef.DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
-		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
+		EnableLateMaterialization:     vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
-		GroupConcatMaxLen:             DefGroupConcatMaxLen,
-		EnableRedactLog:               DefTiDBRedactLog,
-		EnableWindowFunction:          DefEnableWindowFunction,
+		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
+		EnableRedactLog:               vardef.DefTiDBRedactLog,
+		EnableWindowFunction:          vardef.DefEnableWindowFunction,
+		CostModelVersion:              vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
+		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
+		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 	}
+	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
-		indexLookupConcurrency:            DefIndexLookupConcurrency,
-		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
-		indexLookupJoinConcurrency:        DefIndexLookupJoinConcurrency,
-		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
-		projectionConcurrency:             DefTiDBProjectionConcurrency,
-		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
-		analyzeDistSQLScanConcurrency:     DefAnalyzeDistSQLScanConcurrency,
-		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
-		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
-		windowConcurrency:                 DefTiDBWindowConcurrency,
-		mergeJoinConcurrency:              DefTiDBMergeJoinConcurrency,
-		streamAggConcurrency:              DefTiDBStreamAggConcurrency,
-		indexMergeIntersectionConcurrency: DefTiDBIndexMergeIntersectionConcurrency,
-		ExecutorConcurrency:               DefExecutorConcurrency,
+		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
+		indexSerialScanConcurrency:        vardef.DefIndexSerialScanConcurrency,
+		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,
+		hashJoinConcurrency:               vardef.DefTiDBHashJoinConcurrency,
+		projectionConcurrency:             vardef.DefTiDBProjectionConcurrency,
+		distSQLScanConcurrency:            vardef.DefDistSQLScanConcurrency,
+		analyzeDistSQLScanConcurrency:     vardef.DefAnalyzeDistSQLScanConcurrency,
+		hashAggPartialConcurrency:         vardef.DefTiDBHashAggPartialConcurrency,
+		hashAggFinalConcurrency:           vardef.DefTiDBHashAggFinalConcurrency,
+		windowConcurrency:                 vardef.DefTiDBWindowConcurrency,
+		mergeJoinConcurrency:              vardef.DefTiDBMergeJoinConcurrency,
+		streamAggConcurrency:              vardef.DefTiDBStreamAggConcurrency,
+		indexMergeIntersectionConcurrency: vardef.DefTiDBIndexMergeIntersectionConcurrency,
+		ExecutorConcurrency:               vardef.DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:      DefTiDBMemQuotaQuery,
-		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
+		MemQuotaQuery:      vardef.DefTiDBMemQuotaQuery,
+		MemQuotaApplyCache: vardef.DefTiDBMemQuotaApplyCache,
 	}
 	vars.BatchSize = BatchSize{
-		IndexJoinBatchSize: DefIndexJoinBatchSize,
-		IndexLookupSize:    DefIndexLookupSize,
-		InitChunkSize:      DefInitChunkSize,
-		MaxChunkSize:       DefMaxChunkSize,
-		MinPagingSize:      DefMinPagingSize,
-		MaxPagingSize:      DefMaxPagingSize,
+		IndexJoinBatchSize: vardef.DefIndexJoinBatchSize,
+		IndexLookupSize:    vardef.DefIndexLookupSize,
+		InitChunkSize:      vardef.DefInitChunkSize,
+		MaxChunkSize:       vardef.DefMaxChunkSize,
+		MinPagingSize:      vardef.DefMinPagingSize,
+		MaxPagingSize:      vardef.DefMaxPagingSize,
 	}
-	vars.DMLBatchSize = DefDMLBatchSize
-	vars.AllowBatchCop = DefTiDBAllowBatchCop
-	vars.allowMPPExecution = DefTiDBAllowMPPExecution
-	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
-	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
-	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
-	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
-	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
-	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
-	vars.TiFlashMaxQueryMemoryPerNode = DefTiFlashMemQuotaQueryPerNode
-	vars.TiFlashQuerySpillRatio = DefTiFlashQuerySpillRatio
-	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
+	vars.DMLBatchSize = vardef.DefDMLBatchSize
+	vars.AllowBatchCop = vardef.DefTiDBAllowBatchCop
+	vars.allowMPPExecution = vardef.DefTiDBAllowMPPExecution
+	vars.HashExchangeWithNewCollation = vardef.DefTiDBHashExchangeWithNewCollation
+	vars.enforceMPPExecution = vardef.DefTiDBEnforceMPPExecution
+	vars.TiFlashMaxThreads = vardef.DefTiFlashMaxThreads
+	vars.TiFlashMaxBytesBeforeExternalJoin = vardef.DefTiFlashMaxBytesBeforeExternalJoin
+	vars.TiFlashMaxBytesBeforeExternalGroupBy = vardef.DefTiFlashMaxBytesBeforeExternalGroupBy
+	vars.TiFlashMaxBytesBeforeExternalSort = vardef.DefTiFlashMaxBytesBeforeExternalSort
+	vars.TiFlashMaxQueryMemoryPerNode = vardef.DefTiFlashMemQuotaQueryPerNode
+	vars.TiFlashQuerySpillRatio = vardef.DefTiFlashQuerySpillRatio
+	vars.TiFlashHashJoinVersion = vardef.DefTiFlashHashJoinVersion
+	vars.MPPStoreFailTTL = vardef.DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
 	vars.MemTracker.Killer = &vars.SQLKiller
-	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
+	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
+	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2277,13 +2354,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
 		}
 	}
-	if !EnableLocalTxn.Load() {
+	if !vardef.EnableLocalTxn.Load() {
 		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
-	if EnableRowLevelChecksum.Load() {
+	if vardef.EnableRowLevelChecksum.Load() {
 		vars.EnableRowLevelChecksum = true
 	}
-	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
+	vars.systems[vardef.CharacterSetConnection], vars.systems[vardef.CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars
 }
 
@@ -2302,6 +2379,7 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 
 // GetAllowPreferRangeScan get preferRangeScan from SessionVars.preferRangeScan.
 func (s *SessionVars) GetAllowPreferRangeScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptPreferRangeScan)
 	return s.preferRangeScan
 }
 
@@ -2405,15 +2483,15 @@ func (s *SessionVars) RegisterScalarSubQ(scalarSubQ any) {
 // have their own collation, which has a higher collation precedence.
 // See https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
-	charset = s.systems[CharacterSetConnection]
-	collation = s.systems[CollationConnection]
+	charset = s.systems[vardef.CharacterSetConnection]
+	collation = s.systems[vardef.CollationConnection]
 	return
 }
 
 // GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
-	cli, err := s.GetSessionOrGlobalSystemVar(context.Background(), CharacterSetClient)
+	cli, err := s.GetSessionOrGlobalSystemVar(context.Background(), vardef.CharacterSetClient)
 	if err != nil {
 		cli = ""
 	}
@@ -2438,6 +2516,7 @@ func (s *SessionVars) SetStringUserVar(name string, strVal string, collation str
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
+	s.StmtCtx.LastInsertIDSet = true
 	s.StmtCtx.LastInsertID = insertID
 }
 
@@ -2506,7 +2585,7 @@ func (s *SessionVars) IsIsolation(isolation string) bool {
 		s.TxnCtx.Isolation = s.txnIsolationLevelOneShot.value
 	}
 	if s.TxnCtx.Isolation == "" {
-		s.TxnCtx.Isolation, _ = s.GetSystemVar(TxnIsolation)
+		s.TxnCtx.Isolation, _ = s.GetSystemVar(vardef.TxnIsolation)
 	}
 	return s.TxnCtx.Isolation == isolation
 }
@@ -2524,7 +2603,7 @@ func (s *SessionVars) IsolationLevelForNewTxn() (isolation string) {
 	}
 
 	if isolation == "" {
-		isolation, _ = s.GetSystemVar(TxnIsolation)
+		isolation, _ = s.GetSystemVar(vardef.TxnIsolation)
 	}
 
 	return
@@ -2570,9 +2649,9 @@ func (s *SessionVars) Location() *time.Location {
 
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
-	if name == WarningCount {
+	if name == vardef.WarningCount {
 		return strconv.Itoa(s.SysWarningCount), true
-	} else if name == ErrorCount {
+	} else if name == vardef.ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
 	val, ok := s.systems[name]
@@ -2619,7 +2698,7 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt any) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		maxPreparedStmtCount := MaxPreparedStmtCountValue.Load()
+		maxPreparedStmtCount := vardef.MaxPreparedStmtCountValue.Load()
 		newPreparedStmtCount := atomic.AddInt64(&PreparedStmtCount, 1)
 		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
 			atomic.AddInt64(&PreparedStmtCount, -1)
@@ -2725,29 +2804,41 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	if sv == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	val, err := sv.Validate(s, val, ScopeSession)
+	val, err := sv.Validate(s, val, vardef.ScopeSession)
 	if err != nil {
 		return err
 	}
 	return sv.SetSessionFromHook(s, val)
 }
 
-// SetSystemVarWithOldValAsRet is wrapper of SetSystemVar. Return the old value for later use.
-func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, error) {
+// SetSystemVarWithOldStateAsRet is wrapper of SetSystemVar. Return the old value for later use.
+func (s *SessionVars) SetSystemVarWithOldStateAsRet(name string, val string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
 		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	val, err := sv.Validate(s, val, ScopeSession)
+	val, err := sv.Validate(s, val, vardef.ScopeSession)
 	if err != nil {
 		return "", err
 	}
-	// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
-	// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
-	oldV, err := s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
-	if err != nil {
-		return "", err
+
+	var oldV string
+
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		oldV, _ /* not_default */, err = sv.GetStateValue(s)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
+		// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
+		oldV, err = s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+		if err != nil {
+			return "", err
+		}
 	}
+
 	return oldV, sv.SetSessionFromHook(s, val)
 }
 
@@ -2769,7 +2860,7 @@ func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string)
 	if sv == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	val = sv.ValidateWithRelaxedValidation(s, val, ScopeSession)
+	val = sv.ValidateWithRelaxedValidation(s, val, vardef.ScopeSession)
 	return sv.SetSessionFromHook(s, val)
 }
 
@@ -2848,7 +2939,6 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
-	sessionStates.ResourceGroupName = s.ResourceGroupName
 	sessionStates.HypoIndexes = s.HypoIndexes
 	sessionStates.HypoTiFlashReplicas = s.HypoTiFlashReplicas
 
@@ -2884,7 +2974,6 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
-	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
@@ -2908,7 +2997,6 @@ func (s *SessionVars) SetResourceGroupName(groupName string) {
 type TableDelta struct {
 	Delta    int64
 	Count    int64
-	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
 	TableID  int64
 }
@@ -2918,14 +3006,10 @@ func (td TableDelta) Clone() TableDelta {
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}
 }
-
-// ConcurrencyUnset means the value the of the concurrency related variable is unset.
-const ConcurrencyUnset = -1
 
 // Concurrency defines concurrency values.
 type Concurrency struct {
@@ -2985,9 +3069,6 @@ type Concurrency struct {
 
 	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
 	IdleTransactionTimeout int
-
-	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
-	BulkDMLEnabled bool
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -3057,7 +3138,7 @@ func (c *Concurrency) SetIndexSerialScanConcurrency(n int) {
 
 // IndexLookupConcurrency return the number of concurrent index lookup worker.
 func (c *Concurrency) IndexLookupConcurrency() int {
-	if c.indexLookupConcurrency != ConcurrencyUnset {
+	if c.indexLookupConcurrency != vardef.ConcurrencyUnset {
 		return c.indexLookupConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3065,7 +3146,7 @@ func (c *Concurrency) IndexLookupConcurrency() int {
 
 // IndexLookupJoinConcurrency return the number of concurrent index lookup join inner worker.
 func (c *Concurrency) IndexLookupJoinConcurrency() int {
-	if c.indexLookupJoinConcurrency != ConcurrencyUnset {
+	if c.indexLookupJoinConcurrency != vardef.ConcurrencyUnset {
 		return c.indexLookupJoinConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3083,7 +3164,7 @@ func (c *Concurrency) AnalyzeDistSQLScanConcurrency() int {
 
 // HashJoinConcurrency return the number of concurrent hash join outer worker.
 func (c *Concurrency) HashJoinConcurrency() int {
-	if c.hashJoinConcurrency != ConcurrencyUnset {
+	if c.hashJoinConcurrency != vardef.ConcurrencyUnset {
 		return c.hashJoinConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3091,7 +3172,7 @@ func (c *Concurrency) HashJoinConcurrency() int {
 
 // ProjectionConcurrency return the number of concurrent projection worker.
 func (c *Concurrency) ProjectionConcurrency() int {
-	if c.projectionConcurrency != ConcurrencyUnset {
+	if c.projectionConcurrency != vardef.ConcurrencyUnset {
 		return c.projectionConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3099,7 +3180,7 @@ func (c *Concurrency) ProjectionConcurrency() int {
 
 // HashAggPartialConcurrency return the number of concurrent hash aggregation partial worker.
 func (c *Concurrency) HashAggPartialConcurrency() int {
-	if c.hashAggPartialConcurrency != ConcurrencyUnset {
+	if c.hashAggPartialConcurrency != vardef.ConcurrencyUnset {
 		return c.hashAggPartialConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3107,7 +3188,7 @@ func (c *Concurrency) HashAggPartialConcurrency() int {
 
 // HashAggFinalConcurrency return the number of concurrent hash aggregation final worker.
 func (c *Concurrency) HashAggFinalConcurrency() int {
-	if c.hashAggFinalConcurrency != ConcurrencyUnset {
+	if c.hashAggFinalConcurrency != vardef.ConcurrencyUnset {
 		return c.hashAggFinalConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3115,7 +3196,7 @@ func (c *Concurrency) HashAggFinalConcurrency() int {
 
 // WindowConcurrency return the number of concurrent window worker.
 func (c *Concurrency) WindowConcurrency() int {
-	if c.windowConcurrency != ConcurrencyUnset {
+	if c.windowConcurrency != vardef.ConcurrencyUnset {
 		return c.windowConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3123,7 +3204,7 @@ func (c *Concurrency) WindowConcurrency() int {
 
 // MergeJoinConcurrency return the number of concurrent merge join worker.
 func (c *Concurrency) MergeJoinConcurrency() int {
-	if c.mergeJoinConcurrency != ConcurrencyUnset {
+	if c.mergeJoinConcurrency != vardef.ConcurrencyUnset {
 		return c.mergeJoinConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3131,7 +3212,7 @@ func (c *Concurrency) MergeJoinConcurrency() int {
 
 // StreamAggConcurrency return the number of concurrent stream aggregation worker.
 func (c *Concurrency) StreamAggConcurrency() int {
-	if c.streamAggConcurrency != ConcurrencyUnset {
+	if c.streamAggConcurrency != vardef.ConcurrencyUnset {
 		return c.streamAggConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3139,7 +3220,7 @@ func (c *Concurrency) StreamAggConcurrency() int {
 
 // IndexMergeIntersectionConcurrency return the number of concurrent process worker.
 func (c *Concurrency) IndexMergeIntersectionConcurrency() int {
-	if c.indexMergeIntersectionConcurrency != ConcurrencyUnset {
+	if c.indexMergeIntersectionConcurrency != vardef.ConcurrencyUnset {
 		return c.indexMergeIntersectionConcurrency
 	}
 	return c.ExecutorConcurrency
@@ -3185,445 +3266,23 @@ type BatchSize struct {
 	MaxPagingSize int
 }
 
-const (
-	// SlowLogRowPrefixStr is slow log row prefix.
-	SlowLogRowPrefixStr = "# "
-	// SlowLogSpaceMarkStr is slow log space mark.
-	SlowLogSpaceMarkStr = ": "
-	// SlowLogSQLSuffixStr is slow log suffix.
-	SlowLogSQLSuffixStr = ";"
-	// SlowLogTimeStr is slow log field name.
-	SlowLogTimeStr = "Time"
-	// SlowLogStartPrefixStr is slow log start row prefix.
-	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
-	// SlowLogTxnStartTSStr is slow log field name.
-	SlowLogTxnStartTSStr = "Txn_start_ts"
-	// SlowLogKeyspaceName is slow log field name.
-	SlowLogKeyspaceName = "Keyspace_name"
-	// SlowLogKeyspaceID is slow log field name.
-	SlowLogKeyspaceID = "Keyspace_ID"
-	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
-	SlowLogUserAndHostStr = "User@Host"
-	// SlowLogUserStr is slow log field name.
-	SlowLogUserStr = "User"
-	// SlowLogHostStr only for slow_query table usage.
-	SlowLogHostStr = "Host"
-	// SlowLogConnIDStr is slow log field name.
-	SlowLogConnIDStr = "Conn_ID"
-	// SlowLogSessAliasStr is the session alias set by user
-	SlowLogSessAliasStr = "Session_alias"
-	// SlowLogQueryTimeStr is slow log field name.
-	SlowLogQueryTimeStr = "Query_time"
-	// SlowLogParseTimeStr is the parse sql time.
-	SlowLogParseTimeStr = "Parse_time"
-	// SlowLogCompileTimeStr is the compile plan time.
-	SlowLogCompileTimeStr = "Compile_time"
-	// SlowLogRewriteTimeStr is the rewrite time.
-	SlowLogRewriteTimeStr = "Rewrite_time"
-	// SlowLogOptimizeTimeStr is the optimization time.
-	SlowLogOptimizeTimeStr = "Optimize_time"
-	// SlowLogWaitTSTimeStr is the time of waiting TS.
-	SlowLogWaitTSTimeStr = "Wait_TS"
-	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
-	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
-	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
-	SlowLogPreProcSubQueryTimeStr = "Preproc_subqueries_time"
-	// SlowLogDBStr is slow log field name.
-	SlowLogDBStr = "DB"
-	// SlowLogIsInternalStr is slow log field name.
-	SlowLogIsInternalStr = "Is_internal"
-	// SlowLogIndexNamesStr is slow log field name.
-	SlowLogIndexNamesStr = "Index_names"
-	// SlowLogDigestStr is slow log field name.
-	SlowLogDigestStr = "Digest"
-	// SlowLogQuerySQLStr is slow log field name.
-	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
-	// SlowLogStatsInfoStr is plan stats info.
-	SlowLogStatsInfoStr = "Stats"
-	// SlowLogNumCopTasksStr is the number of cop-tasks.
-	SlowLogNumCopTasksStr = "Num_cop_tasks"
-	// SlowLogCopProcAvg is the average process time of all cop-tasks.
-	SlowLogCopProcAvg = "Cop_proc_avg"
-	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
-	SlowLogCopProcP90 = "Cop_proc_p90"
-	// SlowLogCopProcMax is the max process time of all cop-tasks.
-	SlowLogCopProcMax = "Cop_proc_max"
-	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
-	SlowLogCopProcAddr = "Cop_proc_addr"
-	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
-	SlowLogCopWaitAvg = "Cop_wait_avg" // #nosec G101
-	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
-	SlowLogCopWaitP90 = "Cop_wait_p90" // #nosec G101
-	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
-	SlowLogCopWaitMax = "Cop_wait_max"
-	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
-	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
-	// SlowLogCopBackoffPrefix contains backoff information.
-	SlowLogCopBackoffPrefix = "Cop_backoff_"
-	// SlowLogMemMax is the max number bytes of memory used in this statement.
-	SlowLogMemMax = "Mem_max"
-	// SlowLogDiskMax is the max number bytes of disk used in this statement.
-	SlowLogDiskMax = "Disk_max"
-	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
-	SlowLogPrepared = "Prepared"
-	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
-	SlowLogPlanFromCache = "Plan_from_cache"
-	// SlowLogPlanFromBinding is used to indicate whether this plan is matched with the hints in the binding.
-	SlowLogPlanFromBinding = "Plan_from_binding"
-	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
-	SlowLogHasMoreResults = "Has_more_results"
-	// SlowLogSucc is used to indicate whether this sql execute successfully.
-	SlowLogSucc = "Succ"
-	// SlowLogPrevStmt is used to show the previous executed statement.
-	SlowLogPrevStmt = "Prev_stmt"
-	// SlowLogPlan is used to record the query plan.
-	SlowLogPlan = "Plan"
-	// SlowLogPlanDigest is used to record the query plan digest.
-	SlowLogPlanDigest = "Plan_digest"
-	// SlowLogBinaryPlan is used to record the binary plan.
-	SlowLogBinaryPlan = "Binary_plan"
-	// SlowLogPlanPrefix is the prefix of the plan value.
-	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
-	// SlowLogBinaryPlanPrefix is the prefix of the binary plan value.
-	SlowLogBinaryPlanPrefix = ast.TiDBDecodeBinaryPlan + "('"
-	// SlowLogPlanSuffix is the suffix of the plan value.
-	SlowLogPlanSuffix = "')"
-	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
-	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
-	// SlowLogKVTotal is the total time waiting for kv.
-	SlowLogKVTotal = "KV_total"
-	// SlowLogPDTotal is the total time waiting for pd.
-	SlowLogPDTotal = "PD_total"
-	// SlowLogBackoffTotal is the total time doing backoff.
-	SlowLogBackoffTotal = "Backoff_total"
-	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
-	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
-	// SlowLogExecRetryCount is the execution retry count.
-	SlowLogExecRetryCount = "Exec_retry_count"
-	// SlowLogExecRetryTime is the execution retry time.
-	SlowLogExecRetryTime = "Exec_retry_time"
-	// SlowLogBackoffDetail is the detail of backoff.
-	SlowLogBackoffDetail = "Backoff_Detail"
-	// SlowLogResultRows is the row count of the SQL result.
-	SlowLogResultRows = "Result_rows"
-	// SlowLogWarnings is the warnings generated during executing the statement.
-	// Note that some extra warnings would also be printed through slow log.
-	SlowLogWarnings = "Warnings"
-	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
-	SlowLogIsExplicitTxn = "IsExplicitTxn"
-	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
-	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
-	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
-	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
-	// SlowLogResourceGroup is the resource group name that the current session bind.
-	SlowLogResourceGroup = "Resource_group"
-	// SlowLogRRU is the read request_unit(RU) cost
-	SlowLogRRU = "Request_unit_read"
-	// SlowLogWRU is the write request_unit(RU) cost
-	SlowLogWRU = "Request_unit_write"
-	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
-	SlowLogWaitRUDuration = "Time_queued_by_rc"
-	// SlowLogTidbCPUUsageDuration is the total tidb cpu usages.
-	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
-	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
-	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
-)
+// PipelinedDMLConfig defines the configuration for pipelined DML.
+type PipelinedDMLConfig struct {
+	// PipelinedFLushConcurrency indicates the number of concurrent worker for pipelined flush.
+	PipelinedFlushConcurrency int
+
+	// PipelinedResolveLockConcurrency indicates the number of concurrent worker for pipelined resolve lock.
+	PipelinedResolveLockConcurrency int
+
+	// PipelinedWriteThrottleRatio defines how the flush process is throttled
+	// by adding sleep intervals between flushes, to avoid overwhelming the storage layer.
+	// It is defined as: throttle_ratio =  T_sleep / (T_sleep + T_flush)
+	PipelinedWriteThrottleRatio float64
+}
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
 // It's controlled by the global variable `tidb_generate_binary_plan`.
 var GenerateBinaryPlan atomic2.Bool
-
-// JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
-type JSONSQLWarnForSlowLog struct {
-	Level   string
-	Message string
-	// IsExtra means this SQL Warn is expected to be recorded only under some conditions (like in EXPLAIN) and should
-	// haven't been recorded as a warning now, but we recorded it anyway to help diagnostics.
-	IsExtra bool `json:",omitempty"`
-}
-
-// SlowQueryLogItems is a collection of items that should be included in the
-// slow query log.
-type SlowQueryLogItems struct {
-	TxnTS             uint64
-	KeyspaceName      string
-	KeyspaceID        uint32
-	SQL               string
-	Digest            string
-	TimeTotal         time.Duration
-	TimeParse         time.Duration
-	TimeCompile       time.Duration
-	TimeOptimize      time.Duration
-	TimeWaitTS        time.Duration
-	IndexNames        string
-	CopTasks          *execdetails.CopTasksDetails
-	ExecDetail        execdetails.ExecDetails
-	MemMax            int64
-	DiskMax           int64
-	Succ              bool
-	Prepared          bool
-	PlanFromCache     bool
-	PlanFromBinding   bool
-	HasMoreResults    bool
-	PrevStmt          string
-	Plan              string
-	PlanDigest        string
-	BinaryPlan        string
-	RewriteInfo       RewritePhaseInfo
-	KVTotal           time.Duration
-	PDTotal           time.Duration
-	BackoffTotal      time.Duration
-	WriteSQLRespTotal time.Duration
-	ExecRetryCount    uint
-	ExecRetryTime     time.Duration
-	ResultRows        int64
-	IsExplicitTxn     bool
-	IsWriteCacheTable bool
-	UsedStats         *stmtctx.UsedStatsInfo
-	IsSyncStatsFailed bool
-	Warnings          []JSONSQLWarnForSlowLog
-	ResourceGroupName string
-	RRU               float64
-	WRU               float64
-	WaitRUDuration    time.Duration
-	CPUUsages         ppcpuusage.CPUUsages
-}
-
-// SlowLogFormat uses for formatting slow log.
-// The slow log output is like below:
-// # Time: 2019-04-28T15:24:04.309074+08:00
-// # Txn_start_ts: 406315658548871171
-// # Keyspace_name: keyspace_a
-// # Keyspace_ID: 1
-// # User@Host: root[root] @ localhost [127.0.0.1]
-// # Conn_ID: 6
-// # Query_time: 4.895492
-// # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
-// # DB: test
-// # Index_names: [t1.idx1,t2.idx2]
-// # Is_internal: false
-// # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
-// # Stats: t1:1,t2:2
-// # Num_cop_tasks: 10
-// # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
-// # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
-// # Memory_max: 4096
-// # Disk_max: 65535
-// # Succ: true
-// # Prev_stmt: begin;
-// select * from t_slim;
-func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
-	var buf bytes.Buffer
-
-	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
-	if logItems.KeyspaceName != "" {
-		writeSlowLogItem(&buf, SlowLogKeyspaceName, logItems.KeyspaceName)
-		writeSlowLogItem(&buf, SlowLogKeyspaceID, fmt.Sprintf("%d", logItems.KeyspaceID))
-	}
-
-	if s.User != nil {
-		hostAddress := s.User.Hostname
-		if s.ConnectionInfo != nil {
-			hostAddress = s.ConnectionInfo.ClientIP
-		}
-		writeSlowLogItem(&buf, SlowLogUserAndHostStr, fmt.Sprintf("%s[%s] @ %s [%s]", s.User.Username, s.User.Username, s.User.Hostname, hostAddress))
-	}
-	if s.ConnectionID != 0 {
-		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
-	}
-	if s.SessionAlias != "" {
-		writeSlowLogItem(&buf, SlowLogSessAliasStr, s.SessionAlias)
-	}
-	if logItems.ExecRetryCount > 0 {
-		buf.WriteString(SlowLogRowPrefixStr)
-		buf.WriteString(SlowLogExecRetryTime)
-		buf.WriteString(SlowLogSpaceMarkStr)
-		buf.WriteString(strconv.FormatFloat(logItems.ExecRetryTime.Seconds(), 'f', -1, 64))
-		buf.WriteString(" ")
-		buf.WriteString(SlowLogExecRetryCount)
-		buf.WriteString(SlowLogSpaceMarkStr)
-		buf.WriteString(strconv.Itoa(int(logItems.ExecRetryCount)))
-		buf.WriteString("\n")
-	}
-	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
-
-	buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v", SlowLogRewriteTimeStr,
-		SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationRewrite.Seconds(), 'f', -1, 64)))
-	if logItems.RewriteInfo.PreprocessSubQueries > 0 {
-		buf.WriteString(fmt.Sprintf(" %v%v%v %v%v%v", SlowLogPreprocSubQueriesStr, SlowLogSpaceMarkStr, logItems.RewriteInfo.PreprocessSubQueries,
-			SlowLogPreProcSubQueryTimeStr, SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationPreprocessSubQuery.Seconds(), 'f', -1, 64)))
-	}
-	buf.WriteString("\n")
-
-	writeSlowLogItem(&buf, SlowLogOptimizeTimeStr, strconv.FormatFloat(logItems.TimeOptimize.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogWaitTSTimeStr, strconv.FormatFloat(logItems.TimeWaitTS.Seconds(), 'f', -1, 64))
-
-	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
-	}
-
-	if len(s.CurrentDB) > 0 {
-		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB))
-	}
-	if len(logItems.IndexNames) > 0 {
-		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
-	}
-
-	writeSlowLogItem(&buf, SlowLogIsInternalStr, strconv.FormatBool(s.InRestrictedSQL))
-	if len(logItems.Digest) > 0 {
-		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
-	}
-	keys := logItems.UsedStats.Keys()
-	if len(keys) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
-		firstComma := false
-		slices.Sort(keys)
-		for _, id := range keys {
-			usedStatsForTbl := logItems.UsedStats.GetUsedInfo(id)
-			if usedStatsForTbl == nil {
-				continue
-			}
-			if firstComma {
-				buf.WriteString(",")
-			}
-			usedStatsForTbl.WriteToSlowLog(&buf)
-			firstComma = true
-		}
-
-		buf.WriteString("\n")
-	}
-	if logItems.CopTasks != nil {
-		writeSlowLogItem(&buf, SlowLogNumCopTasksStr, strconv.FormatInt(int64(logItems.CopTasks.NumCopTasks), 10))
-		if logItems.CopTasks.NumCopTasks > 0 {
-			// make the result stable
-			backoffs := make([]string, 0, 3)
-			for backoff := range logItems.CopTasks.TotBackoffTimes {
-				backoffs = append(backoffs, backoff)
-			}
-			slices.Sort(backoffs)
-
-			if logItems.CopTasks.NumCopTasks == 1 {
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
-					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
-					SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
-					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
-					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
-				for _, backoff := range backoffs {
-					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
-					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v\n",
-						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
-						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
-					))
-				}
-			} else {
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-					SlowLogCopProcAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgProcessTime.Seconds(),
-					SlowLogCopProcP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90ProcessTime.Seconds(),
-					SlowLogCopProcMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessTime.Seconds(),
-					SlowLogCopProcAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxProcessAddress) + "\n")
-				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v",
-					SlowLogCopWaitAvg, SlowLogSpaceMarkStr, logItems.CopTasks.AvgWaitTime.Seconds(),
-					SlowLogCopWaitP90, SlowLogSpaceMarkStr, logItems.CopTasks.P90WaitTime.Seconds(),
-					SlowLogCopWaitMax, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitTime.Seconds(),
-					SlowLogCopWaitAddr, SlowLogSpaceMarkStr, logItems.CopTasks.MaxWaitAddress) + "\n")
-				for _, backoff := range backoffs {
-					backoffPrefix := SlowLogCopBackoffPrefix + backoff + "_"
-					buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v %v%v%v %v%v%v %v%v%v %v%v%v\n",
-						backoffPrefix+"total_times", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTimes[backoff],
-						backoffPrefix+"total_time", SlowLogSpaceMarkStr, logItems.CopTasks.TotBackoffTime[backoff].Seconds(),
-						backoffPrefix+"max_time", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffTime[backoff].Seconds(),
-						backoffPrefix+"max_addr", SlowLogSpaceMarkStr, logItems.CopTasks.MaxBackoffAddress[backoff],
-						backoffPrefix+"avg_time", SlowLogSpaceMarkStr, logItems.CopTasks.AvgBackoffTime[backoff].Seconds(),
-						backoffPrefix+"p90_time", SlowLogSpaceMarkStr, logItems.CopTasks.P90BackoffTime[backoff].Seconds(),
-					))
-				}
-			}
-		}
-	}
-	if logItems.MemMax > 0 {
-		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
-	}
-	if logItems.DiskMax > 0 {
-		writeSlowLogItem(&buf, SlowLogDiskMax, strconv.FormatInt(logItems.DiskMax, 10))
-	}
-
-	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
-	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
-	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
-	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
-	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
-	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
-	if len(logItems.Warnings) > 0 {
-		buf.WriteString(SlowLogRowPrefixStr + SlowLogWarnings + SlowLogSpaceMarkStr)
-		jsonEncoder := json.NewEncoder(&buf)
-		jsonEncoder.SetEscapeHTML(false)
-		// Note that the Encode() will append a '\n' so we don't need to add another.
-		err := jsonEncoder.Encode(logItems.Warnings)
-		if err != nil {
-			buf.WriteString(err.Error())
-		}
-	}
-	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
-	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
-	writeSlowLogItem(&buf, SlowLogIsSyncStatsFailed, strconv.FormatBool(logItems.IsSyncStatsFailed))
-	if s.StmtCtx.WaitLockLeaseTime > 0 {
-		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
-	}
-	if len(logItems.Plan) != 0 {
-		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
-	}
-	if len(logItems.PlanDigest) != 0 {
-		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
-	}
-	if len(logItems.BinaryPlan) != 0 {
-		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
-	}
-
-	if logItems.ResourceGroupName != "" {
-		writeSlowLogItem(&buf, SlowLogResourceGroup, logItems.ResourceGroupName)
-	}
-	if logItems.RRU > 0.0 {
-		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(logItems.RRU, 'f', -1, 64))
-	}
-	if logItems.WRU > 0.0 {
-		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(logItems.WRU, 'f', -1, 64))
-	}
-	if logItems.WaitRUDuration > time.Duration(0) {
-		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
-	}
-	if logItems.CPUUsages.TidbCPUTime > time.Duration(0) {
-		writeSlowLogItem(&buf, SlowLogTidbCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TidbCPUTime.Seconds(), 'f', -1, 64))
-	}
-	if logItems.CPUUsages.TikvCPUTime > time.Duration(0) {
-		writeSlowLogItem(&buf, SlowLogTikvCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TikvCPUTime.Seconds(), 'f', -1, 64))
-	}
-	if logItems.PrevStmt != "" {
-		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
-	}
-
-	if s.CurrentDBChanged {
-		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
-		s.CurrentDBChanged = false
-	}
-
-	buf.WriteString(logItems.SQL)
-	if len(logItems.SQL) == 0 || logItems.SQL[len(logItems.SQL)-1] != ';' {
-		buf.WriteString(";")
-	}
-
-	return buf.String()
-}
-
-// writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
-func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
-	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
-}
 
 // TxnReadTS indicates the value and used situation for tx_read_ts
 type TxnReadTS struct {
@@ -3767,16 +3426,17 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 //	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
 //	keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
-	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
-		return DefTiDBDefaultStrMatchSelectivity
+	if s.DefaultStrMatchSelectivity == vardef.DefTiDBDefaultStrMatchSelectivity {
+		return vardef.DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
 	if s.TxnCtx.relatedTableForMDL == nil {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
@@ -3943,42 +3603,25 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	}
 }
 
-const (
-	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
-	// Please see comments of SessionVars.OptObjective for details.
-	OptObjectiveModerate string = "moderate"
-	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
-	OptObjectiveDeterminate = "determinate"
-)
-
 // GetOptObjective return the session variable "tidb_opt_objective".
 // Please see comments of SessionVars.OptObjective for details.
 func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
 }
 
-// ForcePreAggStr means 1st hashagg will be pre aggregated.
-// AutoStr means TiFlash will decide which policy for 1st hashagg.
-// ForceStreamingStr means 1st hashagg will for pass through all blocks.
-const (
-	ForcePreAggStr    = "force_preagg"
-	AutoStr           = "auto"
-	ForceStreamingStr = "force_streaming"
-)
-
 // ValidTiFlashPreAggMode returns all valid modes.
 func ValidTiFlashPreAggMode() string {
-	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
+	return vardef.ForcePreAggStr + ", " + vardef.AutoStr + ", " + vardef.ForceStreamingStr
 }
 
 // ToTiPBTiFlashPreAggMode return the corresponding tipb value of preaggregation mode.
 func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
 	switch mode {
-	case ForcePreAggStr:
+	case vardef.ForcePreAggStr:
 		return tipb.TiFlashPreAggMode_ForcePreAgg, true
-	case ForceStreamingStr:
+	case vardef.ForceStreamingStr:
 		return tipb.TiFlashPreAggMode_ForceStreaming, true
-	case AutoStr:
+	case vardef.AutoStr:
 		return tipb.TiFlashPreAggMode_Auto, true
 	default:
 		return tipb.TiFlashPreAggMode_ForcePreAgg, false
@@ -4012,12 +3655,3 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 	}
 	return false
 }
-
-const (
-	// ScatterOff means default, will not scatter region
-	ScatterOff string = ""
-	// ScatterTable means scatter region at table level
-	ScatterTable string = "table"
-	// ScatterGlobal means scatter region at global level
-	ScatterGlobal string = "global"
-)

@@ -38,18 +38,23 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -64,7 +69,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	pd "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -425,9 +432,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
 			case "0":
-				variable.ProcessGeneralLog.Store(false)
+				vardef.ProcessGeneralLog.Store(false)
 			case "1":
-				variable.ProcessGeneralLog.Store(true)
+				vardef.ProcessGeneralLog.Store(true)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -443,9 +450,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch asyncCommit {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAsyncCommit, vardef.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncCommit, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableAsyncCommit, vardef.On)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -465,9 +472,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch onePC {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnable1PC, vardef.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnable1PC, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnable1PC, vardef.On)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -484,7 +491,7 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			if threshold > 0 {
-				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
+				atomic.StoreUint32(&vardef.DDLSlowOprThreshold, uint32(threshold))
 			}
 		}
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
@@ -532,9 +539,9 @@ func (h SettingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			switch mutationChecker {
 			case "0":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.Off)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableMutationChecker, vardef.Off)
 			case "1":
-				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableMutationChecker, variable.On)
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.TiDBEnableMutationChecker, vardef.On)
 			default:
 				handler.WriteError(w, errors.New("illegal argument"))
 				return
@@ -599,7 +606,7 @@ func (h FlashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos := make([]*TableFlashReplicaInfo, 0)
-	schemas := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	schemas := schema.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, schema := range schemas {
 		for _, tbl := range schema.TableInfos {
 			replicaInfos = appendTiFlashReplicaInfo(replicaInfos, tbl)
@@ -762,8 +769,8 @@ type SchemaTableStorage struct {
 	DataFree      int64  `json:"data_free"`
 }
 
-func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *pmodel.CIStr, table *pmodel.CIStr) (messages []*SchemaTableStorage, err error) {
-	var s sessiontypes.Session
+func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *ast.CIStr, table *ast.CIStr) (messages []*SchemaTableStorage, err error) {
+	var s sessionapi.Session
 	if s, err = session.CreateSession(h.Store); err != nil {
 		return
 	}
@@ -804,7 +811,7 @@ func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *pmodel.CIStr, t
 				break
 			}
 
-			for i := 0; i < req.NumRows(); i++ {
+			for i := range req.NumRows() {
 				messages = append(messages, &SchemaTableStorage{
 					TableSchema:   req.GetRow(i).GetString(0),
 					TableName:     req.GetRow(i).GetString(1),
@@ -833,13 +840,13 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	params := mux.Vars(req)
 
 	var (
-		dbName    *pmodel.CIStr
-		tableName *pmodel.CIStr
+		dbName    *ast.CIStr
+		tableName *ast.CIStr
 		isSingle  bool
 	)
 
 	if reqDbName, ok := params[handler.DBName]; ok {
-		cDBName := pmodel.NewCIStr(reqDbName)
+		cDBName := ast.NewCIStr(reqDbName)
 		// all table schemas in a specified database
 		schemaInfo, exists := schema.SchemaByName(cDBName)
 		if !exists {
@@ -850,7 +857,7 @@ func (h SchemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 		if reqTableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := pmodel.NewCIStr(reqTableName)
+			cTableName := ast.NewCIStr(reqTableName)
 			data, e := schema.TableByName(context.Background(), cDBName, cTableName)
 			if e != nil {
 				handler.WriteError(w, e)
@@ -949,10 +956,10 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 
 	if dbName, ok := params[handler.DBName]; ok {
-		cDBName := pmodel.NewCIStr(dbName)
+		cDBName := ast.NewCIStr(dbName)
 		if tableName, ok := params[handler.TableName]; ok {
 			// table schema of a specified table name
-			cTableName := pmodel.NewCIStr(tableName)
+			cTableName := ast.NewCIStr(tableName)
 			data, err := schema.TableByName(context.Background(), cDBName, cTableName)
 			if err != nil {
 				handler.WriteError(w, err)
@@ -1048,7 +1055,7 @@ func (h *TableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	tableName, partitionName := handler.ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -1124,7 +1131,7 @@ func (h DDLHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	txnMeta := meta.NewMeta(txn)
+	txnMeta := meta.NewMutator(txn)
 
 	jobs, err = ddl.ScanHistoryDDLJobs(txnMeta, int64(jobID), limit)
 	if err != nil {
@@ -1347,7 +1354,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+	regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, err
 	}
@@ -1370,7 +1377,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+		regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 		if err != nil {
 			return nil, err
 		}
@@ -1489,7 +1496,7 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// 		`for id in [frameRange.firstTableID,frameRange.endTableID]`
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, dbName := range schema.AllSchemaNames() {
-		if util.IsMemDB(dbName.L) {
+		if metadef.IsMemDB(dbName.L) {
 			continue
 		}
 		tables, err := schema.SchemaTableInfos(context.Background(), dbName)
@@ -1712,7 +1719,7 @@ type ServerInfo struct {
 	IsOwner  bool `json:"is_owner"`
 	MaxProcs int  `json:"max_procs"`
 	GOGC     int  `json:"gogc"`
-	*infosync.ServerInfo
+	*serverinfo.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1738,11 +1745,11 @@ func (h ServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 
 // ClusterServerInfo is used to report cluster servers info when do http request.
 type ClusterServerInfo struct {
-	ServersNum                   int                             `json:"servers_num,omitempty"`
-	OwnerID                      string                          `json:"owner_id"`
-	IsAllServerVersionConsistent bool                            `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []infosync.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*infosync.ServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                               `json:"servers_num,omitempty"`
+	OwnerID                      string                            `json:"owner_id"`
+	IsAllServerVersionConsistent bool                              `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []serverinfo.VersionInfo          `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*serverinfo.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1768,14 +1775,14 @@ func (h AllServerInfoHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) 
 		log.Error("failed to get owner id", zap.Error(err))
 		return
 	}
-	allVersionsMap := map[infosync.ServerVersionInfo]struct{}{}
-	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[serverinfo.VersionInfo]struct{}{}
+	allVersions := make([]serverinfo.VersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
-		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+		if _, ok := allVersionsMap[v.VersionInfo]; ok {
 			continue
 		}
-		allVersionsMap[v.ServerVersionInfo] = struct{}{}
-		allVersions = append(allVersions, v.ServerVersionInfo)
+		allVersionsMap[v.VersionInfo] = struct{}{}
+		allVersions = append(allVersions, v.VersionInfo)
 	}
 	clusterInfo := ClusterServerInfo{
 		ServersNum: len(allServersInfo),
@@ -1956,7 +1963,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	hook := req.FormValue("ddl_hook")
 	switch hook {
 	case "ctc_hook":
-		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			log.Info("on job run before", zap.String("job", job.String()))
 			// Only block the ctc type ddl here.
 			if job.Type != model.ActionModifyColumn {
@@ -1973,7 +1980,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	case "default_hook":
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 
 	handler.WriteData(w, "success!")
@@ -2017,4 +2024,181 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	handler.WriteData(w, config.GetGlobalConfig().Labels)
+}
+
+// IngestParam is the type for lightning ingest parameters.
+type IngestParam string
+
+const (
+	// IngestParamMaxBatchSplitRanges is the parameter for lightning max_batch_split_ranges.
+	IngestParamMaxBatchSplitRanges IngestParam = "max_batch_split_ranges"
+	// IngestParamMaxSplitRangesPerSec is the parameter for lightning max_split_ranges_per_sec.
+	IngestParamMaxSplitRangesPerSec IngestParam = "max_split_ranges_per_sec"
+	// IngestParamMaxInflight is the parameter for lightning max_inflight.
+	IngestParamMaxInflight IngestParam = "max_inflight"
+	// IngestParamMaxPerSecond is the parameter for lightning max_per_second.
+	IngestParamMaxPerSecond IngestParam = "max_per_second"
+)
+
+// IngestConcurrencyHandler is the handler for lightning max_batch_split_ranges and max_inflight.
+type IngestConcurrencyHandler struct {
+	*handler.TikvHandlerTool
+	param IngestParam
+}
+
+// NewIngestConcurrencyHandler creates a new IngestConcurrencyHandler.
+func NewIngestConcurrencyHandler(tool *handler.TikvHandlerTool, param IngestParam) IngestConcurrencyHandler {
+	return IngestConcurrencyHandler{tool, param}
+}
+
+// ServeHTTP handles request of lightning max_batch_split_ranges.
+func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var getter func(*meta.Mutator) (float64, bool, error)
+	var setter func(*meta.Mutator, float64) error
+	var updateGlobal func(v float64) float64
+	switch h.param {
+	case IngestParamMaxBatchSplitRanges:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxBatchSplitRanges()
+			return float64(v), isNull, err
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxBatchSplitRanges(int(value))
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxBatchSplitRanges.Load()
+			intV := int(v)
+			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			return float64(*old)
+		}
+	case IngestParamMaxSplitRangesPerSec:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			return m.GetIngestMaxSplitRangesPerSec()
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxSplitRangesPerSec(value)
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxSplitRangesPerSec.Load()
+			local.CurrentMaxSplitRangesPerSec.Store(&v)
+			return *old
+		}
+	case IngestParamMaxPerSecond:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			return m.GetIngestMaxPerSec()
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxPerSec(value)
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestPerSec.Load()
+			local.CurrentMaxIngestPerSec.Store(&v)
+			return *old
+		}
+	case IngestParamMaxInflight:
+		getter = func(m *meta.Mutator) (float64, bool, error) {
+			v, isNull, err := m.GetIngestMaxInflight()
+			return float64(v), isNull, err
+		}
+		setter = func(m *meta.Mutator, value float64) error {
+			return m.SetIngestMaxInflight(int(value))
+		}
+		updateGlobal = func(v float64) float64 {
+			old := local.CurrentMaxIngestInflight.Load()
+			intV := int(v)
+			local.CurrentMaxIngestInflight.Store(&intV)
+			return float64(*old)
+		}
+	default:
+		handler.WriteError(w, errors.Errorf("unsupported ingest parameter: %s", h.param))
+	}
+	switch req.Method {
+	case http.MethodGet:
+		var respValue float64
+		var respIsNull bool
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			var getErr error
+			respValue, respIsNull, getErr = getter(m)
+			return getErr
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+
+		data := map[string]any{
+			"value":   respValue,
+			"is_null": respIsNull,
+		}
+		handler.WriteData(w, data)
+	case http.MethodPost:
+		var payload struct {
+			Value float64 `json:"value"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		newValue := payload.Value
+		if newValue < 0 {
+			handler.WriteError(w, errors.New("value must be >= 0"))
+			return
+		}
+		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			return setter(m, newValue)
+		})
+
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		oldVal := updateGlobal(newValue)
+		logutil.BgLogger().Info("set ingest concurrency",
+			zap.String("param", string(h.param)),
+			zap.Float64("oldValue", oldVal),
+			zap.Float64("newValue", newValue))
+		handler.WriteData(w, map[string]string{"message": "success"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		handler.WriteError(w, errors.New("method not allowed"))
+	}
+}
+
+// TxnGCStatesHandler is the handler for GC related API.
+type TxnGCStatesHandler struct {
+	store kv.Storage
+}
+
+// NewTxnGCStatesHandler creates a TxnGCStatesHandler.
+func NewTxnGCStatesHandler(store kv.Storage) *TxnGCStatesHandler {
+	return &TxnGCStatesHandler{
+		store: store,
+	}
+}
+
+// ServeHTTP implements the HTTP handler interface.
+func (gc *TxnGCStatesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "This API only supports GET method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pdStoreBackend, ok := gc.store.(kv.StorageWithPD)
+	if !ok {
+		handler.WriteError(w, errors.New("GC API only support storage with PD"))
+		return
+	}
+
+	pdCli := pdStoreBackend.GetPDClient()
+	keyspaceID := gc.store.GetCodec().GetKeyspaceID()
+	gcCli := pdCli.GetGCStatesClient(uint32(keyspaceID))
+	state, err := gcCli.GetGCState(context.Background())
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	handler.WriteData(w, state)
 }

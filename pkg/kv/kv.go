@@ -251,6 +251,8 @@ type Transaction interface {
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
 	StartTS() uint64
+	// CommitTS returns the transaction commit timestamp if it is committed; otherwise it returns 0.
+	CommitTS() uint64
 	// Valid returns if the transaction is valid.
 	// A transaction become invalid after commit or rollback.
 	Valid() bool
@@ -327,6 +329,7 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
+	TryCopLiteWorker           *atomic.Uint32
 }
 
 // ReqTypes.
@@ -346,17 +349,19 @@ const (
 	ReqSubTypeAnalyzeCol = 10005
 )
 
-// StoreType represents the type of a store.
+// StoreType represents the type of storage engine.
 type StoreType uint8
 
 const (
-	// TiKV means the type of a store is TiKV.
+	// TiKV means the type of store engine is TiKV.
 	TiKV StoreType = iota
-	// TiFlash means the type of a store is TiFlash.
+	// TiFlash means the type of store engine is TiFlash.
 	TiFlash
-	// TiDB means the type of a store is TiDB.
+	// TiDB means the type of store engine is TiDB.
+	// used to read memory data from other instances to have a global view of the
+	// data, such as for information_schema.cluster_slow_query.
 	TiDB
-	// UnSpecified means the store type is unknown
+	// UnSpecified means the store engine type is unknown
 	UnSpecified = 255
 )
 
@@ -600,6 +605,8 @@ type Request struct {
 	StoreBusyThreshold time.Duration
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
+	// MaxExecutionTime is the timeout of the whole query execution
+	MaxExecutionTime uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 
@@ -717,6 +724,15 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	// GetCodec gets the codec of the storage.
 	GetCodec() tikv.Codec
+	// SetOption is a thin wrapper around sync.Map.
+	SetOption(k any, v any)
+	// GetOption is a thin wrapper around sync.Map.
+	GetOption(k any) (any, bool)
+	// GetClusterID returns the physical cluster ID of the storage.
+	// for nextgen, all keyspace in the storage share the same cluster ID.
+	GetClusterID() uint64
+	// GetKeyspace returns the keyspace name of the storage.
+	GetKeyspace() string
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
@@ -772,14 +788,15 @@ const (
 
 // ResourceGroupTagBuilder is used to build the resource group tag for a kv request.
 type ResourceGroupTagBuilder struct {
-	sqlDigest  *parser.Digest
-	planDigest *parser.Digest
-	accessKey  []byte
+	sqlDigest    *parser.Digest
+	planDigest   *parser.Digest
+	keyspaceName []byte
+	accessKey    []byte
 }
 
 // NewResourceGroupTagBuilder creates a new ResourceGroupTagBuilder.
-func NewResourceGroupTagBuilder() *ResourceGroupTagBuilder {
-	return &ResourceGroupTagBuilder{}
+func NewResourceGroupTagBuilder(keyspaceName []byte) *ResourceGroupTagBuilder {
+	return &ResourceGroupTagBuilder{keyspaceName: keyspaceName}
 }
 
 // SetSQLDigest sets the sql digest for the request.
@@ -803,7 +820,7 @@ func (b *ResourceGroupTagBuilder) BuildProtoTagger() tikvrpc.ResourceGroupTagger
 
 // EncodeTagWithKey encodes the resource group tag, returns the encoded bytes.
 func (b *ResourceGroupTagBuilder) EncodeTagWithKey(key []byte) []byte {
-	tag := &tipb.ResourceGroupTag{}
+	tag := &tipb.ResourceGroupTag{KeyspaceName: b.keyspaceName}
 	if b.sqlDigest != nil {
 		tag.SqlDigest = b.sqlDigest.Bytes()
 	}

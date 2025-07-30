@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -45,7 +45,7 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 
 	count := 200
 	stmts := make([]ast.StmtNode, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		stmt, err := se.ParseWithParams(context.Background(), "select * from mysql.user limit 1")
 		require.NoError(t, err)
 		stmts[i] = stmt
@@ -53,7 +53,7 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
 	var wg util.WaitGroupWrapper
-	for i := 0; i < count; i++ {
+	for i := range count {
 		s := stmts[i]
 		wg.Run(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
@@ -70,7 +70,7 @@ func TestSchemaCacheSizeVar(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	size, isNull, err := m.GetSchemaCacheSize()
 	require.NoError(t, err)
 	require.Equal(t, size, uint64(0))
@@ -84,10 +84,10 @@ func TestSchemaCacheSizeVar(t *testing.T) {
 
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	size, isNull, err = m.GetSchemaCacheSize()
 	require.NoError(t, err)
-	require.Equal(t, size, uint64(variable.DefTiDBSchemaCacheSize))
+	require.Equal(t, size, uint64(vardef.DefTiDBSchemaCacheSize))
 	require.Equal(t, isNull, false)
 	require.NoError(t, txn.Rollback())
 }

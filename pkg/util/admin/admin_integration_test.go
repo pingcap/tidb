@@ -34,7 +34,8 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 	txn, err := tk.Session().Txn(false)
 	require.NoError(t, err)
 	memBuffer := txn.GetMemBuffer()
-	it, err := memBuffer.Iter(nil, nil)
+	handle := memBuffer.Staging()
+	it := memBuffer.SnapshotIter(nil, nil)
 	require.NoError(t, err)
 	for it.Valid() {
 		if tablecodec.IsRecordKey(it.Key()) && len(it.Value()) > 0 {
@@ -48,6 +49,7 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 		err = it.Next()
 		require.NoError(t, err)
 	}
+	memBuffer.Release(handle)
 
 	tk.MustExec("commit")
 	err = tk.ExecToErr("admin check table t")

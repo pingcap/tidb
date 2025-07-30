@@ -448,7 +448,7 @@ func TestFlashbackPartitionTable(t *testing.T) {
 			"partition `a_2` values less than (75), " +
 			"partition `a_3` values less than (200))")
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		}
 
@@ -556,11 +556,11 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			if job.Type == model.ActionFlashbackCluster && job.SchemaState == model.StateWriteReorganization {
 				txn, err := store.Begin()
 				assert.NoError(t, err)
-				_, err = meta.NewMeta(txn).ListDatabases()
+				_, err = meta.NewMutator(txn).ListDatabases()
 				errorMsg := err.Error()
 				assert.Contains(t, errorMsg, "is in flashback progress, FlashbackStartTS is ")
 				slices := strings.Split(errorMsg, "is in flashback progress, FlashbackStartTS is ")
@@ -570,7 +570,7 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 			}
 		})
 		tk.Exec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 	}

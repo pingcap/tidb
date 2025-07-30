@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 go_library(
     name = "br_lib",
     srcs = [
+        "abort.go",
         "backup.go",
         "cmd.go",
         "debug.go",
@@ -37,7 +38,6 @@ go_library(
         "//pkg/util",
         "//pkg/util/gctuner",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/metricsutil",
         "//pkg/util/redact",

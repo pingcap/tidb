@@ -71,21 +71,16 @@ type HashAggPartialWorker struct {
 	inflightChunkSync *sync.WaitGroup
 }
 
-func (w *HashAggPartialWorker) getChildInput() bool {
+func (w *HashAggPartialWorker) getChildInput() (*chunk.Chunk, bool) {
 	select {
 	case <-w.finishCh:
-		return false
+		return nil, false
 	case chk, ok := <-w.inputCh:
 		if !ok {
-			return false
+			return nil, false
 		}
-		w.chk.SwapColumns(chk)
-		w.giveBackCh <- &HashAggInput{
-			chk:        chk,
-			giveBackCh: w.inputCh,
-		}
+		return chk, true
 	}
-	return true
 }
 
 func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
@@ -95,14 +90,21 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	}
 
 	waitStart := time.Now()
-	ok := w.getChildInput()
-	updateWaitTime(w.stats, waitStart)
-
+	chk, ok := w.getChildInput()
 	if !ok {
 		return false
 	}
 
 	defer w.inflightChunkSync.Done()
+	updateWaitTime(w.stats, waitStart)
+
+	w.intestDuringPartialWorkerRun()
+
+	w.chk.SwapColumns(chk)
+	w.giveBackCh <- &HashAggInput{
+		chk:        chk,
+		giveBackCh: w.inputCh,
+	}
 
 	execStart := time.Now()
 	if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
@@ -219,7 +221,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 	allMemDelta := int64(0)
 	w.partialResultsBuffer = w.partialResultsBuffer[0:0]
 
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
 		tmp, ok := mapper[finalWorkerIdx][string(hack.String(groupKey[i]))]
 
@@ -270,7 +272,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
 	exprCtx := ctx.GetExprCtx()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		partialResult := partialResultOfEachRow[i]
 		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
@@ -287,7 +289,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 }
 
 func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
-	for i := 0; i < finalConcurrency; i++ {
+	for i := range finalConcurrency {
 		w.outputChs[i] <- &w.partialResultsMap[i]
 	}
 }
@@ -296,7 +298,7 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 	if !w.isSpillPrepared {
 		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
 		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
-		for i := 0; i < spilledPartitionNum; i++ {
+		for i := range spilledPartitionNum {
 			w.tmpChksForSpill[i] = w.spillHelper.getNewSpillChunkFunc()
 			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillHelper.spillChunkFieldTypes)
 			if w.spillHelper.diskTracker != nil {
@@ -372,7 +374,7 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 
 // Some tmp chunks may no be full, so we need to manually trigger the spill action.
 func (w *HashAggPartialWorker) spillRemainingDataToDisk() error {
-	for i := 0; i < spilledPartitionNum; i++ {
+	for i := range spilledPartitionNum {
 		if w.tmpChksForSpill[i].NumRows() > 0 {
 			err := w.spilledChunksIO[i].Add(w.tmpChksForSpill[i])
 			if err != nil {

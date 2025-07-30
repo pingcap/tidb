@@ -16,14 +16,12 @@ package expression
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -40,7 +38,7 @@ var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	FuncName model.CIStr
+	FuncName ast.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType           *types.FieldType `plan-cache-clone:"shallow"`
@@ -49,10 +47,15 @@ type ScalarFunction struct {
 	canonicalhashcode []byte
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (sf *ScalarFunction) SafeToShareAcrossSession() bool {
+	return sf.Function.SafeToShareAcrossSession()
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalInt(ctx, input, result)
@@ -61,7 +64,7 @@ func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 // VecEvalReal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalReal(ctx, input, result)
@@ -70,7 +73,7 @@ func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, resul
 // VecEvalString evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalString(ctx, input, result)
@@ -79,7 +82,7 @@ func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, res
 // VecEvalDecimal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalDecimal(ctx, input, result)
@@ -88,7 +91,7 @@ func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, re
 // VecEvalTime evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalTime(ctx, input, result)
@@ -97,7 +100,7 @@ func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, resul
 // VecEvalDuration evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalDuration(ctx, input, result)
@@ -106,7 +109,7 @@ func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, r
 // VecEvalJSON evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalJSON(ctx, input, result)
@@ -129,8 +132,9 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // StringWithCtx implements Expression interface.
 func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
-	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+8+16*len(sf.GetArgs())))
+	buffer.WriteString(sf.FuncName.L)
+	buffer.WriteByte('(')
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
@@ -182,10 +186,13 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
-	for _, arg := range args {
-		if isNull(arg) {
-			*arg.GetType(ctx) = *retFieldTp
-			arg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+	for i, arg := range args {
+		argflags := arg.GetType(ctx)
+		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
+			newarg := arg.Clone()
+			*newarg.GetType(ctx) = *retFieldTp.Clone()
+			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			args[i] = newarg
 		}
 	}
 }
@@ -194,13 +201,6 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
 func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
-	defer func() {
-		if err == nil && ret != nil && checkOrInit != nil {
-			if sf, ok := ret.(*ScalarFunction); ok {
-				ret, err = checkOrInit(sf)
-			}
-		}
-	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
@@ -265,9 +265,16 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: ast.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
+	}
+	if checkOrInit != nil {
+		sf2, err := checkOrInit(sf)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sf = sf2
 	}
 	if fold == 1 {
 		return FoldConstant(ctx, sf), nil
@@ -287,9 +294,9 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 }
 
 // ScalarFunctionCallBack is the definition of callback of calling a newFunction.
-type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
+type ScalarFunctionCallBack func(function *ScalarFunction) (*ScalarFunction, error)
 
-func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
+func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, error) {
 	// todo: more scalar function init actions can be added here, or setting up with customized init callback.
 	if function.FuncName.L == ast.Grouping {
 		if !function.Function.(*BuiltinGroupingImplSig).isMetaInited {
@@ -489,7 +496,7 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 // EvalInt implements Expression interface.
 func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalInt(ctx, row)
@@ -498,7 +505,7 @@ func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 // EvalReal implements Expression interface.
 func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalReal(ctx, row)
@@ -507,7 +514,7 @@ func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, boo
 // EvalDecimal implements Expression interface.
 func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalDecimal(ctx, row)
@@ -516,7 +523,7 @@ func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.My
 // EvalString implements Expression interface.
 func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalString(ctx, row)
@@ -525,7 +532,7 @@ func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bo
 // EvalTime implements Expression interface.
 func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalTime(ctx, row)
@@ -534,7 +541,7 @@ func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, 
 // EvalDuration implements Expression interface.
 func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalDuration(ctx, row)
@@ -543,7 +550,7 @@ func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Du
 // EvalJSON implements Expression interface.
 func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalJSON(ctx, row)
@@ -695,19 +702,17 @@ func (sf *ScalarFunction) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1th> interface.
 func (sf *ScalarFunction) Equals(other any) bool {
-	if other == nil {
+	sf2, ok := other.(*ScalarFunction)
+	if !ok {
 		return false
 	}
-	var sf2 *ScalarFunction
-	switch x := other.(type) {
-	case *ScalarFunction:
-		sf2 = x
-	case ScalarFunction:
-		sf2 = &x
-	default:
+	if sf == nil {
+		return sf2 == nil
+	}
+	if sf2 == nil {
 		return false
 	}
-	ok := sf.FuncName.L == sf2.FuncName.L
+	ok = sf.FuncName.L == sf2.FuncName.L
 	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
 	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
 		return false
@@ -724,6 +729,7 @@ func (sf *ScalarFunction) Equals(other any) bool {
 // ReHashCode is used after we change the argument in place.
 func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = sf.hashcode[:0]
+	sf.hashcode = slices.Grow(sf.hashcode, 1+len(sf.FuncName.L)+len(sf.GetArgs())*8+1)
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
@@ -734,6 +740,23 @@ func ReHashCode(sf *ScalarFunction) {
 	if sf.FuncName.L == ast.Cast {
 		evalTp := sf.RetType.EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
+	}
+	if sf.FuncName.L == ast.Grouping {
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
+		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(marks)))
+		for _, mark := range marks {
+			sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(mark)))
+			// we need to sort map keys to ensure the hashcode is deterministic.
+			keys := make([]uint64, 0, len(mark))
+			for k := range mark {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				sf.hashcode = codec.EncodeInt(sf.hashcode, int64(k))
+			}
+		}
 	}
 }
 

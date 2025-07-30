@@ -15,7 +15,7 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	estRows	task	access object	operator info
-HashJoin	1600.00	root		semi join, equal:[eq(Column#13, Column#11)]
+HashJoin	1600.00	root		semi join, left side:Projection, equal:[eq(Column#13, Column#11)]
 ├─StreamAgg(Build)	1.00	root		funcs:sum(Column#16)->Column#11
 │ └─TableReader	1.00	root		data:StreamAgg
 │   └─StreamAgg	1.00	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column#16
@@ -43,16 +43,16 @@ TableReader	1999.00	root		data:TableRangeScan
 └─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(0,+inf], keep order:false
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
-IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
+IndexReader	1.25	root		index:IndexRangeScan
+└─IndexRangeScan	1.25	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
-HashJoin	2481.25	root		left outer join, equal:[eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c1)]
+HashJoin	2481.25	root		left outer join, left side:TableReader, equal:[eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c1)]
 ├─TableReader(Build)	1985.00	root		data:Selection
 │ └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c1))
 │   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false, stats:partial[c1:missing]
-└─TableReader(Probe)	1998.00	root		data:TableRangeScan
-  └─TableRangeScan	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
+└─TableReader(Probe)	1999.00	root		data:TableRangeScan
+  └─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
@@ -60,8 +60,8 @@ Update	N/A	root		N/A
 explain format = 'brief' delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─IndexReader	0.00	root		index:IndexRangeScan
-  └─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
+└─IndexReader	1.25	root		index:IndexRangeScan
+  └─IndexRangeScan	1.25	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	1985.00	root		Column#7
@@ -80,13 +80,13 @@ TopN	1.00	root		explain_easy_stats.t2.c2, offset:0, count:1
     └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
-IndexLookUp	0.00	root		
-├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false, stats:partial[c2:missing]
-└─Selection(Probe)	0.00	cop[tikv]		lt(explain_easy_stats.t1.c3, 1)
-  └─TableRowIDScan	0.00	cop[tikv]	table:t1	keep order:false, stats:partial[c2:missing]
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	1.25	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false, stats:partial[c2:missing]
+└─Selection(Probe)	1.00	cop[tikv]		lt(explain_easy_stats.t1.c3, 1)
+  └─TableRowIDScan	1.25	cop[tikv]	table:t1	keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
-Selection	0.50	root		gt(explain_easy_stats.t1.c2, 1)
+Selection	1.00	root		gt(explain_easy_stats.t1.c2, 1)
 └─Point_Get	1.00	root	table:t1	handle:1
 explain format = 'brief' select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	access object	operator info
@@ -103,7 +103,7 @@ MemTableScan	10000.00	root	table:COLUMNS
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection	1999.00	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#11
-└─Apply	1999.00	root		CARTESIAN left outer join
+└─Apply	1999.00	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
   └─TopN(Probe)	1999.00	root		explain_easy_stats.t2.c1, offset:0, count:1
@@ -116,11 +116,11 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true, desc
+    └─TableFullScan	20.98	cop[tikv]	table:t1	keep order:true, desc
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info
-HashJoin	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, explain_easy_stats.t2.c2)
+HashJoin	1999.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(1, explain_easy_stats.t2.c2)
 ├─TableReader(Build)	1985.00	root		data:TableFullScan
 │ └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
 └─TableReader(Probe)	1999.00	root		data:TableFullScan
@@ -128,28 +128,28 @@ HashJoin	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, explain_
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_8 {
-subgraph cluster8{
+digraph HashJoin_16 {
+subgraph cluster16{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_8" -> "TableReader_10"
-"HashJoin_8" -> "TableReader_14"
+"HashJoin_16" -> "TableReader_18"
+"HashJoin_16" -> "TableReader_22"
 }
-subgraph cluster9{
+subgraph cluster17{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_9"
+"TableFullScan_17"
 }
-subgraph cluster13{
+subgraph cluster21{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_13"
+"TableFullScan_21"
 }
-"TableReader_10" -> "TableFullScan_9"
-"TableReader_14" -> "TableFullScan_13"
+"TableReader_18" -> "TableFullScan_17"
+"TableReader_22" -> "TableFullScan_21"
 }
 
 explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;

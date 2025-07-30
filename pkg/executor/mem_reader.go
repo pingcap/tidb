@@ -345,7 +345,6 @@ func (iter *txnMemBufferIter) Valid() bool {
 		if iter.curr.Valid() {
 			return true
 		}
-		iter.curr = nil
 		iter.idx++
 	}
 	for iter.idx < len(iter.kvRanges) {
@@ -372,7 +371,6 @@ func (iter *txnMemBufferIter) Valid() bool {
 		if iter.curr.Valid() {
 			return true
 		}
-		iter.curr = nil
 		iter.idx++
 	}
 	return false
@@ -398,7 +396,10 @@ func (iter *txnMemBufferIter) Value() []byte {
 	return iter.curr.Value()
 }
 
-func (*txnMemBufferIter) Close() {
+func (iter *txnMemBufferIter) Close() {
+	if iter.curr != nil {
+		iter.curr.Close()
+	}
 }
 
 func (m *memTableReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {
@@ -662,9 +663,14 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 			if err != nil {
 				return err
 			}
-			handle, err = kv.NewCommonHandle(b)
+			newHandle, err := kv.NewCommonHandle(b)
 			if err != nil {
 				return err
+			}
+			if ph, ok := handle.(kv.PartitionHandle); ok {
+				handle = kv.NewPartitionHandle(ph.PartitionID, newHandle)
+			} else {
+				handle = newHandle
 			}
 		}
 		// filter key/value by partitition id
@@ -827,7 +833,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 	defer tracing.StartRegion(ctx, "buildMemIndexMergeReader").End()
 	indexCount := len(indexMergeReader.indexes)
 	memReaders := make([]memReader, 0, indexCount)
-	for i := 0; i < indexCount; i++ {
+	for i := range indexCount {
 		if indexMergeReader.indexes[i] == nil {
 			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.Ctx(), indexMergeReader.table, indexMergeReader.columns)
 			memReaders = append(memReaders, &memTableReader{
@@ -882,6 +888,8 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 
 type memRowsIter interface {
 	Next() ([]types.Datum, error)
+	// Close will release the snapshot it holds, so be sure to call Close.
+	Close()
 }
 
 type defaultRowsIter struct {
@@ -897,6 +905,8 @@ func (iter *defaultRowsIter) Next() ([]types.Datum, error) {
 	}
 	return nil, nil
 }
+
+func (*defaultRowsIter) Close() {}
 
 // memRowsIterForTable combine a kv.Iterator and a kv decoder to get a memRowsIter.
 type memRowsIterForTable struct {
@@ -966,6 +976,12 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 	return ret, nil
 }
 
+func (iter *memRowsIterForTable) Close() {
+	if iter.kvIter != nil {
+		iter.kvIter.Close()
+	}
+}
+
 type memRowsIterForIndex struct {
 	kvIter     *txnMemBufferIter
 	tps        []*types.FieldType
@@ -1016,6 +1032,12 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		break
 	}
 	return ret, nil
+}
+
+func (iter *memRowsIterForIndex) Close() {
+	if iter.kvIter != nil {
+		iter.kvIter.Close()
+	}
 }
 
 func (m *memIndexMergeReader) getMemRowsIter(ctx context.Context) (memRowsIter, error) {

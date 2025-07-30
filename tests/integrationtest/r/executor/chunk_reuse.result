@@ -223,14 +223,16 @@ explain format='brief' select id1 from t3 where id2 > '3' or id8 < 10 union (sel
 id	estRows	task	access object	operator info
 HashAgg	8878.22	root		group by:Column#17, funcs:firstrow(Column#17)->Column#17
 └─Union	11097.78	root		
-  ├─TableReader	5548.89	root		data:Projection
-  │ └─Projection	5548.89	cop[tikv]		executor__chunk_reuse.t3.id1->Column#17
-  │   └─Selection	5548.89	cop[tikv]		or(gt(executor__chunk_reuse.t3.id2, "3"), lt(executor__chunk_reuse.t3.id8, 10))
-  │     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─TableReader	5548.89	root		data:Projection
-    └─Projection	5548.89	cop[tikv]		executor__chunk_reuse.t3.id1->Column#17
-      └─Selection	5548.89	cop[tikv]		or(gt(executor__chunk_reuse.t3.id2, "4"), lt(executor__chunk_reuse.t3.id8, 7))
-        └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  ├─Projection	5548.89	root		executor__chunk_reuse.t3.id1->Column#17
+  │ └─IndexMerge	5548.89	root		type: union
+  │   ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:("3",+inf], keep order:false, stats:pseudo
+  │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,10), keep order:false, stats:pseudo
+  │   └─TableRowIDScan(Probe)	5548.89	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─Projection	5548.89	root		executor__chunk_reuse.t3.id1->Column#17
+    └─IndexMerge	5548.89	root		type: union
+      ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:("4",+inf], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,7), keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	5548.89	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
 id1
 1

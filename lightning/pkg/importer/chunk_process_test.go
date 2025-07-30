@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -710,7 +711,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	)
 `, "", "")
 	require.NoError(t, err)
-	core, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
+	core, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), node.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	core.State = model.StatePublic
 
@@ -728,7 +729,7 @@ func TestCompressChunkRestore(t *testing.T) {
 
 	var totalBytes int64
 	for i := 0; i < 300; i += 3 {
-		n, err := gzWriter.Write([]byte(fmt.Sprintf("%d,%d,%d\r\n", i, i+1, i+2)))
+		n, err := gzWriter.Write(fmt.Appendf(nil, "%d,%d,%d\r\n", i, i+1, i+2))
 		require.NoError(t, err)
 		totalBytes += int64(n)
 	}

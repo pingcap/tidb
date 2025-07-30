@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -98,7 +100,10 @@ type EngineConfig struct {
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
 	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
-	// will be set lazily.
+	// will be set lazily. This is used by local backend. This field will be written
+	// to engineMeta.TS and take effect in below cases:
+	// - engineManager.openEngine
+	// - engineManager.closeEngine only for an external engine
 	TS uint64
 }
 
@@ -129,6 +134,10 @@ type ExternalEngineConfig struct {
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup engineapi.OnDuplicateKey
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -142,9 +151,13 @@ type TargetInfoGetter interface {
 	// the database name is filled.
 	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
 
-	// FetchRemoteTableModels obtains the models of all tables given the schema
-	// name. The returned table info does not need to be precise if the encoder,
-	// is not requiring them, but must at least fill in the following fields for
+	// FetchRemoteTableModels obtains the TableInfo of given tables under the schema
+	// name. It returns a map whose key is the table name in lower case and value is
+	// the TableInfo. If the table does not exist, it will not be included in the
+	// map.
+	//
+	// The returned table info does not need to be precise if the encoder, is not
+	// requiring them, but must at least fill in the following fields for
 	// TablesFromMeta to succeed:
 	//  - Name
 	//  - State (must be model.StatePublic)
@@ -154,7 +167,7 @@ type TargetInfoGetter interface {
 	//     * State (must be model.StatePublic)
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
-	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+	FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error)
 
 	// CheckRequirements performs the check whether the backend satisfies the version requirements
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
@@ -209,9 +222,6 @@ type Backend interface {
 	// (e.g. preparing to resolve a disk quota violation).
 	FlushAllEngines(ctx context.Context) error
 
-	// ResetEngine clears all written KV pairs in this opened engine.
-	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
-
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
 }
@@ -254,7 +264,7 @@ func (be EngineManager) OpenEngine(
 	engineID int32,
 ) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, int64(engineID))
-	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
+	logger := makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID)
 
 	if err := be.backend.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
@@ -315,13 +325,6 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
 }
 
-// SetTS sets the TS of the engine. In most cases if the caller wants to specify
-// TS it should use the TS field in EngineConfig. This method is only used after
-// a ResetEngine.
-func (engine *OpenedEngine) SetTS(ts uint64) {
-	engine.config.TS = ts
-}
-
 // UnsafeCloseEngine closes the engine without first opening it.
 // This method is "unsafe" as it does not follow the normal operation sequence
 // (Open -> Write -> Close -> Import). This method should only be used when one
@@ -342,7 +345,7 @@ func (be EngineManager) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *Engi
 	engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
 		backend: be.backend,
-		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
+		logger:  makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID),
 		uuid:    engineUUID,
 		id:      id,
 	}.unsafeClose(ctx, cfg)
@@ -390,7 +393,7 @@ func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int3
 func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
 	var err error
 
-	for i := 0; i < importMaxRetryTimes; i++ {
+	for i := range importMaxRetryTimes {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -67,7 +68,7 @@ type Storage interface {
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
-	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+	UpdateTxnSafePointCache(txnSafePoint uint64, now time.Time)
 	SetOracle(oracle oracle.Oracle)
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
@@ -76,6 +77,10 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	GetCodec() tikv.Codec
 	GetPDHTTPClient() pd.Client
+	GetOption(any) (any, bool)
+	SetOption(any, any)
+	GetClusterID() uint64
+	GetKeyspace() string
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -383,7 +388,6 @@ type HotTableIndex struct {
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
-		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -668,7 +672,7 @@ func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model
 // FilterMemDBs filters memory databases in the input schemas.
 func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
-		if util.IsMemDB(dbInfo.Name.L) {
+		if metadef.IsMemDB(dbInfo.Name.L) {
 			continue
 		}
 		schemas = append(schemas, dbInfo)
@@ -683,7 +687,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.
 	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
 	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
-	for i := 0; i < len(regionsInfo.Regions); i++ {
+	for i := range regionsInfo.Regions {
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
 
@@ -904,6 +908,29 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 	reader := bufio.NewReader(resp.Body)
 	if err = ComputeTiFlashStatus(reader, regionReplica); err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+// SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
+func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64) error {
+	// The new query schema is like: http://<host>/tiflash/sync-schema/keyspace/<keyspaceID>/table/<tableID>.
+	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
+	// The query URL is like: http://<host>/sync-schema/keyspace/<NullspaceID>/table/<tableID>
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-schema/keyspace/%d/table/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = resp.Body.Close()
+	if err != nil {
+		logutil.BgLogger().Error("close body failed", zap.Error(err))
 	}
 	return nil
 }

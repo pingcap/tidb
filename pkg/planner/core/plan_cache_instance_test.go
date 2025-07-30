@@ -28,7 +28,7 @@ import (
 )
 
 func _put(pc sessionctx.InstancePlanCache, testKey, memUsage, statsHash int64) (succ bool) {
-	v := &PlanCacheValue{testKey: testKey, memoryUsage: memUsage}
+	v := &PlanCacheValue{testKey: testKey, Memory: memUsage}
 	return pc.Put(fmt.Sprintf("%v-%v", testKey, statsHash), v, nil)
 }
 
@@ -84,7 +84,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
 	_hit(t, pc, 2, 0)
 	_hit(t, pc, 3, 0)
-	_, numEvicted := pc.Evict()
+	_, numEvicted := pc.Evict(false)
 	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
@@ -98,7 +98,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(pc, 1, 100, 0)
 	_put(pc, 2, 100, 0)
 	_put(pc, 3, 100, 0)
-	_, numEvicted = pc.Evict()
+	_, numEvicted = pc.Evict(false)
 	require.Equal(t, numEvicted > 0, false)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 0)
@@ -115,7 +115,7 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	numHeads := 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 3)
-	_, numEvicted = pc.Evict()
+	_, numEvicted = pc.Evict(false)
 	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(0))
 	numHeads = 0
@@ -177,7 +177,7 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_hit(t, pc, 1, 1) // refresh 1-3's last_used
 	_hit(t, pc, 1, 2)
 	_hit(t, pc, 1, 3)
-	_, numEvicted := pc.Evict()
+	_, numEvicted := pc.Evict(false)
 	require.True(t, numEvicted > 0)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	_hit(t, pc, 1, 1)
@@ -185,6 +185,27 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_hit(t, pc, 1, 3)
 	_miss(t, pc, 1, 4)
 	_miss(t, pc, 1, 5)
+}
+
+func TestInstancePlanCacheEvictAll(t *testing.T) {
+	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats = true
+
+	// same key with different statsHash
+	pc := NewInstancePlanCache(1000, 1000)
+	_put(pc, 1, 100, 1)
+	_put(pc, 1, 100, 2)
+	_put(pc, 1, 100, 3)
+	_, numEvicted := pc.Evict(true)
+	require.Equal(t, 3, numEvicted)
+	_miss(t, pc, 1, 1)
+	_miss(t, pc, 1, 2)
+	_miss(t, pc, 1, 3)
+	require.Equal(t, pc.MemUsage(), int64(0))
+	require.Equal(t, pc.Size(), int64(0))
 }
 
 func TestInstancePlanCacheConcurrentRead(t *testing.T) {
@@ -196,8 +217,8 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 
 	pc := NewInstancePlanCache(300, 100000)
 	var flag [100][100]bool
-	for k := 0; k < 100; k++ {
-		for statsHash := 0; statsHash < 100; statsHash++ {
+	for k := range 100 {
+		for statsHash := range 100 {
 			if rand.Intn(10) < 7 {
 				_put(pc, int64(k), 1, int64(statsHash))
 				flag[k][statsHash] = true
@@ -206,11 +227,11 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash] {
 					_hit(t, pc, k, statsHash)
@@ -233,11 +254,11 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 	var flag [100][100]atomic.Bool
 	pc := NewInstancePlanCache(300, 100000)
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ { // writers
+	for range 5 { // writers
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 1000; i++ {
+			for range 1000 {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if _put(pc, int64(k), 1, int64(statsHash)) {
 					flag[k][statsHash].Store(true)
@@ -246,11 +267,11 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 			}
 		}()
 	}
-	for i := 0; i < 5; i++ { // readers
+	for range 5 { // readers
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 2000; i++ {
+			for range 2000 {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash].Load() {
 					_hit(t, pc, k, statsHash)

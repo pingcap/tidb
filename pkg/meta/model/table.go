@@ -17,15 +17,18 @@ package model
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -81,30 +84,34 @@ const (
 )
 
 // ExtraHandleName is the name of ExtraHandle Column.
-var ExtraHandleName = model.NewCIStr("_tidb_rowid")
+var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
-var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
+var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
+
+// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
+// When read column by vector index, sometimes there is no need to read vector column just need distance,
+// so a distance column will be added to table_scan. this field is used in the action.
+const VirtualColVecSearchDistanceID int64 = -2000
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	ID      int64       `json:"id"`
-	Name    model.CIStr `json:"name"`
-	Charset string      `json:"charset"`
-	Collate string      `json:"collate"`
+	ID      int64     `json:"id"`
+	Name    ast.CIStr `json:"name"`
+	Charset string    `json:"charset"`
+	Collate string    `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
 	Columns     []*ColumnInfo     `json:"cols"`
 	Indices     []*IndexInfo      `json:"index_info"`
 	Constraints []*ConstraintInfo `json:"constraint_info"`
 	ForeignKeys []*FKInfo         `json:"fk_info"`
 	State       SchemaState       `json:"state"`
-	// PKIsHandle is true when primary key is a single integer column.
+	// PKIsHandle is true when PK is clustered and a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
-	// IsCommonHandle is true when clustered index feature is
-	// enabled and the primary key is not a single integer column.
+	// IsCommonHandle is true when PK is clustered and not a single integer column.
 	IsCommonHandle bool `json:"is_common_handle"`
 	// CommonHandleVersion is the version of the clustered index.
 	// 0 for the clustered index created == 5.0.0 RC.
@@ -135,7 +142,8 @@ type TableInfo struct {
 	MaxForeignKeyID int64 `json:"max_fk_id"`
 	MaxConstraintID int64 `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
-	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	// These changing schema operations don't include 'truncate table', 'rename table',
+	// 'rename tables', 'truncate partition' and 'exchange partition'.
 	UpdateTS uint64 `json:"update_timestamp"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
@@ -194,6 +202,29 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	Mode TableMode `json:"mode,omitempty"`
+}
+
+// Hash64 implement HashEquals interface.
+func (t *TableInfo) Hash64(h base.Hasher) {
+	h.HashInt64(t.ID)
+}
+
+// Equals implements HashEquals interface.
+func (t *TableInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*TableInfo)(nil)
+	t2, ok := other.(*TableInfo)
+	if !ok {
+		return false
+	}
+	if t == nil {
+		return t2 == nil
+	}
+	if t2 == nil {
+		return false
+	}
+	return t.ID == t2.ID
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -219,7 +250,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
-	nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+	nt.ForeignKeys = nil
 
 	for i := range t.Columns {
 		nt.Columns[i] = t.Columns[i].Clone()
@@ -229,8 +260,11 @@ func (t *TableInfo) Clone() *TableInfo {
 		nt.Indices[i] = t.Indices[i].Clone()
 	}
 
-	for i := range t.ForeignKeys {
-		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	if len(t.ForeignKeys) > 0 {
+		nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+		for i := range t.ForeignKeys {
+			nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+		}
 	}
 
 	if t.Partition != nil {
@@ -244,13 +278,13 @@ func (t *TableInfo) Clone() *TableInfo {
 }
 
 // GetPkName will return the pk name if pk exists.
-func (t *TableInfo) GetPkName() model.CIStr {
+func (t *TableInfo) GetPkName() ast.CIStr {
 	for _, colInfo := range t.Columns {
 		if mysql.HasPriKeyFlag(colInfo.GetFlag()) {
 			return colInfo.Name
 		}
 	}
-	return model.CIStr{}
+	return ast.CIStr{}
 }
 
 // GetPkColInfo gets the ColumnInfo of pk if exists.
@@ -316,6 +350,26 @@ func (t *TableInfo) Cols() []*ColumnInfo {
 func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	for _, idx := range t.Indices {
 		if idx.Name.L == idxName {
+			return idx
+		}
+	}
+	return nil
+}
+
+// FindColumnByID finds ColumnInfo by id.
+func (t *TableInfo) FindColumnByID(id int64) *ColumnInfo {
+	for _, col := range t.Columns {
+		if col.ID == id {
+			return col
+		}
+	}
+	return nil
+}
+
+// FindIndexByID finds index by id.
+func (t *TableInfo) FindIndexByID(id int64) *IndexInfo {
+	for _, idx := range t.Indices {
+		if idx.ID == id {
 			return idx
 		}
 	}
@@ -456,7 +510,7 @@ func (t *TableInfo) IsSequence() bool {
 	return t.Sequence != nil
 }
 
-// IsBaseTable checks to see the table is neither a view or a sequence.
+// IsBaseTable checks to see the table is neither a view nor a sequence.
 func (t *TableInfo) IsBaseTable() bool {
 	return t.Sequence == nil && t.View == nil
 }
@@ -515,8 +569,8 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
-	ID   int64       `json:"id"`
-	Name model.CIStr `json:"name"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -567,7 +621,7 @@ func (t TempTableType) String() string {
 
 // TableLockInfo provides meta data describing a table lock.
 type TableLockInfo struct {
-	Tp model.TableLockType
+	Tp ast.TableLockType
 	// Use array because there may be multiple sessions holding the same read lock.
 	Sessions []SessionInfo
 	State    TableLockState
@@ -590,7 +644,7 @@ func (s SessionInfo) String() string {
 type TableLockTpInfo struct {
 	SchemaID int64
 	TableID  int64
-	Tp       model.TableLockType
+	Tp       ast.TableLockType
 }
 
 // TableLockState is the state for table lock.
@@ -617,6 +671,38 @@ func (t TableLockState) String() string {
 	}
 }
 
+// TableMode is the state for table mode, it's a table level metadata for prevent
+// table read/write during importing(import into) or BR restoring.
+// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
+// return error.
+// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
+// Now allow switching between the same table modes, and not allow convert between
+// TableModeImport and TableModeRestore
+type TableMode byte
+
+const (
+	// TableModeNormal means the table is in normal mode.
+	TableModeNormal TableMode = iota
+	// TableModeImport means the table is in import mode.
+	TableModeImport
+	// TableModeRestore means the table is in restore mode.
+	TableModeRestore
+)
+
+// String implements fmt.Stringer interface.
+func (t TableMode) String() string {
+	switch t {
+	case TableModeNormal:
+		return "Normal"
+	case TableModeImport:
+		return "Import"
+	case TableModeRestore:
+		return "Restore"
+	default:
+		return ""
+	}
+}
+
 // TiFlashReplicaInfo means the flash replica info.
 type TiFlashReplicaInfo struct {
 	Count                 uint64
@@ -627,22 +713,17 @@ type TiFlashReplicaInfo struct {
 
 // IsPartitionAvailable checks whether the partition table replica was available.
 func (tr *TiFlashReplicaInfo) IsPartitionAvailable(pid int64) bool {
-	for _, id := range tr.AvailablePartitionIDs {
-		if id == pid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tr.AvailablePartitionIDs, pid)
 }
 
 // ViewInfo provides meta data describing a DB view.
 type ViewInfo struct {
-	Algorithm   model.ViewAlgorithm   `json:"view_algorithm"`
-	Definer     *auth.UserIdentity    `json:"view_definer"`
-	Security    model.ViewSecurity    `json:"view_security"`
-	SelectStmt  string                `json:"view_select"`
-	CheckOption model.ViewCheckOption `json:"view_checkoption"`
-	Cols        []model.CIStr         `json:"view_cols"`
+	Algorithm   ast.ViewAlgorithm   `json:"view_algorithm"`
+	Definer     *auth.UserIdentity  `json:"view_definer"`
+	Security    ast.ViewSecurity    `json:"view_security"`
+	SelectStmt  string              `json:"view_select"`
+	CheckOption ast.ViewCheckOption `json:"view_checkoption"`
+	Cols        []ast.CIStr         `json:"view_cols"`
 }
 
 // Some constants for sequence.
@@ -690,9 +771,9 @@ type UpdateIndexInfo struct {
 
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
-	Type    model.PartitionType `json:"type"`
-	Expr    string              `json:"expr"`
-	Columns []model.CIStr       `json:"columns"`
+	Type    ast.PartitionType `json:"type"`
+	Expr    string            `json:"expr"`
+	Columns []ast.CIStr       `json:"columns"`
 
 	// User may already create table with partition but table partition is not
 	// yet supported back then. When Enable is true, write/read need use tid
@@ -716,26 +797,33 @@ type PartitionInfo struct {
 
 	States []PartitionState `json:"states"`
 	Num    uint64           `json:"num"`
+	// Indicate which DDL Action is currently on going
+	DDLAction ActionType `json:"ddl_action,omitempty"`
 	// Only used during ReorganizePartition so far
 	DDLState SchemaState `json:"ddl_state"`
 	// Set during ALTER TABLE ... if the table id needs to change
 	// like if there is a global index or going between non-partitioned
 	// and partitioned table, to make the data dropping / range delete
 	// optimized.
-	NewTableID int64 `json:"new_table_id"`
+	NewTableID int64 `json:"new_table_id,omitempty"`
 	// Set during ALTER TABLE ... PARTITION BY ...
 	// First as the new partition scheme, then in StateDeleteReorg as the old
-	DDLType    model.PartitionType `json:"ddl_type"`
-	DDLExpr    string              `json:"ddl_expr"`
-	DDLColumns []model.CIStr       `json:"ddl_columns"`
+	DDLType    ast.PartitionType `json:"ddl_type,omitempty"`
+	DDLExpr    string            `json:"ddl_expr,omitempty"`
+	DDLColumns []ast.CIStr       `json:"ddl_columns,omitempty"`
 	// For ActionAlterTablePartitioning, UPDATE INDEXES
-	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
+	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes,omitempty"`
+	// Simplified way to handle Global Index changes, instead of calculating
+	// it every time, keep track of the changes here.
+	// if index.ID exists in map, then it has changed, true for new copy,
+	// false for old copy (to be removed).
+	DDLChangedIndex map[int64]bool `json:"ddl_changed_index,omitempty"`
 }
 
 // Clone clones itself.
 func (pi *PartitionInfo) Clone() *PartitionInfo {
 	newPi := *pi
-	newPi.Columns = make([]model.CIStr, len(pi.Columns))
+	newPi.Columns = make([]ast.CIStr, len(pi.Columns))
 	copy(newPi.Columns, pi.Columns)
 
 	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
@@ -816,22 +904,15 @@ func (pi *PartitionInfo) GCPartitionStates() {
 	pi.States = newStates
 }
 
-// HasTruncatingPartitionID checks whether the pid is truncating.
-func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
-	for i := range pi.NewPartitionIDs {
-		if pi.NewPartitionIDs[i] == pid {
-			return true
-		}
-	}
-	return false
-}
-
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
-	pi.DDLType = model.PartitionTypeNone
+	pi.DDLAction = ActionNone
+	pi.DDLState = StateNone
+	pi.DDLType = ast.PartitionTypeNone
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
+	pi.DDLChangedIndex = nil
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
@@ -857,6 +938,122 @@ func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) in
 	return -1
 }
 
+// GetDefaultListPartition return the index of Definitions
+// that contains the LIST Default partition otherwise it returns -1
+func (pi *PartitionInfo) GetDefaultListPartition() int {
+	if pi.Type != ast.PartitionTypeList {
+		return -1
+	}
+	defs := pi.Definitions
+	for i := range defs {
+		if len(defs[i].InValues) == 0 {
+			return i
+		}
+		for _, vs := range defs[i].InValues {
+			if len(vs) == 1 && vs[0] == "DEFAULT" {
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
+// CanHaveOverlappingDroppingPartition returns true if special handling
+// is needed during DDL of partitioned tables,
+// where range or list with default partition can have
+// overlapping partitions.
+// Example:
+// ... PARTITION BY RANGE (a)
+// (PARTITION p0 VALUES LESS THAN (10),
+// PARTITION p1 VALUES LESS THAN (20))
+// ALTER TABLE t DROP PARTITION p0;
+// When p0 is gone, then p1 can have values < 10,
+// so if p0 is visible for one session, while another session
+// have dropped p0, a value '9' will then be in p1, instead of p0,
+// i.e. an "overlapping" partition, that needs special handling.
+// Same can happen for LIST partitioning, if there is a DEFAULT partition.
+func (pi *PartitionInfo) CanHaveOverlappingDroppingPartition() bool {
+	if pi.DDLAction == ActionDropTablePartition &&
+		pi.DDLState == StateWriteOnly {
+		return true
+	}
+	return false
+}
+
+// ReplaceWithOverlappingPartitionIdx returns the overlapping partition
+// if there is one and a previous error.
+// Functions based on locatePartitionCommon, like GetPartitionIdxByRow
+// will return the found partition, with an error,
+// since it is being dropped.
+// This function will correct the partition index and error if it can.
+// For example of Overlapping partition,
+// see CanHaveOverlappingDroppingPartition
+// This function should not be used for writing, since we should block
+// writes to partitions that are being dropped.
+// But for read, we should replace the dropping partitions with
+// the overlapping partition if it exists, so we can read new data
+// from sessions one step ahead in the DDL State.
+func (pi *PartitionInfo) ReplaceWithOverlappingPartitionIdx(idx int, err error) (int, error) {
+	if err != nil && idx >= 0 {
+		idx = pi.GetOverlappingDroppingPartitionIdx(idx)
+		if idx >= 0 {
+			err = nil
+		}
+	}
+	return idx, err
+}
+
+// GetOverlappingDroppingPartitionIdx takes the index of Definitions
+// and returns possible overlapping partition to use instead.
+// Only used during DROP PARTITION!
+// For RANGE, DROP PARTITION must be a consecutive range of partitions.
+// For LIST, it only takes effect if there is default partition.
+// returns same idx if no overlapping partition
+// return -1 if the partition is being dropped, with no overlapping partition,
+// like for last range partition dropped or no default list partition.
+// See CanHaveOverlappingDroppingPartition() for more info about
+// Overlapping dropping partition.
+func (pi *PartitionInfo) GetOverlappingDroppingPartitionIdx(idx int) int {
+	if idx < 0 || idx >= len(pi.Definitions) {
+		return -1
+	}
+	if pi.CanHaveOverlappingDroppingPartition() {
+		switch pi.Type {
+		case ast.PartitionTypeRange:
+			for i := idx; i < len(pi.Definitions); i++ {
+				if pi.IsDropping(i) {
+					continue
+				}
+				return i
+			}
+			// Last partition is also dropped!
+			return -1
+		case ast.PartitionTypeList:
+			if pi.IsDropping(idx) {
+				defaultIdx := pi.GetDefaultListPartition()
+				if defaultIdx == idx {
+					return -1
+				}
+				return defaultIdx
+			}
+			return idx
+		}
+	}
+	return idx
+}
+
+// IsDropping returns true if the partition
+// is being dropped (i.e. in DroppingDefinitions)
+func (pi *PartitionInfo) IsDropping(idx int) bool {
+	for _, def := range pi.DroppingDefinitions {
+		if def.ID == pi.Definitions[idx].ID {
+			return true
+		}
+	}
+	return false
+}
+
 // SetOriginalPartitionIDs sets the order of the original partition IDs
 // in case it needs to be rolled back. LIST Partitioning would not know otherwise.
 func (pi *PartitionInfo) SetOriginalPartitionIDs() {
@@ -865,6 +1062,66 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 		ids = append(ids, def.ID)
 	}
 	pi.OriginalPartitionIDsOrder = ids
+}
+
+// IDsInDDLToIgnore returns a list of IDs that the current
+// session should not see (may be duplicate errors on insert/update though)
+// For example during truncate or drop partition.
+func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
+	// TODO:
+	// Drop partition:
+	// TODO: Make similar changes as in Truncate Partition:
+	// Add a state blocking read and write in the partitions to be dropped,
+	// to avoid situations like https://github.com/pingcap/tidb/issues/55888
+	// Add partition:
+	// TODO: Add tests!
+	// Exchange Partition:
+	// Currently blocked for GlobalIndex
+	// Reorganize Partition:
+	// Nothing, since it will create a new copy of the global index.
+	// This is due to the global index needs to have two partitions for the same index key
+	// TODO: Should we extend the GlobalIndex to have multiple partitions?
+	// Maybe from PK/_tidb_rowid + Partition ID
+	// to PK/_tidb_rowid + Partition ID + Valid from Schema Version,
+	// with support for two entries?
+	// Then we could avoid having two copies of the same Global Index
+	// just for handling a single SchemaState.
+	// If so, could we then replace this?
+	switch pi.DDLAction {
+	case ActionTruncateTablePartition:
+		switch pi.DDLState {
+		case StateWriteOnly:
+			return pi.NewPartitionIDs
+		case StateDeleteOnly, StateDeleteReorganization:
+			if len(pi.DroppingDefinitions) == 0 {
+				return nil
+			}
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, definition := range pi.DroppingDefinitions {
+				ids = append(ids, definition.ID)
+			}
+			return ids
+		}
+	case ActionDropTablePartition:
+		if len(pi.DroppingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+	case ActionAddTablePartition:
+		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
+		if len(pi.AddingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.AddingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+		// Not supporting Global Indexes: case ActionExchangeTablePartition
+	}
+	return nil
 }
 
 // PartitionState is the state of the partition.
@@ -876,14 +1133,14 @@ type PartitionState struct {
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
 	ID                 int64          `json:"id"`
-	Name               model.CIStr    `json:"name"`
+	Name               ast.CIStr      `json:"name"`
 	LessThan           []string       `json:"less_than"`
 	InValues           [][]string     `json:"in_values"`
 	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
 	Comment            string         `json:"comment,omitempty"`
 }
 
-// Clone clones ConstraintInfo.
+// Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = make([]string, len(ci.LessThan))
@@ -917,37 +1174,37 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 
 // ConstraintInfo provides meta data describing check-expression constraint.
 type ConstraintInfo struct {
-	ID             int64         `json:"id"`
-	Name           model.CIStr   `json:"constraint_name"`
-	Table          model.CIStr   `json:"tbl_name"`        // Table name.
-	ConstraintCols []model.CIStr `json:"constraint_cols"` // Depended column names.
-	Enforced       bool          `json:"enforced"`
-	InColumn       bool          `json:"in_column"` // Indicate whether the constraint is column type check.
-	ExprString     string        `json:"expr_string"`
-	State          SchemaState   `json:"state"`
+	ID             int64       `json:"id"`
+	Name           ast.CIStr   `json:"constraint_name"`
+	Table          ast.CIStr   `json:"tbl_name"`        // Table name.
+	ConstraintCols []ast.CIStr `json:"constraint_cols"` // Depended column names.
+	Enforced       bool        `json:"enforced"`
+	InColumn       bool        `json:"in_column"` // Indicate whether the constraint is column type check.
+	ExprString     string      `json:"expr_string"`
+	State          SchemaState `json:"state"`
 }
 
 // Clone clones ConstraintInfo.
 func (ci *ConstraintInfo) Clone() *ConstraintInfo {
 	nci := *ci
 
-	nci.ConstraintCols = make([]model.CIStr, len(ci.ConstraintCols))
+	nci.ConstraintCols = make([]ast.CIStr, len(ci.ConstraintCols))
 	copy(nci.ConstraintCols, ci.ConstraintCols)
 	return &nci
 }
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-	ID        int64         `json:"id"`
-	Name      model.CIStr   `json:"fk_name"`
-	RefSchema model.CIStr   `json:"ref_schema"`
-	RefTable  model.CIStr   `json:"ref_table"`
-	RefCols   []model.CIStr `json:"ref_cols"`
-	Cols      []model.CIStr `json:"cols"`
-	OnDelete  int           `json:"on_delete"`
-	OnUpdate  int           `json:"on_update"`
-	State     SchemaState   `json:"state"`
-	Version   int           `json:"version"`
+	ID        int64       `json:"id"`
+	Name      ast.CIStr   `json:"fk_name"`
+	RefSchema ast.CIStr   `json:"ref_schema"`
+	RefTable  ast.CIStr   `json:"ref_table"`
+	RefCols   []ast.CIStr `json:"ref_cols"`
+	Cols      []ast.CIStr `json:"cols"`
+	OnDelete  int         `json:"on_delete"`
+	OnUpdate  int         `json:"on_update"`
+	State     SchemaState `json:"state"`
+	Version   int         `json:"version"`
 }
 
 // String returns the string representation of FKInfo.
@@ -976,11 +1233,11 @@ func (fk *FKInfo) String(db, tb string) string {
 		buf.WriteString("`" + col.O + "`")
 	}
 	buf.WriteString(")")
-	if onDelete := model.ReferOptionType(fk.OnDelete); onDelete != model.ReferOptionNoOption {
+	if onDelete := ast.ReferOptionType(fk.OnDelete); onDelete != ast.ReferOptionNoOption {
 		buf.WriteString(" ON DELETE ")
 		buf.WriteString(onDelete.String())
 	}
-	if onUpdate := model.ReferOptionType(fk.OnUpdate); onUpdate != model.ReferOptionNoOption {
+	if onUpdate := ast.ReferOptionType(fk.OnUpdate); onUpdate != ast.ReferOptionNoOption {
 		buf.WriteString(" ON UPDATE ")
 		buf.WriteString(onUpdate.String())
 	}
@@ -991,8 +1248,8 @@ func (fk *FKInfo) String(db, tb string) string {
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
 
-	nfk.RefCols = make([]model.CIStr, len(fk.RefCols))
-	nfk.Cols = make([]model.CIStr, len(fk.Cols))
+	nfk.RefCols = make([]ast.CIStr, len(fk.RefCols))
+	nfk.Cols = make([]ast.CIStr, len(fk.Cols))
 	copy(nfk.RefCols, fk.RefCols)
 	copy(nfk.Cols, fk.Cols)
 
@@ -1010,10 +1267,10 @@ const (
 
 // ReferredFKInfo provides the cited foreign key in the child table.
 type ReferredFKInfo struct {
-	Cols        []model.CIStr `json:"cols"`
-	ChildSchema model.CIStr   `json:"child_schema"`
-	ChildTable  model.CIStr   `json:"child_table"`
-	ChildFKName model.CIStr   `json:"child_fk_name"`
+	Cols        []ast.CIStr `json:"cols"`
+	ChildSchema ast.CIStr   `json:"child_schema"`
+	ChildTable  ast.CIStr   `json:"child_table"`
+	ChildFKName ast.CIStr   `json:"child_fk_name"`
 }
 
 // TableItemID is composed by table ID and column/index ID
@@ -1043,22 +1300,22 @@ func (s StatsLoadItem) Key() string {
 // StatsOptions is the struct to store the stats options.
 type StatsOptions struct {
 	*StatsWindowSettings
-	AutoRecalc   bool               `json:"auto_recalc"`
-	ColumnChoice model.ColumnChoice `json:"column_choice"`
-	ColumnList   []model.CIStr      `json:"column_list"`
-	SampleNum    uint64             `json:"sample_num"`
-	SampleRate   float64            `json:"sample_rate"`
-	Buckets      uint64             `json:"buckets"`
-	TopN         uint64             `json:"topn"`
-	Concurrency  uint               `json:"concurrency"`
+	AutoRecalc   bool             `json:"auto_recalc"`
+	ColumnChoice ast.ColumnChoice `json:"column_choice"`
+	ColumnList   []ast.CIStr      `json:"column_list"`
+	SampleNum    uint64           `json:"sample_num"`
+	SampleRate   float64          `json:"sample_rate"`
+	Buckets      uint64           `json:"buckets"`
+	TopN         uint64           `json:"topn"`
+	Concurrency  uint             `json:"concurrency"`
 }
 
 // NewStatsOptions creates a new StatsOptions.
 func NewStatsOptions() *StatsOptions {
 	return &StatsOptions{
 		AutoRecalc:   true,
-		ColumnChoice: model.DefaultChoice,
-		ColumnList:   []model.CIStr{},
+		ColumnChoice: ast.DefaultChoice,
+		ColumnList:   []ast.CIStr{},
 		SampleNum:    uint64(0),
 		SampleRate:   0.0,
 		Buckets:      uint64(0),
@@ -1102,13 +1359,17 @@ func (s WindowRepeatType) String() string {
 	}
 }
 
-// DefaultJobInterval sets the default interval between TTL jobs
-const DefaultJobInterval = time.Hour
+// DefaultTTLJobInterval is the default interval of TTL jobs.
+const DefaultTTLJobInterval = "24h"
+
+// OldDefaultTTLJobInterval is the default interval of TTL jobs in v8.5 and the previous versions.
+// It is used by some codes to keep compatible with the previous versions.
+const OldDefaultTTLJobInterval = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {
-	ColumnName      model.CIStr `json:"column"`
-	IntervalExprStr string      `json:"interval_expr"`
+	ColumnName      ast.CIStr `json:"column"`
+	IntervalExprStr string    `json:"interval_expr"`
 	// `IntervalTimeUnit` is actually ast.TimeUnitType. Use `int` to avoid cycle dependency
 	IntervalTimeUnit int  `json:"interval_time_unit"`
 	Enable           bool `json:"enable"`
@@ -1129,8 +1390,15 @@ func (t *TTLInfo) Clone() *TTLInfo {
 // Didn't set TTL_JOB_INTERVAL during upgrade and bootstrap because setting default value here is much simpler
 // and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
 func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
+	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) (time.Duration, error) {
+		return time.Duration(val.(int)), nil
+	})
+
 	if len(t.JobInterval) == 0 {
-		return DefaultJobInterval, nil
+		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
+		// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
+		// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
+		return duration.ParseDuration(OldDefaultTTLJobInterval)
 	}
 
 	return duration.ParseDuration(t.JobInterval)

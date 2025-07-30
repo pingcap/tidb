@@ -217,7 +217,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCrashedOnRepair:                          mysql.Message("Table '%-.192s' is marked as crashed and last (automatic?) repair failed", nil),
 	ErrWarningNotCompleteRollback:               mysql.Message("Some non-transactional changed tables couldn't be rolled back", nil),
 	ErrTransCacheFull:                           mysql.Message("Multi-statement transaction required more than 'maxBinlogCacheSize' bytes of storage; increase this mysqld variable and try again", nil),
-	ErrTooManyUserConnections:                   mysql.Message("User %-.64s already has more than 'maxUserConnections' active connections", nil),
+	ErrTooManyUserConnections:                   mysql.Message("User %-.64s has exceeded the 'max_user_connections' resource", nil),
 	ErrSetConstantsOnly:                         mysql.Message("You may only use constant expressions with SET", nil),
 	ErrLockWaitTimeout:                          mysql.Message("Lock wait timeout exceeded; try restarting transaction", nil),
 	ErrLockTableFull:                            mysql.Message("The total number of locks exceeds the lock table size", nil),
@@ -432,7 +432,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrNoDefaultForViewField:                    mysql.Message("Field of view '%-.192s.%-.192s' underlying table doesn't have a default value", nil),
 	ErrSpNoRecursion:                            mysql.Message("Recursive stored functions and triggers are not allowed.", nil),
 	ErrTooBigScale:                              mysql.Message("Too big scale %d specified for column '%-.192s'. Maximum is %d.", nil),
-	ErrTooBigPrecision:                          mysql.Message("Too big precision %d specified for column '%-.192s'. Maximum is %d.", nil),
+	ErrTooBigPrecision:                          mysql.Message("Too-big precision %d specified for '%-.192s'. Maximum is %d.", nil),
 	ErrMBiggerThanD:                             mysql.Message("For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '%-.192s').", nil),
 	ErrWrongLockOfSystemTable:                   mysql.Message("You can't combine write-locking of system tables with other tables or lock types", nil),
 	ErrConnectToForeignDataSource:               mysql.Message("Unable to connect to foreign data source: %.64s", nil),
@@ -943,6 +943,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTableWithoutPrimaryKey:                                mysql.Message("Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.", nil),
 	ErrConstraintNotFound:                                    mysql.Message("Constraint '%s' does not exist.", nil),
 	ErrDependentByCheckConstraint:                            mysql.Message("Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.", nil),
+	ErrEngineAttributeNotSupported:                           mysql.Message("Storage engine does not support ENGINE_ATTRIBUTE.", nil),
 	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
@@ -1078,7 +1079,11 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
 	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
 	ErrDeleteNotFoundColumn:             mysql.Message("Delete can not find column %s for table %s", nil),
-	ErrHTTPServiceError:                 mysql.Message("HTTP request failed with status %s", nil),
+	ErrKeyTooLarge:                      mysql.Message("key is too large, the size of given key is %d", nil),
+	ErrProtectedTableMode:               mysql.Message("Table %s is in mode %s", nil),
+	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
+
+	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1153,15 +1158,23 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
 
+	ErrEngineAttributeInvalidFormat: mysql.Message("Invalid engine attribute format: %s", nil),
+	ErrStorageClassInvalidSpec:      mysql.Message("Invalid storage class: %s", nil),
+
 	// TiKV/PD errors.
-	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),
-	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),
-	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
-	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
-	ErrTiFlashServerBusy:         mysql.Message("TiFlash server is busy", nil),
-	ErrResolveLockTimeout:        mysql.Message("Resolve lock timeout", nil),
-	ErrRegionUnavailable:         mysql.Message("Region is unavailable", nil),
-	ErrGCTooEarly:                mysql.Message("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", nil),
+	ErrPDServerTimeout:      mysql.Message("PD server timeout: %s", nil),
+	ErrTiKVServerTimeout:    mysql.Message("TiKV server timeout", nil),
+	ErrTiKVServerBusy:       mysql.Message("TiKV server is busy", nil),
+	ErrTiFlashServerTimeout: mysql.Message("TiFlash server timeout", nil),
+	ErrTiFlashServerBusy:    mysql.Message("TiFlash server is busy", nil),
+	ErrTiFlashBackfillIndex: mysql.Message("TiFlash backfill index failed: %s", nil),
+	ErrResolveLockTimeout:   mysql.Message("Resolve lock timeout", nil),
+	ErrRegionUnavailable:    mysql.Message("Region is unavailable", nil),
+	// In most cases, the error `ErrTxnAbortedByGC` is caused by the transaction runs too long, instead of improper GC
+	// life time configuration. This means the description of this error is not accurate.
+	// However, as this error message is already widely acknowledged and might have become part of our diagnosing
+	// process, we keep the old error message format.
+	ErrTxnAbortedByGC:            mysql.Message("GC life time is shorter than transaction duration, transaction start ts is %v (%v), txn safe point is %v (%v)", nil),
 	ErrWriteConflict:             mysql.Message("Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s", []int{3, 4, 5, 6}), // the first and third parts of the key are the optional database names and table names
 	ErrTiKVStoreLimit:            mysql.Message("Store token is up to the limit, store id = %d", nil),
 	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
@@ -1176,4 +1189,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrGlobalIndexNotExplicitlySet: mysql.Message("Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption", nil),
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
+	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 }

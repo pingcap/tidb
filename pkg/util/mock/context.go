@@ -18,32 +18,37 @@ package mock
 import (
 	"context"
 	"fmt"
+	"iter"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -63,10 +68,12 @@ var (
 type Context struct {
 	planctx.EmptyPlanContextExtended
 	*sessionexpr.ExprContext
-	txn           wrapTxn    // mock global variable
+	txn           wrapTxn // mock global variable
+	dom           any
+	schValidator  validatorapi.Validator
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
-	sm            util.SessionManager
+	sm            sessmgr.Manager
 	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
@@ -84,7 +91,7 @@ type wrapTxn struct {
 }
 
 func (txn *wrapTxn) validOrPending() bool {
-	return txn.tsFuture != nil || txn.Transaction.Valid()
+	return txn.tsFuture != nil || (txn.Transaction != nil && txn.Transaction.Valid())
 }
 
 func (txn *wrapTxn) pending() bool {
@@ -128,23 +135,6 @@ func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.Transaction.GetTableInfo(id)
 }
 
-// SetDiskFullOpt implements the interface.
-func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
-
-// SetOption implements the interface.
-func (*wrapTxn) SetOption(_ int, _ any) {}
-
-// StartTS implements the interface.
-func (*wrapTxn) StartTS() uint64 { return uint64(time.Now().UnixNano()) }
-
-// Get implements the interface.
-func (txn *wrapTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	if txn.Transaction == nil {
-		return nil, nil
-	}
-	return txn.Transaction.Get(ctx, k)
-}
-
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (*Context) Execute(_ context.Context, _ string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
@@ -186,8 +176,8 @@ func (*Context) ExecuteInternal(_ context.Context, _ string, _ ...any) (sqlexec.
 }
 
 // ShowProcess implements sessionctx.Context ShowProcess interface.
-func (*Context) ShowProcess() *util.ProcessInfo {
-	return &util.ProcessInfo{}
+func (*Context) ShowProcess() *sessmgr.ProcessInfo {
+	return &sessmgr.ProcessInfo{}
 }
 
 // SetIsDDLOwner sets return value of IsDDLOwner.
@@ -273,6 +263,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+		TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
 	}
@@ -285,7 +276,6 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		TypeCtx: c.GetSessionVars().StmtCtx.TypeCtx(),
 		ErrCtx:  c.GetSessionVars().StmtCtx.ErrCtx(),
 
-		InPreparedPlanBuilding:   c.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
 		RegardNULLAsPoint:        c.GetSessionVars().RegardNULLAsPoint,
 		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
@@ -315,7 +305,15 @@ func (c *Context) GetBuildPBCtx() *planctx.BuildPBContext {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(bool) (kv.Transaction, error) {
+func (c *Context) Txn(active bool) (kv.Transaction, error) {
+	if active {
+		if !c.txn.validOrPending() {
+			err := c.newTxn(context.Background())
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return &c.txn, nil
 }
 
@@ -355,18 +353,41 @@ func (c *Context) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 // MockInfoschema only serves for test.
 var MockInfoschema func(tbList []*model.TableInfo) infoschema.MetaOnlyInfoSchema
 
-// GetDomainInfoSchema returns the latest information schema in domain
-func (c *Context) GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema {
+// GetLatestInfoSchema returns the latest information schema in domain
+func (c *Context) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
 	return c.is
 }
 
+// GetLatestISWithoutSessExt implements sessionctx.Context GetLatestISWithoutSessExt interface.
+func (c *Context) GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema {
+	return c.GetLatestInfoSchema()
+}
+
+// GetSQLServer implements sessionctx.Context GetSQLServer interface.
+func (c *Context) GetSQLServer() sqlsvrapi.Server {
+	return c.dom.(sqlsvrapi.Server)
+}
+
+// IsCrossKS implements sessionctx.Context IsCrossKS interface.
+func (*Context) IsCrossKS() bool {
+	return false
+}
+
+// GetSchemaValidator implements sessionctx.Context GetSchemaValidator interface.
+func (c *Context) GetSchemaValidator() validatorapi.Validator {
+	return c.schValidator
+}
+
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
 func (*Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
+
+// BuiltinFunctionUsageInc implements sessionctx.Context.
+func (*Context) BuiltinFunctionUsageInc(_ string) {}
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (*Context) GetGlobalSysVar(_ sessionctx.Context, name string) (string, error) {
@@ -392,10 +413,12 @@ func (c *Context) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return c.pcache
 }
 
-// NewTxn implements the sessionctx.Context interface.
-func (c *Context) NewTxn(context.Context) error {
+// newTxn Creates new transaction on the session context.
+func (c *Context) newTxn(ctx context.Context) error {
 	if c.Store == nil {
-		return errors.New("store is not set")
+		logutil.Logger(ctx).Warn("mock.Context: No store is specified when trying to create new transaction. A fake transaction will be created. Note that this is unrecommended usage.")
+		c.fakeTxn()
+		return nil
 	}
 	if c.txn.Valid() {
 		err := c.txn.Commit(c.ctx)
@@ -412,14 +435,41 @@ func (c *Context) NewTxn(context.Context) error {
 	return nil
 }
 
-// NewStaleTxnWithStartTS implements the sessionctx.Context interface.
-func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, _ uint64) error {
-	return c.NewTxn(ctx)
+// fakeTxn is used to let some tests pass in the context without an available kv.Storage. Once usages to access
+// transactions without a kv.Storage are removed, this type should also be removed.
+// New code should never use this.
+type fakeTxn struct {
+	// The inner should always be nil.
+	kv.Transaction
+	startTS uint64
+}
+
+func (t *fakeTxn) StartTS() uint64 {
+	return t.startTS
+}
+
+func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
+
+func (*fakeTxn) SetOption(_ int, _ any) {}
+
+func (*fakeTxn) Get(ctx context.Context, _ kv.Key) ([]byte, error) {
+	// Check your implementation if you meet this error. It's dangerous if some calculation relies on the data but the
+	// read result is faked.
+	logutil.Logger(ctx).Warn("mock.Context: No store is specified but trying to access data from a transaction.")
+	return nil, nil
+}
+
+func (*fakeTxn) Valid() bool { return true }
+
+func (c *Context) fakeTxn() {
+	c.txn.Transaction = &fakeTxn{
+		startTS: 1,
+	}
 }
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
-	return errors.Trace(c.NewTxn(ctx))
+	return errors.Trace(c.newTxn(ctx))
 }
 
 // RollbackTxn indicates an expected call of RollbackTxn.
@@ -446,12 +496,12 @@ func (c *Context) GetStore() kv.Storage {
 }
 
 // GetSessionManager implements the sessionctx.Context interface.
-func (c *Context) GetSessionManager() util.SessionManager {
+func (c *Context) GetSessionManager() sessmgr.Manager {
 	return c.sm
 }
 
 // SetSessionManager set the session manager.
-func (c *Context) SetSessionManager(sm util.SessionManager) {
+func (c *Context) SetSessionManager(sm sessmgr.Manager) {
 	c.sm = sm
 }
 
@@ -466,7 +516,7 @@ func (c *Context) GoCtx() context.Context {
 }
 
 // UpdateColStatsUsage updates the column stats usage.
-func (*Context) UpdateColStatsUsage(_ []model.TableItemID) {}
+func (*Context) UpdateColStatsUsage(_ iter.Seq[model.TableItemID]) {}
 
 // StoreIndexUsage strores the index usage information.
 func (*Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
@@ -495,8 +545,8 @@ func (*Context) ReleaseTableLockByTableIDs(_ []int64) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (*Context) CheckTableLocked(_ int64) (bool, pmodel.TableLockType) {
-	return false, pmodel.TableLockNone
+func (*Context) CheckTableLocked(_ int64) (bool, ast.TableLockType) {
+	return false, ast.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.
@@ -554,13 +604,13 @@ func (*Context) ReleaseAllAdvisoryLocks() int {
 	return 0
 }
 
-// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
-func (*Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// EncodeStates implements the sessionapi.Session interface
+func (*Context) EncodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 
-// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
-func (*Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+// DecodeStates implements the sessionapi.Session interface
+func (*Context) DecodeStates(context.Context, *sessionstates.SessionStates) error {
 	return errors.Errorf("Not Supported")
 }
 
@@ -611,8 +661,31 @@ func (*Context) GetCursorTracker() cursor.Tracker {
 	return nil
 }
 
-// NewContext creates a new mocked sessionctx.Context.
-func NewContext() *Context {
+// GetCommitWaitGroup implements the sessionctx.Context interface
+func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
+	return nil
+}
+
+// BindDomainAndSchValidator bind domain into ctx.
+func (c *Context) BindDomainAndSchValidator(dom any, validator validatorapi.Validator) {
+	c.dom = dom
+	c.schValidator = validator
+}
+
+// GetDomain get domain from ctx.
+func (c *Context) GetDomain() any {
+	return c.dom
+}
+
+// NewContextDeprecated creates a new mocked sessionctx.Context.
+// Deprecated: This method is only used for some legacy code.
+// DO NOT use mock.Context in new production code, and use the real Context instead.
+func NewContextDeprecated() *Context {
+	return newContext()
+}
+
+// newContext creates a new mocked sessionctx.Context.
+func newContext() *Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	sctx := &Context{
 		values: make(map[fmt.Stringer]any),
@@ -633,15 +706,14 @@ func NewContext() *Context {
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
 	vars.StmtCtx.DiskTracker.AttachTo(vars.DiskTracker)
 	vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
-	vars.EnablePaging = variable.DefTiDBEnablePaging
-	vars.MinPagingSize = variable.DefMinPagingSize
-	vars.CostModelVersion = variable.DefTiDBCostModelVer
+	vars.EnablePaging = vardef.DefTiDBEnablePaging
+	vars.MinPagingSize = vardef.DefMinPagingSize
 	vars.EnableChunkRPC = true
-	vars.DivPrecisionIncrement = variable.DefDivPrecisionIncrement
-	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+	vars.DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
-	if err := sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4"); err != nil {
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, "utf8mb4"); err != nil {
 		panic(err)
 	}
 	return sctx

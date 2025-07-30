@@ -194,8 +194,8 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleName: "partition_processor",
 			assertRuleSteps: []assertTraceStep{
 				{
-					assertReason: "DataSource_1 has multiple needed partitions[p1,p2] after pruning",
-					assertAction: "DataSource_1 becomes PartitionUnion_6 with children[TableScan_7,TableScan_8]",
+					assertReason: "DataSource_1 doesn't have needed partition table after pruning",
+					assertAction: "DataSource_1 becomes TableDual_4",
 				},
 			},
 		},

@@ -198,3 +198,27 @@ create table tp1(id int);
 ALTER TABLE tp1 PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (200) LAST PARTITION LESS THAN (600);
 select QUERY from information_schema.ddl_jobs limit 1;
 drop table tp1;
+
+# Minute interval partitioning, #57698
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a int NOT NULL, b varchar(20) NOT NULL, c datetime NOT NULL ) PARTITION BY RANGE COLUMNS (c) INTERVAL (1 MINUTE) FIRST PARTITION LESS THAN ('2024-01-01') LAST PARTITION LESS THAN ('2024-01-01 00:10:00');
+SHOW CREATE TABLE t;
+ALTER TABLE t FIRST PARTITION LESS THAN ('2024-01-01 00:02:00');
+ALTER TABLE t LAST PARTITION LESS THAN ('2024-01-01 00:12:00');
+SHOW CREATE TABLE t;
+
+# exchange partition between nonclustered table and clustered table, #60805
+drop table if exists ta, tb;
+create table ta (pk int not null, ex int not null, primary key (pk, ex) nonclustered) partition by range(pk) (PARTITION p1 values less than (10));
+create table tb (pk int not null, ex int not null, primary key (pk, ex) clustered);
+--error 1736
+alter table ta exchange partition p1 with table tb;
+
+# TestIssue60838
+drop table if exists t;
+create table t(a varbinary(255)) partition by list columns (a) (partition p0 values in (''));
+show create table t;
+drop table t;
+create table t(a varbinary(255)) partition by range columns (a) (partition p0 values less than (''));
+show create table t;
+

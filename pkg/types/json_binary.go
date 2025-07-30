@@ -276,7 +276,7 @@ func (bj BinaryJSON) GetOpaqueFieldType() byte {
 func (bj BinaryJSON) GetKeys() BinaryJSON {
 	count := bj.GetElemCount()
 	ret := make([]BinaryJSON, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		ret = append(ret, CreateBinaryJSON(string(bj.objectGetKey(i))))
 	}
 	return buildBinaryJSONArray(ret)
@@ -330,6 +330,9 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 
 func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	// NOTE: copied from Go standard library.
+	// TODO: this function is very similar to `util.AppendFormatFloat`, it'd be better to unify them.
+	// Now the `util.AppendFormatFloat` is an internal function of `server` package, and the `marshalFloat64To`
+	// handles the tailing `.0` specially, so they are not merged yet.
 	f := bj.GetFloat64()
 	if math.IsInf(f, 0) || math.IsNaN(f) {
 		return buf, &json.UnsupportedValueError{Str: strconv.FormatFloat(f, 'g', -1, 64)}
@@ -344,17 +347,36 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	ffmt := byte('f')
 	// Note: Must use float32 comparisons for underlying float32 value to get precise cutoffs right.
 	if abs != 0 {
-		if abs < 1e-6 || abs >= 1e21 {
+		// The scientific notation range for MySQL is different from Go JSON. Ref `util.AppendFormatFloat`
+		if abs < 1e-15 || abs >= 1e15 {
 			ffmt = 'e'
 		}
 	}
+
+	floatPos := len(buf)
 	buf = strconv.AppendFloat(buf, f, ffmt, -1, 64)
+	floatBuf := buf[floatPos:]
+
 	if ffmt == 'e' {
 		// clean up e-09 to e-9
-		n := len(buf)
+		n := len(floatBuf)
 		if n >= 4 && buf[n-4] == 'e' && buf[n-3] == '-' && buf[n-2] == '0' {
 			buf[n-2] = buf[n-1]
 			buf = buf[:n-1]
+		}
+
+		// remove the leading '+' in the exponent
+		plusPos := bytes.IndexRune(floatBuf, '+')
+		if plusPos > 0 {
+			buf = slices.Delete(buf, floatPos+plusPos, floatPos+plusPos+1)
+		}
+	} else {
+		// keeps at least one digit even if `f` is an integer
+		// assuming that this `floatBuf` will not be too long, it's fine to scan it
+		// to find the dot
+		if !bytes.ContainsRune(floatBuf, '.') {
+			buf = append(buf, '.')
+			buf = append(buf, '0')
 		}
 	}
 	return buf, nil
@@ -363,7 +385,7 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 	elemCount := int(jsonEndian.Uint32(bj.Value))
 	buf = append(buf, '[')
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		if i != 0 {
 			buf = append(buf, ", "...)
 		}
@@ -379,7 +401,7 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
 	elemCount := int(jsonEndian.Uint32(bj.Value))
 	buf = append(buf, '{')
-	for i := 0; i < elemCount; i++ {
+	for i := range elemCount {
 		if i != 0 {
 			buf = append(buf, ", "...)
 		}
@@ -417,8 +439,12 @@ func jsonMarshalStringTo(buf, s []byte) []byte {
 				buf = append(buf, '\\', 'r')
 			case '\t':
 				buf = append(buf, '\\', 't')
+			case '\b':
+				buf = append(buf, '\\', 'b')
+			case '\f':
+				buf = append(buf, '\\', 'f')
 			default:
-				// This encodes bytes < 0x20 except for \t, \n and \r.
+				// This encodes bytes < 0x20 except for \t, \n, \r, \b, \f.
 				// If escapeHTML is set, it also escapes <, >, and &
 				// because they can lead to security holes when
 				// user-controlled strings are rendered into JSON
@@ -594,7 +620,7 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
 		buf = append(buf, bj.Value[0:dataSizeOff]...)
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			buf = bj.ArrayGetElem(i).HashValue(buf)
 		}
 	case JSONTypeCodeObject:
@@ -603,7 +629,7 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		buf = append(buf, bj.TypeCode)
 		elemCount := int(jsonEndian.Uint32(bj.Value))
 		buf = append(buf, bj.Value[0:dataSizeOff]...)
-		for i := 0; i < elemCount; i++ {
+		for i := range elemCount {
 			keyJSON := CreateBinaryJSON(string(bj.objectGetKey(i)))
 			buf = append(buf, keyJSON.Value...)
 			buf = bj.objectGetVal(i).HashValue(buf)
@@ -730,10 +756,10 @@ func appendZero(buf []byte, length int) []byte {
 	var tmp [8]byte
 	rem := length % 8
 	loop := length / 8
-	for i := 0; i < loop; i++ {
+	for range loop {
 		buf = append(buf, tmp[:]...)
 	}
-	for i := 0; i < rem; i++ {
+	for range rem {
 		buf = append(buf, 0)
 	}
 	return buf

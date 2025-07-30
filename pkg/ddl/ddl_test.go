@@ -21,22 +21,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -49,11 +48,6 @@ type DDLForTest interface {
 	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
-}
-
-// IsReorgCanceled exports for testing.
-func (rc *reorgCtx) IsReorgCanceled() bool {
-	return rc.isReorgCanceled()
 }
 
 // NewReorgCtx exports for testing.
@@ -115,7 +109,7 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	require.False(t, changed)
 }
 
-func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
+func colDefStrToColInfo(t *testing.T, str string, ctx *metabuild.Context) *model.ColumnInfo {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
@@ -123,7 +117,7 @@ func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *typ
 	chs, coll := charset.GetDefaultCharsetAndCollate()
 	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
-	return &col.FieldType
+	return col.ToInfo()
 }
 
 func TestModifyColumn(t *testing.T) {
@@ -156,9 +150,9 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin, ctx)
-		ftB := colDefStrToFieldType(t, tt.to, ctx)
-		err := checkModifyTypes(ftA, ftB, false)
+		colA := colDefStrToColInfo(t, tt.origin, ctx)
+		colB := colDefStrToColInfo(t, tt.to, ctx)
+		err := checkModifyTypes(colA, colB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
@@ -172,7 +166,7 @@ func TestFieldCase(t *testing.T) {
 	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
 		colObjects[i] = &model.ColumnInfo{
-			Name: pmodel.NewCIStr(name),
+			Name: ast.NewCIStr(name),
 		}
 	}
 	err := checkDuplicateColumn(colObjects)
@@ -204,79 +198,6 @@ func TestIgnorableSpec(t *testing.T) {
 	for _, spec := range ignorableSpecs {
 		require.True(t, isIgnorableSpec(spec))
 	}
-}
-
-func TestBuildJobDependence(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// Add some non-add-index jobs.
-	job1 := &model.Job{ID: 1, TableID: 1, Version: model.JobVersion1, Type: model.ActionAddColumn}
-	job2 := &model.Job{ID: 2, TableID: 1, Version: model.JobVersion1, Type: model.ActionCreateTable}
-	job3 := &model.Job{ID: 3, TableID: 2, Version: model.JobVersion1, Type: model.ActionDropColumn}
-	job6 := &model.Job{ID: 6, TableID: 1, Version: model.JobVersion1, Type: model.ActionDropTable}
-	job7 := &model.Job{ID: 7, TableID: 2, Version: model.JobVersion1, Type: model.ActionModifyColumn}
-	job9 := &model.Job{ID: 9, SchemaID: 111, Version: model.JobVersion1, Type: model.ActionDropSchema}
-	job11 := &model.Job{ID: 11, TableID: 2, Version: model.JobVersion1, Type: model.ActionRenameTable, Args: []any{int64(111), "old db name"}}
-	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		require.NoError(t, m.EnQueueDDLJob(job1))
-		require.NoError(t, m.EnQueueDDLJob(job2))
-		require.NoError(t, m.EnQueueDDLJob(job3))
-		require.NoError(t, m.EnQueueDDLJob(job6))
-		require.NoError(t, m.EnQueueDDLJob(job7))
-		require.NoError(t, m.EnQueueDDLJob(job9))
-		require.NoError(t, m.EnQueueDDLJob(job11))
-		return nil
-	})
-	require.NoError(t, err)
-	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job4)
-		require.NoError(t, err)
-		require.Equal(t, job4.DependencyID, int64(2))
-		return nil
-	})
-	require.NoError(t, err)
-	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job5)
-		require.NoError(t, err)
-		require.Equal(t, job5.DependencyID, int64(3))
-		return nil
-	})
-	require.NoError(t, err)
-	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job8)
-		require.NoError(t, err)
-		require.Equal(t, job8.DependencyID, int64(0))
-		return nil
-	})
-	require.NoError(t, err)
-	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job10)
-		require.NoError(t, err)
-		require.Equal(t, job10.DependencyID, int64(9))
-		return nil
-	})
-	require.NoError(t, err)
-	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
-	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err := buildJobDependence(m, job12)
-		require.NoError(t, err)
-		require.Equal(t, job12.DependencyID, int64(11))
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func TestError(t *testing.T) {
@@ -319,7 +240,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	keyRanges := getTableDataKeyRanges([]int64{})
 	require.Len(t, keyRanges, 1)
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
-	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 2, insert a execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3})
@@ -327,7 +248,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
 	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
 	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
-	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 3, insert some execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3, 5, 9})
@@ -339,10 +260,10 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
 	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
 	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
-	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 }
 
-func TestAppendContinuousKeyRanges(t *testing.T) {
+func TestMergeContinuousKeyRanges(t *testing.T) {
 	cases := []struct {
 		input  []keyRangeMayExclude
 		expect []kv.KeyRange
@@ -452,7 +373,7 @@ func TestAppendContinuousKeyRanges(t *testing.T) {
 	}
 
 	for i, ca := range cases {
-		ranges := appendContinuousKeyRanges([]kv.KeyRange{}, ca.input)
+		ranges := mergeContinuousKeyRanges(ca.input)
 		require.Equal(t, ca.expect, ranges, "case %d", i)
 	}
 }
@@ -470,32 +391,22 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
-		forceV1Bak := ForceDDLJobVersionToV1InTest
-		t.Cleanup(func() {
-			ForceDDLJobVersionToV1InTest = forceV1Bak
-		})
-		ForceDDLJobVersionToV1InTest = "false"
 		d.detectAndUpdateJobVersion()
-		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
-	})
-
-	t.Run("force v1", func(t *testing.T) {
-		reset()
-		forceV1Bak := ForceDDLJobVersionToV1InTest
-		t.Cleanup(func() {
-			ForceDDLJobVersionToV1InTest = forceV1Bak
-		})
-		ForceDDLJobVersionToV1InTest = "true"
-		d.detectAndUpdateJobVersion()
-		require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+		if testargsv1.ForceV1 {
+			require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+		} else {
+			require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		}
 	})
 
 	d.etcdCli = &clientv3.Client{}
 	mockGetAllServerInfo := func(t *testing.T, versions ...string) {
-		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
+		serverInfos := make(map[string]*serverinfo.ServerInfo, len(versions))
 		for i, v := range versions {
-			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
-				ServerVersionInfo: infosync.ServerVersionInfo{Version: v}}
+			serverInfos[fmt.Sprintf("node%d", i)] = &serverinfo.ServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
+					VersionInfo: serverinfo.VersionInfo{Version: v},
+				}}
 		}
 		bytes, err := json.Marshal(serverInfos)
 		require.NoError(t, err)

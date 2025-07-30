@@ -103,26 +103,26 @@
     "name": "TestMPPHintsScope",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
-      "explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format='brief' select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format='brief' select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
 
       "set @@session.tidb_enforce_mpp=true",
-      "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
 
       "set @@session.tidb_enforce_mpp=false",
-      "explain select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain select /*+ read_from_storage(tiflash[t1, t2]) merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ read_from_storage(tiflash[t1, t2]) merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
 
       "set @@session.tidb_allow_mpp=false",
-      "explain select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
+      "explain format='brief' select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format='brief' select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format='brief' select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
     ]
   },
   {
@@ -130,19 +130,19 @@
     "cases": [
       "set @@session.tidb_allow_mpp=true",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
-      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
-      "explain select * from t t1, t t2 where t1.a=t2.a"
+      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a"
     ]
   },
   {
     "name": "TestMPPPreferBCJ",
     "cases": [
-      "explain select * from t1, t2 where t1.a=t2.b",
+      "explain format='brief' select * from t1, t2 where t1.a=t2.b",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
-      "explain select * from t1, t2 where t1.a=t2.b",
+      "explain format='brief' select * from t1, t2 where t1.a=t2.b",
       "insert into t2 values (9); analyze table t2;",
-      "explain select * from t1, t2 where t1.a=t2.b"
+      "explain format='brief' select * from t1, t2 where t1.a=t2.b"
     ]
   },
   {
@@ -150,31 +150,31 @@
     "cases": [
       "set @@session.tidb_allow_mpp=true",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
-      "explain select * from t t1, t t2 where t1.a=t2.a",
+      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
-      "explain select * from t t1, t t2 where t1.a=t2.a"
+      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a"
     ]
   },
   {
     "name": "TestMPPRightSemiJoin",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
-      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+      "explain format='brief' select * from t1 where exists (select * from t2 where t1.a=t2.b)",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
       "set @@session.tidb_broadcast_join_threshold_size=0",
       "set @@session.tidb_broadcast_join_threshold_count=0",
-      "explain select * from t1 where exists (select * from t2 where t1.a=t2.b)"
+      "explain format='brief' select * from t1 where exists (select * from t2 where t1.a=t2.b)"
     ]
   },
   {
     "name": "TestMPPRightOuterJoin",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
-      "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
+      "explain format='brief' select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
       "set @@session.tidb_broadcast_join_threshold_size=0",
       "set @@session.tidb_broadcast_join_threshold_count=0",
-      "explain select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d"
+      "explain format='brief' select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d"
     ]
   },
   {
@@ -616,8 +616,8 @@
     "name": "TestAlwaysTruePredicateWithSubquery",
     "cases" : [
       "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
-      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
-      "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
+      "explain format='brief' select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain format='brief' select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
     ]
   },
   {

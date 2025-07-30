@@ -20,8 +20,12 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -36,6 +40,34 @@ var (
 	MinUploadPartSize int64 = 5 * units.MiB
 )
 
+// mergeCollector collects the bytes and row count in merge step.
+type mergeCollector struct {
+	summary *execute.SubtaskSummary
+	counter prometheus.Counter
+}
+
+// NewMergeCollector creates a new merge collector.
+func NewMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *mergeCollector {
+	var counter prometheus.Counter
+	if me, ok := metric.GetCommonMetric(ctx); ok {
+		counter = me.BytesCounter.WithLabelValues(metric.StateMerged)
+	}
+	return &mergeCollector{
+		summary: summary,
+		counter: counter,
+	}
+}
+
+func (c *mergeCollector) Add(bytes, rowCnt int64) {
+	if c.summary != nil {
+		c.summary.Bytes.Add(bytes)
+		c.summary.RowCnt.Add(rowCnt)
+	}
+	if c.counter != nil {
+		c.counter.Add(float64(bytes))
+	}
+}
+
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
@@ -46,8 +78,10 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
+	onDup engineapi.OnDuplicateKey,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
 	// during encode&sort step, the writer-limit is aligned to block size, so we
@@ -64,7 +98,6 @@ func MergeOverlappingFiles(
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	for _, files := range dataFilesSlice {
-		files := files
 		eg.Go(func() error {
 			return mergeOverlappingFilesInternal(
 				egCtx,
@@ -75,7 +108,9 @@ func MergeOverlappingFiles(
 				uuid.New().String(),
 				blockSize,
 				onClose,
+				collector,
 				checkHotspot,
+				onDup,
 			)
 		})
 	}
@@ -139,7 +174,9 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector execute.Collector,
 	checkHotspot bool,
+	onDup engineapi.OnDuplicateKey,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
@@ -165,11 +202,9 @@ func mergeOverlappingFilesInternal(
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
+		SetOnDup(onDup).
 		BuildOneFile(store, newFilePrefix, writerID)
-	err = writer.Init(ctx, partSize)
-	if err != nil {
-		return nil
-	}
+	writer.InitPartSizeAndLogger(ctx, partSize)
 	defer func() {
 		err2 := writer.Close(ctx)
 		if err2 == nil {
@@ -186,9 +221,14 @@ func mergeOverlappingFilesInternal(
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
-		err = writer.WriteRow(ctx, iter.Key(), iter.Value())
+		key, value := iter.Key(), iter.Value()
+		err = writer.WriteRow(ctx, key, value)
 		if err != nil {
 			return err
+		}
+
+		if collector != nil {
+			collector.Add(int64(len(key)+len(value)), 1)
 		}
 	}
 	return iter.Error()

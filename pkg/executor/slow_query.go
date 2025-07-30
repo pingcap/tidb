@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -40,6 +41,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -99,7 +101,7 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
 	for idx, col := range e.outputCols {
-		if col.Name.O == util.ClusterTableInstanceColumnName {
+		if col.Name.O == metadef.ClusterTableInstanceColumnName {
 			e.instanceFactory, err = getInstanceColumnValueFactory(sctx, idx)
 			if err != nil {
 				return err
@@ -296,7 +298,7 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
-	return util.ReadLine(reader, int(variable.MaxOfMaxAllowedPacket))
+	return util.ReadLine(reader, int(vardef.MaxOfMaxAllowedPacket))
 }
 
 type offset struct {
@@ -314,7 +316,7 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 	var line string
 	log := make([]string, 0, num)
 	var err error
-	for i := 0; i < num; i++ {
+	for range num {
 		for {
 			if isCtxDone(ctx) {
 				return nil, ctx.Err()
@@ -414,7 +416,7 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 	//In reversed scan, We should reverse the blocks.
 	last := len(logs) - 1
-	for i := 0; i < len(logs)/2; i++ {
+	for i := range len(logs) / 2 {
 		logs[i], logs[last-i] = logs[last-i], logs[i]
 	}
 
@@ -594,6 +596,10 @@ func splitByColon(line string) (fields []string, values []string) {
 			fields = append(fields, line[start:current])
 			parseKey = false
 			current += 2 // bypass ": "
+			if current >= lineLength {
+				// last empty value
+				values = append(values, "")
+			}
 		} else {
 			start = current
 			if current < lineLength && (line[current] == '{' || line[current] == '[') {
@@ -607,6 +613,13 @@ func splitByColon(line string) (fields []string, values []string) {
 				for current < lineLength && line[current] != ' ' {
 					current++
 				}
+				// Meet empty value cases: "Key: Key:"
+				if current > 0 && line[current-1] == ':' {
+					values = append(values, "")
+					current = start
+					parseKey = true
+					continue
+				}
 			}
 			values = append(values, line[start:min(current, len(line))])
 			parseKey = true
@@ -614,6 +627,10 @@ func splitByColon(line string) (fields []string, values []string) {
 	}
 	if len(errMsg) > 0 {
 		logutil.BgLogger().Warn("slow query parse slow log error", zap.String("Error", errMsg), zap.String("Log", line))
+		return nil, nil
+	}
+	if len(fields) != len(values) {
+		logutil.BgLogger().Warn("slow query parse slow log error", zap.Int("field_count", len(fields)), zap.Int("value_count", len(values)), zap.String("Log", line))
 		return nil, nil
 	}
 	return fields, values
@@ -685,12 +702,15 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogHostStr, host, e.checker, fileLine)
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
-				} else if strings.HasPrefix(line, variable.SlowLogWarnings) {
+				} else if strings.HasPrefix(line, variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr) {
 					line = line[len(variable.SlowLogWarnings+variable.SlowLogSpaceMarkStr):]
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogWarnings, line, e.checker, fileLine)
+				} else if strings.HasPrefix(line, variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr) {
+					line = line[len(variable.SlowLogDBStr+variable.SlowLogSpaceMarkStr):]
+					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogDBStr, line, e.checker, fileLine)
 				} else {
 					fields, values := splitByColon(line)
-					for i := 0; i < len(fields); i++ {
+					for i := range fields {
 						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
@@ -737,7 +757,7 @@ func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types
 				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				return false
 			}
-			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+			timeValue := types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeTimestamp, types.MaxFsp)
 			return checker.isTimeValid(timeValue)
 		}
 		return true
@@ -850,7 +870,10 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
 		}, nil
-	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows:
+	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows, variable.SlowLogUnpackedBytesSentTiKVTotal,
+		variable.SlowLogUnpackedBytesReceivedTiKVTotal, variable.SlowLogUnpackedBytesSentTiKVCrossZone, variable.SlowLogUnpackedBytesReceivedTiKVCrossZone,
+		variable.SlowLogUnpackedBytesSentTiFlashTotal, variable.SlowLogUnpackedBytesReceivedTiFlashTotal, variable.SlowLogUnpackedBytesSentTiFlashCrossZone,
+		variable.SlowLogUnpackedBytesReceivedTiFlashCrossZone:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
@@ -860,7 +883,8 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			return true, nil
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
-		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults:
+		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable, variable.SlowLogHasMoreResults,
+		variable.SlowLogStorageFromKV, variable.SlowLogStorageFromMPP:
 		return func(row []types.Datum, value string, _ *time.Location, _ *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {
@@ -911,9 +935,9 @@ func ParseTime(s string) (time.Time, error) {
 }
 
 type logFile struct {
-	file       *os.File  // The opened file handle
-	start      time.Time // The start time of the log file
-	compressed bool      // The file is compressed or not
+	file       *os.File   // The opened file handle
+	start      types.Time // The start time of the log file
+	compressed bool       // The file is compressed or not
 }
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
@@ -925,18 +949,6 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			e.stats.initialize = time.Since(startTime)
 			e.stats.totalFileNum = totalFileNum
 		}()
-	}
-	if e.extractor == nil || !e.extractor.Enable {
-		totalFileNum = 1
-		//nolint: gosec
-		file, err := os.Open(logFilePath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return []logFile{{file: file}}, nil
 	}
 	var logFiles []logFile
 	logDir := filepath.Dir(logFilePath)
@@ -981,16 +993,19 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if err != nil {
 			return handleErr(err)
 		}
-		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
-		notInAllTimeRanges := true
-		for _, tr := range e.checker.timeRanges {
-			if start.Compare(tr.endTime) <= 0 {
-				notInAllTimeRanges = false
-				break
+		tz := sctx.GetSessionVars().Location()
+		start := types.NewTime(types.FromGoTime(fileStartTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
+		if e.checker.enableTimeCheck {
+			notInAllTimeRanges := true
+			for _, tr := range e.checker.timeRanges {
+				if start.Compare(tr.endTime) <= 0 {
+					notInAllTimeRanges = false
+					break
+				}
 			}
-		}
-		if notInAllTimeRanges {
-			return nil
+			if notInAllTimeRanges {
+				return nil
+			}
 		}
 
 		// If we want to get the end time from a compressed file,
@@ -1001,16 +1016,18 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			if err != nil {
 				return handleErr(err)
 			}
-			end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
-			inTimeRanges := false
-			for _, tr := range e.checker.timeRanges {
-				if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
-					inTimeRanges = true
-					break
+			if e.checker.enableTimeCheck {
+				end := types.NewTime(types.FromGoTime(fileEndTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
+				inTimeRanges := false
+				for _, tr := range e.checker.timeRanges {
+					if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+						inTimeRanges = true
+						break
+					}
 				}
-			}
-			if !inTimeRanges {
-				return nil
+				if !inTimeRanges {
+					return nil
+				}
 			}
 		}
 		_, err = file.Seek(0, io.SeekStart)
@@ -1019,7 +1036,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 		logFiles = append(logFiles, logFile{
 			file:       file,
-			start:      fileStartTime,
+			start:      start,
 			compressed: compressed,
 		})
 		skip = true
@@ -1038,13 +1055,13 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	// Assume no time range overlap in log files and remove unnecessary log files for compressed files.
 	var ret []logFile
 	for i, file := range logFiles {
-		if i == len(logFiles)-1 || !file.compressed {
+		if i == len(logFiles)-1 || !file.compressed || !e.checker.enableTimeCheck {
 			ret = append(ret, file)
 			continue
 		}
-		start := types.NewTime(types.FromGoTime(logFiles[i].start), mysql.TypeDatetime, types.MaxFsp)
+		start := logFiles[i].start
 		// use next file.start as endTime
-		end := types.NewTime(types.FromGoTime(logFiles[i+1].start), mysql.TypeDatetime, types.MaxFsp)
+		end := logFiles[i+1].start
 		inTimeRanges := false
 		for _, tr := range e.checker.timeRanges {
 			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
@@ -1213,7 +1230,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		lines = append(chars, lines...) // nozero
 
 		// find first '\n' or '\r'
-		for i := 0; i < len(chars)-1; i++ {
+		for i := range len(chars) - 1 {
 			if (chars[i] == '\n' || chars[i] == '\r') && chars[i+1] != '\n' && chars[i+1] != '\r' {
 				firstNonNewlinePos = i + 1
 				break

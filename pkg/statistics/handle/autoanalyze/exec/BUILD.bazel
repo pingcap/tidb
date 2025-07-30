@@ -10,7 +10,7 @@ go_library(
         "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
@@ -31,7 +31,7 @@ go_test(
     flaky = True,
     deps = [
         ":exec",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/util",

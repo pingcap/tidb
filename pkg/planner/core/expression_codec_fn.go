@@ -24,11 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -50,6 +51,7 @@ type tidbCodecFuncHelper struct{}
 
 func (h tidbCodecFuncHelper) encodeHandleFromRow(
 	ctx expression.EvalContext,
+	checker expropt.PrivilegeChecker,
 	isVer infoschemactx.MetaOnlyInfoSchema,
 	args []expression.Expression,
 	row chunk.Row,
@@ -63,7 +65,7 @@ func (h tidbCodecFuncHelper) encodeHandleFromRow(
 		return nil, isNull, err
 	}
 	is := isVer.(infoschema.InfoSchema)
-	tbl, _, err := h.findCommonOrPartitionedTable(ctx, is, dbName, tblName)
+	tbl, _, err := h.findCommonOrPartitionedTable(checker, is, dbName, tblName)
 	if err != nil {
 		return nil, false, err
 	}
@@ -76,17 +78,17 @@ func (h tidbCodecFuncHelper) encodeHandleFromRow(
 }
 
 func (h tidbCodecFuncHelper) findCommonOrPartitionedTable(
-	ctx expression.EvalContext,
+	checker expropt.PrivilegeChecker,
 	is infoschema.InfoSchema,
 	dbName string,
 	tblName string,
 ) (table.Table, int64, error) {
 	tblName, partName := h.extractTablePartition(tblName)
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 	if err != nil {
 		return nil, 0, err
 	}
-	if !ctx.RequestVerification(dbName, tblName, "", mysql.AllPrivMask) {
+	if !checker.RequestVerification(dbName, tblName, "", mysql.AllPrivMask) {
 		// The arguments will be filled by caller.
 		return nil, 0, plannererrors.ErrSpecificAccessDenied
 	}
@@ -165,6 +167,7 @@ func (tidbCodecFuncHelper) buildHandle(
 
 func (h tidbCodecFuncHelper) encodeIndexKeyFromRow(
 	ctx expression.EvalContext,
+	checker expropt.PrivilegeChecker,
 	isVer infoschemactx.MetaOnlyInfoSchema,
 	args []expression.Expression,
 	row chunk.Row,
@@ -182,7 +185,7 @@ func (h tidbCodecFuncHelper) encodeIndexKeyFromRow(
 		return nil, isNull, err
 	}
 	is := isVer.(infoschema.InfoSchema)
-	tbl, physicalID, err := h.findCommonOrPartitionedTable(ctx, is, dbName, tblName)
+	tbl, physicalID, err := h.findCommonOrPartitionedTable(checker, is, dbName, tblName)
 	if err != nil {
 		return nil, false, err
 	}
@@ -396,7 +399,7 @@ func (h tidbCodecFuncHelper) decodeIndexKey(
 			return "", errors.Trace(err)
 		}
 		ds := make([]types.Datum, 0, len(colInfos))
-		for i := 0; i < len(colInfos); i++ {
+		for i := range colInfos {
 			d, err := tablecodec.DecodeColumnValue(values[i], tps[i], loc)
 			if err != nil {
 				return "", errors.Trace(err)
@@ -411,7 +414,7 @@ func (h tidbCodecFuncHelper) decodeIndexKey(
 		ret["table_id"] = tableID
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]any, len(targetIndex.Columns))
-		for i := 0; i < len(targetIndex.Columns); i++ {
+		for i := range targetIndex.Columns {
 			dtStr, err := h.datumToJSONObject(&ds[i])
 			if err != nil {
 				return "", errors.Trace(err)

@@ -28,12 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -50,9 +49,11 @@ const (
 	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %?`
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
-	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
 	// KeyOpDefaultTimeout is the default timeout for each key operation.
 	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpDefaultRetryCnt is the default retry times for each key operation.
+	KeyOpDefaultRetryCnt = 5
 	// KeyOpRetryInterval is the interval between two key operations.
 	KeyOpRetryInterval = 30 * time.Millisecond
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
@@ -77,7 +78,7 @@ type DelRangeTask struct {
 }
 
 // Range returns the range [start, end) to delete.
-func (t DelRangeTask) Range() (kv.Key, kv.Key) {
+func (t DelRangeTask) Range() (start kv.Key, end kv.Key) {
 	return t.StartKey, t.EndKey
 }
 
@@ -184,45 +185,31 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	return errors.Trace(err)
 }
 
-// LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
-func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
-	// close issue #21391
-	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return LoadGlobalVars(ctx, sctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
-}
-
-// LoadDDLVars loads ddl variable from mysql.global_variables.
-func LoadDDLVars(ctx sessionctx.Context) error {
-	return LoadGlobalVars(context.Background(), ctx, []string{variable.TiDBDDLErrorCountLimit})
-}
-
 // LoadGlobalVars loads global variable from mysql.global_variables.
-func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	// *mock.Context does not support SQL execution. Only do it when sctx is not `mock.Context`
-	if _, ok := sctx.(*mock.Context); !ok {
-		e := sctx.GetRestrictedSQLExecutor()
-		var buf strings.Builder
-		buf.WriteString(loadGlobalVars)
-		paramNames := make([]any, 0, len(varNames))
-		for i, name := range varNames {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			buf.WriteString("%?")
-			paramNames = append(paramNames, name)
+func LoadGlobalVars(sctx sessionctx.Context, varNames ...string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	e := sctx.GetRestrictedSQLExecutor()
+	var buf strings.Builder
+	buf.WriteString(loadGlobalVarsSQL)
+	paramNames := make([]any, 0, len(varNames))
+	for i, name := range varNames {
+		if i > 0 {
+			buf.WriteString(", ")
 		}
-		buf.WriteString(")")
-		rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, row := range rows {
-			varName := row.GetString(0)
-			varValue := row.GetString(1)
-			if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
-				return err
-			}
+		buf.WriteString("%?")
+		paramNames = append(paramNames, name)
+	}
+	buf.WriteString(")")
+	rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		varName := row.GetString(0)
+		varValue := row.GetString(1)
+		//nolint:forbidigo
+		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -280,14 +267,37 @@ func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
 func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
 	var err error
 	ctx := context.Background()
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		childCtx, cancel := context.WithTimeout(ctx, timeout)
 		_, err = etcdCli.Delete(childCtx, key)
 		cancel()
 		if err == nil {
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+	}
+	return errors.Trace(err)
+}
+
+// DeleteKeysWithPrefixFromEtcd deletes keys with prefix from etcd.
+func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
+	var err error
+	ctx := context.Background()
+	for i := range retryCnt {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		_, err = etcdCli.Delete(childCtx, prefix, clientv3.WithPrefix())
+		cancel()
+		if err == nil {
+			return nil
+		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		logutil.DDLLogger().Warn(
+			"etcd-cli delete prefix failed",
+			zap.String("prefix", prefix),
+			zap.Error(err),
+			zap.Int("retryCnt", i),
+		)
 	}
 	return errors.Trace(err)
 }
@@ -299,7 +309,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		if err = ctx.Err(); err != nil {
 			return errors.Trace(err)
 		}
@@ -334,6 +344,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
 		}
 
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
@@ -347,10 +358,17 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		if err = ctx.Err(); err != nil {
 			return errors.Trace(err)
 		}
+
+		// Mock error for test
+		failpoint.Inject("PutKVToEtcdError", func(val failpoint.Value) {
+			if val.(bool) && strings.Contains(key, "all_schema_versions") {
+				failpoint.Continue()
+			}
+		})
 
 		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
 		_, err = etcdCli.Put(childCtx, key, val, opts...)
@@ -358,6 +376,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
@@ -395,6 +414,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	defer terror.Call(rs.Close)
+	//nolint:forbidigo
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
 		return false, errors.Trace(err)

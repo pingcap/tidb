@@ -15,25 +15,35 @@
 package restore
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
+	"path"
+	"strconv"
 	"strings"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // deprecated parameter
@@ -43,6 +53,214 @@ const (
 	FineGrained   Granularity = "fine-grained"
 	CoarseGrained Granularity = "coarse-grained"
 )
+
+const logRestoreTableIDBlocklistFilePrefix = "v1/log_restore_tables_blocklists"
+
+type LogRestoreTableIDsBlocklistFile struct {
+	// RestoreCommitTs records the timestamp after PITR restore done. Only the later PITR restore from the log backup of the cluster,
+	// whose BackupTS is not less than it, can ignore the restore table IDs blocklist recorded in the file.
+	RestoreCommitTs uint64 `protobuf:"varint,1,opt,name=restore_commit_ts,proto3"`
+	// SnapshotBackupTs records the BackupTS of the PITR restore. Any PITR restore from the log backup of the cluster, whose restoredTS
+	// is less than it, can ignore the restore table IDs blocklist recorded in the file.
+	SnapshotBackupTs uint64 `protobuf:"varint,2,opt,name=snapshot_backup_ts,proto3"`
+	// RewriteTs records the rewritten timestamp of the meta kvs in this PITR restore.
+	RewriteTs uint64 `protobuf:"varint,6,opt,name=rewrite_ts,proto3"`
+	// TableIds records the table IDs blocklist of the cluster running the log backup task.
+	TableIds []int64 `protobuf:"varint,3,rep,packed,name=table_ids,proto3"`
+	// DbIds records the database IDs blocklist of the cluster running the log backup task.
+	DbIds []int64 `protobuf:"varint,5,rep,packed,name=db_ids,proto3"`
+	// Checksum records the checksum of other fields.
+	Checksum []byte `protobuf:"bytes,4,opt,name=checksum,proto3"`
+}
+
+func (m *LogRestoreTableIDsBlocklistFile) Reset()         { *m = LogRestoreTableIDsBlocklistFile{} }
+func (m *LogRestoreTableIDsBlocklistFile) String() string { return proto.CompactTextString(m) }
+func (m *LogRestoreTableIDsBlocklistFile) ProtoMessage()  {}
+
+func (m *LogRestoreTableIDsBlocklistFile) filename() string {
+	return fmt.Sprintf("%s/R%016X_S%016X.meta", logRestoreTableIDBlocklistFilePrefix, m.RestoreCommitTs, m.SnapshotBackupTs)
+}
+
+func parseLogRestoreTableIDsBlocklistFileName(filename string) (restoreCommitTs, snapshotBackupTs uint64, parsed bool) {
+	filename = path.Base(filename)
+	if !strings.HasSuffix(filename, ".meta") {
+		return 0, 0, false
+	}
+	if filename[0] != 'R' {
+		return 0, 0, false
+	}
+	ts, err := strconv.ParseUint(filename[1:17], 16, 64)
+	if err != nil {
+		log.Warn("failed to parse log restore table IDs blocklist file name", zap.String("filename", filename), zap.Error(err))
+		return 0, 0, false
+	}
+	restoreCommitTs = ts
+	if filename[17] != '_' || filename[18] != 'S' {
+		return 0, 0, false
+	}
+	ts, err = strconv.ParseUint(filename[19:35], 16, 64)
+	if err != nil {
+		log.Warn("failed to parse log restore table IDs blocklist file name", zap.String("filename", filename), zap.Error(err))
+		return 0, 0, false
+	}
+	snapshotBackupTs = ts
+	return restoreCommitTs, snapshotBackupTs, true
+}
+
+func (m *LogRestoreTableIDsBlocklistFile) checksumLogRestoreTableIDsBlocklistFile() []byte {
+	hasher := sha256.New()
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.RestoreCommitTs))
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.SnapshotBackupTs))
+	hasher.Write(binary.LittleEndian.AppendUint64(nil, m.RewriteTs))
+	for _, tableId := range m.TableIds {
+		hasher.Write(binary.LittleEndian.AppendUint64(nil, uint64(tableId)))
+	}
+	for _, dbId := range m.DbIds {
+		hasher.Write(binary.LittleEndian.AppendUint64(nil, uint64(dbId)))
+	}
+	return hasher.Sum(nil)
+}
+
+func (m *LogRestoreTableIDsBlocklistFile) setChecksumLogRestoreTableIDsBlocklistFile() {
+	m.Checksum = m.checksumLogRestoreTableIDsBlocklistFile()
+}
+
+// MarshalLogRestoreTableIDsBlocklistFile generates an Blocklist file and marshals it. It returns its filename and the marshaled data.
+func MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, rewriteTs uint64, tableIds, dbIds []int64) (string, []byte, error) {
+	blocklistFile := &LogRestoreTableIDsBlocklistFile{
+		RestoreCommitTs:  restoreCommitTs,
+		SnapshotBackupTs: snapshotBackupTs,
+		RewriteTs:        rewriteTs,
+		TableIds:         tableIds,
+		DbIds:            dbIds,
+	}
+	blocklistFile.setChecksumLogRestoreTableIDsBlocklistFile()
+	filename := blocklistFile.filename()
+	data, err := proto.Marshal(blocklistFile)
+	if err != nil {
+		return "", nil, errors.Trace(err)
+	}
+	return filename, data, nil
+}
+
+// unmarshalLogRestoreTableIDsBlocklistFile unmarshals the given blocklist file.
+func unmarshalLogRestoreTableIDsBlocklistFile(data []byte) (*LogRestoreTableIDsBlocklistFile, error) {
+	blocklistFile := &LogRestoreTableIDsBlocklistFile{}
+	if err := proto.Unmarshal(data, blocklistFile); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !bytes.Equal(blocklistFile.checksumLogRestoreTableIDsBlocklistFile(), blocklistFile.Checksum) {
+		return nil, errors.Errorf(
+			"checksum mismatch (calculated checksum is %s but the recorded checksum is %s), the log restore table IDs blocklist file may be corrupted",
+			base64.StdEncoding.EncodeToString(blocklistFile.checksumLogRestoreTableIDsBlocklistFile()),
+			base64.StdEncoding.EncodeToString(blocklistFile.Checksum),
+		)
+	}
+	return blocklistFile, nil
+}
+
+func fastWalkLogRestoreTableIDsBlocklistFile(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	filterOutFn func(restoreCommitTs, snapshotBackupTs uint64) bool,
+	executionFn func(ctx context.Context, filename string, restoreCommitTs, rewriteTs uint64, tableIds, dbIds []int64) error,
+) error {
+	filenames := make([]string, 0)
+	if err := s.WalkDir(ctx, &storage.WalkOption{SubDir: logRestoreTableIDBlocklistFilePrefix}, func(path string, _ int64) error {
+		restoreCommitTs, snapshotBackupTs, parsed := parseLogRestoreTableIDsBlocklistFileName(path)
+		if parsed {
+			if filterOutFn(restoreCommitTs, snapshotBackupTs) {
+				return nil
+			}
+		}
+		filenames = append(filenames, path)
+		return nil
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	workerpool := tidbutil.NewWorkerPool(8, "walk dir log restore table IDs blocklist files")
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, filename := range filenames {
+		if ectx.Err() != nil {
+			break
+		}
+		workerpool.ApplyOnErrorGroup(eg, func() error {
+			data, err := s.ReadFile(ectx, filename)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			blocklistFile, err := unmarshalLogRestoreTableIDsBlocklistFile(data)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if filterOutFn(blocklistFile.RestoreCommitTs, blocklistFile.SnapshotBackupTs) {
+				return nil
+			}
+			err = executionFn(ectx, filename, blocklistFile.RestoreCommitTs, blocklistFile.RewriteTs, blocklistFile.TableIds, blocklistFile.DbIds)
+			return errors.Trace(err)
+		})
+	}
+	return errors.Trace(eg.Wait())
+}
+
+// CheckTableTrackerContainsTableIDsFromBlocklistFiles checks whether pitr id tracker contains the filtered table IDs from blocklist file.
+func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	tracker *utils.PiTRIdTracker,
+	startTs, restoredTs uint64,
+	tableNameByTableId func(tableId int64) string,
+	dbNameByDbId func(dbId int64) string,
+	checkTableIdLost func(tableId int64) bool,
+	checkDBIdlost func(dbId int64) bool,
+	cleanError func(rewriteTs uint64),
+) error {
+	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
+		return startTs >= restoreCommitTs || restoredTs <= snapshotBackupTs
+	}, func(_ context.Context, _ string, restoreCommitTs, rewriteTs uint64, tableIds, dbIds []int64) error {
+		for _, tableId := range tableIds {
+			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
+				return errors.Errorf(
+					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) before snapshot backup(at %d). "+
+						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup.",
+					tableId, tableNameByTableId(tableId), restoredTs, restoreCommitTs, startTs)
+			}
+			// the meta kv may not be backed by log restore
+			if checkTableIdLost(tableId) {
+				log.Warn("the table is lost in the log backup storage, so that it can not be restored.", zap.Int64("table id", tableId))
+			}
+		}
+		for _, dbId := range dbIds {
+			if tracker.ContainsDB(dbId) {
+				return errors.Errorf(
+					"cannot restore the database(Id=%d, name %s at %d) because it is log restored(at %d) before snapshot backup(at %d). "+
+						"Please respecify the filter that does not contain the database or replace with a newer snapshot backup.",
+					dbId, dbNameByDbId(dbId), restoredTs, restoreCommitTs, startTs)
+			}
+			// the meta kv may not be backed by log restore
+			if checkDBIdlost(dbId) {
+				log.Warn("the database is lost in the log backup storage, so that it can not be restored.", zap.Int64("database id", dbId))
+			}
+		}
+		cleanError(rewriteTs)
+		return nil
+	})
+	return errors.Trace(err)
+}
+
+// TruncateLogRestoreTableIDsBlocklistFiles truncates the blocklist files whose restore commit ts is not larger than truncate until ts.
+func TruncateLogRestoreTableIDsBlocklistFiles(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	untilTs uint64,
+) error {
+	err := fastWalkLogRestoreTableIDsBlocklistFile(ctx, s, func(restoreCommitTs, snapshotBackupTs uint64) bool {
+		return untilTs < restoreCommitTs
+	}, func(ctx context.Context, filename string, _, _ uint64, _, _ []int64) error {
+		return s.DeleteFile(ctx, filename)
+	})
+	return errors.Trace(err)
+}
 
 type UniqueTableName struct {
 	DB    string
@@ -59,8 +277,8 @@ func TransferBoolToValue(enable bool) string {
 // GetTableSchema returns the schema of a table from TiDB.
 func GetTableSchema(
 	dom *domain.Domain,
-	dbName pmodel.CIStr,
-	tableName pmodel.CIStr,
+	dbName ast.CIStr,
+	tableName ast.CIStr,
 ) (*model.TableInfo, error) {
 	info := dom.InfoSchema()
 	table, err := info.TableByName(context.Background(), dbName, tableName)
@@ -75,7 +293,7 @@ const maxUserTablesNum = 10
 // AssertUserDBsEmpty check whether user dbs exist in the cluster
 func AssertUserDBsEmpty(dom *domain.Domain) error {
 	databases := dom.InfoSchema().AllSchemas()
-	m := meta.NewSnapshotMeta(dom.Store().GetSnapshot(kv.MaxVersion))
+	m := meta.NewReader(dom.Store().GetSnapshot(kv.MaxVersion))
 	userTables := make([]string, 0, maxUserTablesNum+1)
 	appendTables := func(dbName, tableName string) bool {
 		if len(userTables) >= maxUserTablesNum {
@@ -88,7 +306,7 @@ func AssertUserDBsEmpty(dom *domain.Domain) error {
 LISTDBS:
 	for _, db := range databases {
 		dbName := db.Name.L
-		if tidbutil.IsMemOrSysDB(dbName) {
+		if metadef.IsMemOrSysDB(dbName) {
 			continue
 		}
 		tables, err := m.ListSimpleTables(db.ID)
@@ -149,10 +367,25 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 			log.Warn("failed to get TS, retry it", zap.Uint("retry time", retry), logutil.ShortError(getTSErr))
 		}
 		return getTSErr
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 
 	if err != nil {
 		log.Error("failed to get TS", zap.Error(err))
 	}
 	return startTS, errors.Trace(err)
+}
+
+// HasRestoreIDColumn checks if the tidb_pitr_id_map table has restore_id column
+func HasRestoreIDColumn(dom *domain.Domain) bool {
+	table, err := GetTableSchema(dom, ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
+	if err != nil {
+		return false
+	}
+
+	for _, col := range table.Columns {
+		if col.Name.L == "restore_id" {
+			return true
+		}
+	}
+	return false
 }

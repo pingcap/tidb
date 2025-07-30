@@ -991,7 +991,6 @@ func (d *DiskSorter) compactFiles(ctx context.Context, files []*fileMetadata) er
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(d.opts.Concurrency)
 	for _, c := range compactions {
-		c := c
 		g.Go(func() error {
 			if gCtx.Err() != nil {
 				return errors.Trace(gCtx.Err())
@@ -1134,10 +1133,7 @@ func splitCompactionFiles(files []*fileMetadata, maxCompactionDepth int) [][]*fi
 		numSubGroups := (len(group)-1)/maxCompactionDepth + 1
 		subGroupSize := (len(group)-1)/numSubGroups + 1
 		for i := 0; i < len(group); i += subGroupSize {
-			j := i + subGroupSize
-			if j > len(group) {
-				j = len(group)
-			}
+			j := min(i+subGroupSize, len(group))
 			finalGroups = append(finalGroups, group[i:j])
 		}
 	}

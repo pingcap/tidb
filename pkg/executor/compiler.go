@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -122,10 +123,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		InfoSchema:    is,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}
 	// Use cached plan if possible.
 	if preparedObj != nil && plannercore.IsSafeToReusePointGetExecutor(c.Ctx, is, preparedObj) {
@@ -177,13 +178,7 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 		return true
 	}
 
-	for _, child := range p.Children() {
-		if isPhysicalPlanNeedLowerPriority(child) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(p.Children(), isPhysicalPlanNeedLowerPriority)
 }
 
 // CountStmtNode records the number of statements with the same type.
@@ -336,6 +331,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 			dbLabelSet[dbLabel] = struct{}{}
 		}
 	case *ast.SplitRegionStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
+	case *ast.DistributeTableStmt:
 		if x.Table != nil {
 			dbLabel := x.Table.Schema.O
 			dbLabelSet[dbLabel] = struct{}{}

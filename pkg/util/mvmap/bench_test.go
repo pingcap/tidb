@@ -23,7 +23,7 @@ import (
 func BenchmarkMVMapPut(b *testing.B) {
 	m := NewMVMap()
 	buffer := make([]byte, 8)
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		binary.BigEndian.PutUint64(buffer, uint64(i))
 		m.Put(buffer, buffer)
 	}
@@ -32,13 +32,13 @@ func BenchmarkMVMapPut(b *testing.B) {
 func BenchmarkMVMapGet(b *testing.B) {
 	m := NewMVMap()
 	buffer := make([]byte, 8)
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		binary.BigEndian.PutUint64(buffer, uint64(i))
 		m.Put(buffer, buffer)
 	}
 	val := make([][]byte, 0, 8)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		binary.BigEndian.PutUint64(buffer, uint64(i))
 		val = m.Get(buffer, val[:0])
 		if len(val) != 1 || !bytes.Equal(val[0], buffer) {

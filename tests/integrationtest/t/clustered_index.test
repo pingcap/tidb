@@ -16,30 +16,30 @@ create table tbl_2 ( col_10 datetime default '1976-05-11' , col_11 datetime , co
 load stats 's/wout_cluster_index_tbl_0.json';
 load stats 's/wout_cluster_index_tbl_2.json';
 
-explain select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
 
-explain select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
 
-explain select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
-explain select col_14 from wout_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+explain format='brief' select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
+explain format='brief' select col_14 from wout_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
 
-explain select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
-explain select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+explain format='brief' select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
+explain format='brief' select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
 
-explain select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
-explain select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;
+explain format='brief' select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
+explain format='brief' select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;
 
-explain select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
-explain select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+explain format='brief' select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
+explain format='brief' select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;
 
-explain select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
-explain select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;
+explain format='brief' select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
+explain format='brief' select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;
 
-explain select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
 
-explain select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
-explain select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
+explain format='brief' select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
+explain format='brief' select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
 set @@tidb_enable_outer_join_reorder=false;

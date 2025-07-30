@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -28,20 +28,20 @@ func TestGetOrDecodeArgsV2(t *testing.T) {
 	j := &Job{
 		Version: JobVersion2,
 		Type:    ActionTruncateTable,
-		Args: []any{&TruncateTableArgs{
-			FKCheck: true,
-		}},
 	}
+	j.FillArgs(&TruncateTableArgs{
+		FKCheck: true,
+	})
 	_, err := j.Encode(true)
 	require.NoError(t, err)
 	require.NotNil(t, j.RawArgs)
 	// return existing argsV2
 	argsV2, err := getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
-	require.Same(t, j.Args[0], argsV2)
+	require.Same(t, j.args[0], argsV2)
 	// unmarshal from json
 	var argsBak *TruncateTableArgs
-	argsBak, j.Args = j.Args[0].(*TruncateTableArgs), nil
+	argsBak, j.args = j.args[0].(*TruncateTableArgs), nil
 	argsV2, err = getOrDecodeArgsV2[*TruncateTableArgs](j)
 	require.NoError(t, err)
 	require.NotNil(t, argsV2)
@@ -191,7 +191,7 @@ func TestBatchCreateTableArgs(t *testing.T) {
 	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion1, ActionCreateTables)))
 	args, err := GetBatchCreateTableArgs(j2)
 	require.NoError(t, err)
-	for i := 0; i < len(inArgs.Tables); i++ {
+	for i := range inArgs.Tables {
 		require.EqualValues(t, inArgs.Tables[i].TableInfo, args.Tables[i].TableInfo)
 		require.EqualValues(t, true, args.Tables[i].FKCheck)
 	}
@@ -206,8 +206,8 @@ func TestBatchCreateTableArgs(t *testing.T) {
 func TestDropTableArgs(t *testing.T) {
 	inArgs := &DropTableArgs{
 		Identifiers: []ast.Ident{
-			{Schema: model.NewCIStr("db"), Name: model.NewCIStr("tbl")},
-			{Schema: model.NewCIStr("db2"), Name: model.NewCIStr("tbl2")},
+			{Schema: ast.NewCIStr("db"), Name: ast.NewCIStr("tbl")},
+			{Schema: ast.NewCIStr("db2"), Name: ast.NewCIStr("tbl2")},
 		},
 		FKCheck: true,
 	}
@@ -288,9 +288,9 @@ func TestTruncateTableArgs(t *testing.T) {
 func TestTablePartitionArgs(t *testing.T) {
 	inArgs := &TablePartitionArgs{
 		PartNames: []string{"a", "b"},
-		PartInfo: &PartitionInfo{Type: model.PartitionTypeRange, Definitions: []PartitionDefinition{
-			{ID: 1, Name: model.NewCIStr("a"), LessThan: []string{"1"}},
-			{ID: 2, Name: model.NewCIStr("b"), LessThan: []string{"2"}},
+		PartInfo: &PartitionInfo{Type: ast.PartitionTypeRange, Definitions: []PartitionDefinition{
+			{ID: 1, Name: ast.NewCIStr("a"), LessThan: []string{"1"}},
+			{ID: 2, Name: ast.NewCIStr("b"), LessThan: []string{"2"}},
 		}},
 	}
 	for _, tp := range []ActionType{
@@ -340,16 +340,16 @@ func TestTablePartitionArgs(t *testing.T) {
 		FillRollbackArgsForAddPartition(j,
 			&TablePartitionArgs{
 				PartNames: partNames,
-				PartInfo: &PartitionInfo{Type: model.PartitionTypeRange, Definitions: []PartitionDefinition{
-					{ID: 1, Name: model.NewCIStr("aaaa"), LessThan: []string{"1"}},
-					{ID: 2, Name: model.NewCIStr("bbb"), LessThan: []string{"2"}},
+				PartInfo: &PartitionInfo{Type: ast.PartitionTypeRange, Definitions: []PartitionDefinition{
+					{ID: 1, Name: ast.NewCIStr("aaaa"), LessThan: []string{"1"}},
+					{ID: 2, Name: ast.NewCIStr("bbb"), LessThan: []string{"2"}},
 				}},
 			})
-		require.Len(t, j.Args, 1)
+		require.Len(t, j.args, 1)
 		if ver == JobVersion1 {
-			require.EqualValues(t, partNames, j.Args[0].([]string))
+			require.EqualValues(t, partNames, j.args[0].([]string))
 		} else {
-			args := j.Args[0].(*TablePartitionArgs)
+			args := j.args[0].(*TablePartitionArgs)
 			require.EqualValues(t, partNames, args.PartNames)
 			require.Nil(t, args.PartInfo)
 			require.Nil(t, args.OldPhysicalTblIDs)
@@ -448,8 +448,8 @@ func TestAlterTablePartitionArgs(t *testing.T) {
 func TestRenameTableArgs(t *testing.T) {
 	inArgs := &RenameTableArgs{
 		OldSchemaID:   9527,
-		OldSchemaName: model.NewCIStr("old_schema_name"),
-		NewTableName:  model.NewCIStr("new_table_name"),
+		OldSchemaName: ast.NewCIStr("old_schema_name"),
+		NewTableName:  ast.NewCIStr("new_table_name"),
 	}
 
 	jobvers := []JobVersion{JobVersion1, JobVersion2}
@@ -464,41 +464,15 @@ func TestRenameTableArgs(t *testing.T) {
 	}
 }
 
-func TestUpdateRenameTableArgs(t *testing.T) {
-	inArgs := &RenameTableArgs{
-		OldSchemaID:   9527,
-		OldSchemaName: model.NewCIStr("old_schema_name"),
-		NewTableName:  model.NewCIStr("new_table_name"),
-	}
-
-	jobvers := []JobVersion{JobVersion1, JobVersion2}
-	for _, jobver := range jobvers {
-		job := &Job{
-			SchemaID: 9528,
-			Version:  jobver,
-			Type:     ActionRenameTable,
-		}
-		job.FillArgs(inArgs)
-
-		err := UpdateRenameTableArgs(job)
-		require.NoError(t, err)
-
-		args, err := GetRenameTableArgs(job)
-		require.NoError(t, err)
-		require.Equal(t, &RenameTableArgs{
-			OldSchemaID:   9528,
-			NewSchemaID:   9528,
-			OldSchemaName: model.NewCIStr("old_schema_name"),
-			NewTableName:  model.NewCIStr("new_table_name"),
-		}, args)
-	}
-}
-
 func TestGetRenameTablesArgs(t *testing.T) {
 	inArgs := &RenameTablesArgs{
 		RenameTableInfos: []*RenameTableArgs{
-			{1, model.CIStr{O: "db1", L: "db1"}, model.CIStr{O: "tb3", L: "tb3"}, model.CIStr{O: "tb1", L: "tb1"}, 3, 100},
-			{2, model.CIStr{O: "db2", L: "db2"}, model.CIStr{O: "tb2", L: "tb2"}, model.CIStr{O: "tb4", L: "tb4"}, 3, 101},
+			{OldSchemaID: 1, OldSchemaName: ast.CIStr{O: "db1", L: "db1"},
+				NewTableName: ast.CIStr{O: "tb3", L: "tb3"}, OldTableName: ast.CIStr{O: "tb1", L: "tb1"},
+				NewSchemaID: 3, TableID: 100},
+			{OldSchemaID: 2, OldSchemaName: ast.CIStr{O: "db2", L: "db2"},
+				NewTableName: ast.CIStr{O: "tb2", L: "tb2"}, OldTableName: ast.CIStr{O: "tb4", L: "tb4"},
+				NewSchemaID: 3, TableID: 101},
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -514,7 +488,7 @@ func TestGetRenameTablesArgs(t *testing.T) {
 
 func TestResourceGroupArgs(t *testing.T) {
 	inArgs := &ResourceGroupArgs{
-		RGInfo: &ResourceGroupInfo{ID: 100, Name: model.NewCIStr("rg_name")},
+		RGInfo: &ResourceGroupInfo{ID: 100, Name: ast.NewCIStr("rg_name")},
 	}
 	for _, tp := range []ActionType{ActionCreateResourceGroup, ActionAlterResourceGroup, ActionDropResourceGroup} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -531,28 +505,11 @@ func TestResourceGroupArgs(t *testing.T) {
 	}
 }
 
-func TestDropColumnArgs(t *testing.T) {
-	inArgs := &DropColumnArgs{
-		ColName:      model.NewCIStr("col_name"),
-		IfExists:     true,
-		IndexIDs:     []int64{1, 2, 3},
-		PartitionIDs: []int64{4, 5, 6},
-	}
-
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		j2 := &Job{}
-		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
-		args, err := GetDropColumnArgs(j2)
-		require.NoError(t, err)
-		require.Equal(t, inArgs, args)
-	}
-}
-
 func TestGetAlterSequenceArgs(t *testing.T) {
 	inArgs := &AlterSequenceArgs{
 		Ident: ast.Ident{
-			Schema: model.NewCIStr("test_db"),
-			Name:   model.NewCIStr("test_t"),
+			Schema: ast.NewCIStr("test_db"),
+			Name:   ast.NewCIStr("test_t"),
 		},
 		SeqOptions: []*ast.SequenceOption{
 			{
@@ -605,7 +562,7 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {
 	inArgs := &AlterIndexVisibilityArgs{
-		IndexName: model.NewCIStr("index-name"),
+		IndexName: ast.NewCIStr("index-name"),
 		Invisible: true,
 	}
 
@@ -622,7 +579,7 @@ func TestGetAddForeignKeyArgs(t *testing.T) {
 	inArgs := &AddForeignKeyArgs{
 		FkInfo: &FKInfo{
 			ID:   7527,
-			Name: model.NewCIStr("fk-name"),
+			Name: ast.NewCIStr("fk-name"),
 		},
 		FkCheck: true,
 	}
@@ -665,7 +622,7 @@ func TestGetShardRowIDArgs(t *testing.T) {
 
 func TestGetDropForeignKeyArgs(t *testing.T) {
 	inArgs := &DropForeignKeyArgs{
-		FkName: model.NewCIStr("fk-name"),
+		FkName: ast.NewCIStr("fk-name"),
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -682,7 +639,7 @@ func TestGetAlterTTLInfoArgs(t *testing.T) {
 	ttlCronJobSchedule := "ttl-schedule"
 	inArgs := &AlterTTLInfoArgs{
 		TTLInfo: &TTLInfo{
-			ColumnName:       model.NewCIStr("column_name"),
+			ColumnName:       ast.NewCIStr("column_name"),
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: 10010,
 		},
@@ -701,8 +658,8 @@ func TestGetAlterTTLInfoArgs(t *testing.T) {
 func TestAddCheckConstraintArgs(t *testing.T) {
 	Constraint :=
 		&ConstraintInfo{
-			Name:       model.NewCIStr("t3_c1"),
-			Table:      model.NewCIStr("t3"),
+			Name:       ast.NewCIStr("t3_c1"),
+			Table:      ast.NewCIStr("t3"),
 			ExprString: "id<10",
 			State:      StateDeleteOnly,
 		}
@@ -723,7 +680,7 @@ func TestAddCheckConstraintArgs(t *testing.T) {
 
 func TestCheckConstraintArgs(t *testing.T) {
 	inArgs := &CheckConstraintArgs{
-		ConstraintName: model.NewCIStr("c1"),
+		ConstraintName: ast.NewCIStr("c1"),
 		Enforced:       true,
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -740,7 +697,7 @@ func TestGetAlterTablePlacementArgs(t *testing.T) {
 	inArgs := &AlterTablePlacementArgs{
 		PlacementPolicyRef: &PolicyRefInfo{
 			ID:   7527,
-			Name: model.NewCIStr("placement-policy"),
+			Name: ast.NewCIStr("placement-policy"),
 		},
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -796,8 +753,8 @@ func TestGetUpdateTiFlashReplicaStatusArgs(t *testing.T) {
 }
 func TestLockTableArgs(t *testing.T) {
 	inArgs := &LockTablesArgs{
-		LockTables:    []TableLockTpInfo{{1, 1, model.TableLockNone}},
-		UnlockTables:  []TableLockTpInfo{{2, 2, model.TableLockNone}},
+		LockTables:    []TableLockTpInfo{{1, 1, ast.TableLockNone}},
+		UnlockTables:  []TableLockTpInfo{{2, 2, ast.TableLockNone}},
 		IndexOfLock:   13,
 		IndexOfUnlock: 24,
 	}
@@ -817,7 +774,7 @@ func TestLockTableArgs(t *testing.T) {
 }
 
 func TestRepairTableArgs(t *testing.T) {
-	inArgs := &RepairTableArgs{&TableInfo{ID: 1, Name: model.NewCIStr("t")}}
+	inArgs := &RepairTableArgs{&TableInfo{ID: 1, Name: ast.NewCIStr("t")}}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRepairTable)))
@@ -834,7 +791,7 @@ func TestRecoverArgs(t *testing.T) {
 		DropJobID: 2,
 		TableInfo: &TableInfo{
 			ID:   100,
-			Name: model.NewCIStr("table"),
+			Name: ast.NewCIStr("table"),
 		},
 		OldSchemaName: "old",
 		OldTableName:  "table",
@@ -862,8 +819,8 @@ func TestRecoverArgs(t *testing.T) {
 
 func TestPlacementPolicyArgs(t *testing.T) {
 	inArgs := &PlacementPolicyArgs{
-		Policy:         &PolicyInfo{ID: 1, Name: model.NewCIStr("policy"), State: StateDeleteOnly},
-		PolicyName:     model.NewCIStr("policy_name"),
+		Policy:         &PolicyInfo{ID: 1, Name: ast.NewCIStr("policy"), State: StateDeleteOnly},
+		PolicyName:     ast.NewCIStr("policy_name"),
 		PolicyID:       123,
 		ReplaceOnExist: false,
 	}
@@ -886,4 +843,342 @@ func TestPlacementPolicyArgs(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestGetSetDefaultValueArgs(t *testing.T) {
+	inArgs := &SetDefaultValueArgs{
+		Col: &ColumnInfo{
+			ID:   7527,
+			Name: ast.NewCIStr("col_name"),
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionSetDefaultValue)))
+		args, err := GetSetDefaultValueArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestFlashbackClusterArgs(t *testing.T) {
+	inArgs := &FlashbackClusterArgs{
+		FlashbackTS:       111,
+		StartTS:           222,
+		CommitTS:          333,
+		EnableGC:          true,
+		EnableAutoAnalyze: true,
+		EnableTTLJob:      true,
+		SuperReadOnly:     true,
+		LockedRegionCnt:   444,
+		PDScheduleValue:   map[string]any{"t1": 123.0},
+		FlashbackKeyRanges: []KeyRange{
+			{StartKey: []byte("db1"), EndKey: []byte("db2")},
+			{StartKey: []byte("db2"), EndKey: []byte("db3")},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionFlashbackCluster)))
+		args, err := GetFlashbackClusterArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestDropColumnArgs(t *testing.T) {
+	inArgs := &TableColumnArgs{
+		Col: &ColumnInfo{
+			Name: ast.NewCIStr("col_name"),
+		},
+		IgnoreExistenceErr: true,
+		IndexIDs:           []int64{1, 2, 3},
+		PartitionIDs:       []int64{4, 5, 6},
+		Pos:                &ast.ColumnPosition{},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropColumn)))
+		args, err := GetTableColumnArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+		if v == JobVersion1 {
+			require.Len(t, j2.args, 4)
+		}
+	}
+
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &TableColumnArgs{Col: &ColumnInfo{}}, JobVersion1, ActionDropColumn)))
+	var rawArgs []json.RawMessage
+	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+	require.Len(t, rawArgs, 2)
+}
+
+func TestAddColumnArgs(t *testing.T) {
+	inArgs := &TableColumnArgs{
+		Col: &ColumnInfo{
+			ID:   7527,
+			Name: ast.NewCIStr("col_name"),
+		},
+		Pos: &ast.ColumnPosition{
+			Tp: ast.ColumnPositionFirst,
+		},
+		Offset:             1001,
+		IgnoreExistenceErr: true,
+	}
+	dropArgs := &TableColumnArgs{
+		Col: &ColumnInfo{
+			Name: ast.NewCIStr("drop_column"),
+		},
+		Pos: &ast.ColumnPosition{},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddColumn)))
+		args, err := GetTableColumnArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+
+		FillRollBackArgsForAddColumn(j2, dropArgs)
+		j2.State = JobStateRollingback
+		jobBytes, err := j2.Encode(true)
+		require.NoError(t, err)
+		j3 := &Job{}
+		require.NoError(t, j3.Decode(jobBytes))
+		args, err = GetTableColumnArgs(j3)
+		require.NoError(t, err)
+		require.Equal(t, dropArgs, args)
+	}
+}
+func TestAlterTableAttributesArgs(t *testing.T) {
+	inArgs := &AlterTableAttributesArgs{
+		LabelRule: &pdhttp.LabelRule{
+			ID:       "id",
+			Index:    2,
+			RuleType: "rule",
+			Labels:   []pdhttp.RegionLabel{{Key: "key", Value: "value"}},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterTableAttributes)))
+		args, err := GetAlterTableAttributesArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, *inArgs.LabelRule, *args.LabelRule)
+	}
+}
+
+func TestAddIndexArgs(t *testing.T) {
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{{
+			Global:                  false,
+			Unique:                  true,
+			IndexName:               ast.NewCIStr("idx1"),
+			IndexPartSpecifications: []*ast.IndexPartSpecification{{Length: 2}},
+			IndexOption:             &ast.IndexOption{},
+			HiddenCols:              []*ColumnInfo{{}, {}},
+			SQLMode:                 mysql.ModeANSI,
+			IndexID:                 1,
+			IfExist:                 false,
+			IsGlobal:                false,
+			FuncExpr:                "test_string",
+		}},
+		PartitionIDs: []int64{100, 101, 102},
+		OpType:       OpAddIndex,
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsColumnar = false
+		inArgs.IndexArgs[0].IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].HiddenCols, a.HiddenCols)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsColumnar = false
+		inArgs.IndexArgs[0].IsPK = true
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].Global, a.Global)
+		require.Equal(t, inArgs.IndexArgs[0].Unique, a.Unique)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].SQLMode, a.SQLMode)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].IsColumnar = true
+		inArgs.IndexArgs[0].IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddColumnarIndex)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].IsColumnar, a.IsColumnar)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].FuncExpr, a.FuncExpr)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		inArgs.IndexArgs[0].ColumnarIndexType = ColumnarIndexTypeInverted
+		inArgs.IndexArgs[0].IsColumnar = true
+		inArgs.IndexArgs[0].IsPK = false
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddColumnarIndex)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].ColumnarIndexType, a.ColumnarIndexType)
+		require.Equal(t, inArgs.IndexArgs[0].IsColumnar, a.IsColumnar)
+		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
+		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)
+		require.Equal(t, inArgs.IndexArgs[0].IndexOption, a.IndexOption)
+		require.Equal(t, inArgs.IndexArgs[0].FuncExpr, a.FuncExpr)
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionAddIndex)))
+
+		args, err := GetFinishedModifyIndexArgs(j2)
+		require.NoError(t, err)
+
+		a := args.IndexArgs[0]
+		require.Equal(t, inArgs.IndexArgs[0].IndexID, a.IndexID)
+		require.Equal(t, inArgs.IndexArgs[0].IfExist, a.IfExist)
+		require.Equal(t, inArgs.IndexArgs[0].IsGlobal, a.IsGlobal)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+}
+
+func TestDropIndexArguements(t *testing.T) {
+	checkFunc := func(t *testing.T, inArgs *ModifyIndexArgs) {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionDropIndex)))
+			args, err := GetDropIndexArgs(j2)
+			require.NoError(t, err)
+			for i, expect := range inArgs.IndexArgs {
+				require.EqualValues(t, expect.IndexName, args.IndexArgs[i].IndexName)
+				require.EqualValues(t, expect.IfExist, args.IndexArgs[i].IfExist)
+			}
+
+			j2 = &Job{}
+			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropIndex)))
+			args2, err := GetFinishedModifyIndexArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.IndexArgs, args2.IndexArgs)
+			require.EqualValues(t, inArgs.PartitionIDs, args2.PartitionIDs)
+		}
+	}
+
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{
+			{
+				IndexName:  ast.NewCIStr("i2"),
+				IfExist:    true,
+				IsColumnar: true,
+				IndexID:    1,
+			},
+		},
+		PartitionIDs: []int64{100, 101, 102, 103},
+		OpType:       OpDropIndex,
+	}
+	checkFunc(t, inArgs)
+}
+
+func TestGetRenameIndexArgs(t *testing.T) {
+	inArgs := &ModifyIndexArgs{
+		IndexArgs: []*IndexArg{
+			{IndexName: ast.NewCIStr("old")},
+			{IndexName: ast.NewCIStr("new")},
+		},
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionRenameIndex)))
+
+		args, err := GetModifyIndexArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestModifyColumnsArgs(t *testing.T) {
+	inArgs := &ModifyColumnArgs{
+		Column:           &ColumnInfo{ID: 111, Name: ast.NewCIStr("col1")},
+		OldColumnName:    ast.NewCIStr("aa"),
+		Position:         &ast.ColumnPosition{Tp: ast.ColumnPositionFirst},
+		ModifyColumnType: 1,
+		NewShardBits:     123,
+		ChangingColumn:   &ColumnInfo{ID: 222, Name: ast.NewCIStr("col2")},
+		RedundantIdxs:    []int64{1, 2},
+		IndexIDs:         []int64{3, 4},
+		PartitionIDs:     []int64{5, 6},
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifyColumn)))
+		args, err := GetModifyColumnArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, *inArgs.Column, *args.Column)
+		require.Equal(t, inArgs.OldColumnName, args.OldColumnName)
+		require.Equal(t, inArgs.Position, args.Position)
+		require.Equal(t, inArgs.ModifyColumnType, args.ModifyColumnType)
+		require.Equal(t, inArgs.NewShardBits, args.NewShardBits)
+		require.Equal(t, *inArgs.ChangingColumn, *args.ChangingColumn)
+		require.Equal(t, inArgs.ChangingIdxs, args.ChangingIdxs)
+		require.Equal(t, inArgs.RedundantIdxs, args.RedundantIdxs)
+
+		if v == JobVersion1 {
+			var rawArgs []json.RawMessage
+			require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+			require.Len(t, rawArgs, 8)
+		}
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, ActionModifyColumn)))
+		args, err := GetFinishedModifyColumnArgs(j2)
+		require.NoError(t, err)
+
+		require.Equal(t, inArgs.IndexIDs, args.IndexIDs)
+		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
+	}
+
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &ModifyColumnArgs{}, JobVersion1, ActionModifyColumn)))
+	var rawArgs []json.RawMessage
+	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+	require.Len(t, rawArgs, 5)
 }

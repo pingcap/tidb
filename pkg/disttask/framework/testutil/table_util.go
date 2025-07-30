@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -41,7 +40,7 @@ func InitTableTest(t *testing.T) (kv.Storage, *storage.TaskManager, context.Cont
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
-	return store, getTaskManager(t, pool), ctx
+	return store, getTaskManager(pool), ctx
 }
 
 // InitTableTestWithCancel inits needed components with context.CancelFunc for table_test.
@@ -49,16 +48,16 @@ func InitTableTestWithCancel(t *testing.T) (*storage.TaskManager, context.Contex
 	_, pool := getResourcePool(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = util.WithInternalSourceType(ctx, "table_test")
-	return getTaskManager(t, pool), ctx, cancel
+	return getTaskManager(pool), ctx, cancel
 }
 
 func getResourcePool(t *testing.T) (kv.Storage, *pools.ResourcePool) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		tk := testkit.NewTestKit(t, store)
 		return tk.Session(), nil
-	}, 1, 1, time.Second)
+	}, 10, 10, time.Second)
 
 	t.Cleanup(func() {
 		pool.Close()
@@ -66,11 +65,9 @@ func getResourcePool(t *testing.T) (kv.Storage, *pools.ResourcePool) {
 	return store, pool
 }
 
-func getTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager {
+func getTaskManager(pool *pools.ResourcePool) *storage.TaskManager {
 	manager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(manager)
-	manager, err := storage.GetTaskManager()
-	require.NoError(t, err)
 	return manager
 }
 

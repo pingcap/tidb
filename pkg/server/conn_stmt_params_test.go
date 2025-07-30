@@ -50,7 +50,7 @@ func decodeAndParse(typectx types.Context, args []expression.Expression, boundPa
 		return err
 	}
 
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		args[i] = parsedArgs[i]
 	}
 	return
@@ -305,7 +305,7 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
 }
 
-func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, min uint8, sec uint8, msec uint32) []byte {
+func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, minute uint8, sec uint8, msec uint32) []byte {
 	endian := binary.LittleEndian
 
 	result := []byte{mysql.TypeDatetime, 0x0, 11}
@@ -313,7 +313,7 @@ func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, min uin
 	result = append(result, month)
 	result = append(result, day)
 	result = append(result, hour)
-	result = append(result, min)
+	result = append(result, minute)
 	result = append(result, sec)
 	result = endian.AppendUint32(result, msec)
 	return result
@@ -341,7 +341,7 @@ func expectedDatetimeExecuteResult(t *testing.T, c *mockConn, time types.Time, w
 		require.NoError(t, err)
 		require.NoError(t, conn.writePacket(data))
 
-		for i := 0; i < warnCount; i++ {
+		for range warnCount {
 			conn.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("any error"))
 		}
 		require.NoError(t, conn.writeEOF(context.Background(), mysql.ServerStatusAutocommit))

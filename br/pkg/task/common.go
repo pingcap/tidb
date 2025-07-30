@@ -28,8 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -115,9 +114,7 @@ const (
 )
 
 const (
-	// Once TableInfoVersion updated. BR need to check compatibility with
-	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
-	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
+	cipherKeyNonHexErrorMsg = "cipher key must be a valid hexadecimal string"
 )
 
 // FullBackupType type when doing full backup or restore
@@ -255,9 +252,12 @@ type Config struct {
 	// should be removed after TiDB upgrades the BR dependency.
 	Filter filter.MySQLReplicationRules
 
-	FilterStr          []string      `json:"filter-strings" toml:"filter-strings"`
-	TableFilter        filter.Filter `json:"-" toml:"-"`
-	SwitchModeInterval time.Duration `json:"switch-mode-interval" toml:"switch-mode-interval"`
+	FilterStr   []string      `json:"filter-strings" toml:"filter-strings"`
+	TableFilter filter.Filter `json:"-" toml:"-"`
+	// PiTRTableTracker generated from TableFilter during snapshot restore, it has all the db id and table id that needs
+	// to be restored
+	PiTRTableTracker   *utils.PiTRIdTracker `json:"-" toml:"-"`
+	SwitchModeInterval time.Duration        `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup
 	Schemas map[string]struct{}
 	// Tables is a table name set, to check whether the restore table has been backup
@@ -297,10 +297,11 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagCA, "", "CA certificate path for TLS connection")
 	flags.String(flagCert, "", "Certificate path for TLS connection")
 	flags.String(flagKey, "", "Private key path for TLS connection")
-	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
+	flags.Uint(flagChecksumConcurrency, vardef.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
-	flags.Bool(flagChecksum, true, "Run checksum at end of task")
+	// default to false as we think it's unnecessary to run in production as it's resource intensive
+	flags.Bool(flagChecksum, false, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -404,7 +405,7 @@ func DefineTableFlags(command *cobra.Command) {
 	_ = command.MarkFlagRequired(flagTable)
 }
 
-// DefineFilterFlags defines the --filter and --case-sensitive flags for `full` subcommand.
+// DefineFilterFlags defines the --filter and --case-sensitive flags.
 func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden bool) {
 	flags := command.Flags()
 	flags.StringArrayP(flagFilter, "f", defaultFilter, "select tables to process")
@@ -464,34 +465,52 @@ func GetCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// if cipher-key is valid, convert the hexadecimal string to bytes
+	var hexString string
+
+	// Check if cipher-key is provided directly
 	if len(cipherKey) > 0 {
-		return hex.DecodeString(cipherKey)
+		hexString = cipherKey
+	} else {
+		// Read content from cipher-file
+		content, err := os.ReadFile(cipherKeyFile)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to read cipher file")
+		}
+		hexString = string(bytes.TrimSuffix(content, []byte("\n")))
 	}
 
-	// convert the content(as hexadecimal string) from cipher-file to bytes
-	content, err := os.ReadFile(cipherKeyFile)
+	// Attempt to decode the hex string
+	decodedKey, err := hex.DecodeString(hexString)
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to read cipher file")
+		return nil, errors.Annotate(berrors.ErrInvalidArgument, cipherKeyNonHexErrorMsg)
 	}
 
-	content = bytes.TrimSuffix(content, []byte("\n"))
-	return hex.DecodeString(string(content))
+	return decodedKey, nil
 }
 
-func checkCipherKeyMatch(cipher *backuppb.CipherInfo) bool {
+func checkCipherKeyMatch(cipher *backuppb.CipherInfo) error {
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
-		return true
+		return nil
 	case encryptionpb.EncryptionMethod_AES128_CTR:
-		return len(cipher.CipherKey) == crypterAES128KeyLen
+		if len(cipher.CipherKey) != crypterAES128KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-128 key length mismatch: expected %d, got %d",
+				crypterAES128KeyLen, len(cipher.CipherKey))
+		}
 	case encryptionpb.EncryptionMethod_AES192_CTR:
-		return len(cipher.CipherKey) == crypterAES192KeyLen
+		if len(cipher.CipherKey) != crypterAES192KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-192 key length mismatch: expected %d, got %d",
+				crypterAES192KeyLen, len(cipher.CipherKey))
+		}
 	case encryptionpb.EncryptionMethod_AES256_CTR:
-		return len(cipher.CipherKey) == crypterAES256KeyLen
+		if len(cipher.CipherKey) != crypterAES256KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-256 key length mismatch: expected %d, got %d",
+				crypterAES256KeyLen, len(cipher.CipherKey))
+		}
 	default:
-		return false
+		return errors.Errorf("Unknown encryption method: %v", cipher.CipherType)
 	}
+	return nil
 }
 
 func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
@@ -524,8 +543,9 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return errors.Annotate(berrors.ErrInvalidArgument, "crypter method and key length not match")
+	err = checkCipherKeyMatch(&cfg.CipherInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -561,8 +581,9 @@ func (cfg *Config) parseLogBackupCipherInfo(flags *pflag.FlagSet) (bool, error) 
 		return false, errors.Trace(err)
 	}
 
-	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return false, errors.Annotate(berrors.ErrInvalidArgument, "log backup encryption method and key length not match")
+	err = checkCipherKeyMatch(&cfg.CipherInfo)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 
 	return true, nil
@@ -577,6 +598,10 @@ func (cfg *Config) normalizePDURLs() error {
 		}
 	}
 	return nil
+}
+
+func (cfg *Config) UserFiltered() bool {
+	return len(cfg.Schemas) != 0 || len(cfg.Tables) != 0 || len(cfg.FilterStr) != 0
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -638,11 +663,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 				Schema: db,
 				Name:   tbl,
 			})
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.`%s`", db, tbl)}
 		} else {
 			cfg.TableFilter = filter.NewSchemasFilter(db)
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.*", db)}
 		}
 	} else {
 		cfg.TableFilter, _ = filter.Parse([]string{"*.*"})
+		cfg.FilterStr = []string{"*.*"}
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
@@ -760,6 +788,11 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 	return nil
 }
 
+// OverrideDefaultForBackup override common config for backup tasks
+func (cfg *Config) OverrideDefaultForBackup() {
+	cfg.Checksum = false
+}
+
 // NewMgr creates a new mgr at the given PD address.
 func NewMgr(ctx context.Context,
 	g glue.Glue, pds []string,
@@ -873,7 +906,8 @@ func ReadBackupMeta(
 // flagToZapField checks whether this flag can be logged,
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
-	if f.Name == flagStorage {
+	switch f.Name {
+	case flagStorage, FlagStreamFullBackupStorage:
 		hiddenQuery, err := url.Parse(f.Value.String())
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")
@@ -881,8 +915,14 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 		// hide all query here.
 		hiddenQuery.RawQuery = ""
 		return zap.Stringer(f.Name, hiddenQuery)
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key":
+		return zap.String(f.Name, "<redacted>")
+	case flagMasterKeyConfig:
+		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.
+		return zap.String(f.Name, "<redacted>")
+	default:
+		return zap.Stringer(f.Name, f.Value)
 	}
-	return zap.Stringer(f.Name, f.Value)
 }
 
 // LogArguments prints origin command arguments.
@@ -914,7 +954,7 @@ func (cfg *Config) adjust() {
 		cfg.GRPCKeepaliveTimeout = defaultGRPCKeepaliveTimeout
 	}
 	if cfg.ChecksumConcurrency == 0 {
-		cfg.ChecksumConcurrency = variable.DefChecksumTableConcurrency
+		cfg.ChecksumConcurrency = vardef.DefChecksumTableConcurrency
 	}
 	if cfg.MetadataDownloadBatchSize == 0 {
 		cfg.MetadataDownloadBatchSize = defaultMetadataDownloadBatchSize
@@ -965,9 +1005,15 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		cur := progress.GetCurrent()
 		p := float64(cur) / float64(total)
 		p *= 100
-		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		err := os.WriteFile(progressFile, fmt.Appendf(nil, "%.2f", p), 0600)
 		if err != nil {
 			log.Warn("failed to update tmp progress file", zap.Error(err))
 		}
 	}
+}
+
+func WriteStringToConsole(g glue.Glue, msg string) error {
+	b := []byte(msg)
+	_, err := glue.GetConsole(g).Out().Write(b)
+	return err
 }

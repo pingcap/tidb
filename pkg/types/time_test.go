@@ -1814,7 +1814,8 @@ func TestParseTimeFromFloat64(t *testing.T) {
 		{0.0, mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
 		{20000102030405, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
 		{20000102030405.015625, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
-		{20000102030405.0078125, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{20000102030405.0078125, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7813, nil},
+		{121212131313.99998, mysql.TypeDatetime, 2012, 12, 12, 13, 13, 13, 999985, nil},
 		{2000, mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
 		{20000000000000, mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
 	}

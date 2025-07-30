@@ -33,7 +33,7 @@ type AutoIDAccessor interface {
 }
 
 type autoIDAccessor struct {
-	m          *Meta
+	m          *Mutator
 	databaseID int64
 	tableID    int64
 
@@ -188,7 +188,7 @@ func (a *autoIDAccessors) SequenceCycle() AutoIDAccessor {
 }
 
 // NewAutoIDAccessors creates a new AutoIDAccessors.
-func NewAutoIDAccessors(m *Meta, databaseID, tableID int64) AutoIDAccessors {
+func NewAutoIDAccessors(m *Mutator, databaseID, tableID int64) AutoIDAccessors {
 	return &autoIDAccessors{
 		autoIDAccessor{
 			m:          m,

@@ -23,15 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
 
 // mockSession is used for test.
 type mockSession struct {
-	se         sessiontypes.Session
+	se         sessionapi.Session
 	globalVars map[string]string
 }
 
@@ -86,7 +86,7 @@ func (*mockSession) CreateTables(_ context.Context, _ map[string][]*model.TableI
 }
 
 // CreateTable implements glue.Session.
-func (*mockSession) CreateTable(_ context.Context, _ pmodel.CIStr,
+func (*mockSession) CreateTable(_ context.Context, _ ast.CIStr,
 	_ *model.TableInfo, _ ...ddl.CreateTableOption) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
@@ -97,7 +97,7 @@ func (s *mockSession) Close() {
 	s.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 	if ret, ok := s.globalVars[name]; ok {
 		return ret, nil
@@ -105,13 +105,30 @@ func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 	return "True", nil
 }
 
+// GetGlobalSysVar implements glue.Session.
+func (s *mockSession) GetGlobalSysVar(string) (string, error) {
+	return "", nil
+}
+
+// AlterTableMode implements glue.Session.
+func (*mockSession) AlterTableMode(_ context.Context, _ int64, _ int64, _ model.TableMode) error {
+	log.Fatal("unimplemented AlterTableMode for mock session")
+	return nil
+}
+
+// RefreshMeta implements glue.Session.
+func (*mockSession) RefreshMeta(_ context.Context, _ *model.RefreshMetaArgs) error {
+	log.Fatal("unimplemented RefreshMeta for mock session")
+	return nil
+}
+
 // MockGlue only used for test
 type MockGlue struct {
-	se         sessiontypes.Session
+	se         sessionapi.Session
 	GlobalVars map[string]string
 }
 
-func (m *MockGlue) SetSession(se sessiontypes.Session) {
+func (m *MockGlue) SetSession(se sessionapi.Session) {
 	m.se = se
 }
 

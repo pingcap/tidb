@@ -37,6 +37,7 @@ import (
 // then all the records of job A must before or after job B, no cross record between these 2 jobs.
 func TestDDLScheduling(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
+	ctx := context.Background()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -74,7 +75,7 @@ func TestDDLScheduling(t *testing.T) {
 				})
 				for {
 					time.Sleep(time.Millisecond * 100)
-					jobs, err := ddl.GetAllDDLJobs(testkit.NewTestKit(t, store).Session())
+					jobs, err := ddl.GetAllDDLJobs(ctx, testkit.NewTestKit(t, store).Session())
 					require.NoError(t, err)
 					if len(jobs) == i+1 {
 						break
@@ -158,7 +159,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 		}
 	}
 
-	for i := 0; i < len(ids)-1; i++ {
+	for i := range len(ids) - 1 {
 		for j := i + 1; j < len(ids); j++ {
 			if have(ids[i], ids[j]) {
 				all(ids[i], ids[j])

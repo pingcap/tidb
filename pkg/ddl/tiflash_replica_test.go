@@ -31,15 +31,15 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -147,7 +147,7 @@ func TestSetTableFlashReplica(t *testing.T) {
 }
 
 // setUpRPCService setup grpc server to handle cop request for test.
-func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.SessionManager) (*grpc.Server, string) {
+func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm sessmgr.Manager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
@@ -166,7 +166,7 @@ func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.Sess
 func updateTableMeta(t *testing.T, store kv.Storage, dbID int64, tableInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		return m.UpdateTable(dbID, tableInfo)
 	})
 	require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestInfoSchemaForTiFlashReplica(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 0 0"))
 	dom := domain.GetDomain(tk.Session())
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = true
 	updateTableMeta(t, store, tbl.Meta().DBID, tbl.Meta())
@@ -208,6 +208,9 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
 	defer rpcserver.Stop()
 	tk.MustExec("use test")
+	// previously, projection won't generate cop plan, because memTable can't be pushed to cop.
+	// so projection is always attached as root operator.
+	// tk.MustExec("set @@tidb_opt_projection_push_down = off")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
 	tk.MustExec("create temporary table temp2(id int)")
 	tk.MustGetErrCode("alter table temp set tiflash replica 1", errno.ErrOptOnTemporaryTable)
@@ -235,18 +238,18 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
-		for i := 0; i < len(rows); i++ {
+		for i := range rows {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
 				} else {
-					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
+					require.Equal(t, "[ddl:8200]Unsupported `set TiFlash replica` settings for system table and memory table", err.Error())
 				}
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
@@ -312,7 +315,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 	tbl1 := external.GetTableByName(t, tk, "test", "t1")
 	doneCh := make(chan error, 2)
 	var onceChecker sync.Map
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
 			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
@@ -357,7 +360,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		tbl2 := external.GetTableByName(t, tk, "test", "t2")
 		require.Equal(t, len(tbl2.Cols()), len(tbl2.Meta().Columns))
 
-		for i := 0; i < len(tbl2.Meta().Indices); i++ {
+		for i := range tbl2.Meta().Indices {
 			require.Equal(t, model.StatePublic, tbl2.Meta().Indices[i].State)
 		}
 	}
@@ -375,7 +378,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
@@ -412,7 +415,7 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
 	tk.MustExec("insert truncate_table values (1, 1), (2, 2)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	oldTblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("truncate_table"))
+	oldTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("truncate_table"))
 	require.NoError(t, err)
 	oldTblID := oldTblInfo.Meta().ID
 
@@ -422,14 +425,14 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustQuery("select * from truncate_table").Check(testkit.Rows("3 3", "4 4"))
 
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	newTblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("truncate_table"))
+	newTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("truncate_table"))
 	require.NoError(t, err)
 	require.Greater(t, newTblInfo.Meta().ID, oldTblID)
 
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for i := 0; i < waitForCleanDataRound; i++ {
+	for range waitForCleanDataRound {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)

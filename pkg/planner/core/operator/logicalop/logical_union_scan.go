@@ -32,9 +32,9 @@ import (
 type LogicalUnionScan struct {
 	BaseLogicalPlan
 
-	Conditions []expression.Expression
+	Conditions []expression.Expression `hash64-equals:"true"`
 
-	HandleCols util.HandleCols
+	HandleCols util.HandleCols `hash64-equals:"true"`
 }
 
 // Init initializes LogicalUnionScan.
@@ -61,7 +61,7 @@ func (p *LogicalUnionScan) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
 	var predicatesWithVCol, predicatesWithoutVCol []expression.Expression
 	// predicates with virtual columns can't be pushed down to TiKV/TiFlash so they'll be put into a Projection
 	// below the UnionScan, but the current UnionScan doesn't support placing Projection below it, see #53951.
@@ -73,17 +73,20 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 		}
 	}
 	predicates = predicatesWithoutVCol
-	retainedPredicates, _ := p.Children()[0].PredicatePushDown(predicates, opt)
+	retainedPredicates, _, err := p.Children()[0].PredicatePushDown(predicates, opt)
+	if err != nil {
+		return nil, nil, err
+	}
 	p.Conditions = make([]expression.Expression, 0, len(predicates))
 	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
 	retainedPredicates = append(retainedPredicates, predicatesWithVCol...)
-	return retainedPredicates, p
+	return retainedPredicates, p, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.HandleCols.NumCols(); i++ {
+	for i := range p.HandleCols.NumCols() {
 		parentUsedCols = append(parentUsedCols, p.HandleCols.GetCol(i))
 	}
 	for _, col := range p.Schema().Columns {
@@ -122,6 +125,11 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+func (p *LogicalUnionScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+	// ref exhaustPhysicalPlans4LogicalUnionScan: it will push down the sort prop directly.
+	// in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
+	return p.Children()[0].PreparePossibleProperties(schema, childrenProperties...)
+}
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
 func (p *LogicalUnionScan) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {

@@ -77,7 +77,7 @@ func newTableRestore(t *testing.T,
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, kvStore, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
@@ -421,7 +421,7 @@ func TestCheckTasksExclusively(t *testing.T) {
 		sort.Slice(tasks, func(i, j int) bool {
 			return tasks[i].taskID < tasks[j].taskID
 		})
-		for j := 0; j < 5; j++ {
+		for j := range 5 {
 			require.Equal(t, int64(j), tasks[j].taskID)
 		}
 
@@ -442,10 +442,14 @@ type testChecksumMgr struct {
 	callCnt  int
 }
 
+var _ local.ChecksumManager = (*testChecksumMgr)(nil)
+
 func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*local.RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
 }
+
+func (*testChecksumMgr) Close() {}
 
 func TestSingleTaskMetaMgr(t *testing.T) {
 	metaBuilder := singleMgrBuilder{

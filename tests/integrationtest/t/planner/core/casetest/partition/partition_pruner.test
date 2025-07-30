@@ -291,3 +291,58 @@ analyze table t;
 select * from t where b = 2 and a like 'abc';
 # Fast plan had a bug
 select * from t where b = 2;
+
+# Test issue 59827, BatchPointGet
+# Fast plan:
+--sorted_result
+select * from t where b in (1,2);
+explain select * from t where b in (1,2);
+# Non-fast plan:
+--sorted_result
+select * from t where b in (1,2) and a like '%a%';
+explain select * from t where b in (1,2) and a like '%a%';
+set @@tidb_partition_prune_mode=Default;
+# Fast plan:
+--sorted_result
+select * from t where b in (1,2);
+explain select * from t where b in (1,2);
+# Non-fast plan:
+--sorted_result
+select * from t where b in (1,2) and a like '%a%';
+explain select * from t where b in (1,2) and a like '%a%';
+
+# Test issue 61726
+drop table if exists t;
+CREATE TABLE `t` (
+  `col_4` varchar(223) DEFAULT 'QKd^)QlWh#cT&3',
+  UNIQUE KEY `idx_3` (`col_4`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col_4`)
+(PARTITION `p0` VALUES LESS THAN ('+*8Ab='),
+ PARTITION `p1` VALUES LESS THAN ('959#Km%JOy2EFI'),
+ PARTITION `p2` VALUES LESS THAN ('FbL~@RpX01&CYY-%%+'),
+ PARTITION `p3` VALUES LESS THAN ('GFB'),
+ PARTITION `p4` VALUES LESS THAN (MAXVALUE));
+
+insert into t values ('u^D92@_4'), (null);
+
+# no error
+explain format='brief' select * from t where col_4 in ( 'u^D92@_4' ,null );
+select * from t where col_4 in ( 'u^D92@_4' ,null );
+
+# Test issue 61965
+drop table if exists t;
+CREATE TABLE `t` (
+  `col_95` char(181) COLLATE gbk_bin NOT NULL DEFAULT 'SaMKHTyg+nlID-X3Y',
+  PRIMARY KEY (`col_95`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin
+PARTITION BY RANGE COLUMNS(`col_95`)
+(PARTITION `p0` VALUES LESS THAN ('6)nvX^uj0UGxqX'),
+ PARTITION `p1` VALUES LESS THAN ('BHSluf6'),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE));
+
+insert into t values ('58y-j)84-&Y*'), ('WNe(rS5uwmvIvFnHw'), ('j9FsMawX5uBro%$p'), ('C(#EQm@J');
+
+explain format='brief' select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
+select t.col_95 as r0 from t where t.col_95 between 'Dyw=*7nigCMh' and 'Im0*7sZ' or t.col_95 in ( '58y-j)84-&Y*' ,'WNe(rS5uwmvIvFnHw' ,'j9FsMawX5uBro%$p' ,'C(#EQm@J' ) group by t.col_95  having t.col_95 between '%^2' and '38ABfC-' or t.col_95 between 'eKCAE$d2x_hxscj' and 'zcw35^ATEEp1md=L';
+

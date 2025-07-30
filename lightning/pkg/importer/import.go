@@ -58,11 +58,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/prometheus/client_golang/prometheus"
@@ -70,7 +71,8 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -286,6 +288,8 @@ type ControllerParam struct {
 	TaskType string
 }
 
+var componentName = caller.Component("lightning-importer")
+
 // NewImportController creates a new Controller instance.
 func NewImportController(
 	ctx context.Context,
@@ -337,7 +341,7 @@ func NewImportControllerWithPauser(
 	}
 
 	db := p.DB
-	errorMgr := errormanager.New(db, cfg, log.FromContext(ctx))
+	errorMgr := errormanager.New(db, cfg, log.Wrap(logutil.Logger(ctx)))
 	if err := errorMgr.Init(ctx); err != nil {
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
 	}
@@ -363,7 +367,7 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithContext(ctx, addrs, tls.ToPDSecurityOption())
+		pdCli, err = pd.NewClientWithContext(ctx, componentName, addrs, tls.ToPDSecurityOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -378,7 +382,7 @@ func NewImportControllerWithPauser(
 				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
-				log.FromContext(ctx).Warn("TiKV version doesn't support conflict strategy. The resolution algorithm will fall back to 'none'", zap.Error(err))
+				logutil.Logger(ctx).Warn("TiKV version doesn't support conflict strategy. The resolution algorithm will fall back to 'none'", zap.Error(err))
 				cfg.Conflict.Strategy = config.NoneOnDup
 			}
 		}
@@ -390,17 +394,17 @@ func NewImportControllerWithPauser(
 		// get resource group name.
 		exec := common.SQLWithRetry{
 			DB:     db,
-			Logger: log.FromContext(ctx),
+			Logger: log.Wrap(logutil.Logger(ctx)),
 		}
 		if err := exec.QueryRow(ctx, "", "select current_resource_group();", &p.ResourceGroupName); err != nil {
 			if common.IsFunctionNotExistErr(err, "current_resource_group") {
-				log.FromContext(ctx).Warn("current_resource_group() not supported, ignore this error", zap.Error(err))
+				logutil.Logger(ctx).Warn("current_resource_group() not supported, ignore this error", zap.Error(err))
 			}
 		}
 
 		taskType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, db)
 		if err != nil {
-			return nil, errors.Annotatef(err, "get system variable '%s' failed", variable.TiDBExplicitRequestSourceType)
+			return nil, errors.Annotatef(err, "get system variable '%s' failed", vardef.TiDBExplicitRequestSourceType)
 		}
 		if taskType == "" {
 			taskType = kvutil.ExplicitTypeLightning
@@ -415,7 +419,7 @@ func NewImportControllerWithPauser(
 		//     it means the store is a raft-v2 engine and we will include the ranges from now on.
 		isRaftKV2, err := common.IsRaftKV2(ctx, db)
 		if err != nil {
-			log.FromContext(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
+			logutil.Logger(ctx).Warn("check isRaftKV2 failed", zap.Error(err))
 		}
 		var raftKV2SwitchModeDuration time.Duration
 		if isRaftKV2 {
@@ -479,7 +483,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db,
 	)
 
 	rc := &Controller{
@@ -501,7 +505,7 @@ func NewImportControllerWithPauser(
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
 
-		errorSummaries:    makeErrorSummaries(log.FromContext(ctx)),
+		errorSummaries:    makeErrorSummaries(log.Wrap(logutil.Logger(ctx))),
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
@@ -520,7 +524,7 @@ func NewImportControllerWithPauser(
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
 		encBuilder:          encodingBuilder,
-		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls.TLSConfig(), pdHTTPCli, log.FromContext(ctx).Logger),
+		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls.TLSConfig(), pdHTTPCli, logutil.Logger(ctx)),
 
 		keyspaceName:      p.KeyspaceName,
 		resourceGroupName: p.ResourceGroupName,
@@ -553,7 +557,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.cleanCheckpoints,
 	}
 
-	task := log.FromContext(ctx).Begin(zap.InfoLevel, "the whole procedure")
+	task := log.Wrap(logutil.Logger(ctx)).Begin(zap.InfoLevel, "the whole procedure")
 
 	var err error
 	finished := false
@@ -592,8 +596,10 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// create table with schema file
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
-	logger := log.FromContext(ctx)
-	concurrency := min(rc.cfg.App.RegionConcurrency, 8)
+	logger := log.Wrap(logutil.Logger(ctx))
+	// the minimum 4 comes the fact that when connect to non-owner TiDB, the max
+	// QPS is 2 per connection due to polling every 500ms.
+	concurrency := max(2*rc.cfg.App.RegionConcurrency, 4)
 	// sql.DB is a connection pool, we set it to concurrency + 1(for job generator)
 	// to reuse connections, as we might call db.Conn/conn.Close many times.
 	// there's no API to get sql.DB.MaxIdleConns, so we revert to its default which is 2
@@ -637,7 +643,7 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		return common.ErrInitCheckpoint.Wrap(err).GenWithStackByArgs()
 	}
 	failpoint.Inject("InitializeCheckpointExit", func() {
-		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
+		logutil.Logger(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
 	if rc.cfg.TikvImporter.AddIndexBySQL {
@@ -647,7 +653,7 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	}
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
-	go rc.listenCheckpointUpdates(log.FromContext(ctx))
+	go rc.listenCheckpointUpdates(log.Wrap(logutil.Logger(ctx)))
 
 	// Estimate the number of chunks for progress reporting
 	return rc.estimateChunkCountIntoMetrics(ctx)
@@ -722,7 +728,7 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 			file := local.Engine{UUID: eID}
 			err := file.Exist(dir)
 			if err != nil {
-				log.FromContext(ctx).Error("can't find local file",
+				logutil.Logger(ctx).Error("can't find local file",
 					zap.String("table name", tableName),
 					zap.Int32("engine ID", engineID))
 				if os.IsNotExist(err) {
@@ -809,7 +815,7 @@ func firstErr(errors ...error) error {
 func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string, engineID int32, err error, statusIfSucceed checkpoints.CheckpointStatus) error {
 	merger := &checkpoints.StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
-	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Int32("engine_id", engineID),
+	logger := logutil.Logger(ctx).With(zap.String("table", tableName), zap.Int32("engine_id", engineID),
 		zap.String("new_status", statusIfSucceed.MetricName()), zap.Error(err))
 	logger.Debug("update checkpoint")
 
@@ -997,10 +1003,10 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 			for {
 				select {
 				case <-ctx.Done():
-					log.FromContext(ctx).Warn("stopping periodic actions", log.ShortError(ctx.Err()))
+					logutil.Logger(ctx).Warn("stopping periodic actions", log.ShortError(ctx.Err()))
 					return
 				case <-stop:
-					log.FromContext(ctx).Info("everything imported, stopping periodic actions")
+					logutil.Logger(ctx).Info("everything imported, stopping periodic actions")
 					return
 
 				case <-switchModeChan:
@@ -1011,7 +1017,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 				case <-logProgressChan:
 					metrics, ok := metric.FromContext(ctx)
 					if !ok {
-						log.FromContext(ctx).Warn("couldn't find metrics from context, skip log progress")
+						logutil.Logger(ctx).Warn("couldn't find metrics from context, skip log progress")
 						continue
 					}
 					// log the current progress periodically, so OPS will know that we're still working
@@ -1126,7 +1132,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					}
 
 					// Note: a speed of 28 MiB/s roughly corresponds to 100 GiB/hour.
-					log.FromContext(ctx).Info("progress",
+					logutil.Logger(ctx).Info("progress",
 						zap.String("total", fmt.Sprintf("%.1f%%", totalPercent*100)),
 						// zap.String("files", fmt.Sprintf("%.0f/%.0f (%.1f%%)", finished, estimated, finished/estimated*100)),
 						zap.String("tables", fmt.Sprintf("%.0f/%.0f%s", completedTables, totalTables, formatPercent(completedTables, totalTables))),
@@ -1145,7 +1151,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 				}
 			}
 		}, func(do bool) {
-			log.FromContext(ctx).Info("cancel periodic actions", zap.Bool("do", do))
+			logutil.Logger(ctx).Info("cancel periodic actions", zap.Bool("do", do))
 			for _, f := range cancelFuncs {
 				f(do)
 			}
@@ -1176,7 +1182,7 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, componentName, addrs, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1189,7 +1195,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		paused    bool
 	)
 	// Try to get the minimum safe point across all services as our GC safe point.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if i > 0 {
 			time.Sleep(time.Second * 3)
 		}
@@ -1208,7 +1214,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 			paused = true
 			break
 		}
-		log.FromContext(ctx).Warn(
+		logutil.Logger(ctx).Warn(
 			"Failed to register GC safe point because the current minimum safe point is newer"+
 				" than what we assume, will retry newMinSafePoint next time",
 			zap.Uint64("minSafePoint", minSafePoint),
@@ -1231,11 +1237,11 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 			case <-ticker.C:
 				minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
 				if err != nil {
-					log.FromContext(ctx).Warn("Failed to register GC safe point", zap.Error(err))
+					logutil.Logger(ctx).Warn("Failed to register GC safe point", zap.Error(err))
 					continue
 				}
 				if minSafePoint > safePoint {
-					log.FromContext(ctx).Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
+					logutil.Logger(ctx).Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
 						"risk of being GC and not detectable",
 						zap.Uint64("safePoint", safePoint),
 						zap.Uint64("minSafePoint", minSafePoint),
@@ -1245,7 +1251,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 			case <-ctx.Done():
 				stopCtx, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
 				if _, err := pdCli.UpdateServiceGCSafePoint(stopCtx, serviceID, 0, safePoint); err != nil {
-					log.FromContext(ctx).Warn("Failed to reset safe point ttl to zero", zap.Error(err))
+					logutil.Logger(ctx).Warn("Failed to reset safe point ttl to zero", zap.Error(err))
 				}
 				// just make compiler happy
 				cancelFunc()
@@ -1273,7 +1279,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		}()
 	}
 
-	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all tables data")
+	logTask := log.Wrap(logutil.Logger(ctx)).Begin(zap.InfoLevel, "restore all tables data")
 	if rc.tableWorkers == nil {
 		rc.tableWorkers = worker.NewPool(ctx, rc.cfg.App.TableConcurrency, "table")
 	}
@@ -1346,7 +1352,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			u = strings.TrimPrefix(u, "https://")
 			urlsWithoutScheme = append(urlsWithoutScheme, u)
 		}
-		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
+		kvStore, err = (&driver.TiKVDriver{}).OpenWithOptions(
 			fmt.Sprintf(
 				"tikv://%s?disableGC=true&keyspaceName=%s",
 				strings.Join(urlsWithoutScheme, ","), rc.keyspaceName,
@@ -1356,7 +1362,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcdCli, err := clientv3.New(clientv3.Config{
+		etcdCli, err = clientv3.New(clientv3.Config{
 			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
@@ -1369,6 +1375,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		// it's nil when checksum=off
+		if manager != nil {
+			defer manager.Close()
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
@@ -1436,7 +1446,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
+	for range rc.cfg.App.IndexConcurrency {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
@@ -1480,7 +1490,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, etcdCli, log.FromContext(ctx))
+			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, etcdCli, log.Wrap(logutil.Logger(ctx)))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1488,19 +1498,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			allTasks = append(allTasks, task{tr: tr, cp: cp})
 
 			if len(cp.Engines) == 0 {
-				for i, fi := range tableMeta.DataFiles {
+				for _, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
-					if fi.FileMeta.Type == mydump.SourceTypeParquet {
-						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						if m, ok := metric.FromContext(ctx); ok {
-							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
-						}
-						fi.FileMeta.Rows = numberRows
-						tableMeta.DataFiles[i] = fi
-					}
 				}
 			} else {
 				for _, eng := range cp.Engines {
@@ -1550,7 +1549,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	postProgress = func() error {
 		close(postProcessTaskChan)
 		// otherwise, we should run all tasks in the post-process task chan
-		for i := 0; i < rc.cfg.App.TableConcurrency; i++ {
+		for range rc.cfg.App.TableConcurrency {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -1615,7 +1614,7 @@ func addExtendDataForCheckpoint(
 	}
 
 	// Use default file router directly because fileRouter and router are not compatible
-	fileRouter, err := mydump.NewDefaultFileRouter(log.FromContext(ctx))
+	fileRouter, err := mydump.NewDefaultFileRouter(log.Wrap(logutil.Logger(ctx)))
 	if err != nil {
 		return err
 	}
@@ -1651,12 +1650,12 @@ func (rc *Controller) outputErrorSummary() {
 // do full compaction for the whole data.
 func (rc *Controller) fullCompact(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Compact {
-		log.FromContext(ctx).Info("skip full compaction")
+		logutil.Logger(ctx).Info("skip full compaction")
 		return nil
 	}
 
 	// wait until any existing level-1 compact to complete first.
-	task := log.FromContext(ctx).Begin(zap.InfoLevel, "wait for completion of existing level 1 compaction")
+	task := log.Wrap(logutil.Logger(ctx)).Begin(zap.InfoLevel, "wait for completion of existing level 1 compaction")
 	for !rc.compactState.CompareAndSwap(compactStateIdle, compactStateDoing) {
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -1717,7 +1716,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 				m.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
 			}
 
-			logger := log.FromContext(ctx).With(
+			logger := log.Wrap(logutil.Logger(ctx)).With(
 				zap.Int64("diskSize", totalDiskSize),
 				zap.Int64("memSize", totalMemSize),
 				zap.Int64("quota", quota),
@@ -1778,7 +1777,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
-	log.FromContext(ctx).Info(session.TidbNewCollationEnabled, zap.Bool("enabled", enabled))
+	logutil.Logger(ctx).Info(session.TidbNewCollationEnabled, zap.Bool("enabled", enabled))
 
 	return nil
 }
@@ -1796,7 +1795,7 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 		return nil
 	}
 
-	logger := log.FromContext(ctx).With(
+	logger := log.Wrap(logutil.Logger(ctx)).With(
 		zap.Stringer("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
 		zap.Int64("taskID", rc.cfg.TaskID),
 	)
@@ -1879,6 +1878,15 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 		}
 
+		pdEnableFollowerHandleRegion, err := common.GetPDEnableFollowerHandleRegion(ctx, rc.db)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+		err = pdController.SetFollowerHandle(pdEnableFollowerHandleRegion)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+
 		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
@@ -1912,12 +1920,15 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				}
 				if err := rc.clusterResource(ctx); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
-						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
+						logutil.Logger(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 					}
 				}
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
+				}
+				if err := rc.checkPDTiDBFromSameCluster(ctx); err != nil {
+					return common.ErrCheckPDTiDBFromSameCluster.Wrap(err).GenWithStackByArgs()
 				}
 			}
 			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
@@ -1934,7 +1945,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			err := rc.taskMgr.CleanupTask(ctx)
 			if err != nil {
-				log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err))
+				logutil.Logger(ctx).Warn("cleanup task failed", zap.Error(err))
 			}
 		}
 		return common.ErrPreCheckFailed.GenWithStackByArgs(rc.checkTemplate.FailedMsg())
@@ -1990,20 +2001,17 @@ type deliverResult struct {
 }
 
 func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
-	// We need to update the AllocBase every time we've finished a file.
-	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
-	// or integer primary key), which can only be obtained by reading all data.
-
-	var base int64
-	if t.tableInfo.Core.ContainsAutoRandomBits() {
-		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
-	} else {
-		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1
-	}
+	// we save the XXXBase every time a chunk is finished.
+	// Note, it's possible some chunk with larger autoID range finished first, so
+	// the saved XXXBase is larger, when chunks with smaller autoID range finished
+	// it might have no effect on the saved XXXBase, but it's OK, we only need
+	// the largest.
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &checkpoints.RebaseCheckpointMerger{
-			AllocBase: base,
+			AutoRandBase:  t.alloc.Get(autoid.AutoRandomType).Base(),
+			AutoIncrBase:  t.alloc.Get(autoid.AutoIncrementType).Base(),
+			AutoRowIDBase: t.alloc.Get(autoid.RowIDAllocType).Base(),
 		},
 	}
 	rc.saveCpCh <- saveCp{
@@ -2013,6 +2021,7 @@ func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *che
 			Key:               chunk.Key,
 			Checksum:          chunk.Checksum,
 			Pos:               chunk.Chunk.Offset,
+			RealPos:           chunk.Chunk.RealOffset,
 			RowID:             chunk.Chunk.PrevRowIDMax,
 			ColumnPermutation: chunk.ColumnPermutation,
 			EndOffset:         chunk.Chunk.EndOffset,

@@ -101,6 +101,10 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionReorganizePartition,
 		ActionAlterTablePartitioning,
 		ActionRemovePartitioning,
+		ActionAddColumnarIndex,
+		ActionModifyEngineAttribute,
+		ActionAlterTableMode,
+		ActionRefreshMeta,
 	},
 	UnmanagementDDL: {
 		ActionCreatePlacementPolicy,

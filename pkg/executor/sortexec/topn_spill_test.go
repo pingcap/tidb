@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -190,7 +190,7 @@ func buildTopNExec(sortCase *testutil.SortCase, dataSource *testutil.MockDataSou
 
 	topNexec := &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Offset: offset, Count: count},
+		Limit:       &physicalop.PhysicalLimit{Offset: offset, Count: count},
 		Concurrency: 5,
 	}
 
@@ -376,8 +376,9 @@ func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 }
 
 func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
+	//nolint:constructor
 	topnExec := &sortexec.TopNExec{}
-	topnExec.Limit = &plannercore.PhysicalLimit{}
+	topnExec.Limit = &physicalop.PhysicalLimit{}
 
 	oneChunkInDiskCase(t, topnExec)
 	severalChunksInDiskCase(t, topnExec)
@@ -403,25 +404,25 @@ func TestTopNSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
 		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
 		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -456,25 +457,25 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}
@@ -491,6 +492,28 @@ func TestIssue54206(t *testing.T) {
 	tk.MustExec("create table t2(a bigint, b bigint);")
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustQuery("select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 1;")
+}
+
+func TestIssue54541(t *testing.T) {
+	totalRowNum := 30
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	topNCase := &testutil.SortCase{Rows: totalRowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+	offset := uint64(totalRowNum / 10)
+	count := uint64(totalRowNum / 3)
+
+	schema := expression.NewSchema(topNCase.Columns()...)
+	dataSource := buildDataSource(topNCase, schema)
+	exe := buildTopNExec(topNCase, dataSource, offset, count)
+
+	sortexec.TestKillSignalInTopN(t, exe)
 }
 
 func TestTopNFallBackAction(t *testing.T) {

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -42,6 +43,19 @@ func NewSession(s sessionctx.Context) *Session {
 // Begin starts a transaction.
 func (s *Session) Begin(ctx context.Context) error {
 	err := sessiontxn.NewTxn(ctx, s.Context)
+	if err != nil {
+		return err
+	}
+	s.GetSessionVars().SetInTxn(true)
+	return nil
+}
+
+// BeginPessimistic starts a pessimistic transaction.
+func (s *Session) BeginPessimistic(ctx context.Context) error {
+	err := sessiontxn.GetTxnManager(s.Context).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnDefault,
+		TxnMode: ast.Pessimistic,
+	})
 	if err != nil {
 		return err
 	}
@@ -72,7 +86,7 @@ func (s *Session) Reset() {
 }
 
 // Execute executes a query.
-func (s *Session) Execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
+func (s *Session) Execute(ctx context.Context, query string, label string, args ...any) ([]chunk.Row, error) {
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -82,7 +96,7 @@ func (s *Session) Execute(ctx context.Context, query string, label string) ([]ch
 	if ctx.Value(kv.RequestSourceKey) == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	}
-	rs, err := s.Context.GetSQLExecutor().ExecuteInternal(ctx, query)
+	rs, err := s.Context.GetSQLExecutor().ExecuteInternal(ctx, query, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
@@ -68,26 +69,26 @@ func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
-	case *PhysicalSort:
+	case *physicalop.PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *PhysicalTopN:
+	case *physicalop.PhysicalTopN:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *NominalSort:
+	case *physicalop.NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
-	case *PhysicalUnionAll:
+	case *physicalop.PhysicalUnionAll:
 		plan = injectProjBelowUnion(p)
 	}
 	return plan
 }
 
-func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
-	if !un.mpp {
+func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalUnionAll {
+	if !un.Mpp {
 		return un
 	}
 	for i, ch := range un.Children() {
 		exprs := make([]expression.Expression, len(ch.Schema().Columns))
 		needChange := false
-		for i, dstCol := range un.schema.Columns {
+		for i, dstCol := range un.Schema().Columns {
 			dstType := dstCol.RetType
 			srcCol := ch.Schema().Columns[i]
 			srcCol.Index = i
@@ -100,10 +101,10 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 			}
 		}
 		if needChange {
-			proj := PhysicalProjection{
+			proj := physicalop.PhysicalProjection{
 				Exprs: exprs,
 			}.Init(un.SCtx(), ch.StatsInfo(), 0)
-			proj.SetSchema(un.schema.Clone())
+			proj.SetSchema(un.Schema().Clone())
 			proj.SetChildren(ch)
 			un.Children()[i] = proj
 		}
@@ -206,7 +207,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 
 	child := aggPlan.Children()[0]
 	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
-	proj := PhysicalProjection{
+	proj := physicalop.PhysicalProjection{
 		Exprs: projExprs,
 	}.Init(aggPlan.SCtx(), child.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), aggPlan.QueryBlockOffset(), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
@@ -239,7 +240,7 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 		col.Index = i
 		topProjExprs = append(topProjExprs, col)
 	}
-	topProj := PhysicalProjection{
+	topProj := physicalop.PhysicalProjection{
 		Exprs: topProjExprs,
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
 	topProj.SetSchema(p.Schema().Clone())
@@ -271,14 +272,14 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 	}
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
-	bottomProj := PhysicalProjection{
+	bottomProj := physicalop.PhysicalProjection{
 		Exprs: bottomProjExprs,
 	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
 
-	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
+	if origChildProj, isChildProj := childPlan.(*physicalop.PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
 	refine4NeighbourProj(topProj, bottomProj)
@@ -320,7 +321,7 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 	}
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
-	bottomProj := PhysicalProjection{
+	bottomProj := physicalop.PhysicalProjection{
 		Exprs: bottomProjExprs,
 	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
@@ -332,13 +333,13 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 		col.Index = i
 		topProjExprs = append(topProjExprs, col)
 	}
-	topProj := PhysicalProjection{
+	topProj := physicalop.PhysicalProjection{
 		Exprs: topProjExprs,
 	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	topProj.SetSchema(childPlan.Schema().Clone())
 	topProj.SetChildren(bottomProj)
 
-	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
+	if origChildProj, isChildProj := childPlan.(*physicalop.PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
 	refine4NeighbourProj(topProj, bottomProj)

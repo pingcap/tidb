@@ -146,6 +146,14 @@ func TestHandle(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "abc", d.GetString())
 	assert.Equal(t, "{100, abc}", ch.String())
+
+	ph1 := NewPartitionHandle(2, ih)
+	assert.True(t, ph1.Equal(ih))
+	assert.True(t, ih.Equal(ph1))
+
+	ph2 := NewPartitionHandle(1, ch2)
+	assert.True(t, ph2.Equal(ch2))
+	assert.True(t, ch2.Equal(ph2))
 }
 
 func TestPaddingHandle(t *testing.T) {
@@ -345,7 +353,7 @@ func TestKeyRangeDefinition(t *testing.T) {
 		StartKey: []byte("s2"),
 		EndKey:   []byte("e2"),
 	}}
-	require.Equal(t, int64(168), KeyRangeSliceMemUsage(s))
+	require.Equal(t, int64(104), KeyRangeSliceMemUsage(s))
 }
 
 func BenchmarkIsPoint(b *testing.B) {
@@ -373,10 +381,10 @@ var inputs = []struct {
 func memAwareIntMap(size int, handles []Handle) int {
 	var x int
 	m := NewMemAwareHandleMap[int]()
-	for j := 0; j < size; j++ {
+	for j := range size {
 		m.Set(handles[j], j)
 	}
-	for j := 0; j < size; j++ {
+	for j := range size {
 		x, _ = m.Get(handles[j])
 	}
 	return x
@@ -385,21 +393,21 @@ func memAwareIntMap(size int, handles []Handle) int {
 func nativeIntMap(size int, handles []Handle) int {
 	var x int
 	m := make(map[Handle]int)
-	for j := 0; j < size; j++ {
+	for j := range size {
 		m[handles[j]] = j
 	}
 
-	for j := 0; j < size; j++ {
+	for j := range size {
 		x = m[handles[j]]
 	}
 	return x
 }
 
 func BenchmarkMemAwareHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
+	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
-		for i := 0; i < s.input; i++ {
+		for i := range s.input {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {
@@ -418,10 +426,10 @@ func BenchmarkMemAwareHandleMap(b *testing.B) {
 }
 
 func BenchmarkNativeHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
+	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
-		for i := 0; i < s.input; i++ {
+		for i := range s.input {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {

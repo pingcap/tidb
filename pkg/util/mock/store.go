@@ -85,3 +85,21 @@ func (*Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 func (*Store) GetCodec() tikv.Codec {
 	return nil
 }
+
+// GetOption implements kv.Storage interface.
+func (*Store) GetOption(_ any) (any, bool) {
+	return nil, false
+}
+
+// SetOption implements kv.Storage interface.
+func (*Store) SetOption(_, _ any) {}
+
+// GetClusterID implements kv.Storage interface.
+func (*Store) GetClusterID() uint64 {
+	return 1
+}
+
+// GetKeyspace implements kv.Storage interface.
+func (*Store) GetKeyspace() string {
+	return ""
+}

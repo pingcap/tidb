@@ -84,7 +84,7 @@ func (c *ascendingKeyGenerator) run() {
 
 	go func() {
 		defer close(c.keyOutCh)
-		for i := 0; i < c.count; i++ {
+		for range c.count {
 			// try to use most left bytes to alternate the key
 			for j := keyCommonPrefixSize + incSuffixLen - 1; j >= keyCommonPrefixSize; j-- {
 				c.curKey[j]++
@@ -115,7 +115,7 @@ func newAscendingKeySource(
 		valueSize: valueSize,
 		keys:      make([][]byte, count),
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		key := <-keyCh
 		s.keys[i] = key
 		s.totalSize += len(key) + valueSize
@@ -207,7 +207,7 @@ func (c *randomKeyGenerator) run() {
 
 	go func() {
 		defer close(c.keyOutCh)
-		for i := 0; i < c.count; i++ {
+		for range c.count {
 			c.rnd.Read(c.curKey[keyCommonPrefixSize : keyCommonPrefixSize+randomLen])
 			for j := len(c.curKey) - 1; j >= keyCommonPrefixSize+randomLen; j-- {
 				c.curKey[j]++
@@ -239,7 +239,7 @@ func newRandomKeySource(
 		valueSize: valueSize,
 		keys:      make([][]byte, count),
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		key := <-keyCh
 		s.keys[i] = key
 		s.totalSize += len(key) + valueSize
@@ -272,7 +272,7 @@ func createEvenlyDistributedFiles(
 	value := make([]byte, 100)
 	kvCnt := 0
 	var minKey, maxKey kv.Key
-	for i := 0; i < fileCount; i++ {
+	for i := range fileCount {
 		builder := NewWriterBuilder().
 			SetBlockSize(10 * 1024 * 1024).
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
@@ -318,7 +318,7 @@ func createAscendingFiles(
 	value := make([]byte, 100)
 	kvCnt := 0
 	var minKey, maxKey kv.Key
-	for i := 0; i < fileCount; i++ {
+	for i := range fileCount {
 		builder := NewWriterBuilder().
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(

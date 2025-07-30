@@ -92,3 +92,36 @@ select hex('一a'), '一a';
 hex('涓?')	涓?
 E4B83F	涓?
 set @@sql_mode=default;
+set @@character_set_client=default;
+set @@character_set_connection=default;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_bin
+set default_collation_for_utf8mb4 = 'utf8mb4_general_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_general_ci
+set default_collation_for_utf8mb4 = 'utf8mb4_0900_ai_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_0900_ai_ci
+set default_collation_for_utf8mb4 = default;
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_bin
+set character_set_results = "gbk";
+select cast(0x414141E280A9424242 as char charset utf8mb4);
+cast(0x414141E280A9424242 as char charset utf8mb4)
+AAA?BBB
+SET character_set_results = @undefined_var;
+DROP TABLE if exists t61085;
+create table t61085 (a char(255) charset gbk);
+insert into t61085 values ('AAA');
+set SESSION sql_mode = '';
+select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
+a
+AAA
+DROP TABLE t61085;

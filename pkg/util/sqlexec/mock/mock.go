@@ -14,22 +14,10 @@
 
 package mock
 
-import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	mockctx "github.com/pingcap/tidb/pkg/util/mock"
-)
-
 // RestrictedSQLExecutorKey is the key to represent MockRestrictedSQLExecutorMockRecorder in ctx.
 type RestrictedSQLExecutorKey struct{}
 
 // String implements the string.Stringer interface.
 func (k RestrictedSQLExecutorKey) String() string {
 	return "__MockRestrictedSQLExecutor"
-}
-
-// WrapAsSCtx wraps the MockRestrictedSQLExecutor into sessionctx.Context.
-func WrapAsSCtx(exec *MockRestrictedSQLExecutor) sessionctx.Context {
-	sctx := mockctx.NewContext()
-	sctx.SetValue(RestrictedSQLExecutorKey{}, exec)
-	return sctx
 }

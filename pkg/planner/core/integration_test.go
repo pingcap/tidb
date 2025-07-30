@@ -30,15 +30,15 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,7 +76,7 @@ func TestAggPushDownEngine(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
@@ -84,7 +84,7 @@ func TestAggPushDownEngine(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -128,9 +128,9 @@ func TestIssue15110And49616(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
-	tblInfo, err := is.TableByName(context.Background(), db.Name, pmodel.NewCIStr("crm_rd_150m"))
+	tblInfo, err := is.TableByName(context.Background(), db.Name, ast.NewCIStr("crm_rd_150m"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -159,12 +159,12 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	tk.MustExec("create table t(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(10), partition p1 values less than (100))")
 
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pt := tbl.(table.PartitionedTable)
 	query, err := expression.ParseSimpleExpr(tk.Session().GetExprCtx(), "a = '2020-01-01 00:00:00'", expression.WithTableInfo("", tbl.Meta()))
 	require.NoError(t, err)
-	dbName := pmodel.NewCIStr(tk.Session().GetSessionVars().CurrentDB)
+	dbName := ast.NewCIStr(tk.Session().GetSessionVars().CurrentDB)
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Session().GetExprCtx(), dbName, tbl.Meta().Name, tbl.Meta().Cols(), tbl.Meta())
 	require.NoError(t, err)
 	// Even the partition is not monotonous, EQ condition should be prune!
@@ -173,6 +173,219 @@ func TestPartitionPruningForEQ(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	require.Equal(t, 0, res[0])
+}
+
+func TestCast4PartitionPruning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`drop table if exists t_ts`)
+	tk.MustExec(`drop table if exists t_hash`)
+	tk.MustExec(`drop table if exists t_range_col`)
+	tk.MustExec("drop table if exists t_range_col_v2")
+
+	tk.MustExec(`create table t(a int, b int, c int) partition by range(a) (
+    partition p1 values less than (100),
+    partition p2 values less than (200),
+    partition pm values less than (MAXVALUE));`)
+	// case 1: range partition
+	// 1.1.1 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "123" and "199";`).Check(
+		testkit.Rows("TableReader_8 8000.00 root partition:p2 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123), le(cast(test.t.a, double BINARY), 199)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.1.2 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "123.12" and "199.99";`).Check(
+		testkit.Rows("TableReader_8 8000.00 root partition:p2 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 199.99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.1.3 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "ddd" and "99";`).Check(
+		testkit.Rows("TableReader_8 8000.00 root partition:p1 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p1         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.1.4 test between castIntAsReal(int) and real
+	tk.MustQuery(`explain select * from t where a between "123.12" and cast("199.99" as decimal);`).Check(
+		testkit.Rows("TableReader_8 8000.00 root partition:p2,pm data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 123.12), le(cast(test.t.a, double BINARY), 200)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2,pm      | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 1.2.1 test between castIntAsDecimal(int) and decimal
+	tk.MustQuery(`explain select * from t where a between 123.12 and 199.99;`).Check(
+		testkit.Rows("TableReader_8 8000.00 root partition:p2 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, decimal(10,0) BINARY), 123.12), le(cast(test.t.a, decimal(10,0) BINARY), 199.99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t     | p2         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 2: range partition, but not support expression
+	tk.MustExec(`create table t_ts (report_updated timestamp) partition by range(unix_timestamp(report_updated)) (
+		partition p1 values less than (1732982400), -- 2024-12-01 00:00:00
+		partition p2 values less than (1733068800), -- 2024-12-02 00:00:00
+		partition pm values less than (MAXVALUE));`)
+	tk.MustExec("insert into t_ts values('2024-11-30 00:00:00'), ('2024-12-01 00:00:00'), ('2024-12-02 00:00:00')")
+	tk.MustQuery("select * from t_ts where report_updated = '2024-12-01 00:00:00'").Check(testkit.Rows("2024-12-01 00:00:00"))
+	tk.MustQuery("explain select * from t_ts where report_updated = 20241201").Check(testkit.Rows(
+		"TableReader_8 10.00 root partition:p2 data:Selection_7",
+		"└─Selection_7 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select * from t_ts where report_updated = '2024-12-01 00:00:00'").Check(testkit.Rows(
+		"TableReader_8 10.00 root partition:p2 data:Selection_7",
+		"└─Selection_7 10.00 cop[tikv]  eq(test.t_ts.report_updated, 2024-12-01 00:00:00.000000)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_ts keep order:false, stats:pseudo"))
+	rs := tk.MustQuery("explain select * from t_ts where report_updated > unix_timestamp('2008-05-01 00:00:00')").Rows()
+	require.Equal(t, rs[0][3], "partition:all")
+	//MysQL explain:
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_ts  | p1,p2,pm   | ALL  | NULL          | NULL | NULL    | NULL |    3 |    33.33 | Using where |
+	//+----+-------------+-------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 3: hash partition
+	tk.MustExec(`CREATE TABLE t_hash(a int, b int) PARTITION BY HASH(a) PARTITIONS 6`)
+	tk.MustExec(`insert into t_hash values(1, 1), (10, 10), (26, 26)`)
+	tk.MustQuery(`select * from t_hash where a = '1'`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`explain select * from t_hash where a = '1'`).Check(testkit.Rows(
+		"TableReader_8 10.00 root partition:p1 data:Selection_7",
+		"└─Selection_7 10.00 cop[tikv]  eq(test.t_hash.a, 1)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_hash keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+--------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table  | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+--------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_hash | p1         | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+--------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 4: range columns partition
+	tk.MustExec(`CREATE TABLE t_range_col(a int, b int)
+		PARTITION BY RANGE COLUMNS(a) (
+      		PARTITION p_100 VALUES LESS THAN (100),
+     		PARTITION p_200 VALUES LESS THAN (200),
+			PARTITION p_300 VALUES LESS THAN (300),
+			PARTITION p_max VALUES LESS THAN MAXVALUE
+		);`)
+	tk.MustExec(`insert into t_range_col values(1, 1), (100, 100), (200, 200);`)
+	// 4.1.1 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between '100' and '199';`).Check(testkit.Rows("100 100"))
+	tk.MustQuery(`explain select * from t_range_col where a between '100' and '199'`).Check(testkit.Rows(
+		"TableReader_8 8000.00 root partition:p_200 data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 100), le(cast(test.t_range_col.a, double BINARY), 199)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_200      | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.1.2 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between "ddd" and "199";`).Sort().Check(testkit.Rows("1 1", "100 100"))
+	tk.MustQuery(`explain select * from t where a between "ddd" and "199";`).Check(testkit.Rows(
+		"TableReader_8 8000.00 root partition:p1,p2 data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 0), le(cast(test.t.a, double BINARY), 199)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions  | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_100,p_200 | ALL  | NULL          | NULL | NULL    | NULL |    2 |    50.00 | Using where |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.1.3 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between "23.12" and "199.99";`).Check(testkit.Rows("100 100"))
+	tk.MustQuery(`explain select * from t_range_col where a between "23.12" and "199.99";`).Check(
+		testkit.Rows("TableReader_8 8000.00 root partition:p_100,p_200 data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, double BINARY), 23.12), le(cast(test.t_range_col.a, double BINARY), 199.99)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions  | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_100,p_200 | ALL  | NULL          | NULL | NULL    | NULL |    2 |    50.00 | Using where |
+	//+----+-------------+-------------+-------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.1.4 test between castIntAsReal(int) and real
+	tk.MustQuery(`select * from t_range_col where a between "23.12" and cast("199.99" as decimal);`).Sort().Check(testkit.Rows("100 100", "200 200"))
+	tk.MustQuery(`explain select * from t where a between "23.12" and cast("199.99" as decimal);`).Check(
+		testkit.Rows("TableReader_8 8000.00 root partition:all data:Selection_7",
+			"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t.a, double BINARY), 23.12), le(cast(test.t.a, double BINARY), 200)",
+			"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+-------------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions        | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+-------------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_100,p_200,p_300 | ALL  | NULL          | NULL | NULL    | NULL |    3 |    33.33 | Using where |
+	//+----+-------------+-------------+-------------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// 4.2.1 test between castIntAsDecimal(int) and decimal
+	tk.MustQuery(`select * from t_range_col where a between 100.00 and 199.99;`).Check(testkit.Rows("100 100"))
+	tk.MustQuery(`explain select * from t_range_col where a between 100.00 and 199.99`).Check(testkit.Rows(
+		"TableReader_8 8000.00 root partition:p_200 data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col.a, decimal(10,0) BINARY), 100.00), le(cast(test.t_range_col.a, decimal(10,0) BINARY), 199.99)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table       | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col | p_200      | ALL  | NULL          | NULL | NULL    | NULL |    1 |   100.00 | Using where |
+	//+----+-------------+-------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+
+	// case 5: test range column partition, and partition key is non-numeric type
+	tk.MustExec(`CREATE TABLE t_range_col_v2(a varchar(12), b int)
+		PARTITION BY RANGE COLUMNS(a) (
+      		PARTITION p_111 VALUES LESS THAN ('111'),
+     		PARTITION p_555 VALUES LESS THAN ('555'),
+			PARTITION p_999 VALUES LESS THAN ('999'),
+			PARTITION p_max VALUES LESS THAN MAXVALUE
+		);`)
+	tk.MustExec(`insert into t_range_col_v2 values('111', 1), ('222', 1), ('333', 1), ('444', 1), ('555', 1), ('666', 1), ('777', 1);`)
+	tk.MustQuery(`select * from t_range_col_v2 where a between 111 and 444;`).Sort().Check(testkit.Rows(
+		"111 1", "222 1", "333 1", "444 1"))
+	// all partitions are visited, because `a` col's collation is utf8mb4_bin, while constant's collation is binary.
+	tk.MustQuery(`explain select * from t_range_col_v2 where a between 111 and 444;`).Check(testkit.Rows(
+		"TableReader_8 8000.00 root partition:all data:Selection_7",
+		"└─Selection_7 8000.00 cop[tikv]  ge(cast(test.t_range_col_v2.a, double BINARY), 111), le(cast(test.t_range_col_v2.a, double BINARY), 444)",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t_range_col_v2 keep order:false, stats:pseudo"))
+	// MySQL explain:
+	//+----+-------------+----------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//| id | select_type | table          | partitions | type | possible_keys | key  | key_len | ref  | rows | filtered | Extra       |
+	//+----+-------------+----------------+------------+------+---------------+------+---------+------+------+----------+-------------+
+	//|  1 | SIMPLE      | t_range_col_v2 | NULL       | ALL  | NULL          | NULL | NULL    | NULL |    7 |    14.29 | Using where |
+	//+----+-------------+----------------+------------+------+---------------+------+---------+------+------+----------+-------------+
 }
 
 func TestNotReadOnlySQLOnTiFlash(t *testing.T) {
@@ -186,7 +399,7 @@ func TestNotReadOnlySQLOnTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -218,7 +431,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -226,7 +439,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "10000.00", "root", " MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "10000.00", "root", " MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
 		{"  └─Projection_4", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#3"},
 		{"    └─TableFullScan_8", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
@@ -248,7 +461,7 @@ func TestRightShiftPushDownToTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -256,7 +469,7 @@ func TestRightShiftPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -277,17 +490,17 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 	rows := [][]any{
 		{"Projection_15", "root", "test.t1.b"},
-		{"└─Apply_17", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
-		{"  ├─TableReader_20(Build)", "root", "data:Selection_19"},
-		{"  │ └─Selection_19", "cop[tikv]", "not(isnull(test.t1.b))"},
-		{"  │   └─TableFullScan_18", "cop[tikv]", "keep order:false, stats:pseudo"},
-		{"  └─Selection_21(Probe)", "root", "not(isnull(Column#7))"},
-		{"    └─StreamAgg_23", "root", "funcs:min(test.t2.b)->Column#7"},
-		{"      └─TopN_24", "root", "test.t2.b, offset:0, count:1"},
-		{"        └─TableReader_32", "root", "data:TopN_31"},
-		{"          └─TopN_31", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-		{"            └─Selection_30", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-		{"              └─TableFullScan_29", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"└─Apply_19", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
+		{"  ├─TableReader_22(Build)", "root", "data:Selection_21"},
+		{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
+		{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"  └─Selection_23(Probe)", "root", "not(isnull(Column#7))"},
+		{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#7"},
+		{"      └─TopN_31", "root", "test.t2.b, offset:0, count:1"},
+		{"        └─TableReader_41", "root", "data:TopN_40"},
+		{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+		{"            └─Selection_39", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+		{"              └─TableFullScan_38", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 	tk.MustExec("insert t1 values ('A', 1);")
@@ -310,7 +523,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = `eq(cast(test.t1.a, var_string(1)), "A")`
+	rows[1][2] = `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`
 	sql = "select a from t1 where cast(a as char)='A'"
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
@@ -318,7 +531,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('bit', 'tikv','');")
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
 	rows = [][]any{
-		{"Selection_5", "root", `eq(cast(test.t1.a, var_string(1)), "A")`},
+		{"Selection_5", "root", `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`},
 		{"└─TableReader_7", "root", "data:TableFullScan_6"},
 		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
@@ -684,7 +897,7 @@ func TestReverseUTF8PushDownToTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -692,7 +905,7 @@ func TestReverseUTF8PushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#3"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -714,7 +927,7 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -722,7 +935,7 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#3"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -744,7 +957,7 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -752,7 +965,7 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "space(test.t.a)->Column#3"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -815,7 +1028,7 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			tk.MustExec("drop table if exists t")
 			switch i {
 			case 0:
@@ -880,7 +1093,7 @@ func TestConflictReadFromStorage(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -942,13 +1155,13 @@ func TestIssue31202(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t31202(a int primary key, b int);")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t31202", L: "t31202"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t31202", L: "t31202"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	tk.MustQuery("explain format = 'brief' select * from t31202;").Check(testkit.Rows(
-		"TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+		"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
 		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─TableFullScan 10000.00 mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
 
@@ -963,7 +1176,7 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec(`create table t32157(
   process_code varchar(8) NOT NULL,
   ctrl_class varchar(2) NOT NULL,
@@ -999,7 +1212,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	tk.MustExec("set @@tidb_enforce_mpp = on")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int)")
-	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t1", L: "t1"})
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t1", L: "t1"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1035,7 +1248,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
-	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+	require.Equal(t, uint64(vardef.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
@@ -1043,7 +1256,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 	rows = tk.MustQuery(sql).Rows()
 	streamCount = getStreamCountFromExplain(rows)
 	// require.Equal(t, len(streamCount), 1)
-	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+	require.Equal(t, uint64(vardef.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
 
 	// Disabled when tiflash_fine_grained_shuffle_stream_count is -1.
 	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
@@ -1188,7 +1401,7 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1196,7 +1409,7 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1217,13 +1430,12 @@ func TestIssue36194(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// create virtual tiflash replica.
 	is := dom.InfoSchema()
 
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1231,11 +1443,11 @@ func TestIssue36194(t *testing.T) {
 	}
 	tk.MustQuery("explain format = 'brief' select /*+ read_from_storage(tiflash[t]) */ * from t where a + 1 > 20 limit 100;;").Check(testkit.Rows(
 		"Limit 100.00 root  offset:0, count:100",
-		"└─TableReader 100.00 root  MppVersion: 2, data:ExchangeSender",
+		"└─TableReader 100.00 root  MppVersion: 3, data:ExchangeSender",
 		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
 		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
-		"        └─TableFullScan 125.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"))
+		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
 }
 
 func TestGetFormatPushDownToTiFlash(t *testing.T) {
@@ -1248,13 +1460,13 @@ func TestGetFormatPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	tk.MustQuery("explain format = 'brief' select GET_FORMAT(DATE, location) from t;").Check(testkit.Rows(
-		"TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+		"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
 		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Projection 10000.00 mpp[tiflash]  get_format(DATE, test.t.location)->Column#3",
 		"    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
@@ -1264,7 +1476,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a json);")
 	tk.MustExec("insert into t values(null);")
@@ -1275,7 +1487,7 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1320,7 +1532,7 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1328,7 +1540,7 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1347,13 +1559,13 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.a)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1361,7 +1573,7 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select hex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1380,13 +1592,13 @@ func TestBinPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "bin(test.t.a)->Column#3"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1408,7 +1620,7 @@ func TestEltPushDownToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1416,7 +1628,7 @@ func TestEltPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1437,7 +1649,7 @@ func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1445,7 +1657,7 @@ func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_instr(test.t.expr, test.t.pattern, 1, 1, 0, test.t.match_type)->Column#8"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1466,7 +1678,7 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1474,7 +1686,7 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_substr(test.t.expr, test.t.pattern, 1, 1, test.t.match_type)->Column#7"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1495,7 +1707,7 @@ func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1503,7 +1715,7 @@ func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column#8"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1528,7 +1740,7 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1536,7 +1748,7 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#4, cast(test.t.b, time BINARY)->Column#5"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1555,13 +1767,13 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1569,7 +1781,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1588,13 +1800,13 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "least(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1602,7 +1814,7 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 	tk.MustQuery("explain select least(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 	rows = [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "greatest(test.t.a, test.t.b)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1633,12 +1845,12 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
 	tk.MustQuery("select @@tidb_enable_tiflash_read_for_write_stmt").Check(testkit.Rows("1"))
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-	tbl2, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t2", L: "t2"})
+	tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t2", L: "t2"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1694,11 +1906,11 @@ func TestPointGetWithSelectLock(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, primary key(a, b));")
 	tk.MustExec("create table t1(c int unique, d int);")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t1", L: "t1"})
+	tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t1", L: "t1"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -1762,7 +1974,7 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustExec("execute stmt1 using @a, @b, @c, @d, @e")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	// We don't limit range mem usage when rebuilding ranges for the cached plan.
@@ -1875,7 +2087,7 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustExec("execute stmt1 using @a, @b, @c")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	// We don't limit range mem usage when rebuilding index join ranges for the cached plan. So [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc] can be built.
@@ -1906,7 +2118,7 @@ func TestIsIPv4ToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1914,7 +2126,7 @@ func TestIsIPv4ToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "is_ipv4(test.t.v4)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1937,7 +2149,7 @@ func TestIsIPv6ToTiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1945,7 +2157,7 @@ func TestIsIPv6ToTiFlash(t *testing.T) {
 	}
 
 	rows := [][]any{
-		{"TableReader_10", "root", "MppVersion: 2, data:ExchangeSender_9"},
+		{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 		{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
 		{"  └─Projection_4", "mpp[tiflash]", "is_ipv6(test.t.v6)->Column#4"},
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
@@ -1968,17 +2180,17 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tikv.
 	rows := [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_13", "root", "data:TableFullScan_12"},
-		{"  └─TableFullScan_12", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tikv.
 	rows = [][]any{
 		{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
-		{"└─TableReader_5", "root", "data:TableFullScan_4"},
-		{"  └─TableFullScan_4", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"└─TableReader_6", "root", "data:TableFullScan_5"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustExec("set session tidb_opt_projection_push_down='ON';")
 	tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
@@ -1986,16 +2198,16 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// Selection to tikv.
 	rows = [][]any{
-		{"Selection_7", "root", "gt(test.t.c2, 1)"},
-		{"└─TableReader_6", "root", "data:TableFullScan_5"},
-		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"Selection_8", "root", "gt(test.t.c2, 1)"},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -2004,11 +2216,11 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 	// TopN to tiflash.
 	rows = [][]any{
-		{"TopN_7", "root", "test.t.c2, offset:0, count:2"},
-		{"└─TableReader_15", "root", "data:TableFullScan_14"},
-		{"  └─TableFullScan_14", "cop[tiflash]", "keep order:false, stats:pseudo"},
+		{"TopN", "root", "test.t.c2, offset:0, count:2"},
+		{"└─TableReader", "root", "data:TableFullScan"},
+		{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+	tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
 
 	// Projection to tiflash.
 	rows = [][]any{
@@ -2046,13 +2258,13 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
 	// Create virtual tiflash replica info.
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range_d64")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range_d64")
 
 	tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
 
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
-		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
+		"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
@@ -2061,7 +2273,7 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9E0 following) as a from test.first_range;").Check(testkit.Rows(
-		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
+		"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
@@ -2070,7 +2282,7 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 2.3 preceding and 0 following) as a from test.first_range_d64;").Check(testkit.Rows(
-		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
+		"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range_d64.v)->Column#6 over(partition by test.first_range_d64.p order by test.first_range_d64.o range between 2.3 preceding and 0 following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range_d64.p, test.first_range_d64.o, stream_count: 20",
@@ -2079,7 +2291,7 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range_d64 keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o_datetime range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
-		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
+		"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o_datetime range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o_datetime, stream_count: 20",
@@ -2092,7 +2304,7 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		"└─Window_8 10000.00 root  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o_time range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following)",
 		"  └─Sort_12 10000.00 root  test.first_range.p, test.first_range.o_time",
 		"    └─ShuffleReceiver_14 10000.00 root  ",
-		"      └─TableReader_11 10000.00 root  MppVersion: 2, data:ExchangeSender_10",
+		"      └─TableReader_11 10000.00 root  MppVersion: 3, data:ExchangeSender_10",
 		"        └─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"          └─TableFullScan_9 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 }
@@ -2108,8 +2320,8 @@ func TestIssue46556(t *testing.T) {
 		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
 			`├─Projection(Build) 0.00 root  <nil>->Column#5`,
 			`│ └─TableDual 0.00 root  rows:0`,
-			`└─TableReader(Probe) 7992.00 root  data:Selection`,
-			`  └─Selection 7992.00 cop[tikv]  like(test.t0.c0, test.t0.c0, 92), not(isnull(test.t0.c0))`,
+			`└─TableReader(Probe) 9990.00 root  data:Selection`,
+			`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
 			`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
 }
 
@@ -2118,10 +2330,12 @@ func TestIssue41458(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("use test")
+
+	tk.MustExec("create database special")
+	tk.MustExec("use special")
 	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
 	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
-	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';").Sort().Rows()
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'special' and STMT_TYPE = 'Select';").Sort().Rows()
 	plan := rawRows[0][0].(string)
 	rows := strings.Split(plan, "\n")
 	rows = rows[1:]
@@ -2166,6 +2380,7 @@ func TestIssue48257(t *testing.T) {
 
 	// 1. test sync load
 	tk.MustExec("create table t(a int)")
+	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec("insert into t value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -2191,6 +2406,7 @@ func TestIssue48257(t *testing.T) {
 	// 2. test async load
 	tk.MustExec("set tidb_stats_load_sync_wait = 0")
 	tk.MustExec("create table t1(a int)")
+	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec("insert into t1 value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -2211,7 +2427,7 @@ func TestIssue48257(t *testing.T) {
 		"TableReader 10000.00 root  data:TableFullScan",
 		"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 		"TableReader 1.00 root  data:TableFullScan",
 		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
@@ -2230,12 +2446,12 @@ func TestIssue54213(t *testing.T) {
   c bigint(20) ,
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
-	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
-			"└─Limit_12 0.10 root  offset:0, count:100",
-			"  └─IndexReader_16 0.10 root  index:Limit_15",
-			"    └─Limit_15 0.10 cop[tikv]  offset:0, count:100",
-			"      └─IndexRangeScan_14 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+		testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			"└─Limit 1.00 root  offset:0, count:100",
+			"  └─IndexReader 1.25 root  index:Limit",
+			"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+			"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }
 
 func TestIssue54870(t *testing.T) {
@@ -2318,4 +2534,116 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	tk.MustExec("INSERT INTO test1 VALUES (-100000000, \"123459789332\", 1, \"123459789332\", \"BBBBB\", 1675871896, 1675871896, '{\"col10\": \"CCCCC\",\"col9\": [\"ABCDEFG\"]}', NULL, DEFAULT, DEFAULT, DEFAULT);\n")
 	tk.MustExec("UPDATE test1 SET col7 = '{\"col10\":\"DDDDD\",\"col9\":[\"abcdefg\"]}';\n")
 	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
+}
+
+func TestIssue58829(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
+	tk.MustExec(`create table t2 (id bigint(20), k int)`)
+
+	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
+	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+}
+
+func TestIssue61669(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`
+CREATE TABLE B (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  RCRD_NO varchar(20) NOT NULL,
+  FILE_NO varchar(20) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  MDL_DT date DEFAULT NULL,
+  TS varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  MDL_NO varchar(50) DEFAULT NULL,
+  TXN_NO varchar(90) DEFAULT NULL,
+  SCR_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  PRIMARY KEY (ROW_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, DT, MDL_DT, TS, LD),
+  KEY IDX2_ETF_FLR_PRCHRDMP_TXN_DTL (BSTPRTFL_NO, MDL_DT, SCR_NO, TXN_NO),
+  KEY IDX1_ETF_FLR_PRCHRDMP_TXNDTL (FILE_NO, BSTPRTFL_NO),
+  KEY IDX_ETF_FLR_PRCHRDMP_TXN_FIX (MDL_NO, BSTPRTFL_NO, MDL_DT),
+  UNIQUE UI_ETF_FLR_PRCHRDMP_TXN_DTLTB (RCRD_NO),
+  KEY IDX3_ETF_FLR_PRCHRDMP_TXN_DTL (DT)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 2085290754;`)
+	tk.MustExec(`
+CREATE TABLE A (
+  ROW_NO bigint NOT NULL AUTO_INCREMENT,
+  TEMP_NO varchar(20) NOT NULL,
+  VCHR_TPCD varchar(19) DEFAULT NULL,
+  LD varchar(19) DEFAULT NULL,
+  BSTPRTFL_NO varchar(20) DEFAULT NULL,
+  DAM decimal(25, 8) DEFAULT NULL,
+  DT date DEFAULT NULL,
+  CASH_RPLC_AMT decimal(19, 2) DEFAULT NULL,
+  PCSG_BTNO_NO varchar(20) DEFAULT NULL,
+  KEY INX_TEMP_NO (TEMP_NO),
+  PRIMARY KEY (ROW_NO),
+  KEY idx2_ETF_FNDTA_SALE_PA (PCSG_BTNO_NO, DT, VCHR_TPCD)
+) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
+	tk.MustExec(`set tidb_opt_index_join_build_v2=off`)
+	r := tk.MustQuery(`
+explain SELECT *
+FROM A A
+JOIN
+    (SELECT CASH_RPLC_AMT,
+         S.BSTPRTFL_NO
+    FROM
+        (SELECT BSTPRTFL_NO,
+         SUM(CASE
+            WHEN LD IN ('03') THEN
+            DAM
+            ELSE 0 END) AS CASH_RPLC_AMT
+        FROM
+            (SELECT B.LD,
+         SUM(B.DAM) DAM,
+         B.BSTPRTFL_NO
+            FROM B B
+            GROUP BY  B.LD, B.BSTPRTFL_NO) ff
+            GROUP BY  BSTPRTFL_NO) S ) f
+            ON A.BSTPRTFL_NO = f.BSTPRTFL_NO
+    WHERE A.PCSG_BTNO_NO = 'MXUU2022123043502318'`)
+	require.True(t, len(r.Rows()) > 0) // no error
+}
+
+func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table test.t (p int, o int, v int not null);")
+	tk.MustExec("insert into test.t values (0, 0, -1), (1, 0, -1), (1, 1, 0), (1, 3, 4), (1, 6, 6), (1, 7, -5), (1, 8, 3), (1, 18, 1), (1, 30, 30), (2, 0, 2), (2, 1, 0), (2, 4, -4), (2, 7, -2), (2, 8, 1), (2, 15, 2), (2, 30, -11), (3, 0, 7), (3, 4, -3), (3, 6, 9), (3, 10, -9), (3, 20, -3), (3, 40, 2), (3, 41, 1), (4, 0, 4), (5, 0, -5), (6, 0, 2), (6, 10, 5), (6, 30, 0), (7, 0, 3), (7, 1, 3), (7, 2, 2), (7, 3, -4), (7, 4, 9);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	rows := [][]any{
+		{"TableReader_25", "root", "MppVersion: 3, data:ExchangeSender_24"},
+		{"└─ExchangeSender_24", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_8", "mpp[tiflash]", "Column#10->Column#15, Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, stream_count: 8"},
+		{"    └─Window_23", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#10, count(test.t.v)->Column#11, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#12, min(test.t.v)->Column#13, max(test.t.v)->Column#14 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+		{"      └─Sort_15", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
+		{"        └─ExchangeReceiver_14", "mpp[tiflash]", "stream_count: 8"},
+		{"          └─ExchangeSender_13", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
+		{"            └─TableFullScan_12", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 }

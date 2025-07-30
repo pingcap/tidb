@@ -53,7 +53,6 @@ type engineInfo struct {
 	openedEngine *backend.OpenedEngine
 
 	uuid        uuid.UUID
-	cfg         *backend.EngineConfig
 	writerCache generic.SyncMap[int, backend.EngineWriter]
 	memRoot     MemRoot
 	flushLock   *sync.RWMutex
@@ -64,7 +63,6 @@ func newEngineInfo(
 	ctx context.Context,
 	jobID, indexID int64,
 	unique bool,
-	cfg *backend.EngineConfig,
 	en *backend.OpenedEngine,
 	uuid uuid.UUID,
 	memRoot MemRoot,
@@ -74,7 +72,6 @@ func newEngineInfo(
 		jobID:        jobID,
 		indexID:      indexID,
 		unique:       unique,
-		cfg:          cfg,
 		openedEngine: en,
 		uuid:         uuid,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](4),
@@ -151,7 +148,6 @@ func (ei *engineInfo) CreateWriter(id int, writerCfg *backend.LocalWriterConfig)
 		return nil, err
 	}
 
-	ei.memRoot.Consume(structSizeWriterCtx)
 	logutil.Logger(ei.ctx).Info(LitInfoCreateWrite, zap.Int64("job ID", ei.jobID),
 		zap.Int64("index ID", ei.indexID), zap.Int("worker ID", id),
 		zap.Int64("allocate memory", structSizeWriterCtx+writerCfg.Local.MemCacheSize),
@@ -178,7 +174,6 @@ func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWri
 		}
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
-		ei.memRoot.ConsumeWithTag(encodeBackendTag(ei.jobID), writerCfg.Local.MemCacheSize)
 	}
 	wc := &writerContext{
 		ctx:    ei.ctx,
@@ -200,7 +195,6 @@ func (ei *engineInfo) closeWriters() error {
 			}
 		}
 		ei.writerCache.Delete(wid)
-		ei.memRoot.Release(structSizeWriterCtx)
 	}
 	return firstErr
 }

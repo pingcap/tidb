@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -37,7 +37,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
-	"go.uber.org/zap"
 )
 
 // TidbTestSuite is a test suite for tidb
@@ -79,7 +78,7 @@ func parseDuration(lease string) (time.Duration, error) {
 		dur, err = time.ParseDuration(lease + "s")
 	}
 	if err != nil || dur < 0 {
-		return 0, errors.Newf("invalid lease duration", zap.String("lease", lease))
+		return 0, errors.Errorf("invalid lease duration: %s", lease)
 	}
 	return dur, nil
 }

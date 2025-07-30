@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
@@ -274,7 +274,7 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 	numRows := chk.NumRows()
 	sc := dagCtx.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		datums = datums[:0]
 		if dagReq.OutputOffsets != nil {
 			for _, j := range dagReq.OutputOffsets {
@@ -299,7 +299,7 @@ func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types
 	if dagReq.OutputOffsets != nil {
 		offsets := make([]int, len(dagReq.OutputOffsets))
 		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
-		for i := 0; i < len(dagReq.OutputOffsets); i++ {
+		for i := range dagReq.OutputOffsets {
 			offset := dagReq.OutputOffsets[i]
 			offsets[i] = int(offset)
 			newFields[i] = fields[offset]
@@ -350,7 +350,7 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	if dagReq.DivPrecisionIncrement != nil {
 		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
 	} else {
-		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+		sctx.GetSessionVars().DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	}
 	ctx := &dagContext{
 		evalContext:   &evalContext{sctx: sctx},
@@ -470,7 +470,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
-	sctx := mock.NewContext()
+	sctx := mock.NewContextDeprecated()
 	sctx.GetSessionVars().StmtCtx = sc
 	sctx.GetSessionVars().TimeZone = tz
 	return sctx
@@ -515,7 +515,7 @@ func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, co
 		EncodeType:   dagReq.EncodeType,
 	}
 	executors := dagReq.Executors
-	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+	if dagReq.GetCollectExecutionSummaries() {
 		// for simplicity, we assume all executors to be spending the same amount of time as the request
 		timeProcessed := uint64(dur / time.Nanosecond)
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))
@@ -614,7 +614,7 @@ func extractKVRanges(startKey, endKey []byte, keyRanges []*coprocessor.KeyRange,
 }
 
 func reverseKVRanges(kvRanges []kv.KeyRange) {
-	for i := 0; i < len(kvRanges)/2; i++ {
+	for i := range len(kvRanges) / 2 {
 		j := len(kvRanges) - i - 1
 		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
 	}

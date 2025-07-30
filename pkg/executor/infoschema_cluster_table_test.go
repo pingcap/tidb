@@ -33,11 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
@@ -82,10 +82,10 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 
 	// Fix issue 9836
 	sm := &testkit.MockSessionManager{
-		PS:    make([]*util.ProcessInfo, 1),
+		PS:    make([]*sessmgr.ProcessInfo, 1),
 		SerID: 1,
 	}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -207,6 +207,19 @@ func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 func (s *mockStore) Name() string                 { return "mockStore" }
 func (s *mockStore) Describe() string             { return "" }
+
+func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
+	originIP := config.GetGlobalConfig().AdvertiseAddress
+	config.GetGlobalConfig().AdvertiseAddress = config.UnavailableIP
+	defer func() { config.GetGlobalConfig().AdvertiseAddress = originIP }()
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
+	// the TiDB node is skipped because it does not has IP
+	require.Equal(t, 0, len(rows))
+}
 
 func TestTiDBClusterInfo(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
@@ -352,6 +365,9 @@ func TestTikvRegionStatus(t *testing.T) {
 		"1 test test_t2 1 p_a 1 p1",
 		"1 test test_t2 1 p_b 0 <nil>",
 	))
+
+	// Run the query to ensure virtual schemas are excluded and expect no rows to be returned
+	tk.MustQuery(`SELECT DB_NAME FROM information_schema.TIKV_REGION_STATUS WHERE DB_NAME IN ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA')`).Check(testkit.Rows())
 }
 
 func TestTableStorageStats(t *testing.T) {
@@ -393,7 +409,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 57
+	result := 60
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

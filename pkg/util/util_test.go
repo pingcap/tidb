@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	pb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
@@ -34,7 +36,7 @@ func TestLogFormat(t *testing.T) {
 	mockTooLongQuery := make([]byte, 1024*9)
 
 	var refCount stmtctx.ReferenceCount = 0
-	info := &ProcessInfo{
+	info := &sessmgr.ProcessInfo{
 		ID:            233,
 		User:          "PingCAP",
 		Host:          "127.0.0.1",
@@ -119,4 +121,19 @@ func TestIsInCorrectIdentifierName(t *testing.T) {
 		got := IsInCorrectIdentifierName(tc.input)
 		require.Equalf(t, tc.correct, got, "IsInCorrectIdentifierName(%v) != %v", tc.name, tc.correct)
 	}
+}
+
+func TestDupProto(t *testing.T) {
+	p := &pb.StorageBackend{
+		Backend: &pb.StorageBackend_S3{
+			S3: &pb.S3{
+				Endpoint: "127.0.0.1",
+			},
+		},
+	}
+
+	p2 := ProtoV1Clone(p)
+	require.Equal(t, p2.Backend.(*pb.StorageBackend_S3).S3.Endpoint, "127.0.0.1")
+	p2.Backend.(*pb.StorageBackend_S3).S3.Endpoint = "127.0.0.2"
+	require.Equal(t, p.Backend.(*pb.StorageBackend_S3).S3.Endpoint, "127.0.0.1")
 }

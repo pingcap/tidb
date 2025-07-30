@@ -19,9 +19,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +42,7 @@ func TestTableSampleBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
 
 	tk.MustExec("insert into t values (0), (1000), (2000);")
@@ -55,7 +57,7 @@ func TestTableSampleBasic(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a BIGINT PRIMARY KEY AUTO_RANDOM(3), b int auto_increment, key(b)) pre_split_regions=8;")
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		tk.MustExec("insert into t values();")
 	}
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("8"))
@@ -71,7 +73,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
@@ -80,7 +82,7 @@ func TestTableSampleMultiRegions(t *testing.T) {
 	tk.MustQuery("select a from t tablesample regions() where a = 0;").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t2 (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t2 values (?);", i)
 	}
 	rows = tk.MustQuery("select * from t tablesample regions(), t2 tablesample regions();").Rows()
@@ -121,10 +123,39 @@ func TestMaxChunkSize(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	tk.Session().GetSessionVars().MaxChunkSize = 1
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
 	require.Len(t, rows, 4)
+}
+
+func TestKeyspaceSample(t *testing.T) {
+	// Build an exist keyspace.
+	keyspaceMeta := keyspacepb.KeyspaceMeta{}
+	keyspaceMeta.Id = 2
+	keyspaceMeta.Name = "test_ks_name2"
+
+	opts := mockstore.WithKeyspaceMeta(&keyspaceMeta)
+	store := testkit.CreateMockStore(t, opts)
+	tk := createSampleTestkit(t, store)
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1", "2"))
+
+	// Build another exist keyspace.
+	keyspaceMeta02 := keyspacepb.KeyspaceMeta{}
+	keyspaceMeta02.Id = 3
+	keyspaceMeta02.Name = "test_ks_name3"
+
+	opts02 := mockstore.WithKeyspaceMeta(&keyspaceMeta02)
+	store02 := testkit.CreateMockStore(t, opts02)
+
+	tk02 := createSampleTestkit(t, store02)
+	tk02.MustExec("create table t (a int);")
+
+	// Tables with the same name in different keyspaces have isolated data.
+	tk02.MustExec("insert into t values (3),(4);")
+	tk02.MustQuery("select a from t;").Check(testkit.Rows("3", "4"))
 }

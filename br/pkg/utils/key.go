@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -143,13 +146,6 @@ func clampInOneRange(rng kv.KeyRange, clampIn kv.KeyRange) (kv.KeyRange, failedT
 	return rng, successClamp
 }
 
-// CloneSlice sallowly clones a slice.
-func CloneSlice[T any](s []T) []T {
-	r := make([]T, len(s))
-	copy(r, s)
-	return r
-}
-
 // IntersectAll returns the intersect of two set of segments.
 // OWNERSHIP INFORMATION:
 // For running faster, this function would MUTATE the input slice. (i.e. takes its ownership.)
@@ -196,4 +192,28 @@ func IntersectAll(s1 []kv.KeyRange, s2 []kv.KeyRange) []kv.KeyRange {
 		}
 	}
 	return rs
+}
+
+const DateFormat = "2006-01-02 15:04:05.999999999 -0700"
+
+func FormatDate(ts time.Time) string {
+	return ts.Format(DateFormat)
+}
+
+func IsMetaDBKey(key []byte) bool {
+	return strings.HasPrefix(string(key), "mDB")
+}
+
+func IsMetaDDLJobHistoryKey(key []byte) bool {
+	return strings.HasPrefix(string(key), "mDDLJobH")
+}
+
+func IsDBOrDDLJobHistoryKey(key []byte) bool {
+	return strings.HasPrefix(string(key), "mD")
+}
+
+func EncodeTxnMetaKey(key []byte, field []byte, ts uint64) []byte {
+	k := tablecodec.EncodeMetaKey(key, field)
+	txnKey := codec.EncodeBytes(nil, k)
+	return codec.EncodeUintDesc(txnKey, ts)
 }

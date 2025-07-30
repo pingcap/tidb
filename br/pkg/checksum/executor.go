@@ -4,6 +4,7 @@ package checksum
 
 import (
 	"context"
+	"slices"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -14,7 +15,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -44,7 +45,7 @@ func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 		table: table,
 		ts:    ts,
 
-		concurrency: variable.DefDistSQLScanConcurrency,
+		concurrency: vardef.DefDistSQLScanConcurrency,
 	}
 }
 
@@ -133,10 +134,9 @@ func buildChecksumRequest(
 	for _, partDef := range partDefs {
 		var oldPartID int64
 		if oldTable != nil {
-			for _, oldPartDef := range oldTable.Info.Partition.Definitions {
-				if oldPartDef.Name == partDef.Name {
-					oldPartID = oldPartDef.ID
-				}
+			oldPartID, err = utils.GetPartitionByName(oldTable.Info, partDef.Name)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,
@@ -217,8 +217,8 @@ func buildTableRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldTable != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...), tablecodec.GenTableRecordPrefix(oldTableID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...), tablecodec.GenTableRecordPrefix(tableID)...),
+			OldPrefix: slices.Concat(oldKeyspace, tablecodec.GenTableRecordPrefix(oldTableID)),
+			NewPrefix: slices.Concat(newKeyspace, tablecodec.GenTableRecordPrefix(tableID)),
 		}
 	}
 
@@ -261,10 +261,8 @@ func buildIndexRequest(
 	var rule *tipb.ChecksumRewriteRule
 	if oldIndexInfo != nil {
 		rule = &tipb.ChecksumRewriteRule{
-			OldPrefix: append(append([]byte{}, oldKeyspace...),
-				tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)...),
-			NewPrefix: append(append([]byte{}, newKeyspace...),
-				tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)...),
+			OldPrefix: slices.Concat(oldKeyspace, tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexInfo.ID)),
+			NewPrefix: slices.Concat(newKeyspace, tablecodec.EncodeTableIndexPrefix(tableID, indexInfo.ID)),
 		}
 	}
 	checksum := &tipb.ChecksumRequest{
@@ -369,8 +367,6 @@ func (exec *Executor) Execute(
 	updateFn func(),
 ) (*tipb.ChecksumResponse, error) {
 	checksumResp := &tipb.ChecksumResponse{}
-	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime,
-		utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
 	for _, req := range exec.reqs {
 		// Pointer to SessionVars.Killed
 		// Killed is a flag to indicate that this query is killed.
@@ -397,7 +393,7 @@ func (exec *Executor) Execute(
 				return errors.Trace(err)
 			}
 			return nil
-		}, &checksumBackoffer)
+		}, utils.NewChecksumBackoffStrategy())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

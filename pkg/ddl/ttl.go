@@ -20,28 +20,23 @@ import (
 
 	"github.com/pingcap/errors"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-// DefaultTTLJobInterval is the default value for ttl job interval.
-const DefaultTTLJobInterval = "1h"
-
-func onTTLInfoRemove(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	tblInfo.TTLInfo = nil
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -49,7 +44,7 @@ func onTTLInfoRemove(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 	return ver, nil
 }
 
-func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// at least one for them is not nil
 	args, err := model.GetAlterTTLInfoArgs(job)
 	if err != nil {
@@ -58,7 +53,7 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 	}
 	ttlInfo, ttlInfoEnable, ttlInfoJobInterval := args.TTLInfo, args.TTLEnable, args.TTLCronJobSchedule
 
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -88,7 +83,7 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 		tblInfo.TTLInfo.JobInterval = *ttlInfoJobInterval
 	}
 
-	ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, true)
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -99,7 +94,7 @@ func onTTLInfoChange(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int6
 // checkTTLInfoValid checks the TTL settings for a table.
 // The argument `isForForeignKeyCheck` is used to check the table should not be referenced by foreign key.
 // If `isForForeignKeyCheck` is `nil`, it will skip the foreign key check.
-func checkTTLInfoValid(schema pmodel.CIStr, tblInfo *model.TableInfo, foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema) error {
+func checkTTLInfoValid(schema ast.CIStr, tblInfo *model.TableInfo, foreignKeyCheckIs infoschemactx.MetaOnlyInfoSchema) error {
 	if tblInfo.TempTableType != model.TempTableNone {
 		return dbterror.ErrTempTableNotAllowedWithTTL
 	}
@@ -196,7 +191,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      DefaultTTLJobInterval,
+				JobInterval:      model.DefaultTTLJobInterval,
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue

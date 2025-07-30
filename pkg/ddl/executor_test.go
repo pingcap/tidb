@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -49,8 +49,9 @@ func TestGetDDLJobs(t *testing.T) {
 
 	cnt := 10
 	jobs := make([]*model.Job, cnt)
+	ctx := context.Background()
 	var currJobs2 []*model.Job
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		jobs[i] = &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
@@ -59,7 +60,7 @@ func TestGetDDLJobs(t *testing.T) {
 		err := addDDLJobs(sess, txn, jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := ddl.GetAllDDLJobs(sess)
+		currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
@@ -77,7 +78,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := ddl.GetAllDDLJobs(sess)
+	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -93,6 +94,7 @@ func TestGetDDLJobs(t *testing.T) {
 
 func TestGetDDLJobsIsSort(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
 
 	sess := testkit.NewTestKit(t, store).Session()
 	_, err := sess.Execute(context.Background(), "begin")
@@ -110,7 +112,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	// insert add index jobs to AddIndexJobListKey queue
 	enQueueDDLJobs(t, sess, txn, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := ddl.GetAllDDLJobs(sess)
+	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
@@ -143,7 +145,7 @@ func TestIsJobRollbackable(t *testing.T) {
 	}
 }
 
-func enQueueDDLJobs(t *testing.T, sess sessiontypes.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
+func enQueueDDLJobs(t *testing.T, sess sessionapi.Session, txn kv.Transaction, jobType model.ActionType, start, end int) {
 	for i := start; i < end; i++ {
 		job := &model.Job{
 			ID:       int64(i),
@@ -173,13 +175,13 @@ func TestCreateViewConcurrently(t *testing.T) {
 			return
 		}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) {
 		if job.Type == model.ActionCreateView {
 			counter--
 		}
 	})
 	var eg errgroup.Group
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		eg.Go(func() error {
 			newTk := testkit.NewTestKit(t, store)
 			_, err := newTk.Exec("use test")
@@ -209,8 +211,8 @@ func TestCreateDropCreateTable(t *testing.T) {
 	var fpErr error
 	var createTable bool
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		if job.Type == model.ActionDropTable && job.SchemaState == model.StateWriteOnly && !createTable {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && job.SchemaState == model.StateNone && !createTable {
 			fpErr = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow", fmt.Sprintf("return(%d)", job.ID))
 			wg.Add(1)
 			go func() {
@@ -221,9 +223,10 @@ func TestCreateDropCreateTable(t *testing.T) {
 		}
 	})
 	tk.MustExec("drop table t;")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 
 	wg.Wait()
+	require.True(t, createTable)
 	require.NoError(t, createErr)
 	require.NoError(t, fpErr)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/mockOwnerCheckAllVersionSlow"))
@@ -260,7 +263,7 @@ func TestHandleLockTable(t *testing.T) {
 	se := tk.Session().(sessionctx.Context)
 	require.False(t, se.HasLockedTables())
 
-	checkTableLocked := func(tblID int64, tp pmodel.TableLockType) {
+	checkTableLocked := func(tblID int64, tp ast.TableLockType) {
 		locked, lockType := se.CheckTableLocked(tblID)
 		require.True(t, locked)
 		require.Equal(t, tp, lockType)
@@ -288,28 +291,28 @@ func TestHandleLockTable(t *testing.T) {
 	t.Run("ddl success", func(t *testing.T) {
 		se.ReleaseAllTableLocks()
 		require.False(t, se.HasLockedTables())
-		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: pmodel.TableLockRead}})
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: ast.TableLockRead}})
 		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
 		require.Len(t, se.GetAllTableLocks(), 2)
-		checkTableLocked(1, pmodel.TableLockRead)
-		checkTableLocked(2, pmodel.TableLockRead)
+		checkTableLocked(1, ast.TableLockRead)
+		checkTableLocked(2, ast.TableLockRead)
 
 		ddl.HandleLockTablesOnFinish(se, jobW, nil)
 		require.Len(t, se.GetAllTableLocks(), 1)
-		checkTableLocked(2, pmodel.TableLockRead)
+		checkTableLocked(2, ast.TableLockRead)
 	})
 
 	t.Run("ddl fail", func(t *testing.T) {
 		se.ReleaseAllTableLocks()
 		require.False(t, se.HasLockedTables())
-		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: pmodel.TableLockRead}})
+		se.AddTableLock([]model.TableLockTpInfo{{SchemaID: 1, TableID: 1, Tp: ast.TableLockRead}})
 		ddl.HandleLockTablesOnSuccessSubmit(tk.Session(), jobW)
 		require.Len(t, se.GetAllTableLocks(), 2)
-		checkTableLocked(1, pmodel.TableLockRead)
-		checkTableLocked(2, pmodel.TableLockRead)
+		checkTableLocked(1, ast.TableLockRead)
+		checkTableLocked(2, ast.TableLockRead)
 
 		ddl.HandleLockTablesOnFinish(se, jobW, errors.New("test error"))
 		require.Len(t, se.GetAllTableLocks(), 1)
-		checkTableLocked(1, pmodel.TableLockRead)
+		checkTableLocked(1, ast.TableLockRead)
 	})
 }

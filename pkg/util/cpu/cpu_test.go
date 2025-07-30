@@ -37,7 +37,7 @@ func TestCPUValue(t *testing.T) {
 	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -52,7 +52,7 @@ func TestCPUValue(t *testing.T) {
 		}()
 	}
 	observer.Start()
-	for n := 0; n < 10; n++ {
+	for range 10 {
 		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.False(t, unsupported)
@@ -72,7 +72,7 @@ func TestFailpointCPUValue(t *testing.T) {
 	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -87,7 +87,7 @@ func TestFailpointCPUValue(t *testing.T) {
 		}()
 	}
 	observer.Start()
-	for n := 0; n < 10; n++ {
+	for range 10 {
 		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.True(t, unsupported)

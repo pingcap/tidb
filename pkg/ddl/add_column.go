@@ -30,32 +30,31 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
-func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropColumn(jobCtx, t, job)
+		ver, err = onDropColumn(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -69,7 +68,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 		}
 	})
 
-	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(jobCtx.metaMut, job)
 	if err != nil {
 		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
 			job.Warning = toTError(err)
@@ -92,7 +91,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 	case model.StateNone:
 		// none -> delete only
 		columnInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -100,7 +99,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		columnInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -109,7 +108,7 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		columnInfo.State = model.StateWriteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -126,15 +125,19 @@ func onAddColumn(jobCtx *jobContext, t *meta.Meta, job *model.Job) (ver int64, e
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, t, job, tblInfo, originalState != columnInfo.State)
+		// Use updateVersionAndTableInfoWithCheck to validate the table before making it public
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
+		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
+		err = asyncNotifyEvent(jobCtx, addColumnEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		addColumnEvent := notifier.NewAddColumnEvent(tblInfo, []*model.ColumnInfo{columnInfo})
-		asyncNotifyEvent(jobCtx, addColumnEvent, job)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
@@ -206,6 +209,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			//nolint:forbidigo
 			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
 				if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 					return nil, errors.Trace(err)
@@ -540,7 +544,7 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, dependColNames, err := findDependedColumnNames(pmodel.NewCIStr(""), pmodel.NewCIStr(""), colDef)
+				_, dependColNames, err := findDependedColumnNames(ast.NewCIStr(""), ast.NewCIStr(""), colDef)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -552,7 +556,7 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionCheck:
-				if !variable.EnableCheckConstraint.Load() {
+				if !vardef.EnableCheckConstraint.Load() {
 					ctx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
@@ -602,7 +606,9 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
-
+	if _, ok := option.Expr.(*ast.ColumnNameExpr); ok {
+		return hasDefaultValue, errors.New("column name is not yet supported as a default value")
+	}
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
 		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
@@ -1221,6 +1227,21 @@ func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value 
 			if timeValue.GetMysqlTime().CoreTime() == types.ZeroCoreTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
+		}
+	}
+	if value != nil && col.GetType() == mysql.TypeBit {
+		v, ok := value.(string)
+		if !ok {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+
+		uintVal, err := types.BinaryLiteral(v).ToInt(ctx.GetEvalCtx().TypeCtx())
+		if err != nil {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+		intest.Assert(col.GetFlen() > 0 && col.GetFlen() <= 64)
+		if col.GetFlen() < 64 && uintVal >= 1<<(uint64(col.GetFlen())) {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 		}
 	}
 	return hasDefaultValue, value, nil

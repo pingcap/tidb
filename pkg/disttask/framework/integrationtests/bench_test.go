@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -90,16 +92,16 @@ func BenchmarkSchedulerOverhead(b *testing.B) {
 		// in this test, we will start 4*proto.MaxConcurrentTask tasks, but only
 		// proto.MaxConcurrentTask will be scheduled at the same time, for other
 		// tasks will be in queue only to check the performance of querying them.
-		for i := 0; i < 4*proto.MaxConcurrentTask; i++ {
+		for i := range 4 * proto.MaxConcurrentTask {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			taskMeta := make([]byte, *taskMetaSize)
-			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, "", taskMeta)
+			_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, 1, "", 0, taskMeta)
 			require.NoError(c.T, err)
 		}
 		// task has 2 steps, each step has 1 subtask，wait in serial to reduce WaitTask check overhead.
 		// only wait first proto.MaxConcurrentTask and exit
 		time.Sleep(2 * *waitDuration)
-		for i := 0; i < proto.MaxConcurrentTask; i++ {
+		for i := range proto.MaxConcurrentTask {
 			taskKey := fmt.Sprintf("task-%03d", i)
 			testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)
 		}
@@ -113,11 +115,13 @@ func prepareForBenchTest(b *testing.B) {
 	var err error
 	store, err := d.Open("tikv://" + *testkit.WithTiKV)
 	require.NoError(b, err)
-
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	require.NoError(b, ddl.StartOwnerManager(context.Background(), store))
 	var dom *domain.Domain
 	dom, err = session.BootstrapSession(store)
 	defer func() {
 		dom.Close()
+		ddl.CloseOwnerManager()
 		err := store.Close()
 		require.NoError(b, err)
 		view.Stop()
@@ -150,7 +154,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) (metas [][]byte, err error) {
 			cnt := 1
 			res := make([][]byte, cnt)
-			for i := 0; i < cnt; i++ {
+			for i := range cnt {
 				res[i] = []byte(task.Key)
 			}
 			return res, nil
@@ -158,7 +162,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	).AnyTimes()
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	testutil.RegisterTaskMetaWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
+	registerExampleTaskWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
 		select {
 		case <-ctx.Done():
 			taskManager, err := storage.GetTaskManager()

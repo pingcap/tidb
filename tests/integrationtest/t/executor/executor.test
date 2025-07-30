@@ -1408,6 +1408,10 @@ select a from (select 1 a) `x`, (select 2 a) `x`;
 select x.a from (select 1 a) `x`, (select 2 a) `x`;
 -- error 1248
 select a from (select 1 a), (select 2 a);
+-- error 1248
+select * from (select 1 union select 1);
+-- error 1248
+select * from (select 1 INTERSECT select 1);
 set sql_mode = 'oracle';
 select a, b from (select 1 a) ``, (select 2 b) ``;
 select a, b from (select 1 a) `x`, (select 2 b) `x`;
@@ -1420,6 +1424,8 @@ select a from (select 1 a) `x`, (select 2 a) `x`;
 select x.a from (select 1 a) `x`, (select 2 a) `x`;
 -- error 1052
 select a from (select 1 a), (select 2 a);
+select * from (select 1 union select 1);
+select * from (select 1 INTERSECT select 1);
 set sql_mode = default;
 
 # TestSelectHashPartitionTable
@@ -2104,8 +2110,8 @@ insert tdouble values (10.23);
 set sql_mode = '';
 insert t values ();
 show warnings;
+-- error 1048
 insert t values (null);
-show warnings;
 insert ignore t values (null);
 show warnings;
 insert t select null;
@@ -2557,6 +2563,8 @@ disconnect conn1;
 disconnect conn2;
 set global tidb_txn_mode=pessimistic;
 
+select 1 for update;
+
 # TestSelectForUpdateOf
 drop table if exists t, t1;
 create table t (i int);
@@ -2623,12 +2631,12 @@ create table t (id bigint key,b int);
 split table t by (10),(20),(30);
 insert into t values (0,0),(10,10),(20,20),(30,30);
 alter table t add index idx1(b);
---replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time> 13 <comments>
 admin show ddl jobs 1;
 
 insert into t values (1,0),(2,10),(3,20),(4,30);
 alter table t add index idx2(b);
---replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time> 13 <comments>
 admin show ddl jobs 1;
 
 # TestSummaryFailedUpdate

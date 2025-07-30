@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -80,7 +80,7 @@ type IndexLookUpJoin struct {
 	innerPtrBytes [][]byte
 
 	// LastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
-	LastColHelper *plannercore.ColWithCmpFuncManager
+	LastColHelper *physicalop.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage.
 
@@ -102,7 +102,7 @@ type OuterCtx struct {
 // is added to avoid cycle import
 type IndexJoinExecutorBuilder interface {
 	BuildExecutorForIndexJoin(ctx context.Context, lookUpContents []*IndexJoinLookUpContent,
-		indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error)
+		indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error)
 }
 
 // InnerCtx is the inner side ctx used in index lookup join
@@ -163,7 +163,7 @@ type innerWorker struct {
 	lookup      *IndexLookUpJoin
 
 	indexRanges           []*ranger.Range
-	nextColCompareFilters *plannercore.ColWithCmpFuncManager
+	nextColCompareFilters *physicalop.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
 	stats                 *innerWorkerRuntimeStats
 	memTracker            *memory.Tracker
@@ -198,7 +198,7 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.WorkerWg.Add(1)
 	go e.newOuterWorker(resultCh, innerCh, initBatchSize).run(workerCtx, e.WorkerWg)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		innerWorker := e.newInnerWorker(innerCh)
 		e.WorkerWg.Add(1)
 		go innerWorker.run(workerCtx, e.WorkerWg)
@@ -238,7 +238,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.OuterCtx,
 		taskCh:        taskCh,
 		ctx:           e.Ctx(),
-		executorChk:   e.AllocPool.Alloc(e.InnerCtx.RowTypes, e.MaxChunkSize(), e.MaxChunkSize()),
+		executorChk:   e.AllocPool.Alloc(e.InnerCtx.RowTypes, e.InitCap(), e.MaxChunkSize()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.KeyOff2IdxOff,
 		stats:         innerStats,
@@ -453,7 +453,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
-		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, maxChunkSize, maxChunkSize)
+		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, requiredRows, maxChunkSize)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
@@ -473,7 +473,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		task.outerMatch = make([][]bool, task.outerResult.NumChunks())
 		var err error
 		exprCtx := ow.ctx.GetExprCtx()
-		for i := 0; i < numChks; i++ {
+		for i := range numChks {
 			chk := task.outerResult.GetChunk(i)
 			outerMatch := make([]bool, 0, chk.NumRows())
 			task.memTracker.Consume(int64(cap(outerMatch)))
@@ -575,10 +575,10 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 	}
 	lookUpContents := make([]*IndexJoinLookUpContent, 0, task.outerResult.Len())
 	keyBuf := make([]byte, 0, 64)
-	for chkIdx := 0; chkIdx < task.outerResult.NumChunks(); chkIdx++ {
+	for chkIdx := range task.outerResult.NumChunks() {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
@@ -632,15 +632,15 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) (dLookupKey, dHashKey []types.Datum, err error) {
 	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
 		return nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.KeyCols)
-	dLookupKey := make([]types.Datum, 0, keyLen)
-	dHashKey := make([]types.Datum, 0, len(iw.HashCols))
+	dLookupKey = make([]types.Datum, 0, keyLen)
+	dHashKey = make([]types.Datum, 0, len(iw.HashCols))
 	for i, hashCol := range iw.outerCtx.HashCols {
 		outerValue := outerRow.GetDatum(hashCol, iw.outerCtx.RowTypes[hashCol])
 		// Join-on-condition can be promised to be equal-condition in
@@ -697,7 +697,7 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*IndexJoinLoo
 }
 
 func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum, ctors []collate.Collator) int {
-	for idx := 0; idx < len(left); idx++ {
+	for idx := range left {
 		cmp, err := left[idx].Compare(sc.TypeCtx(), &right[idx], ctors[idx])
 		// We only compare rows with the same type, no error to return.
 		terror.Log(err)
@@ -758,9 +758,9 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 	}
 	keyBuf := make([]byte, 0, 64)
 	valBuf := make([]byte, 8)
-	for i := 0; i < task.innerResult.NumChunks(); i++ {
+	for i := range task.innerResult.NumChunks() {
 		chk := task.innerResult.GetChunk(i)
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			innerRow := chk.GetRow(j)
 			if iw.hasNullInJoinKey(innerRow) {
 				continue
@@ -785,12 +785,7 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 }
 
 func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
-	for _, ordinal := range iw.HashCols {
-		if row.IsNull(ordinal) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(iw.HashCols, row.IsNull)
 }
 
 // Close implements the Executor interface.

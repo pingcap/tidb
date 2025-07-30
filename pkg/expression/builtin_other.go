@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -171,7 +171,7 @@ func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Exp
 			switch {
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
-					if MaybeOverOptimized4PlanCache(ctx, args) {
+					if MaybeOverOptimized4PlanCache(ctx, args...) {
 						ctx.SetSkipPlanCache(fmt.Sprintf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
@@ -191,6 +191,10 @@ type baseInSig struct {
 	// It works with builtinInXXXSig.hashset to accelerate 'eval'.
 	nonConstArgsIdx []int
 	hasNull         bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
@@ -198,26 +202,62 @@ type builtinInIntSig struct {
 	baseInSig
 	// the bool value in the map is used to identify whether the constant stored in key is signed or unsigned
 	hashSet map[int64]bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
+
+	// Keep track of unique args count for in-place modification
+	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
+
+	// TODO: ConstOnlyInContext and default branch should also prune duplicate ones after expression are managed by memo.
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
+
 			if isNull {
-				b.hasNull = true
+				// Only keep one NULL value
+				if !b.hasNull {
+					b.hasNull = true
+					b.args[uniqueArgCount] = b.args[i]
+					uniqueArgCount++
+				}
 				continue
 			}
-			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+
+			// Only keep this arg if value wasn't seen before
+			if _, exists := b.hashSet[val]; !exists {
+				b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
+				b.args[uniqueArgCount] = b.args[i]
+				uniqueArgCount++
+			}
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
+		default:
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
 		}
 	}
+
+	// Truncate args to only include unique values
+	b.args = b.args[:uniqueArgCount]
+
 	return nil
 }
 
@@ -290,27 +330,63 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 type builtinInStringSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
+
+	// Keep track of unique args count for in-place modification
+	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
+
+	// TODO: ConstOnlyInContext and default branch should also prune duplicate ones after expression are managed by memo.
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
+
 			if isNull {
-				b.hasNull = true
+				// Only keep one NULL value
+				if !b.hasNull {
+					b.hasNull = true
+					b.args[uniqueArgCount] = b.args[i]
+					uniqueArgCount++
+				}
 				continue
 			}
-			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+
+			key := string(collator.Key(val)) // should do memory copy here
+			// Only keep this arg if value wasn't seen before
+			if !b.hashSet.Exist(key) {
+				b.hashSet.Insert(key)
+				b.args[uniqueArgCount] = b.args[i]
+				uniqueArgCount++
+			}
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
+		default:
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
 		}
 	}
+
+	// Truncate args to only include unique values
+	b.args = b.args[:uniqueArgCount]
 
 	return nil
 }
@@ -364,26 +440,61 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 type builtinInRealSig struct {
 	baseInSig
 	hashSet set.Float64Set
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
+
+	// Keep track of unique args count for in-place modification
+	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
+
+	// TODO: ConstOnlyInContext and default branch should also prune duplicate ones after expression are managed by memo.
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
+
 			if isNull {
-				b.hasNull = true
+				// Only keep one NULL value
+				if !b.hasNull {
+					b.hasNull = true
+					b.args[uniqueArgCount] = b.args[i]
+					uniqueArgCount++
+				}
 				continue
 			}
-			b.hashSet.Insert(val)
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+
+			// Only keep this arg if value wasn't seen before
+			if !b.hashSet.Exist(val) {
+				b.hashSet.Insert(val)
+				b.args[uniqueArgCount] = b.args[i]
+				uniqueArgCount++
+			}
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
+		default:
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
 		}
 	}
+
+	// Truncate args to only include unique values
+	b.args = b.args[:uniqueArgCount]
 
 	return nil
 }
@@ -435,30 +546,67 @@ func (b *builtinInRealSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDecimalSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
+
+	// Keep track of unique args count for in-place modification
+	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
+
+	// TODO: ConstOnlyInContext and default branch should also prune duplicate ones after expression are managed by memo.
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
+
 			if isNull {
-				b.hasNull = true
+				// Only keep one NULL value
+				if !b.hasNull {
+					b.hasNull = true
+					b.args[uniqueArgCount] = b.args[i]
+					uniqueArgCount++
+				}
 				continue
 			}
+
 			key, err := val.ToHashKey()
 			if err != nil {
 				return err
 			}
-			b.hashSet.Insert(string(key))
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+
+			hashKey := string(key)
+			// Only keep this arg if value wasn't seen before
+			if !b.hashSet.Exist(hashKey) {
+				b.hashSet.Insert(hashKey)
+				b.args[uniqueArgCount] = b.args[i]
+				uniqueArgCount++
+			}
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
+		default:
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
 		}
 	}
+
+	// Truncate args to only include unique values
+	b.args = b.args[:uniqueArgCount]
 
 	return nil
 }
@@ -515,26 +663,62 @@ func (b *builtinInDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 type builtinInTimeSig struct {
 	baseInSig
 	hashSet map[types.CoreTime]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
+
+	// Keep track of unique args count for in-place modification
+	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
+
+	// TODO: ConstOnlyInContext and default branch should also prune duplicate ones after expression are managed by memo.
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
+
 			if isNull {
-				b.hasNull = true
+				// Only keep one NULL value
+				if !b.hasNull {
+					b.hasNull = true
+					b.args[uniqueArgCount] = b.args[i]
+					uniqueArgCount++
+				}
 				continue
 			}
-			b.hashSet[val.CoreTime()] = struct{}{}
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+
+			coreTime := val.CoreTime()
+			// Only keep this arg if value wasn't seen before
+			if _, exists := b.hashSet[coreTime]; !exists {
+				b.hashSet[coreTime] = struct{}{}
+				b.args[uniqueArgCount] = b.args[i]
+				uniqueArgCount++
+			}
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
+		default:
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
 		}
 	}
+
+	// Truncate args to only include unique values
+	b.args = b.args[:uniqueArgCount]
 
 	return nil
 }
@@ -586,26 +770,61 @@ func (b *builtinInTimeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDurationSig struct {
 	baseInSig
 	hashSet map[time.Duration]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
+
+	// Keep track of unique args count for in-place modification
+	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
+
+	// TODO: ConstOnlyInContext and default branch should also prune duplicate ones after expression are managed by memo.
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
+
 			if isNull {
-				b.hasNull = true
+				// Only keep one NULL value
+				if !b.hasNull {
+					b.hasNull = true
+					b.args[uniqueArgCount] = b.args[i]
+					uniqueArgCount++
+				}
 				continue
 			}
-			b.hashSet[val.Duration] = struct{}{}
-		} else {
-			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+
+			// Only keep this arg if value wasn't seen before
+			if _, exists := b.hashSet[val.Duration]; !exists {
+				b.hashSet[val.Duration] = struct{}{}
+				b.args[uniqueArgCount] = b.args[i]
+				uniqueArgCount++
+			}
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
+		default:
+			b.args[uniqueArgCount] = b.args[i]
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, uniqueArgCount)
+			uniqueArgCount++
 		}
 	}
+
+	// Truncate args to only include unique values
+	b.args = b.args[:uniqueArgCount]
 
 	return nil
 }
@@ -656,6 +875,9 @@ func (b *builtinInDurationSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 // builtinInJSONSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInJSONSig) Clone() builtinFunc {
@@ -689,6 +911,9 @@ func (b *builtinInJSONSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 
 type builtinInVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInVectorFloat32Sig) Clone() builtinFunc {
@@ -742,6 +967,9 @@ func (c *rowFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 
 type builtinRowSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRowSig) Clone() builtinFunc {
@@ -989,11 +1217,39 @@ func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.Field
 	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(ast.GetVar),
+	sf := &ScalarFunction{
+		FuncName: ast.NewCIStr(ast.GetVar),
 		RetType:  retType,
 		Function: f,
-	}, nil
+	}
+	return convertReadonlyVarToConst(ctx, sf), nil
+}
+
+// convertReadonlyVarToConst tries to convert the readonly user variables to constants.
+func convertReadonlyVarToConst(ctx BuildContext, getVar *ScalarFunction) Expression {
+	arg0, isConst := getVar.GetArgs()[0].(*Constant)
+	if !isConst || arg0.DeferredExpr != nil {
+		return getVar
+	}
+	varName := arg0.Value.GetString()
+	isReadonly := ctx.IsReadonlyUserVar(varName)
+	if !isReadonly {
+		return getVar
+	}
+	v, err := getVar.Eval(ctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		intest.Assert(false, "readonly user variable should not meet error when executing.")
+		return getVar
+	}
+	d, ok := ctx.GetEvalCtx().GetUserVarsReader().GetUserVarVal(varName)
+	if ok && d.Kind() == types.KindBinaryLiteral {
+		v.SetBinaryLiteral(v.GetBytes())
+	}
+	return &Constant{
+		Value:        v,
+		RetType:      getVar.RetType,
+		DeferredExpr: nil,
+	}
 }
 
 type getVarFunctionClass struct {
@@ -1025,6 +1281,9 @@ func (c *getStringVarFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinGetStringVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetStringVarSig) Clone() builtinFunc {
@@ -1076,6 +1335,9 @@ func (c *getIntVarFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinGetIntVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetIntVarSig) Clone() builtinFunc {
@@ -1115,6 +1377,9 @@ func (c *getRealVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetRealVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetRealVarSig) Clone() builtinFunc {
@@ -1158,6 +1423,9 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinGetDecimalVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
@@ -1209,6 +1477,9 @@ func (c *getTimeVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetTimeVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetTimeVarSig) Clone() builtinFunc {
@@ -1608,6 +1879,9 @@ func (c *bitCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinBitCountSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinBitCountSig) Clone() builtinFunc {
@@ -1651,6 +1925,9 @@ func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetParamStringSig) Clone() builtinFunc {

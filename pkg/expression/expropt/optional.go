@@ -78,6 +78,9 @@ func (o *OptionalEvalPropProviders) Add(val exprctx.OptionalEvalPropProvider) {
 		case exprctx.OptPropSequenceOperator:
 			_, ok := val.(SequenceOperatorProvider)
 			intest.Assert(ok)
+		case exprctx.OptPropPrivilegeChecker:
+			_, ok := val.(PrivilegeCheckerProvider)
+			intest.Assert(ok)
 		default:
 			intest.Assert(false)
 		}

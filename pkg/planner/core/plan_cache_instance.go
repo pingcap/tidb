@@ -88,7 +88,7 @@ func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool
 
 func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
-		if checkTypesCompatibility4PC(node.value.paramTypes, paramTypes) { // v.Plan is read-only, no need to lock
+		if checkTypesCompatibility4PC(node.value.ParamTypes, paramTypes) { // v.Plan is read-only, no need to lock
 			if !pc.inEvict.Load() {
 				node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
 			}
@@ -130,17 +130,28 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 	return
 }
 
+// All returns all cached values.
+// All returned values are read-only, don't modify them.
+func (pc *instancePlanCache) All() (values []any) {
+	values = make([]any, 0, pc.Size())
+	pc.foreach(func(_, this *instancePCNode) bool {
+		values = append(values, this.value)
+		return false
+	})
+	return
+}
+
 // Evict evicts some values. There should be a background thread to perform the eviction.
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
-func (pc *instancePlanCache) Evict() (detailInfo string, numEvicted int) {
+func (pc *instancePlanCache) Evict(evictAll bool) (detailInfo string, numEvicted int) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
 	pc.inEvict.Store(true)
 	defer pc.inEvict.Store(false)
 	currentTot, softLimit := pc.totCost.Load(), pc.softMemLimit.Load()
-	if currentTot < softLimit {
+	if !evictAll && currentTot < softLimit {
 		detailInfo = fmt.Sprintf("memory usage is below the soft limit, currentTot: %v, softLimit: %v", currentTot, softLimit)
 		return
 	}
@@ -149,7 +160,12 @@ func (pc *instancePlanCache) Evict() (detailInfo string, numEvicted int) {
 		lastUsedTimes = append(lastUsedTimes, this.lastUsed.Load())
 		return false
 	})
-	threshold := pc.calcEvictionThreshold(lastUsedTimes) // step 2
+	var threshold time.Time
+	if evictAll {
+		threshold = time.Now().Add(time.Hour * 24) // a future time
+	} else {
+		threshold = pc.calcEvictionThreshold(lastUsedTimes) // step 2
+	}
 	detailInfo = fmt.Sprintf("evict threshold: %v", threshold)
 	pc.foreach(func(prev, this *instancePCNode) bool { // step 3
 		if !this.lastUsed.Load().After(threshold) { // if lastUsed<=threshold, evict this value

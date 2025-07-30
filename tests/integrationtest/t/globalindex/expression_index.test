@@ -23,3 +23,15 @@ select * from t use index(idx) where lower(b) > 'c' order by lower(b);
 explain format='brief' select * from t partition(p0) use index(idx) where lower(b) > 'c';
 select * from t partition(p0) use index(idx) where lower(b) > 'c';
 
+
+# For global index + non-unique index
+drop table if exists t;
+CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` char DEFAULT NULL,
+  KEY `idx` ((lower(`b`))) global
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+
+show warnings;
+

@@ -15,18 +15,23 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -45,10 +50,7 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 		return nil
 	}
 	for i := 0; i < len(topN.TopN); {
-		end := i + batchInsertSize
-		if end > len(topN.TopN) {
-			end = len(topN.TopN)
-		}
+		end := min(i+batchInsertSize, len(topN.TopN))
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
 		for j := i; j < end; j++ {
@@ -71,16 +73,13 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 	return nil
 }
 
-func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (lastAnalyzePos []byte, err error) {
+func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (err error) {
 	if hg == nil {
 		return
 	}
 	sc := sctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(hg.Buckets); {
-		end := i + batchInsertSize
-		if end > len(hg.Buckets) {
-			end = len(hg.Buckets)
-		}
+		end := min(i+batchInsertSize, len(hg.Buckets))
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
 		for j := i; j < end; j++ {
@@ -90,15 +89,12 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
 			if err != nil {
 				return
 			}
-			if j == len(hg.Buckets)-1 {
-				lastAnalyzePos = upperBound.GetBytes()
-			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
 			if err != nil {
 				return
 			}
@@ -120,8 +116,8 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	return
 }
 
-// SaveTableStatsToStorage saves the stats of a table to storage.
-func SaveTableStatsToStorage(sctx sessionctx.Context,
+// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
@@ -134,7 +130,28 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
-	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id = %? for update", tableID)
+	// Add a fake table ID to prevent the deadlock between the batch get and the point get.
+	//
+	// Deadlock Issue Explanation:
+	// We encountered a stable deadlock issue during the analyze process where the transaction
+	// ultimately failed and the error was propagated to the top layer. From the deadlock records
+	// in information_schema.deadlocks, it's confirmed that this is a non-retryable deadlock.
+	//
+	// Root Cause:
+	// The point get operation acquires locks in two separate phases: first the index lock, then the row lock.
+	// Meanwhile, another transaction doing a batch point get (e.g. during stats delta dump) acquires both locks
+	// together but in the opposite order (row then index). This creates a circular wait condition where:
+	// 1. Transaction 1 holds index lock and waits for row lock
+	// 2. Transaction 2 holds row lock and waits for index lock
+	// Since the locks are acquired in separate lockKeys calls, TiDB cannot detect and retry this deadlock.
+	//
+	// Deadlock Sequence:
+	// txn1: lockKeys on point get (index lock)
+	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
+	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
+	fakeID := int64(-1988)
+	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(tableID, 10)}
+	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
 		return 0, err
 	}
@@ -172,11 +189,12 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			count = 0
 		}
 		if _, err = util.Exec(sctx,
-			"replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)",
+			"replace into mysql.stats_meta (version, table_id, count, snapshot, last_stats_histograms_version) values (%?, %?, %?, %?, %?)",
 			version,
 			tableID,
 			count,
 			snapShot,
+			version,
 		); err != nil {
 			return 0, err
 		}
@@ -185,7 +203,8 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
 		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%? where table_id=%?",
+			"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id=%?",
+			version,
 			version,
 			tableID,
 		); err != nil {
@@ -193,10 +212,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		}
 	} else {
 		// 1-3. There's already an existing records for this table, and we are handling a normal v2 analyze.
-		modifyCnt := curModifyCnt - results.BaseModifyCnt
-		if modifyCnt < 0 {
-			modifyCnt = 0
-		}
+		modifyCnt := max(curModifyCnt-results.BaseModifyCnt, 0)
 		statslogutil.StatsLogger().Info("incrementally update modifyCount",
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
@@ -204,10 +220,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			zap.Int64("modifyCount", modifyCnt))
 		var cnt int64
 		if analyzeSnapshot {
-			cnt = curCnt + results.Count - results.BaseCount
-			if cnt < 0 {
-				cnt = 0
-			}
+			cnt = max(curCnt+results.Count-results.BaseCount, 0)
 			statslogutil.StatsLogger().Info("incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
@@ -215,28 +228,25 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 				zap.Int64("results.BaseCount", results.BaseCount),
 				zap.Int64("count", cnt))
 		} else {
-			cnt = results.Count
-			if cnt < 0 {
-				cnt = 0
-			}
+			cnt = max(results.Count, 0)
 			statslogutil.StatsLogger().Info("directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
 		}
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?",
+			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%?, last_stats_histograms_version=%? where table_id=%?",
 			version,
 			modifyCnt,
 			cnt,
 			results.Snapshot,
+			version,
 			tableID,
 		); err != nil {
 			return 0, err
 		}
 		statsVer = version
 	}
-	cache.TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -271,22 +281,16 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 					return 0, err
 				}
 			}
-			if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?, %?)",
-				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, statistics.AnalyzeFlag, hg.Correlation); err != nil {
+			if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?)",
+				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, hg.Correlation); err != nil {
 				return 0, err
 			}
 			if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return 0, err
 			}
-			var lastAnalyzePos []byte
-			lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
+			err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
 			if err != nil {
 				return 0, err
-			}
-			if len(lastAnalyzePos) > 0 {
-				if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
-					return 0, err
-				}
 			}
 			if result.IsIndex == 0 {
 				if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
@@ -321,11 +325,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	return
 }
 
-// SaveStatsToStorage saves the stats to storage.
+// SaveColOrIdxStatsToStorage saves the column or index statistics to the storage.
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func SaveStatsToStorage(
+func SaveColOrIdxStatsToStorage(
 	sctx sessionctx.Context,
 	tableID int64,
 	count, modifyCount int64,
@@ -334,7 +338,6 @@ func SaveStatsToStorage(
 	cms *statistics.CMSketch,
 	topN *statistics.TopN,
 	statsVersion int,
-	isAnalyzed int64,
 	updateAnalyzeTime bool,
 ) (statsVer uint64, err error) {
 	version, err := util.GetStartTS(sctx)
@@ -344,10 +347,9 @@ func SaveStatsToStorage(
 
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
-		cache.TableRowStatsCache.Invalidate(tableID)
+		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
 	} else {
-		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
+		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?", version, version, tableID)
 	}
 	if err != nil {
 		return 0, err
@@ -367,26 +369,16 @@ func SaveStatsToStorage(
 	if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
 	}
-	flag := 0
-	if isAnalyzed == 1 {
-		flag = statistics.AnalyzeFlag
-	}
-	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?, %?)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
+	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, hg.Correlation); err != nil {
 		return 0, err
 	}
 	if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
 	}
-	var lastAnalyzePos []byte
-	lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
+	err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
 	if err != nil {
 		return 0, err
-	}
-	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
-		if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
-			return 0, err
-		}
 	}
 	if updateAnalyzeTime && isIndex == 0 {
 		if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
@@ -396,16 +388,175 @@ func SaveStatsToStorage(
 	return
 }
 
-// SaveMetaToStorage will save stats_meta to storage.
+// SaveMetaToStorage will batch save stats_meta to storage.
 func SaveMetaToStorage(
 	sctx sessionctx.Context,
-	tableID, count, modifyCount int64) (statsVer uint64, err error) {
+	refreshLastHistVer bool,
+	metaUpdates []statstypes.MetaUpdate,
+) (uint64, error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
-	statsVer = version
-	cache.TableRowStatsCache.Invalidate(tableID)
-	return
+	var sql string
+	values := make([]string, 0, len(metaUpdates))
+	if refreshLastHistVer {
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount, version))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count), last_stats_histograms_version = values(last_stats_histograms_version)", strings.Join(values, ","))
+	} else {
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)", strings.Join(values, ","))
+	}
+	_, err = util.Exec(sctx, sql)
+	return version, errors.Trace(err)
+}
+
+// InsertColStats2KV insert a record to stats_histograms with distinct_count 1
+// and insert a bucket to stats_buckets with default value. This operation also
+// updates version.
+func InsertColStats2KV(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalID int64,
+	colInfos []*model.ColumnInfo,
+) (uint64, error) {
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	// First of all, we update the version.
+	_, err = util.ExecWithCtx(
+		ctx, sctx,
+		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
+		startTS, startTS, physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
+	if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+		return startTS, nil
+	}
+
+	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
+	var rs sqlexec.RecordSet
+	rs, err = util.ExecWithCtx(
+		ctx, sctx,
+		"select count from mysql.stats_meta where table_id = %?",
+		physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	count := req.GetRow(0).GetInt64(0)
+	for _, colInfo := range colInfos {
+		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if value.IsNull() {
+			// If the adding column has default value null, all the existing rows have null value on the newly added column.
+			if _, err = util.ExecWithCtx(
+				ctx, sctx,
+				`insert into mysql.stats_histograms
+					(version, table_id, is_index, hist_id, distinct_count, null_count)
+				values (%?, %?, 0, %?, 0, %?)`,
+				startTS, physicalID, colInfo.ID, count,
+			); err != nil {
+				return 0, errors.Trace(err)
+			}
+			continue
+		}
+
+		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_histograms
+				(version, table_id, is_index, hist_id, distinct_count, tot_col_size)
+			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
+			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		// There must be only one bucket for this new column and the value is the default value.
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert into mysql.stats_buckets
+				(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)
+			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
+			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return startTS, nil
+}
+
+// InsertTableStats2KV inserts a record standing for a new table to stats_meta
+// and inserts some records standing for the new columns and indices which belong
+// to this table.
+func InsertTableStats2KV(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	info *model.TableInfo,
+	physicalID int64,
+) (uint64, error) {
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = util.ExecWithCtx(
+		ctx, sctx,
+		"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
+		startTS, physicalID, startTS,
+	); err != nil {
+		return 0, errors.Trace(err)
+	}
+	for _, col := range info.Columns {
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert ignore into mysql.stats_histograms
+				(table_id, is_index, hist_id, distinct_count, version)
+			values (%?, 0, %?, 0, %?)`,
+			physicalID, col.ID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	for _, idx := range info.Indices {
+		if _, err = util.ExecWithCtx(
+			ctx, sctx,
+			`insert ignore into mysql.stats_histograms
+				(table_id, is_index, hist_id, distinct_count, version)
+			values(%?, 1, %?, 0, %?)`,
+			physicalID, idx.ID, startTS,
+		); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return startTS, nil
+}
+
+// convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundToBlob(ctx types.Context, d types.Datum) (types.Datum, error) {
+	return d.ConvertTo(ctx, types.NewFieldType(mysql.TypeBlob))
 }

@@ -55,7 +55,10 @@ func Round(f float64, dec int) float64 {
 func Truncate(f float64, dec int) float64 {
 	shift := math.Pow10(dec)
 	tmp := f * shift
-	if math.IsInf(tmp, 0) {
+
+	// When dec is larger than 308, the shift will be inf.
+	// At the same time, if f is 0, tmp will be NaN.
+	if math.IsInf(tmp, 0) || math.IsNaN(tmp) {
 		return f
 	}
 	if shift == 0.0 {

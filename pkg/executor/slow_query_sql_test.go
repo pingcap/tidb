@@ -25,9 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -304,6 +306,13 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < now();").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2022-04-29 17:50:00'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time < '2010-01-02 15:04:05'").Check(testkit.Rows("0"))
+
+	// test the time zone change cases, see issue: https://github.com/pingcap/tidb/issues/58452
+	tk.MustExec("set @@time_zone='UTC'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustExec("set @@time_zone='+10:00'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
 }
 
 func TestIssue37066(t *testing.T) {
@@ -406,7 +415,7 @@ func TestWarningsInSlowQuery(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, f int, g int, h set('11', '22', '33')," +
 		"primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t", L: "t"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t", L: "t"})
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
@@ -436,4 +445,98 @@ func TestWarningsInSlowQuery(t *testing.T) {
 		})
 		require.Equal(t, output[i].Result, res[0])
 	}
+}
+
+func TestStorageEnginesInSlowQuery(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+	}()
+	tk.MustExec("use test")
+
+	// Query that doesn't read from any storage engines
+	tk.MustExec("select 1")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query = 'select 1;'").
+		Check(testkit.Rows("0 0"))
+
+	// Query that only reads from TiKV
+	tk.MustExec("create table t_tikv (a int)")
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_tikv;'").
+		Check(testkit.Rows("1 0"))
+
+	// Query that only reads from TiFlash
+	tk.MustExec("create table t_tiflash (a int)")
+	tk.MustExec("alter table t_tiflash set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
+	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	tk.MustExec("select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash;")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_tiflash;'").
+		Check(testkit.Rows("0 1"))
+
+	// Query that reads from both TiKV and TiFlash
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_tikv, t_tiflash;'").
+		Check(testkit.Rows("1 1"))
+
+	// Point get queries should register as reading from TiKV
+	tk.MustExec("create table t_pointget (a int primary key)")
+	query := "select a from t_pointget where a = 1"
+	tk.MustHavePlan(query, "Point_Get")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_pointget%;'").
+		Check(testkit.Rows("1 0"))
+
+	// Index readers should register as reading from TiKV
+	tk.MustExec("create table t_index_reader (a int, key (a))")
+	query = "select a from t_index_reader where a = 1"
+	tk.MustHavePlan(query, "IndexReader")
+	tk.MustQuery(query)
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_index_reader%;'").
+		Check(testkit.Rows("1 0"))
+
+	// Index lookups should register as reading from TiKV
+	tk.MustExec("create table t_index_lookup (a int, b int, index (a))")
+	tk.MustIndexLookup("select a, b from t_index_lookup where a = 1")
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_index_lookup%;'").
+		Check(testkit.Rows("1 0"))
+
+	// Index merge readers should register as reading from TiKV
+	tk.MustExec("create table t_index_merge(a int, b int, primary key (a), unique key (b))")
+	query = "select /*+ use_index_merge(t_index_merge, a, b) */ * from t_index_merge where a = 1 or b = 1"
+	tk.MustHavePlan(query, "IndexMerge")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%t_index_merge%;'").
+		Check(testkit.Rows("1 0"))
+
+	// TABLESAMPLE queries should register as reading from TiKV
+	query = "select * from t_tikv tablesample regions();"
+	tk.MustHavePlan(query, "TableSample")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_from_kv, storage_from_mpp from information_schema.slow_query " +
+		"where query like 'select%tablesample%;'").
+		Check(testkit.Rows("1 0"))
 }

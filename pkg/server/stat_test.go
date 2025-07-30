@@ -33,9 +33,9 @@ import (
 func TestUptime(t *testing.T) {
 	var err error
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockServerInfo", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockServerInfo", "return(true)"))
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockServerInfo")
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockServerInfo")
 		require.NoError(t, err)
 	}()
 
@@ -50,7 +50,7 @@ func TestUptime(t *testing.T) {
 	}()
 	require.NoError(t, err)
 
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
 	require.NoError(t, err)
 
 	tidbdrv := NewTiDBDriver(store)

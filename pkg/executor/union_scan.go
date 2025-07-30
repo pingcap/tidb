@@ -191,6 +191,9 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
+	if us.addedRowsIter != nil {
+		us.addedRowsIter.Close()
+	}
 	return exec.Close(us.Children(0))
 }
 
@@ -255,7 +258,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
-			snapshotHandle, err = us.handleCols.BuildHandle(row)
+			snapshotHandle, err = us.handleCols.BuildHandle(us.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return nil, err
 			}
@@ -314,7 +317,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 		}
 		return cmp, nil
 	}
-	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
+	cmp, err = ce.handleCols.Compare(a, b, ce.collators, sctx.TypeCtx())
 	if ce.desc {
 		return -cmp, err
 	}

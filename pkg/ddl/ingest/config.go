@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -43,14 +43,17 @@ func genConfig(
 	memRoot MemRoot,
 	unique bool,
 	resourceGroup string,
+	keyspace string,
 	concurrency int,
-) (*local.BackendConfig, error) {
+	maxWriteSpeed int,
+	globalSort bool,
+) *local.BackendConfig {
 	cfg := &local.BackendConfig{
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
 		WorkerConcurrency: concurrency * 2,
-		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
+		KeyspaceName:      keyspace,
 		// We disable the switch TiKV mode feature for now, because the impact is not
 		// fully tested.
 		ShouldCheckWriteStall: true,
@@ -68,20 +71,20 @@ func genConfig(
 		PausePDSchedulerScope:       lightning.PausePDSchedulerScopeTable,
 		TaskType:                    kvutil.ExplicitTypeDDL,
 		DisableAutomaticCompactions: true,
+		StoreWriteBWLimit:           maxWriteSpeed,
 	}
 	// Each backend will build a single dir in lightning dir.
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load()) * 2
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
-	if unique {
+	if unique && !globalSort {
 		cfg.DupeDetectEnabled = true
 		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
-	} else {
-		cfg.DupeDetectEnabled = false
 	}
+	cfg.TiKVWorkerURL = tidb.GetGlobalConfig().TiKVWorkerURL
 
-	return cfg, nil
+	return cfg
 }
 
 // CopReadBatchSize is the batch size of coprocessor read.
@@ -91,17 +94,7 @@ func CopReadBatchSize(hintSize int) int {
 	if hintSize > 0 {
 		return hintSize
 	}
-	return 10 * int(variable.GetDDLReorgBatchSize())
-}
-
-// CopReadChunkPoolSize is the size of chunk pool, which
-// represents the max concurrent ongoing coprocessor requests.
-// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
-func CopReadChunkPoolSize(hintConc int) int {
-	if hintConc > 0 {
-		return 10 * hintConc
-	}
-	return 10 * int(variable.GetDDLReorgWorkerCounter())
+	return 10 * int(vardef.GetDDLReorgBatchSize())
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.

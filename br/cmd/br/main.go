@@ -13,6 +13,7 @@ import (
 func main() {
 	gCtx := context.Background()
 	ctx, cancel := utils.StartExitSingleListener(gCtx)
+	defer cancel()
 
 	rootCmd := &cobra.Command{
 		Use:              "br",
@@ -20,7 +21,7 @@ func main() {
 		TraverseChildren: true,
 		SilenceUsage:     true,
 	}
-	AddFlags(rootCmd)
+	DefineCommonFlags(rootCmd)
 	SetDefaultContext(ctx)
 	rootCmd.AddCommand(
 		NewDebugCommand(),
@@ -28,13 +29,13 @@ func main() {
 		NewRestoreCommand(),
 		NewStreamCommand(),
 		newOperatorCommand(),
+		NewAbortCommand(),
 	)
 	// Outputs cmd.Print to stdout.
 	rootCmd.SetOut(os.Stdout)
 
 	rootCmd.SetArgs(os.Args[1:])
 	if err := rootCmd.Execute(); err != nil {
-		cancel()
 		log.Error("br failed", zap.Error(err))
 		os.Exit(1) // nolint:gocritic
 	}

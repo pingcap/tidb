@@ -29,18 +29,22 @@ const (
 )
 
 var (
-	normalCharUTF8MB4 = []byte{0xE4, 0xBD, 0xA0, 0xE5, 0xA5, 0xBD, 0xEF, 0xBC, 0x8C, 0xE4, 0xB8, 0x96, 0xE7, 0x95, 0x8C, 0xEF, 0xBC, 0x81} // “你好，世界！” in utf8mb4
-	normalCharGB18030 = []byte{0xC4, 0xE3, 0xBA, 0xC3, 0xA3, 0xAC, 0xCA, 0xC0, 0xBD, 0xE7, 0xA3, 0xA1}                                     // “你好，世界！” in gb18030
-	invalidChar       = []byte{0xff}                                                                                                       // Invalid gb18030 char
+	normalCharUTF8MB4 = []byte{0xE4, 0xBD, 0xA0, 0xE5, 0xA5, 0xBD, 0xEF, 0xBC, 0x8C, 0xE4, 0xB8, 0x96, 0xE7, 0x95, 0x8C, 0xEF, 0xBC, 0x81,
+		0xE1, 0xB8, 0xBF, 0xE2, 0x82, 0xAC, 0xE9, 0xBE, 0xB4} // “你好，世界！ḿ€龴” in utf8mb4
+	normalCharGB18030 = []byte{0xC4, 0xE3, 0xBA, 0xC3, 0xA3, 0xAC, 0xCA, 0xC0, 0xBD, 0xE7, 0xA3, 0xA1,
+		0xA8, 0xBC, 0xA2, 0xE3, 0xFE, 0x59} // “你好，世界！ḿ€龴” in gb18030
+	invalidChar = []byte{0xff} // Invalid gb18030 char                                                                                                   // Invalid gb18030 char
 )
 
 func TestCharsetConvertor(t *testing.T) {
 	utf8Reader, err := os.Open(testUTF8DataFile)
 	require.NoError(t, err)
+	defer utf8Reader.Close()
 	utf8Data, err := io.ReadAll(utf8Reader)
 	require.NoError(t, err)
 	gbkReader, err := os.Open(testGBKDataFile)
 	require.NoError(t, err)
+	defer gbkReader.Close()
 	gbkData, err := io.ReadAll(gbkReader)
 	require.NoError(t, err)
 
@@ -52,7 +56,7 @@ func TestCharsetConvertor(t *testing.T) {
 
 	utf8ToGBKData, err := cc.Encode(string(normalCharUTF8MB4))
 	require.NoError(t, err)
-	require.Equal(t, string(normalCharGB18030), utf8ToGBKData)
+	require.Equal(t, string(normalCharGB18030), utf8ToGBKData, "%x, %x", normalCharGB18030, []byte(utf8ToGBKData))
 }
 
 func TestInvalidCharReplace(t *testing.T) {
@@ -70,6 +74,7 @@ func TestInvalidCharReplace(t *testing.T) {
 
 	gbkReader, err := os.Open(testTempDataFile)
 	require.NoError(t, err)
+	defer gbkReader.Close()
 	gbkData, err := io.ReadAll(gbkReader)
 	require.NoError(t, err)
 	cc, err := NewCharsetConvertor("gb18030", dataInvalidCharReplace)

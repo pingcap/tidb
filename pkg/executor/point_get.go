@@ -17,8 +17,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -28,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -54,8 +56,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		return nil
 	}
 
-	if p.PrunePartitions(b.ctx) {
-		// no matching partitions
+	isTableDual, err := p.PrunePartitions(b.ctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if isTableDual {
 		return &TableDualExec{
 			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), p.Schema(), p.ID()),
 			numDualRows:    0,
@@ -70,46 +76,25 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		}()
 	}
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	e := &PointGetExecutor{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
-		indexUsageReporter: b.buildIndexUsageReporter(p),
+		indexUsageReporter: b.buildIndexUsageReporter(p, false),
 		txnScope:           b.txnScope,
 		readReplicaScope:   b.readReplicaScope,
 		isStaleness:        b.isStaleness,
 		partitionNames:     p.PartitionNames,
 	}
 
-	e.SetInitCap(1)
-	e.SetMaxChunkSize(1)
-	e.Init(p)
-
 	e.snapshot, err = b.getSnapshot()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	if b.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
-		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
-	}
-	if e.RuntimeStats() != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-	}
-
-	if p.IndexInfo != nil {
-		sctx := b.ctx.GetSessionVars().StmtCtx
-		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
-	}
-
-	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
-		assertScope := val.(string)
-		if e.Ctx().GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
-			panic("point get replica option fail")
-		}
-	})
+	e.SetInitCap(1)
+	e.SetMaxChunkSize(1)
+	e.Init(p)
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -138,7 +123,7 @@ type PointGetExecutor struct {
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
 	partitionDefIdx  *int
-	partitionNames   []pmodel.CIStr
+	partitionNames   []ast.CIStr
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -177,7 +162,7 @@ func GetPhysID(tblInfo *model.TableInfo, idx *int) int64 {
 	return tblInfo.ID
 }
 
-func matchPartitionNames(pid int64, partitionNames []pmodel.CIStr, pi *model.PartitionInfo) bool {
+func matchPartitionNames(pid int64, partitionNames []ast.CIStr, pi *model.PartitionInfo) bool {
 	if len(partitionNames) == 0 {
 		return true
 	}
@@ -197,7 +182,20 @@ func matchPartitionNames(pid int64, partitionNames []pmodel.CIStr, pi *model.Par
 	return false
 }
 
+// Recreated based on Init, change baseExecutor fields also
+func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan, ctx sessionctx.Context) {
+	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
+	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
+	e.BaseExecutor = exec.NewBaseExecutor(ctx, p.Schema(), p.ID())
+	e.indexUsageReporter = buildIndexUsageReporter(ctx, p, false)
+
+	e.Init(p)
+	InitSnapshotWithSessCtx(e.snapshot, ctx, nil)
+}
+
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
+// Note: since this function is also used by Recreated function, thus we can't rely on member field's default value
+// for example: we need to explicitly set e.stats to nil when e.RuntimeStats() is nil
 func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
@@ -218,10 +216,31 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 
-	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
-	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
-	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
-	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
+	sessVars := e.Ctx().GetSessionVars()
+	if sessVars.IsReplicaReadClosestAdaptive() {
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.Ctx(), p.GetAvgRowSize()))
+	}
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.Ctx().GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
+		}
+	})
+
+	if e.RuntimeStats() != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+	} else {
+		e.stats = nil
+	}
+
+	if p.IndexInfo != nil {
+		sctx := sessVars.StmtCtx
+		sctx.IndexNames = append(sctx.IndexNames, p.TblInfo.Name.O+":"+p.IndexInfo.Name.O)
+	}
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -268,10 +287,11 @@ func (e *PointGetExecutor) Close() error {
 		tableID := e.tblInfo.ID
 		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, kvReqTotal, rows)
 		}
 	}
 	e.done = false
@@ -371,7 +391,11 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 				tblID = pid
-				if !matchPartitionNames(tblID, e.partitionNames, e.tblInfo.GetPartitionInfo()) {
+				pi := e.tblInfo.GetPartitionInfo()
+				if !matchPartitionNames(tblID, e.partitionNames, pi) {
+					return nil
+				}
+				if slices.Contains(pi.IDsInDDLToIgnore(), pid) {
 					return nil
 				}
 			}
@@ -655,7 +679,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	}
 
 	lock := e.tblInfo.Lock
-	if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) {
+	if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) {
 		if e.Ctx().GetSessionVars().EnablePointGetCache {
 			cacheDB := e.Ctx().GetStore().GetMemCache()
 			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
@@ -666,6 +690,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
+	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+		// if the query has max execution time set, we need to set the context deadline for the get request
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+		return e.snapshot.Get(ctxWithTimeout, key)
+	}
 	return e.snapshot.Get(ctx, key)
 }
 
@@ -781,12 +811,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 }
 
 func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
-	for _, pCol := range prefixColIDs {
-		if pCol == colID {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(prefixColIDs, colID)
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {

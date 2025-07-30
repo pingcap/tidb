@@ -114,7 +114,7 @@ func (ts tsItems) Swap(i, j int) {
 }
 
 func (ts tsItems) sorted() bool {
-	for n := 0; n < len(ts)-1; n++ {
+	for n := range len(ts) - 1 {
 		if ts[n].timestamp > ts[n+1].timestamp {
 			return false
 		}
@@ -150,10 +150,7 @@ type record struct {
 }
 
 func newRecord(sqlDigest, planDigest []byte) *record {
-	listCap := topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load() + 1
-	if listCap > maxTsItemsCapacity {
-		listCap = maxTsItemsCapacity
-	}
+	listCap := min(topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load()+1, maxTsItemsCapacity)
 	return &record{
 		sqlDigest:  sqlDigest,
 		planDigest: planDigest,
@@ -380,11 +377,12 @@ func (r *record) rebuildTsIndex() {
 }
 
 // toProto converts the record to the corresponding protobuf representation.
-func (r *record) toProto() tipb.TopSQLRecord {
+func (r *record) toProto(keyspaceName []byte) tipb.TopSQLRecord {
 	return tipb.TopSQLRecord{
-		SqlDigest:  r.sqlDigest,
-		PlanDigest: r.planDigest,
-		Items:      r.tsItems.toProto(),
+		KeyspaceName: keyspaceName,
+		SqlDigest:    r.sqlDigest,
+		PlanDigest:   r.planDigest,
+		Items:        r.tsItems.toProto(),
 	}
 }
 
@@ -419,10 +417,10 @@ func (rs records) topN(n int) (top, evicted records) {
 }
 
 // toProto converts the records to the corresponding protobuf representation.
-func (rs records) toProto() []tipb.TopSQLRecord {
+func (rs records) toProto(keyspaceName []byte) []tipb.TopSQLRecord {
 	pb := make([]tipb.TopSQLRecord, 0, len(rs))
 	for _, r := range rs {
-		pb = append(pb, r.toProto())
+		pb = append(pb, r.toProto(keyspaceName))
 	}
 	return pb
 }
@@ -644,11 +642,12 @@ func (m *normalizedSQLMap) take() *normalizedSQLMap {
 }
 
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
-func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
+func (m *normalizedSQLMap) toProto(keyspaceName []byte) []tipb.SQLMeta {
 	metas := make([]tipb.SQLMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
+			KeyspaceName:  keyspaceName,
 			SqlDigest:     []byte(k.(string)),
 			NormalizedSql: meta.normalizedSQL,
 			IsInternalSql: meta.isInternal,
@@ -708,12 +707,13 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
+func (m *normalizedPlanMap) toProto(keyspaceName []byte, decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
 	m.data.Load().Range(func(k, v any) bool {
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
-			PlanDigest: hack.Slice(k.(string)),
+			KeyspaceName: keyspaceName,
+			PlanDigest:   hack.Slice(k.(string)),
 		}
 
 		var err error

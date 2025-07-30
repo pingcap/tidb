@@ -261,5 +261,19 @@
       "desc format = 'brief' select * from ((select count(*) from (select id,name from t order by id)a group by name,id order by id)  union all (select id+1 from t order by 1))c",
       "desc format = 'brief' select * from (select * from t order by id)a order by name"
     ]
+  },
+  {
+    "name": "TestMPPJoinWithoutUselessExchange",
+    "cases": [
+      "explain format = 'brief' select count(*), t2.v1, t2.v2 from t1 left join t2 on t1.v1 = t2.v1 and t1.v2 = t2.v2 group by t2.v1, t2.v2",
+      "explain format = 'brief' select count(*), t2.v1, t2.v2 from t3 left join t2 on t3.v1 = t2.v1 and t3.v2 = t2.v2 group by t2.v1, t2.v2",
+      "explain format = 'brief' select count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k"
+    ]
+  },
+  {
+    "name": "TestMPPJoinWithRemoveUselessExchange",
+    "cases": [
+        "explain format = 'brief' SELECT /*+ SHUFFLE_JOIN(aaa, bbb) */ count(*) FROM (SELECT a.v1, a.v2 FROM (SELECT /*+ SHUFFLE_JOIN(t1, t2) */  t1.v1, t1.v2 FROM t1 JOIN t2 ON t1.v1 = t2.v1) a JOIN (SELECT /*+ SHUFFLE_JOIN(t3, t4) */ t3.v1, t3.v2 FROM t3 JOIN t4 ON t3.v1 = t4.v1) b ON a.v1 = b.v1 AND a.v2 = b.v2) aaa JOIN (SELECT a.v1, a.v2 FROM (SELECT /*+  SHUFFLE_JOIN(t1, t2) */ t1.v1, t1.v2 FROM t1 JOIN t2 ON t1.v2 = t2.v2) a JOIN (SELECT /*+ SHUFFLE_JOIN(t3, t4) */ t3.v1, t3.v2 FROM t3 JOIN t4 ON t3.v2 = t4.v2) b ON a.v1 = b.v1 AND a.v2 = b.v2) bbb ON aaa.v1 = bbb.v1 AND aaa.v2 = bbb.v2;"
+    ]
   }
 ]

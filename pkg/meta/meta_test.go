@@ -25,14 +25,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -57,12 +58,12 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the independent policy ID allocation.
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("aa"),
+		Name: ast.NewCIStr("aa"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion:      "my primary",
 			Regions:            "my regions",
@@ -87,7 +88,7 @@ func TestPlacementPolicy(t *testing.T) {
 	require.Equal(t, policy, val)
 
 	// mock updating the placement policy.
-	policy.Name = pmodel.NewCIStr("bb")
+	policy.Name = ast.NewCIStr("bb")
 	policy.LearnerConstraints = "+zone=nanjing"
 	err = m.UpdatePolicy(policy)
 	require.NoError(t, err)
@@ -107,7 +108,7 @@ func TestPlacementPolicy(t *testing.T) {
 	txn, err = store.Begin()
 	require.NoError(t, err)
 
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	val, err = m.GetPolicy(1)
 	require.NoError(t, err)
 	require.Equal(t, policy, val)
@@ -127,7 +128,7 @@ func TestResourceGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the independent policy ID allocation.
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	groups, err := m.ListResourceGroups()
 	require.NoError(t, err)
 	require.Equal(t, len(groups), 1)
@@ -142,7 +143,7 @@ func TestResourceGroup(t *testing.T) {
 
 	rg := &model.ResourceGroupInfo{
 		ID:   groupID,
-		Name: pmodel.NewCIStr("aa"),
+		Name: ast.NewCIStr("aa"),
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate: 100,
 		},
@@ -175,7 +176,7 @@ func TestMeta(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	n, err := m.GenGlobalID()
 	require.NoError(t, err)
@@ -213,7 +214,7 @@ func TestMeta(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("a"),
+		Name: ast.NewCIStr("a"),
 	}
 	err = m.CreateDatabase(dbInfo)
 	require.NoError(t, err)
@@ -226,7 +227,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dbInfo, v)
 
-	dbInfo.Name = pmodel.NewCIStr("aa")
+	dbInfo.Name = ast.NewCIStr("aa")
 	err = m.UpdateDatabase(dbInfo)
 	require.NoError(t, err)
 
@@ -240,7 +241,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo := &model.TableInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("t"),
+		Name: ast.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo)
@@ -258,7 +259,7 @@ func TestMeta(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
-	tbInfo.Name = pmodel.NewCIStr("tt")
+	tbInfo.Name = ast.NewCIStr("tt")
 	err = m.UpdateTable(1, tbInfo)
 	require.NoError(t, err)
 
@@ -278,7 +279,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
-		Name: pmodel.NewCIStr("bb"),
+		Name: ast.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo2)
@@ -289,7 +290,7 @@ func TestMeta(t *testing.T) {
 	tableNames, err := m.ListSimpleTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableNameInfo{tblName, tblName2}, tableNames)
-	tables, err := m.ListTables(1)
+	tables, err := m.ListTables(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
 	{
@@ -327,7 +328,7 @@ func TestMeta(t *testing.T) {
 	tableNames, err = m.ListSimpleTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableNameInfo{tblName}, tableNames)
-	tables, err = m.ListTables(1)
+	tables, err = m.ListTables(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
 	{
@@ -344,7 +345,7 @@ func TestMeta(t *testing.T) {
 	tid := int64(100)
 	tbInfo100 := &model.TableInfo{
 		ID:   tid,
-		Name: pmodel.NewCIStr("t_rename"),
+		Name: ast.NewCIStr("t_rename"),
 	}
 	// Create table.
 	err = m.CreateTableOrView(1, tbInfo100)
@@ -371,7 +372,7 @@ func TestMeta(t *testing.T) {
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
-		Name: pmodel.NewCIStr("tbl3"),
+		Name: ast.NewCIStr("tbl3"),
 	}
 	err = m.CreateTableAndSetAutoID(1, tbInfo3, model.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
@@ -455,7 +456,7 @@ func TestSnapshot(t *testing.T) {
 	}()
 
 	txn, _ := store.Begin()
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	_, err = m.GenGlobalID()
 	require.NoError(t, err)
 	n, _ := m.GetGlobalID()
@@ -466,7 +467,7 @@ func TestSnapshot(t *testing.T) {
 	ver1, _ := store.CurrentVersion(kv.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	txn, _ = store.Begin()
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	_, err = m.GenGlobalID()
 	require.NoError(t, err)
 	n, _ = m.GetGlobalID()
@@ -475,12 +476,9 @@ func TestSnapshot(t *testing.T) {
 	require.NoError(t, err)
 
 	snapshot := store.GetSnapshot(ver1)
-	snapMeta := meta.NewSnapshotMeta(snapshot)
+	snapMeta := meta.NewReader(snapshot)
 	n, _ = snapMeta.GetGlobalID()
 	require.Equal(t, int64(1), n)
-	_, err = snapMeta.GenGlobalID()
-	require.NotNil(t, err)
-	require.Equal(t, "[structure:8220]write on snapshot", err.Error())
 }
 
 func TestElement(t *testing.T) {
@@ -523,7 +521,7 @@ func BenchmarkGenGlobalIDs(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	b.ResetTimer()
 	var ids []int64
@@ -549,12 +547,12 @@ func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 		require.NoError(b, err)
 	}()
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	b.ResetTimer()
 	var id int64
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			id, _ = m.GenGlobalID()
 		}
 	}
@@ -647,11 +645,15 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 
 	dbID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
-	require.Greater(t, dbID, int64(0))
+	if kerneltype.IsNextGen() {
+		require.Equal(t, metadef.SystemDatabaseID, dbID)
+	} else {
+		require.EqualValues(t, 1, dbID)
+	}
 
 	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
@@ -664,6 +666,7 @@ func TestCreateMySQLDatabase(t *testing.T) {
 func TestIsTableInfoMustLoad(t *testing.T) {
 	tableInfo := &model.TableInfo{
 		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
+		State:   model.StatePublic,
 	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -671,6 +674,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+		State:          model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -678,6 +682,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
+		State:              model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -685,13 +690,15 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		Partition: &model.PartitionInfo{Expr: "a"},
+		State:     model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
-		Lock: &model.TableLockInfo{State: model.TableLockStatePreLock},
+		Lock:  &model.TableLockInfo{State: model.TableLockStatePreLock},
+		State: model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -699,20 +706,47 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		ForeignKeys: []*model.FKInfo{{ID: 1}},
+		State:       model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = nil
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
+		State:         model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
-		ID: 123,
+		ID:    123,
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		State: model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -728,12 +762,12 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
 	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
-	require.Equal(t, string(b), expect)
+	require.Equal(t, expect, string(b))
 }
 
 func TestTableNameExtract(t *testing.T) {
 	var tbl model.TableInfo
-	tbl.Name = pmodel.NewCIStr(`a`)
+	tbl.Name = ast.NewCIStr(`a`)
 	b, err := json.Marshal(tbl)
 	require.NoError(t, err)
 
@@ -742,28 +776,28 @@ func TestTableNameExtract(t *testing.T) {
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, "a", nameLMatch[1])
 
-	tbl.Name = pmodel.NewCIStr(`"a"`)
+	tbl.Name = ast.NewCIStr(`"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = pmodel.NewCIStr(`""a"`)
+	tbl.Name = ast.NewCIStr(`""a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `""a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = pmodel.NewCIStr(`"\"a"`)
+	tbl.Name = ast.NewCIStr(`"\"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = pmodel.NewCIStr(`"\"啊"`)
+	tbl.Name = ast.NewCIStr(`"\"啊"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
@@ -919,42 +953,35 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	// create database
 	dbInfo := &model.DBInfo{
 		ID:    10001,
-		Name:  pmodel.NewCIStr("sc"),
+		Name:  ast.NewCIStr("sc"),
 		State: model.StatePublic,
 	}
 
 	// create table with special attributes
 	tblInfo := &model.TableInfo{
 		ID:    10002,
-		Name:  pmodel.NewCIStr("cs"),
+		Name:  ast.NewCIStr("cs"),
 		State: model.StatePublic,
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
-				{ID: 11, Name: pmodel.NewCIStr("p1")},
-				{ID: 22, Name: pmodel.NewCIStr("p2")},
+				{ID: 11, Name: ast.NewCIStr("p1")},
+				{ID: 22, Name: ast.NewCIStr("p2")},
 			},
 			Enable: true,
 		},
-		ForeignKeys: []*model.FKInfo{{
-			ID:       1,
-			Name:     pmodel.NewCIStr("fk"),
-			RefTable: pmodel.NewCIStr("t"),
-			RefCols:  []pmodel.CIStr{pmodel.NewCIStr("a")},
-			Cols:     []pmodel.CIStr{pmodel.NewCIStr("t_a")},
-		}},
 		TiFlashReplica: &model.TiFlashReplicaInfo{
 			Count:          0,
 			LocationLabels: []string{"a,b,c"},
 			Available:      true,
 		},
 		Lock: &model.TableLockInfo{
-			Tp:    pmodel.TableLockRead,
+			Tp:    ast.TableLockRead,
 			State: model.TableLockStatePreLock,
 			TS:    0,
 		},
 		PlacementPolicyRef: &model.PolicyRefInfo{
 			ID:   1,
-			Name: pmodel.NewCIStr("r1"),
+			Name: ast.NewCIStr("r1"),
 		},
 		TTLInfo: &model.TTLInfo{
 			IntervalExprStr:  "1",
@@ -966,9 +993,9 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
-		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -980,27 +1007,23 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	defer dom.Close()
 
 	// verify partition info correctness
-	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
-	// foreign key info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.ForeignKeysAttribute)
-	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
-	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
 	// tiflash replica info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TiFlashReplica, tblInfoRes[0].TableInfos[0].TiFlashReplica)
 	// lock info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TableLockAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.Lock, tblInfoRes[0].TableInfos[0].Lock)
 	// placement policy
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PlacementPolicyAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PlacementPolicyAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfoRes[0].TableInfos[0].PlacementPolicyRef)
 	// ttl info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
 }
@@ -1015,7 +1038,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	// create database
 	dbInfo := &model.DBInfo{
 		ID:      10001,
-		Name:    pmodel.NewCIStr("sc"),
+		Name:    ast.NewCIStr("sc"),
 		Charset: "utf8",
 		Collate: "utf8_general_ci",
 		State:   model.StatePublic,
@@ -1024,13 +1047,13 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	// create table with partition info
 	tblInfo := &model.TableInfo{
 		ID:      10002,
-		Name:    pmodel.NewCIStr("cs"),
+		Name:    ast.NewCIStr("cs"),
 		Charset: "latin1",
 		Collate: "latin1_bin",
 		State:   model.StatePublic,
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
-				{ID: 1, Name: pmodel.NewCIStr("p1")},
+				{ID: 1, Name: ast.NewCIStr("p1")},
 			},
 			Enable: true,
 		},
@@ -1038,9 +1061,9 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
+		err := meta.NewMutator(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
-		err = meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+		err = meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -1058,7 +1081,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
 	//byName, traverse byName and load from store,
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("sc"), pmodel.NewCIStr("cs"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("sc"), ast.NewCIStr("cs"))
 	require.NoError(t, err)
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
@@ -1068,7 +1091,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
 	//schemaMap, traverse schemaMap find dbInfo
-	db, ok := is.SchemaByName(pmodel.NewCIStr("sc"))
+	db, ok := is.SchemaByName(ast.NewCIStr("sc"))
 	require.True(t, ok)
 	require.Equal(t, db.ID, dbInfo.ID)
 
@@ -1097,12 +1120,12 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		ID:    10001,
-		Name:  pmodel.NewCIStr("sc"),
+		Name:  ast.NewCIStr("sc"),
 		State: model.StatePublic,
 	}
 	policy := &model.PolicyInfo{
 		ID:   2,
-		Name: pmodel.NewCIStr("policy_1"),
+		Name: ast.NewCIStr("policy_1"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion: "r1",
 			Regions:       "r1,r2",
@@ -1110,18 +1133,19 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	group := &model.ResourceGroupInfo{
 		ID:   3,
-		Name: pmodel.NewCIStr("groupName_1"),
+		Name: ast.NewCIStr("groupName_1"),
 	}
 	tblInfo := &model.TableInfo{
 		ID:    10002,
-		Name:  pmodel.NewCIStr("cs"),
+		Name:  ast.NewCIStr("cs"),
 		State: model.StatePublic,
 		ForeignKeys: []*model.FKInfo{{
 			ID:        1,
-			Name:      pmodel.NewCIStr("fk_1"),
-			RefSchema: pmodel.NewCIStr("t1"),
-			RefTable:  pmodel.NewCIStr("parent"),
+			Name:      ast.NewCIStr("fk_1"),
+			RefSchema: ast.NewCIStr("t1"),
+			RefTable:  ast.NewCIStr("parent"),
 			Version:   1,
+			RefCols:   []ast.CIStr{ast.NewCIStr("id")},
 		}},
 		PlacementPolicyRef: &model.PolicyRefInfo{
 			ID:   policy.ID,
@@ -1130,13 +1154,13 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	tblInfo1 := &model.TableInfo{
 		ID:            10003,
-		Name:          pmodel.NewCIStr("cs"),
+		Name:          ast.NewCIStr("cs"),
 		State:         model.StatePublic,
 		TempTableType: model.TempTableLocal,
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		err := m.CreatePolicy(policy)
 		require.NoError(t, err)
 		err = m.AddResourceGroup(group)
@@ -1176,4 +1200,71 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, referredFk[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 	// temp table
 	require.True(t, is.HasTemporaryTable())
+}
+
+func TestIsDatabaseExist(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		exist, err := m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.False(t, exist)
+
+		require.NoError(t, m.CreateSysDatabaseByID("aaa", 123))
+		exist, err = m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.True(t, exist)
+		return nil
+	}))
+}
+
+func TestBootTableVersion(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ver, err := m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.InitNextGenBootTableVersion, ver)
+
+		require.NoError(t, m.SetNextGenBootTableVersion(meta.BaseNextGenBootTableVersion))
+		ver, err = m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.BaseNextGenBootTableVersion, ver)
+		// make sure we use correct key
+		ddlVer, err := m.GetDDLTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.InitDDLTableVersion, ddlVer)
+		return nil
+	}))
+}
+
+func TestCreateSysDatabaseByIDIfNotExists(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err = m.CreateSysDatabaseByIDIfNotExists("aaa", 123)
+		require.NoError(t, err)
+		exist, err := m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.True(t, exist)
+		err = m.CreateSysDatabaseByIDIfNotExists("aaa", 123)
+		require.NoError(t, err)
+		return nil
+	}))
 }

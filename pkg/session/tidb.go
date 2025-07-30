@@ -20,10 +20,10 @@ package session
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	"github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -48,8 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
+
+// StoreBootstrappedKey is used by store.G/SetOption to store related bootstrap context for kv.Storage.
+const StoreBootstrappedKey = "bootstrap"
 
 type domainMap struct {
 	mu      syncutil.Mutex
@@ -60,6 +64,10 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil)
+}
+
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -86,9 +94,14 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease))
-		factory := createSessionFunc(store)
-		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
+		factory := getSessionFactory(store)
+		sysFactory := getSessionFactoryWithDom(store)
+		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory,
+			func(targetKS string) pools.Factory {
+				return getCrossKSSessionFactory(store, targetKS)
+			},
+			etcdClient,
+		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
@@ -124,9 +137,6 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	// store.UUID()-> IfBootstrapped
-	storeBootstrapped     = make(map[string]bool)
-	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is lease of info schema, we use this to check whether info schema
 	// is valid in SchemaChecker. we also use half of it as info schema reload interval.
@@ -146,21 +156,7 @@ var (
 // TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
 func ResetStoreForWithTiKVTest(store kv.Storage) {
 	domap.Delete(store)
-	unsetStoreBootstrapped(store.UUID())
-}
-
-func setStoreBootstrapped(storeUUID string) {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
-	storeBootstrapped[storeUUID] = true
-}
-
-// unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
-// currently this function only used for test.
-func unsetStoreBootstrapped(storeUUID string) {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
-	delete(storeBootstrapped, storeUUID)
+	store.SetOption(StoreBootstrappedKey, nil)
 }
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -367,7 +363,7 @@ func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSe
 }
 
 // ResultSetToStringSlice changes the RecordSet to [][]string.
-func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.RecordSet) ([][]string, error) {
+func ResultSetToStringSlice(ctx context.Context, s sessionapi.Session, rs sqlexec.RecordSet) ([][]string, error) {
 	rows, err := GetRows4Test(ctx, s, rs)
 	if err != nil {
 		return nil, err
@@ -380,7 +376,7 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 	for i := range rows {
 		row := rows[i]
 		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {

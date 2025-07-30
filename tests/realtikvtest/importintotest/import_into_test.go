@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -94,18 +95,20 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	sql := fmt.Sprintf(`import into t FROM 'gs://privilege-test/db.tbl.*.csv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
-	// works even SEM enabled
-	sem.Enable()
-	s.T().Cleanup(func() {
-		sem.Disable()
-	})
-	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustExec("truncate table t")
-	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustQuery(sql)
-	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+	if kerneltype.IsClassic() {
+		// works even SEM enabled
+		sem.Enable()
+		s.T().Cleanup(func() {
+			sem.Disable()
+		})
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustExec("truncate table t")
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustQuery(sql)
+		s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
 
-	sem.Disable()
+		sem.Disable()
+	}
 	// requires FILE for server file
 	importFromServerSQL := fmt.Sprintf("IMPORT INTO t FROM '%s'", filePath)
 	// NOTE: we must use ExecToErr instead of QueryToErr here, because QueryToErr will cause the case fail always.
@@ -117,6 +120,30 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustQuery(importFromServerSQL)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+}
+
+func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t(a bigint primary key, b varchar(100), c varchar(100), d int,
+		key(a), key(c,d), key(d));`)
+
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/*.csv?endpoint=%s'`, gcsEndpoint)
+	result := s.tk.MustQuery(importSQL).Rows()
+	require.Equal(s.T(), "finished", result[0][fmap["Status"]].(string))
+
+	// After import success, the table stat should be updated
+	require.Eventually(s.T(), func() bool {
+		r := s.tk.MustQuery("select table_rows from information_schema.tables where table_name= 't' and table_schema = 'gsort_basic'").Rows()
+		require.Len(s.T(), r, 1)
+		rows, err := strconv.Atoi(r[0][0].(string))
+		require.NoError(s.T(), err)
+		return rows == 3
+	}, 30*time.Second, 100*time.Millisecond, "stats not updated after import into")
 }
 
 func (s *mockGCSSuite) TestBasicImportInto() {
@@ -240,6 +267,20 @@ func (s *mockGCSSuite) TestBasicImportInto() {
 			querySQL:     "select * from t order by b",
 			lastInsertID: 6,
 		},
+		// partition table
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int) partition by hash(a) partitions 5;",
+			flags:          "(c, b, a)",
+			res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
+			querySQL:       "select * from t order by c",
+		},
+		// partition table + global index
+		{
+			createTableSQL: "create table t (a bigint, b varchar(100), c int, index idx(c) global) partition by hash(a) partitions 5;",
+			flags:          "(c, b, a)",
+			res:            []string{"11 test1 1", "22 test2 2", "33 test3 3", "44 test4 4", "55 test5 5", "66 test6 6"},
+			querySQL:       "select * from t use index(idx) order by c",
+		},
 	}
 
 	loadDataSQL := fmt.Sprintf(`import into t %%s FROM 'gs://test-multi-load/db.tbl.*.csv?endpoint=%s'
@@ -348,13 +389,13 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
-	s.tk.MustExec("delete from t_gen1")
+	s.tk.MustExec("truncate table t_gen1")
 
 	// Specify the column, this should also work.
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
-	s.tk.MustExec("delete from t_gen1")
+	s.tk.MustExec("truncate table t_gen1")
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen1(a,@1)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
@@ -364,13 +405,13 @@ func (s *mockGCSSuite) TestGeneratedColumnsAndTSVFile() {
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
-	s.tk.MustExec(`delete from t_gen2`)
+	s.tk.MustExec(`truncate table t_gen2`)
 
 	// Specify the column b
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(b)
 		FROM 'gcs://test-bucket/generated_columns.csv?endpoint=%s' WITH fields_terminated_by='\t'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
-	s.tk.MustExec(`delete from t_gen2`)
+	s.tk.MustExec(`truncate table t_gen2`)
 
 	// Specify the column a
 	s.tk.MustQuery(fmt.Sprintf(`IMPORT INTO load_csv.t_gen2(a)
@@ -485,18 +526,26 @@ func (s *mockGCSSuite) TestLoadSQLDump() {
 
 	content := `insert into tbl values (1, 'a'), (2, 'b');`
 	s.server.CreateObject(fakestorage.Object{
-		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p"},
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load-parquet", Name: "p.sql"},
 		Content:     []byte(content),
 	})
 	tempDir := s.T().TempDir()
 	s.NoError(os.WriteFile(path.Join(tempDir, "test.sql"), []byte(content), 0o644))
 
-	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	sql := fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s' FORMAT 'SQL';`, gcsEndpoint)
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM 'gs://test-load-parquet/p.sql?endpoint=%s';`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
 	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s' FORMAT 'SQL';`, path.Join(tempDir, "test.sql"))
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
+	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
+	sql = fmt.Sprintf(`IMPORT INTO load_csv.t FROM '%s';`, path.Join(tempDir, "test.sql"))
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows("1 a", "2 b"))
 }
@@ -669,14 +718,17 @@ func (s *mockGCSSuite) TestOtherCharset() {
 }
 
 func (s *mockGCSSuite) TestMaxWriteSpeed() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("we don't need to limit write speed with next-gen")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_write_speed;")
 	s.tk.MustExec("CREATE DATABASE load_test_write_speed;")
 	s.tk.MustExec(`CREATE TABLE load_test_write_speed.t(a int, b int)`)
 
 	lineCount := 1000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "%d,%d\n", i, i)...)
 	}
 
 	s.server.CreateObject(fakestorage.Object{
@@ -692,7 +744,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
 	result := s.tk.MustQuery(sql)
-	fileSize := result.Rows()[0][6].(string)
+	fileSize := result.Rows()[0][plannercore.ImportIntoFieldMap["SourceFileSize"]].(string)
 	s.Equal("7.598KiB", fileSize)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
@@ -864,7 +916,10 @@ func (s *mockGCSSuite) TestImportMode() {
 	// NOTE: this case only runs when current instance is TiDB owner, if you run it locally,
 	// better start a cluster without TiDB instance.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
+	ch := make(chan struct{}, 1)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+		ch <- struct{}{}
+	})
 	sql := fmt.Sprintf(`IMPORT INTO load_data.import_mode FROM 'gs://test-load/import_mode-*.tsv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s'`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
 	s.Len(rows, 1)
@@ -872,7 +927,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.NoError(err)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.Greater(intoNormalTime, intoImportTime)
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	s.checkTaskMetaRedacted(int64(jobID))
 	// after import step, we should enter normal mode, i.e. we only call ToImportMode once
 	intoNormalTime, intoImportTime = time.Time{}, time.Time{}
@@ -888,7 +943,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.Greater(intoNormalTime, intoImportTime)
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/clearLastSwitchTime"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess"))
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	// test disable_tikv_import_mode, should not call ToImportMode and ToNormalMode
 	s.tk.MustExec("truncate table load_data.import_mode;")
@@ -896,7 +951,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	// test with multirocksdb
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(true)")
@@ -905,7 +960,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.import_mode;").Sort().Check(testkit.Rows("1 11 111"))
 	s.tk.MustExec("truncate table load_data.import_mode;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2"))
 
@@ -921,7 +976,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	err = s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(intoNormalTime, intoImportTime)
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	s.checkTaskMetaRedacted(importer.TestLastImportJobID.Load())
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }
@@ -1138,14 +1193,17 @@ func (s *mockGCSSuite) TestAddIndexBySQL() {
 }
 
 func (s *mockGCSSuite) TestDiskQuota() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("disk quota will cause range overlap, tikv-worker cannot handle it right now")
+	}
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_test_disk_quota;")
 	s.tk.MustExec("CREATE DATABASE load_test_disk_quota;")
 	s.tk.MustExec(`CREATE TABLE load_test_disk_quota.t(a int, b int)`)
 
 	lineCount := 10000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "%d,%d\n", i, i)...)
 	}
 
 	s.server.CreateObject(fakestorage.Object{
@@ -1172,7 +1230,6 @@ func (s *mockGCSSuite) TestDiskQuota() {
 }
 
 func (s *mockGCSSuite) TestAnalyze() {
-	s.T().Skip("skip for ci now")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 
@@ -1180,8 +1237,8 @@ func (s *mockGCSSuite) TestAnalyze() {
 	s.tk.MustExec("create table load_data.analyze_table(a int, b int, c int, index idx_ac(a,c), index idx_b(b))")
 	lineCount := 2000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("1,%d,1\n", i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "1,%d,1\n", i)...)
 	}
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "analyze-1.tsv"},
@@ -1238,4 +1295,25 @@ func (s *mockGCSSuite) TestBadCases() {
 		FROM 'gs://test-load/bad-cases-1.csv?endpoint=%s'`, gcsEndpoint)
 	err := s.tk.QueryToErr(sql)
 	require.ErrorContains(s.T(), err, "panic occurred during import, please check log")
+}
+
+func (s *mockGCSSuite) TestImportIntoWithFK() {
+	content := []byte(`1,1
+	2,2`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "foreign-key-test",
+			Name:       "child.csv",
+		},
+		Content: content,
+	})
+	s.prepareAndUseDB("import_into")
+	s.tk.MustExec("create table parent (id int primary key);")
+	s.tk.MustExec("create table child (id int primary key, fk int, foreign key (fk) references parent(id));")
+	sql := fmt.Sprintf(`IMPORT INTO import_into.child
+		FROM 'gs://foreign-key-test/child.csv?endpoint=%s'`, gcsEndpoint)
+
+	// it should success even if the parent table is empty
+	s.tk.MustQuery(sql)
+	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
 }

@@ -30,11 +30,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -220,6 +223,8 @@ var (
 	PullTiFlashPdTick = atomicutil.NewUint64(30 * 5)
 	// UpdateTiFlashStoreTick indicates the number of intervals before we fully update TiFlash stores.
 	UpdateTiFlashStoreTick = atomicutil.NewUint64(5)
+	// RefreshRulesTick indicates the number of intervals before we refresh TiFlash rules.
+	RefreshRulesTick = atomicutil.NewUint64(10)
 	// PollTiFlashBackoffMaxTick is the max tick before we try to update TiFlash replica availability for one table.
 	PollTiFlashBackoffMaxTick TiFlashTick = 10
 	// PollTiFlashBackoffMinTick is the min tick before we try to update TiFlash replica availability for one table.
@@ -393,7 +398,7 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 
 		progress, err := infosync.CalculateTiFlashProgress(availableTableID.ID, tableInfo.TiFlashReplica.Count, pollTiFlashContext.TiFlashStores)
 		if err != nil {
-			if intest.InTest && err.Error() != "EOF" {
+			if intest.EnableInternalCheck && err.Error() != "EOF" {
 				// In the test, the server cannot start up because the port is occupied.
 				// Although the port is random. so we need to quickly return when to
 				// fail to get tiflash sync.
@@ -451,7 +456,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	var tableList = make([]TiFlashReplicaStatus, 0)
 
 	// Collect TiFlash Replica info, for every table.
-	ch := schema.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	ch := schema.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			LoadTiFlashReplicaInfo(tblInfo, &tableList)
@@ -547,6 +552,99 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 	return nil
 }
 
+type pending struct {
+	ID        int64
+	TableInfo *model.TableInfo
+	DBInfo    *model.DBInfo
+}
+
+// refreshTiFlashPlacementRules will refresh the placement rules of TiFlash replicas if on tick.
+// 1. It will scan all the meta and check if there is any TiFlash replica.
+// 2. If there is, it will check if the placement rules are missing.
+// 3. If the placement rules are missing, it will add by submit a ActionSetTiFlashReplica job to repair the entire table.
+func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64) error {
+	if tick%RefreshRulesTick.Load() != 0 {
+		return nil
+	}
+	schema := d.infoCache.GetLatest()
+	if schema == nil {
+		return errors.New("schema is nil")
+	}
+
+	var pendings []pending
+
+	for _, dbResult := range schema.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute) {
+		db, ok := schema.SchemaByName(dbResult.DBName)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbResult.DBName.O)
+		}
+		for _, tblInfo := range dbResult.TableInfos {
+			if tblInfo.TiFlashReplica == nil {
+				continue
+			}
+
+			if ps := tblInfo.GetPartitionInfo(); ps != nil {
+				collectPendings := func(ps []model.PartitionDefinition) {
+					for _, p := range ps {
+						pendings = append(pendings, pending{
+							ID:        p.ID,
+							TableInfo: tblInfo,
+							DBInfo:    db,
+						})
+					}
+				}
+				collectPendings(ps.Definitions)
+				collectPendings(ps.AddingDefinitions)
+			} else {
+				pendings = append(pendings, pending{
+					ID:        tblInfo.ID,
+					TableInfo: tblInfo,
+					DBInfo:    db,
+				})
+			}
+		}
+	}
+
+	fixed := make(map[int64]struct{})
+	for _, replica := range pendings {
+		if _, ok := fixed[replica.TableInfo.ID]; ok {
+			continue
+		}
+		rule, err := infosync.GetPlacementRule(d.ctx, replica.ID)
+		if err != nil {
+			logutil.DDLLogger().Warn("get placement rule err", zap.Error(err))
+			continue
+		}
+		// pdhttp.GetPlacementRule returns the zero object instead of nil pointer when not found.
+		ruleIsMissing := rule == nil || len(rule.ID) == 0
+		if ruleIsMissing && replica.TableInfo.TiFlashReplica.Count > 0 {
+			job := &model.Job{
+				Version:        model.GetJobVerInUse(),
+				SchemaID:       replica.DBInfo.ID,
+				TableID:        replica.TableInfo.ID,
+				SchemaName:     replica.DBInfo.Name.L,
+				TableName:      replica.TableInfo.Name.L,
+				Type:           model.ActionSetTiFlashReplica,
+				BinlogInfo:     &model.HistoryInfo{},
+				CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+				SQLMode:        sctx.GetSessionVars().SQLMode,
+			}
+			args := model.SetTiFlashReplicaArgs{TiflashReplica: ast.TiFlashReplicaSpec{
+				Count:  replica.TableInfo.TiFlashReplica.Count,
+				Labels: replica.TableInfo.TiFlashReplica.LocationLabels,
+			}}
+			err = d.executor.doDDLJob2(sctx, job, &args)
+			if err != nil {
+				logutil.DDLLogger().Warn("fix placement rule err", zap.Error(err))
+			} else {
+				logutil.DDLLogger().Info("fix placement rule success", zap.Int64("tableID", replica.TableInfo.ID))
+				fixed[replica.TableInfo.ID] = struct{}{}
+			}
+		}
+	}
+	return nil
+}
+
 func (d *ddl) PollTiFlashRoutine() {
 	pollTiflashContext, err := NewTiFlashManagementContext()
 	if err != nil {
@@ -591,6 +689,11 @@ func (d *ddl) PollTiFlashRoutine() {
 							// If we have not set up MockTiFlash instance, for those tests without TiFlash, just suppress.
 						default:
 							logutil.DDLLogger().Warn("refreshTiFlashTicker returns error", zap.Error(err))
+						}
+					}
+					if kerneltype.IsNextGen() {
+						if err := d.refreshTiFlashPlacementRules(sctx, pollTiflashContext.PollCounter); err != nil {
+							logutil.DDLLogger().Warn("refreshTiFlashPlacementRules returns error", zap.Error(err))
 						}
 					}
 				} else {

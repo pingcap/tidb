@@ -21,7 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -37,7 +38,7 @@ func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 	return sctx, nil
 }
 
-func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext) base.Task {
+func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, fd *funcdep.FDSet) base.Task {
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*MppTask)
 		if !ok || mpp.Invalid() {
@@ -47,7 +48,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 			return base.InvalidTask
 		}
-		tsk = mpp.enforceExchanger(p)
+		tsk = mpp.enforceExchanger(p, fd)
 	}
 	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
 	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.
@@ -58,7 +59,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 		tsk = tsk.ConvertToRootTask(ctx)
 	}
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{
+	sort := physicalop.PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
 	}.Init(ctx, tsk.Plan().StatsInfo(), tsk.Plan().QueryBlockOffset(), sortReqProp)
@@ -97,7 +98,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *Physica
 		return nil
 	}
 
-	sort, ok := pp.Children()[0].(*PhysicalSort)
+	sort, ok := pp.Children()[0].(*physicalop.PhysicalSort)
 	if !ok {
 		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
 		// TODO: Implement a better one.
@@ -136,7 +137,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *P
 		return nil
 	}
 
-	sort, ok := pp.Children()[0].(*PhysicalSort)
+	sort, ok := pp.Children()[0].(*physicalop.PhysicalSort)
 	if !ok {
 		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
 		// TODO: Implement a better one.
@@ -178,7 +179,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *P
 	tails := make([]base.PhysicalPlan, len(children))
 
 	for i := range children {
-		sort, ok := children[i].(*PhysicalSort)
+		sort, ok := children[i].(*physicalop.PhysicalSort)
 		if !ok {
 			// Multi-thread executing on SORTED data source is not effective enough by current implementation.
 			// TODO: Implement a better one.
@@ -210,9 +211,9 @@ func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) floa
 	res := float64(1)
 	for _, pp := range probeParents {
 		switch pp.(type) {
-		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
-			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
-				outer := pp.Children()[1-join.getInnerChildIdx()]
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
+				outer := pp.Children()[1-join.GetInnerChildIdx()]
 				res *= outer.StatsInfo().RowCount
 			}
 		}
@@ -224,9 +225,9 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 	res := int64(1)
 	for _, pp := range pps {
 		switch pp.(type) {
-		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
-			if join, ok := pp.(interface{ getInnerChildIdx() int }); ok {
-				outerChildID := pp.Children()[1-join.getInnerChildIdx()].ID()
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
+				outerChildID := pp.Children()[1-join.GetInnerChildIdx()].ID()
 				actRows := int64(1)
 				if statsColl.ExistsRootStats(outerChildID) {
 					actRows = statsColl.GetRootStats(outerChildID).GetActRows()
@@ -240,29 +241,4 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 		}
 	}
 	return res
-}
-
-// HasMaxOneRow returns if the LogicalPlan will output at most one row.
-func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
-	if len(childMaxOneRow) == 0 {
-		// The reason why we use this check is that, this function
-		// is used both in planner/core and planner/cascades.
-		// In cascades planner, LogicalPlan may have no `children`.
-		return false
-	}
-	switch x := p.(type) {
-	case *logicalop.LogicalLock, *logicalop.LogicalLimit, *logicalop.LogicalSort, *logicalop.LogicalSelection,
-		*logicalop.LogicalApply, *logicalop.LogicalProjection, *logicalop.LogicalWindow, *logicalop.LogicalAggregation:
-		return childMaxOneRow[0]
-	case *logicalop.LogicalMaxOneRow:
-		return true
-	case *logicalop.LogicalJoin:
-		switch x.JoinType {
-		case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
-			return childMaxOneRow[0]
-		default:
-			return childMaxOneRow[0] && childMaxOneRow[1]
-		}
-	}
-	return false
 }

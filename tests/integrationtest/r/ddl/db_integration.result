@@ -372,27 +372,12 @@ alter table t add unique index idx_ac(a, c);
 alter table t add unique index idx_b(b);
 Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists t;
-drop table if exists t_ft;
-create table t_ft (a text, fulltext key (a));
-show warnings;
-Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
-alter table t_ft add fulltext key (a);
-show warnings;
-Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
-show create table t_ft;
-Table	Create Table
-t_ft	CREATE TABLE `t_ft` (
-  `a` text DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-drop table if exists t_ft;
 drop table if exists t;
 create table t (a int default b'1');
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT '1'
+  `a` int DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 drop table if exists t;
@@ -406,7 +391,7 @@ count(distinct c1)
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `c` int(10) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   `c1` varchar(256) DEFAULT (uuid())
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t1;
@@ -667,9 +652,9 @@ alter table t add index idx((a+c));
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` varchar(100) DEFAULT NULL,
-  `c` int(11) DEFAULT NULL,
+  `c` int DEFAULT NULL,
   KEY `idx` ((`a` + `c`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`a`)
@@ -689,7 +674,7 @@ create table t(a int auto_increment key clustered) auto_id_cache 100;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL AUTO_INCREMENT,
+  `a` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */
 insert into t values();
@@ -733,8 +718,8 @@ alter table t1 auto_id_cache 200;
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) NOT NULL AUTO_INCREMENT,
+  `a` int DEFAULT NULL,
+  `b` int NOT NULL AUTO_INCREMENT,
   UNIQUE KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=101 /*T![auto_id_cache] AUTO_ID_CACHE=200 */
 insert into t1(b) values(NULL);
@@ -754,7 +739,7 @@ create table t(a int auto_increment key clustered) auto_id_cache 3;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL AUTO_INCREMENT,
+  `a` int NOT NULL AUTO_INCREMENT,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=3 */
 insert into t(a) values(NULL),(NULL),(NULL);
@@ -805,7 +790,7 @@ alter table t1 alter index a invisible;
 Error 3522 (HY000): A primary key index cannot be invisible
 create table t2(a int, primary key(a));
 alter table t2 alter index PRIMARY invisible;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" 
 create table t3(a int NOT NULL, b int);
 alter table t3 add index idx((a+b));
 select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't3' order by index_name;
@@ -860,26 +845,26 @@ create global temporary table db2.tplacement3 (id int) on commit delete rows;
 show create table db2.tplacement3;
 Table	Create Table
 tplacement3	CREATE GLOBAL TEMPORARY TABLE `tplacement3` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
 create temporary table db2.tplacement4 (id int);
 show create table db2.tplacement4;
 Table	Create Table
 tplacement4	CREATE TEMPORARY TABLE `tplacement4` (
-  `id` int(11) DEFAULT NULL
+  `id` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create table db2.t1 (a int) placement policy 'default';
 create global temporary table db2.tplacement5 like db2.t1 on commit delete rows;
 show create table db2.tplacement5;
 Table	Create Table
 tplacement5	CREATE GLOBAL TEMPORARY TABLE `tplacement5` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
 create temporary table db2.tplacement6 like db2.t1;
 show create table db2.tplacement6;
 Table	Create Table
 tplacement6	CREATE TEMPORARY TABLE `tplacement6` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table db2.tplacement6;
 drop table db2.tplacement5;
@@ -1254,6 +1239,8 @@ Error 3800 (HY000): Expression of expression index 'k' cannot refer to a row val
 create table t (j json, key k ((j+1),(j+1)));
 create table t1 (col1 int, index ((concat(''))));
 Error 3761 (HY000): The used storage engine cannot index the expression 'concat(_utf8mb4'')'
+create table t1 (col1 int, index ((null)));
+Error 3761 (HY000): The used storage engine cannot index the expression 'null'
 CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);
 Error 3756 (HY000): The primary key cannot be an expression index
 drop table if exists t;

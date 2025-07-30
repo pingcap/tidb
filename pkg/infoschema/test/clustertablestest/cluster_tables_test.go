@@ -40,23 +40,21 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client/http"
@@ -169,10 +167,10 @@ func TestTestDataLockWaits(t *testing.T) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
-		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
 		// Invalid digests
-		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).EncodeTagWithKey([]byte(""))},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
 	tk := s.newTestKitWithRoot(t)
@@ -227,7 +225,7 @@ func TestSelectClusterTable(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{
+		PS: []*sessmgr.ProcessInfo{
 			{
 				ID:           1,
 				User:         "root",
@@ -261,7 +259,7 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time desc limit 1").Check(testkit.Rows("25.571605962 40507 alias123"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
+	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953", "16 2021-09-08 14:39:54.506967"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 	re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 	require.NotNil(t, re)
@@ -419,18 +417,18 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		user := "user" + strconv.Itoa(i)
 		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
 	}
 	tk.MustExec("flush privileges")
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tk := s.newTestKitWithRoot(t)
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				user := "user" + strconv.Itoa(j)
 				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 					Username: user,
@@ -730,7 +728,7 @@ select * from t1;
 	for _, quota := range memQuotas {
 		checkFn(quota)
 	}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		quota := rand.Int()%8192 + 1
 		checkFn(quota)
 	}
@@ -743,13 +741,13 @@ select * from t1;
 	tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 }
 
-func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.SessionManager) (*grpc.Server, string) {
+func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm sessmgr.Manager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	// Fix issue 9836
 	if sm == nil {
-		sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
-		sm.(*testkit.MockSessionManager).PS[0] = &util.ProcessInfo{
+		sm = &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 1)}
+		sm.(*testkit.MockSessionManager).PS[0] = &sessmgr.ProcessInfo{
 			ID:      1,
 			User:    "root",
 			Host:    "127.0.0.1",
@@ -1054,7 +1052,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select (select sum(b) from t3 where t2.b=t3.a) from t1 join t2 where t1.a = t2.a and t1.c = ?`,
-			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), no_order_index(@`sel_2` `test`.`t3` `k_a`), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), order_index(@`sel_2` `test`.`t3` `k_a`)",
 			nil,
 		},
 
@@ -1103,7 +1101,7 @@ func TestQuickBinding(t *testing.T) {
 		prepStmt = fmt.Sprintf("prepare st from '%v'", sql)
 		nParam := strings.Count(sql, "?")
 		var x, y []string
-		for i := 0; i < nParam; i++ {
+		for i := range nParam {
 			x = append(x, fmt.Sprintf("@a%d=%v", i, randValue()))
 			y = append(y, fmt.Sprintf("@a%d", i))
 		}
@@ -1124,7 +1122,7 @@ func TestQuickBinding(t *testing.T) {
 
 		// normal test
 		sqlWithoutHint := removeHint(tc.template)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			testSQL := fillValues(sqlWithoutHint)
 			tk.MustExec(testSQL)
@@ -1134,7 +1132,7 @@ func TestQuickBinding(t *testing.T) {
 		}
 
 		// test with prepared / execute protocol
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			prepStmt, setStmt, execStmt := genPrepSQL(tc.template)
 			tk.MustExec(prepStmt)
@@ -1165,7 +1163,7 @@ func TestQuickBinding(t *testing.T) {
 
 			// normal test
 			sqlWithoutHint := removeHint(temp)
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				stmtsummary.StmtSummaryByDigestMap.Clear()
 				testSQL := fillValues(sqlWithoutHint)
 				tk.MustExec(testSQL)
@@ -1770,7 +1768,7 @@ func testIndexUsageTable(t *testing.T, clusterTable bool) {
 	tk.MustExec("create table t1(id1 int unique, id2 int unique)")
 	tk.MustExec("create table t2(id1 int unique, id2 int unique)")
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		for j := 1; j <= 2; j++ {
 			tk.MustExec(fmt.Sprintf("insert into t%d values (?, ?)", j), i, i)
 		}
@@ -1866,7 +1864,7 @@ func TestUnusedIndexView(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id1 int unique, id2 int unique)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -1901,18 +1899,18 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
 	bigID := tbl.Meta().ID * 10
 	bigTableName := ""
 	// set a hard limitation on 10000 to avoid using too much resource
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
 
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(bigTableName))
 		require.NoError(t, err)
 
 		require.LessOrEqual(t, tbl.Meta().ID, bigID)
@@ -1971,4 +1969,55 @@ func TestMDLViewIDConflict(t *testing.T) {
 	txnTK1.MustExec("COMMIT")
 	txnTK2.MustExec("COMMIT")
 	wg.Wait()
+}
+
+func TestPlanCacheView(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select a from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
+
+	tk.MustExec("use test")
+	tk.MustExec(`prepare st from 'select a from t where a in (?)'`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache order by executions`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2",
+			":10080 select a from t where a in (?) 3")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
 }

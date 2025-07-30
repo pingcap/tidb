@@ -33,6 +33,8 @@ const (
 	maxSQLNum = 5000
 )
 
+var keyspaceName = []byte("123")
+
 func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
@@ -61,9 +63,9 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 
 func reportCache(tsr *RemoteTopSQLReporter) {
 	tsr.doReport(&ReportData{
-		DataRecords: tsr.collecting.take().getReportRecords().toProto(),
-		SQLMetas:    tsr.normalizedSQLMap.take().toProto(),
-		PlanMetas:   tsr.normalizedPlanMap.take().toProto(tsr.decodePlan, tsr.compressPlan),
+		DataRecords: tsr.collecting.take().getReportRecords().toProto(keyspaceName),
+		SQLMetas:    tsr.normalizedSQLMap.take().toProto(keyspaceName),
+		PlanMetas:   tsr.normalizedPlanMap.take().toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan),
 	})
 }
 
@@ -147,9 +149,11 @@ func TestCollectAndSendBatch(t *testing.T) {
 		}
 		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
 		require.True(t, exist)
+		require.Equal(t, keyspaceName, sqlMeta.KeyspaceName)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
 		planMeta, exist := findPlanMeta(data.PlanMetas, req.PlanDigest)
 		require.True(t, exist)
+		require.Equal(t, keyspaceName, sqlMeta.KeyspaceName)
 		require.Equal(t, "planNormalized"+strconv.Itoa(id), planMeta.NormalizedPlan)
 	}
 }
@@ -184,9 +188,11 @@ func TestCollectAndEvicted(t *testing.T) {
 		require.Equal(t, uint32(id), req.Items[0].CpuTimeMs)
 		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
 		require.True(t, exist)
+		require.Equal(t, keyspaceName, sqlMeta.KeyspaceName)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
 		planMeta, exist := findPlanMeta(data.PlanMetas, req.PlanDigest)
 		require.True(t, exist)
+		require.Equal(t, keyspaceName, sqlMeta.KeyspaceName)
 		require.Equal(t, "planNormalized"+strconv.Itoa(id), planMeta.NormalizedPlan)
 	}
 }
@@ -306,19 +312,25 @@ func TestCollectAndTopN(t *testing.T) {
 	require.Equal(t, []byte("sqlDigest6"), results[5].SqlDigest)
 	require.Equal(t, 6, getTotalCPUTime(results[5]))
 	require.Equal(t, 6, len(ds.data[0].SQLMetas))
+	require.Equal(t, keyspaceName, results[0].KeyspaceName)
+	require.Equal(t, keyspaceName, results[1].KeyspaceName)
+	require.Equal(t, keyspaceName, results[2].KeyspaceName)
+	require.Equal(t, keyspaceName, results[3].KeyspaceName)
+	require.Equal(t, keyspaceName, results[4].KeyspaceName)
+	require.Equal(t, keyspaceName, results[5].KeyspaceName)
 }
 
 func TestCollectCapacity(t *testing.T) {
-	tsr, _ := setupRemoteTopSQLReporter(maxSQLNum, 60)
+	tsr, _ := setupRemoteTopSQLReporter(maxSQLNum, 62)
 	registerSQL := func(n int) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			key := []byte("sqlDigest" + strconv.Itoa(i))
 			value := "sqlNormalized" + strconv.Itoa(i)
 			tsr.RegisterSQL(key, value, false)
 		}
 	}
 	registerPlan := func(n int) {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			key := []byte("planDigest" + strconv.Itoa(i))
 			value := "planNormalized" + strconv.Itoa(i)
 			tsr.RegisterPlan(key, value, false)
@@ -326,7 +338,7 @@ func TestCollectCapacity(t *testing.T) {
 	}
 	genRecord := func(n int) []collector.SQLCPUTimeRecord {
 		records := make([]collector.SQLCPUTimeRecord, 0, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			records = append(records, collector.SQLCPUTimeRecord{
 				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
 				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
@@ -388,6 +400,7 @@ func TestCollectInternal(t *testing.T) {
 		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
 		require.True(t, exist)
 		require.Equal(t, id%2 == 0, sqlMeta.IsInternalSql)
+		require.Equal(t, keyspaceName, sqlMeta.KeyspaceName)
 	}
 }
 
@@ -397,8 +410,8 @@ func TestMultipleDataSinks(t *testing.T) {
 
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 
-	var chs []chan *ReportData
-	for i := 0; i < 7; i++ {
+	chs := make([]chan *ReportData, 0, 7)
+	for range 7 {
 		chs = append(chs, make(chan *ReportData, 1))
 	}
 	dss := make([]DataSink, 0, len(chs))
@@ -419,6 +432,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		d := <-ch
 		require.NotNil(t, d)
 		require.Len(t, d.DataRecords, 1)
+		require.Equal(t, keyspaceName, d.DataRecords[0].KeyspaceName)
 		require.Equal(t, []byte("sqlDigest1"), d.DataRecords[0].SqlDigest)
 		require.Equal(t, []byte("planDigest1"), d.DataRecords[0].PlanDigest)
 		require.Len(t, d.DataRecords[0].Items, 1)
@@ -426,11 +440,13 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.Equal(t, uint32(2), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
+			KeyspaceName:  keyspaceName,
 			SqlDigest:     []byte("sqlDigest1"),
 			NormalizedSql: "sqlNormalized1",
 		}}, d.SQLMetas)
 
 		require.Equal(t, []tipb.PlanMeta{{
+			KeyspaceName:   keyspaceName,
 			PlanDigest:     []byte("planDigest1"),
 			NormalizedPlan: "planNormalized1",
 		}}, d.PlanMetas)
@@ -451,6 +467,7 @@ func TestMultipleDataSinks(t *testing.T) {
 		d := <-chs[i]
 		require.NotNil(t, d)
 		require.Len(t, d.DataRecords, 1)
+		require.Equal(t, keyspaceName, d.DataRecords[0].KeyspaceName)
 		require.Equal(t, []byte("sqlDigest4"), d.DataRecords[0].SqlDigest)
 		require.Equal(t, []byte("planDigest4"), d.DataRecords[0].PlanDigest)
 		require.Len(t, d.DataRecords[0].Items, 1)
@@ -458,12 +475,14 @@ func TestMultipleDataSinks(t *testing.T) {
 		require.Equal(t, uint32(5), d.DataRecords[0].Items[0].CpuTimeMs)
 
 		require.Equal(t, []tipb.SQLMeta{{
+			KeyspaceName:  keyspaceName,
 			SqlDigest:     []byte("sqlDigest4"),
 			NormalizedSql: "sqlNormalized4",
 			IsInternalSql: true,
 		}}, d.SQLMetas)
 
 		require.Equal(t, []tipb.PlanMeta{{
+			KeyspaceName:   keyspaceName,
 			PlanDigest:     []byte("planDigest4"),
 			NormalizedPlan: "planNormalized4",
 		}}, d.PlanMetas)
@@ -528,7 +547,7 @@ func initializeCache(maxStatementsNum, interval int) (*RemoteTopSQLReporter, *mo
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
 	tsr, _ := initializeCache(maxSQLNum, 120)
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		populateCache(tsr, 0, maxSQLNum, uint64(i))
 	}
 }
@@ -537,7 +556,7 @@ func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
 	tsr, _ := initializeCache(maxSQLNum, 120)
 	begin := 0
 	end := maxSQLNum
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		begin += maxSQLNum
 		end += maxSQLNum
 		populateCache(tsr, begin, end, uint64(i))

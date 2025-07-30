@@ -23,9 +23,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +39,7 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk0.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
@@ -70,7 +71,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk0.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
@@ -134,6 +135,8 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
+	h := dom.StatsHandle()
+	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec("insert into t select 1")
 	for i := 1; i <= 8; i++ {
 		tk.MustExec("insert into t select * from t") // 256 Lines
@@ -143,7 +146,6 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	rs0 := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	require.Len(t, rs0.Rows(), 0)
 
-	h := dom.StatsHandle()
 	originalVal4 := statistics.AutoAnalyzeMinCnt
 	originalVal5 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	statistics.AutoAnalyzeMinCnt = 0
@@ -155,7 +157,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	sm := &testkit.MockSessionManager{
 		Dom: dom,
-		PS:  []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS:  []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()

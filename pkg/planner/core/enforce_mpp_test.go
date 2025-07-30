@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +31,6 @@ func TestRowSizeInMPP(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(10), b varchar(20), c varchar(256))")
 	tk.MustExec("insert into t values (space(10), space(20), space(256))")
@@ -40,7 +39,7 @@ func TestRowSizeInMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
 	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
 	require.NoError(t, err)

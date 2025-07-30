@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -76,12 +76,12 @@ func TestCompareIndexData(t *testing.T) {
 		cols := make([]*table.Column, 0)
 		indexCols := make([]*model.IndexColumn, 0)
 		for i, ft := range data.fts {
-			cols = append(cols, &table.Column{ColumnInfo: &model.ColumnInfo{Name: pmodel.NewCIStr(fmt.Sprintf("c%d", i)), FieldType: *ft}})
+			cols = append(cols, &table.Column{ColumnInfo: &model.ColumnInfo{Name: ast.NewCIStr(fmt.Sprintf("c%d", i)), FieldType: *ft}})
 			indexCols = append(indexCols, &model.IndexColumn{Offset: i, Length: data.indexLength[i]})
 		}
-		indexInfo := &model.IndexInfo{Name: pmodel.NewCIStr("i0"), Columns: indexCols}
+		indexInfo := &model.IndexInfo{Name: ast.NewCIStr("i0"), Columns: indexCols}
 
-		err := compareIndexData(tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: pmodel.NewCIStr("t")}, nil)
+		err := compareIndexData(tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: ast.NewCIStr("t")}, nil)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }
@@ -257,7 +257,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 				tc = tc.WithLocation(lc)
 				tableInfo := model.TableInfo{
 					ID:             1,
-					Name:           pmodel.NewCIStr("t"),
+					Name:           ast.NewCIStr("t"),
 					Columns:        columnInfos,
 					Indices:        indexInfos,
 					PKIsHandle:     false,

@@ -34,6 +34,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"         //nolint:goimports
 	_ "net/http/pprof" // #nosec G108 for pprof
@@ -55,7 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -67,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -125,6 +127,9 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+
+	userResLock  sync.RWMutex // userResLock used to protect userResource
+	userResource map[string]*userResourceLimits
 
 	capability uint32
 	dom        *domain.Domain
@@ -247,13 +252,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
 	}
 	s.capability = defaultCapability
-	setTxnScope()
 	setSystemTimeZoneVariable()
 
 	tlsConfig, autoReload, err := util.LoadTLSCertificates(
@@ -408,18 +413,6 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_cert", cert)
 	variable.SetSysVar("ssl_key", key)
 	variable.SetSysVar("ssl_ca", ca)
-}
-
-func setTxnScope() {
-	variable.SetSysVar(variable.TiDBTxnScope, func() string {
-		if !variable.EnableLocalTxn.Load() {
-			return kv.GlobalTxnScope
-		}
-		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
-			return kv.GlobalTxnScope
-		}
-		return kv.LocalTxnScope
-	}())
 }
 
 // Export config-related metrics
@@ -719,6 +712,14 @@ func (s *Server) onConn(conn *clientConn) {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
+	if err := conn.increaseUserConnectionsCount(); err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Warn("failed to increase the count of connections", zap.Error(err),
+				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+		return
+	}
+	defer conn.decreaseUserConnectionCount()
+
 	if !s.registerConn(conn) {
 		return
 	}
@@ -801,9 +802,7 @@ func (s *Server) checkConnectionCount() error {
 		return nil
 	}
 
-	s.rwlock.RLock()
-	conns := len(s.clients)
-	s.rwlock.RUnlock()
+	conns := s.ConnectionCount()
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
@@ -814,23 +813,19 @@ func (s *Server) checkConnectionCount() error {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
-	rs := make(map[uint64]*util.ProcessInfo)
-	for connID, pi := range s.getUserProcessList() {
-		rs[connID] = pi
-	}
+func (s *Server) ShowProcessList() map[uint64]*sessmgr.ProcessInfo {
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
+	maps.Copy(rs, s.getUserProcessList())
 	if s.dom != nil {
-		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
-			rs[connID] = pi
-		}
+		maps.Copy(rs, s.dom.SysProcTracker().GetSysProcessList())
 	}
 	return rs
 }
 
-func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
+func (s *Server) getUserProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
@@ -839,7 +834,8 @@ func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
 	return rs
 }
 
-// ShowTxnList shows all txn info for displaying in `TIDB_TRX`
+// ShowTxnList shows all txn info for displaying in `TIDB_TRX`.
+// Internal sessions are not taken into consideration.
 func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
@@ -847,7 +843,7 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			info := client.ctx.Session.TxnInfo()
-			if info != nil {
+			if info != nil && info.ProcessInfo != nil {
 				rs = append(rs, info)
 			}
 		}
@@ -871,7 +867,7 @@ func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.
 }
 
 // GetProcessInfo implements the SessionManager interface.
-func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (s *Server) GetProcessInfo(id uint64) (*sessmgr.ProcessInfo, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
@@ -881,7 +877,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 				return pinfo, true
 			}
 		}
-		return &util.ProcessInfo{}, false
+		return &sessmgr.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
 }
@@ -1008,9 +1004,7 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	conns := make(map[uint64]*clientConn)
 
 	s.rwlock.Lock()
-	for k, v := range s.clients {
-		conns[k] = v
-	}
+	maps.Copy(conns, s.clients)
 	s.rwlock.Unlock()
 
 	allDone := make(chan struct{})
@@ -1021,6 +1015,17 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 		for _, conn := range conns {
 			// Wait for the connections with explicit transaction or an executing auto-commit query.
 			if conn.getStatus() == connStatusReading && !conn.getCtx().GetSessionVars().InTxn() {
+				// The waitgroup is not protected by the `quitWaitingForConns`. However, the implementation
+				// of `client-go` will guarantee this `Wait` will return at least after killing the
+				// connections. We also wait for a similar `WaitGroup` on the store after killing the connections.
+				//
+				// Therefore, it'll not cause goroutine leak. Even if, it's not a big issue when the TiDB is
+				// going to shutdown.
+				//
+				// It should be waited for connections in all status, even if it's not in transactions and is reading
+				// from the client. Because it may run background commit goroutines at any time.
+				conn.getCtx().Session.GetCommitWaitGroup().Wait()
+
 				continue
 			}
 			select {
@@ -1028,6 +1033,11 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 			case <-quitWaitingForConns:
 				return
 			}
+
+			// Wait for the commit wait group after waiting for the `conn.quit` channel to make sure the foreground
+			// process has finished to avoid the situation that after waiting for the wait group, the transaction starts
+			// a new background goroutine and increase the wait group.
+			conn.getCtx().Session.GetCommitWaitGroup().Wait()
 		}
 	}()
 
@@ -1059,6 +1069,14 @@ func (s *Server) StoreInternalSession(se any) {
 	s.internalSessions[se] = struct{}{}
 	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
+}
+
+// ContainsInternalSession implements SessionManager interface.
+func (s *Server) ContainsInternalSession(se any) bool {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	_, ok := s.internalSessions[se]
+	return ok
 }
 
 // DeleteInternalSession implements SessionManager interface.
@@ -1113,7 +1131,7 @@ func setSystemTimeZoneVariable() {
 }
 
 // CheckOldRunningTxn implements SessionManager interface.
-func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 
@@ -1124,7 +1142,7 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
+			session.RemoveLockDDLJobs(client.ctx.Session, jobs, printLog)
 		}
 	}
 }

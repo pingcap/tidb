@@ -18,11 +18,13 @@ package testkit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -32,6 +34,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -39,8 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statisticsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -64,7 +68,7 @@ type TestKit struct {
 	assert  *assert.Assertions
 	t       testing.TB
 	store   kv.Storage
-	session sessiontypes.Session
+	session sessionapi.Session
 	alloc   chunk.Allocator
 }
 
@@ -73,7 +77,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	if _, ok := t.(*testing.B); !ok {
 		// Don't check `intest.InTest` for benchmark. We should allow to run benchmarks without `intest` tag, because some assert may have significant performance
 		// impact.
-		require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+		require.True(t, intest.InTest && intest.EnableAssert, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	}
 	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
@@ -92,7 +96,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		if ok {
 			mockSm.mu.Lock()
 			if mockSm.Conn == nil {
-				mockSm.Conn = make(map[uint64]sessiontypes.Session)
+				mockSm.Conn = make(map[uint64]sessionapi.Session)
 			}
 			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
@@ -104,7 +108,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 }
 
 // NewTestKitWithSession returns a new *TestKit.
-func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Session) *TestKit {
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessionapi.Session) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -118,28 +122,19 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
-	if intest.InTest {
-		seed := uint64(time.Now().UnixNano())
-		tk.t.Logf("RefreshSession rand seed: %d", seed)
-		rng := rand.New(rand.NewSource(int64(seed)))
-		if rng.Intn(10) < 3 { // 70% chance to run infoschema v2
-			tk.MustExec("set @@global.tidb_schema_cache_size = 0")
-		}
-	}
-
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // SetSession set the session of testkit
-func (tk *TestKit) SetSession(session sessiontypes.Session) {
+func (tk *TestKit) SetSession(session sessionapi.Session) {
 	tk.session = session
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
-func (tk *TestKit) Session() sessiontypes.Session {
+func (tk *TestKit) Session() sessionapi.Session {
 	return tk.session
 }
 
@@ -275,26 +270,6 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...any) *Re
 	return tk.MustQuery(sql, args...)
 }
 
-// MustPartitionByList checks if the result execution plan must read specific partitions by list.
-func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...any) *Result {
-	rs := tk.MustQuery("explain "+sql, args...)
-	ok := len(partitions) == 0
-	for i := range rs.rows {
-		if ok {
-			tk.require.NotContains(rs.rows[i][3], "partition:")
-		}
-		for index, partition := range partitions {
-			if !ok && strings.Contains(rs.rows[i][3], "partition:"+partition) {
-				partitions = append(partitions[:index], partitions[index+1:]...)
-			}
-		}
-	}
-	if !ok {
-		tk.require.Len(partitions, 0)
-	}
-	return tk.MustQuery(sql, args...)
-}
-
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...any) error {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
@@ -386,16 +361,6 @@ func (tk *TestKit) NotHasKeywordInOperatorInfo(sql string, keyword string, args 
 	return true
 }
 
-// HasPlan4ExplainFor checks if the result execution plan contains specific plan.
-func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
-	for i := range result.rows {
-		if strings.Contains(result.rows[i][0], plan) {
-			return true
-		}
-	}
-	return false
-}
-
 // Exec executes a sql statement using the prepared stmt API
 func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
@@ -405,6 +370,10 @@ func (tk *TestKit) Exec(sql string, args ...any) (sqlexec.RecordSet, error) {
 // ExecWithContext executes a sql statement using the prepared stmt API
 func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	defer tk.Session().GetSessionVars().ClearAlloc(&tk.alloc, err != nil)
+
+	// Set the command value to ComQuery, so that the process info can be updated correctly
+	tk.Session().SetCommandValue(mysql.ComQuery)
+	defer tk.Session().SetCommandValue(mysql.ComSleep)
 
 	cursorExists := tk.Session().GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists)
 	if len(args) == 0 {
@@ -499,7 +468,7 @@ func (tk *TestKit) MustExecToErr(sql string, args ...any) {
 }
 
 // NewSession creates a new session environment for test.
-func NewSession(t testing.TB, store kv.Storage) sessiontypes.Session {
+func NewSession(t testing.TB, store kv.Storage) sessionapi.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
@@ -540,7 +509,7 @@ func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
 func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 	err := tk.ExecToErr(sql)
 	tk.require.Error(err, "sql: %s", sql)
-	tk.require.Contains(err.Error(), errStr)
+	tk.require.Contains(err.Error(), errStr, "sql: %s", sql)
 }
 
 // MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
@@ -551,28 +520,35 @@ func (tk *TestKit) MustMatchErrMsg(sql string, errRx any) {
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
-func (tk *TestKit) MustUseIndex(sql string, index string, args ...any) bool {
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...any) {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][3], "index:"+index) {
-			return true
+			return
 		}
 	}
-	return false
+	tk.require.Fail("index not used", "sql:%s, args: %v, index:%s, plan:%v", sql, args, index, rs.rows)
 }
 
-// MustUseIndex4ExplainFor checks if the result execution plan contains specific index(es).
-func (tk *TestKit) MustUseIndex4ExplainFor(result *Result, index string) bool {
-	for i := range result.rows {
-		// It depends on whether we enable to collect the execution info.
-		if strings.Contains(result.rows[i][3], "index:"+index) {
-			return true
-		}
-		if strings.Contains(result.rows[i][4], "index:"+index) {
-			return true
+// MustNoIndexUsed checks if the result execution plan contains no index.
+func (tk *TestKit) MustNoIndexUsed(sql string, args ...any) {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:") {
+			tk.require.Fail("index is used")
 		}
 	}
-	return false
+}
+
+// MustUseIndexForConnection checks if the result execution plan contains specific index(es) for a connection.
+func (tk *TestKit) MustUseIndexForConnection(connID string, index string) {
+	rs := tk.MustQuery("explain for connection " + connID)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], "index:"+index) {
+			return
+		}
+	}
+	tk.require.Fail("index not used", "connID:%s, index:%s, plan:%v", connID, index, rs.rows)
 }
 
 // CheckExecResult checks the affected rows and the insert id after executing MustExec.
@@ -623,17 +599,16 @@ func containGlobal(rs *Result) bool {
 }
 
 // MustNoGlobalStats checks if there is no global stats.
-func (tk *TestKit) MustNoGlobalStats(table string) bool {
+func (tk *TestKit) MustNoGlobalStats(table string) {
 	if containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
-		return false
+		tk.require.Fail("global stats should not be found")
 	}
 	if containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
-		return false
+		tk.require.Fail("global stats should not be found")
 	}
 	if containGlobal(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
-		return false
+		tk.require.Fail("global stats should not be found")
 	}
-	return true
 }
 
 // CheckLastMessage checks last message after executing MustExec
@@ -777,4 +752,24 @@ func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.Wa
 	})
 
 	return &wg
+}
+
+// LoadTableStats loads table stats from json file.
+func LoadTableStats(fileName string, dom *domain.Domain) error {
+	statsPath := filepath.Join("testdata", fileName)
+	bytes, err := os.ReadFile(statsPath)
+	if err != nil {
+		return err
+	}
+	statsTbl := &statisticsutil.JSONTable{}
+	err = json.Unmarshal(bytes, statsTbl)
+	if err != nil {
+		return err
+	}
+	statsHandle := dom.StatsHandle()
+	err = statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), statsTbl, 0)
+	if err != nil {
+		return err
+	}
+	return nil
 }

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreatePolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	po, err := m.GetPolicy(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -43,7 +43,7 @@ func applyCreatePolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
 	return nil
 }
 
-func applyAlterPolicy(b *Builder, m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func applyAlterPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	po, err := m.GetPolicy(diff.SchemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -71,7 +71,7 @@ func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
 	return []int64{}
 }
 
-func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) error {
+func applyCreateOrAlterResourceGroup(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	group, err := m.GetResourceGroup(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -84,7 +84,7 @@ func applyCreateOrAlterResourceGroup(b *Builder, m *meta.Meta, diff *model.Schem
 	return nil
 }
 
-func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []int64 {
+func applyDropResourceGroup(b *Builder, m meta.Reader, diff *model.SchemaDiff) []int64 {
 	group, ok := b.infoSchema.ResourceGroupByID(diff.SchemaID)
 	if !ok {
 		return nil
@@ -101,7 +101,7 @@ func (b *Builder) addTemporaryTable(tblID int64) {
 	b.infoSchema.temporaryTableIDs[tblID] = struct{}{}
 }
 
-func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
+func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
 	info := b.infoSchema
 	// build the policies.
 	for _, policy := range policies {
@@ -111,21 +111,5 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 	// build the groups.
 	for _, group := range resourceGroups {
 		info.setResourceGroup(group)
-	}
-
-	// Maintain foreign key reference information.
-	if b.enableV2 {
-		rs := b.ListTablesWithSpecialAttribute(ForeignKeysAttribute)
-		for _, db := range rs {
-			for _, tbl := range db.TableInfos {
-				info.addReferredForeignKeys(db.DBName, tbl)
-			}
-		}
-		return
-	}
-	for _, di := range dbInfos {
-		for _, t := range di.Deprecated.Tables {
-			b.infoSchema.addReferredForeignKeys(di.Name, t)
-		}
 	}
 }

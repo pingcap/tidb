@@ -15,14 +15,14 @@
 package types
 
 import (
+	"bytes"
 	"cmp"
 	gjson "encoding/json"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -309,7 +310,7 @@ func (d *Datum) GetBinaryLiteral4Cmp() BinaryLiteral {
 	if bitLen == 0 {
 		return d.b
 	}
-	for i := 0; i < bitLen; i++ {
+	for i := range bitLen {
 		// Remove the prefix 0 in the bit array.
 		if d.b[i] != 0 {
 			return d.b[i:]
@@ -550,6 +551,43 @@ func (d *Datum) GetValue() any {
 	default:
 		return d.GetInterface()
 	}
+}
+
+// TruncatedStringify returns the %v representation of the datum
+// but truncated (for example, for strings, only first 64 bytes is printed).
+// This function is useful in contexts like EXPLAIN.
+func (d *Datum) TruncatedStringify() string {
+	switch d.k {
+	case KindString, KindBytes:
+		return truncateStringIfNeeded(d.GetString())
+	case KindMysqlJSON:
+		return truncateStringIfNeeded(d.GetMysqlJSON().String())
+	case KindVectorFloat32:
+		// Vector supports native efficient truncation.
+		return d.GetVectorFloat32().TruncatedString()
+	case KindInt64:
+		return strconv.FormatInt(d.GetInt64(), 10)
+	case KindUint64:
+		return strconv.FormatUint(d.GetUint64(), 10)
+	default:
+		// For other types, no truncation is needed.
+		return fmt.Sprintf("%v", d.GetValue())
+	}
+}
+
+func truncateStringIfNeeded(str string) string {
+	const maxLen = 64
+	if len(str) > maxLen {
+		const suffix = "...(len:"
+		lenStr := strconv.Itoa(len(str))
+		buf := bytes.NewBuffer(make([]byte, 0, maxLen+len(suffix)+len(lenStr)+1))
+		buf.WriteString(str[:maxLen])
+		buf.WriteString(suffix)
+		buf.WriteString(lenStr)
+		buf.WriteByte(')')
+		return buf.String()
+	}
+	return str
 }
 
 // SetValueWithDefaultCollation sets any kind of value.
@@ -1151,6 +1189,8 @@ func (d *Datum) convertToString(ctx Context, target *FieldType) (Datum, error) {
 		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.
 		val, err := d.GetBinaryLiteral().ToInt(ctx)
+		// The length of BIT is limited to 64, so this function will never fail / truncated.
+		intest.AssertNoError(err)
 		if err != nil {
 			s = d.GetBinaryLiteral().ToString()
 		} else {
@@ -1674,38 +1714,13 @@ func (d *Datum) ConvertToMysqlYear(ctx Context, target *FieldType) (Datum, error
 	return ret, errors.Trace(err)
 }
 
-func (d *Datum) convertStringToMysqlBit(ctx Context) (uint64, error) {
-	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
-	if err != nil {
-		// It cannot be converted to bit type, so we need to convert it to int type.
-		return BinaryLiteral(d.b).ToInt(ctx)
-	}
-	return bitStr.ToInt(ctx)
-}
-
 func (d *Datum) convertToMysqlBit(ctx Context, target *FieldType) (Datum, error) {
 	var ret Datum
 	var uintValue uint64
 	var err error
 	switch d.k {
-	case KindBytes:
+	case KindString, KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(ctx)
-	case KindString:
-		// For single bit value, we take string like "true", "1" as 1, and "false", "0" as 0,
-		// this behavior is not documented in MySQL, but it behaves so, for more information, see issue #18681
-		s := BinaryLiteral(d.b).ToString()
-		if target.GetFlen() == 1 {
-			switch strings.ToLower(s) {
-			case "true", "1":
-				uintValue = 1
-			case "false", "0":
-				uintValue = 0
-			default:
-				uintValue, err = d.convertStringToMysqlBit(ctx)
-			}
-		} else {
-			uintValue, err = d.convertStringToMysqlBit(ctx)
-		}
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
 		d.k = KindUint64
@@ -2390,44 +2405,26 @@ func MaxValueDatum() Datum {
 
 // SortDatums sorts a slice of datum.
 func SortDatums(ctx Context, datums []Datum) error {
-	sorter := datumsSorter{datums: datums, ctx: ctx}
-	sort.Sort(&sorter)
-	return sorter.err
-}
-
-type datumsSorter struct {
-	datums []Datum
-	ctx    Context
-	err    error
-}
-
-func (ds *datumsSorter) Len() int {
-	return len(ds.datums)
-}
-
-func (ds *datumsSorter) Less(i, j int) bool {
-	cmp, err := ds.datums[i].Compare(ds.ctx, &ds.datums[j], collate.GetCollator(ds.datums[i].Collation()))
+	var err error
+	slices.SortFunc(datums, func(a, b Datum) int {
+		var cmp int
+		cmp, err = a.Compare(ctx, &b, collate.GetCollator(b.Collation()))
+		if err != nil {
+			return 0
+		}
+		return cmp
+	})
 	if err != nil {
-		ds.err = errors.Trace(err)
-		return true
+		err = errors.Trace(err)
 	}
-	return cmp < 0
+	return err
 }
-
-func (ds *datumsSorter) Swap(i, j int) {
-	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
-}
-
-var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
 
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	n := len(datums)
-	builder := strBuilderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		strBuilderPool.Put(builder)
-	}()
+	builder := &strings.Builder{}
+	builder.Grow(8 * n)
 	if n > 1 {
 		builder.WriteString("(")
 	}
@@ -2495,62 +2492,62 @@ func CloneRow(dr []Datum) []Datum {
 }
 
 // GetMaxValue returns the max value datum for each type.
-func GetMaxValue(ft *FieldType) (max Datum) {
+func GetMaxValue(ft *FieldType) (maxVal Datum) {
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			max.SetUint64(IntegerUnsignedUpperBound(ft.GetType()))
+			maxVal.SetUint64(IntegerUnsignedUpperBound(ft.GetType()))
 		} else {
-			max.SetInt64(IntegerSignedUpperBound(ft.GetType()))
+			maxVal.SetInt64(IntegerSignedUpperBound(ft.GetType()))
 		}
 	case mysql.TypeFloat:
-		max.SetFloat32(float32(GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
+		maxVal.SetFloat32(float32(GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
 	case mysql.TypeDouble:
-		max.SetFloat64(GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
+		maxVal.SetFloat64(GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMaxValue, to avoid import circle
 		bytes := []byte{250}
-		max.SetString(string(bytes), ft.GetCollate())
+		maxVal.SetString(string(bytes), ft.GetCollate())
 	case mysql.TypeNewDecimal:
-		max.SetMysqlDecimal(NewMaxOrMinDec(false, ft.GetFlen(), ft.GetDecimal()))
+		maxVal.SetMysqlDecimal(NewMaxOrMinDec(false, ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeDuration:
-		max.SetMysqlDuration(Duration{Duration: MaxTime})
+		maxVal.SetMysqlDuration(Duration{Duration: MaxTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.GetType() == mysql.TypeDate || ft.GetType() == mysql.TypeDatetime {
-			max.SetMysqlTime(NewTime(MaxDatetime, ft.GetType(), 0))
+			maxVal.SetMysqlTime(NewTime(MaxDatetime, ft.GetType(), 0))
 		} else {
-			max.SetMysqlTime(MaxTimestamp)
+			maxVal.SetMysqlTime(MaxTimestamp)
 		}
 	}
 	return
 }
 
 // GetMinValue returns the min value datum for each type.
-func GetMinValue(ft *FieldType) (min Datum) {
+func GetMinValue(ft *FieldType) (minVal Datum) {
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
-			min.SetUint64(0)
+			minVal.SetUint64(0)
 		} else {
-			min.SetInt64(IntegerSignedLowerBound(ft.GetType()))
+			minVal.SetInt64(IntegerSignedLowerBound(ft.GetType()))
 		}
 	case mysql.TypeFloat:
-		min.SetFloat32(float32(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
+		minVal.SetFloat32(float32(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal())))
 	case mysql.TypeDouble:
-		min.SetFloat64(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
+		minVal.SetFloat64(-GetMaxFloat(ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		// codec.Encode KindMinNotNull, to avoid import circle
 		bytes := []byte{1}
-		min.SetString(string(bytes), ft.GetCollate())
+		minVal.SetString(string(bytes), ft.GetCollate())
 	case mysql.TypeNewDecimal:
-		min.SetMysqlDecimal(NewMaxOrMinDec(true, ft.GetFlen(), ft.GetDecimal()))
+		minVal.SetMysqlDecimal(NewMaxOrMinDec(true, ft.GetFlen(), ft.GetDecimal()))
 	case mysql.TypeDuration:
-		min.SetMysqlDuration(Duration{Duration: MinTime})
+		minVal.SetMysqlDuration(Duration{Duration: MinTime})
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.GetType() == mysql.TypeDate || ft.GetType() == mysql.TypeDatetime {
-			min.SetMysqlTime(NewTime(MinDatetime, ft.GetType(), 0))
+			minVal.SetMysqlTime(NewTime(MinDatetime, ft.GetType(), 0))
 		} else {
-			min.SetMysqlTime(MinTimestamp)
+			minVal.SetMysqlTime(MinTimestamp)
 		}
 	}
 	return

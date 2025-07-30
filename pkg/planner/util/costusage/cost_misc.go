@@ -59,7 +59,7 @@ type CostVer2 struct {
 
 // GetCost returns the cost value of the costVer2
 func (c *CostVer2) GetCost() float64 {
-	return c.cost
+	return max(c.cost, 0)
 }
 
 // GetTrace returns the trace of current costVer2
@@ -141,10 +141,12 @@ func SumCostVer2(costs ...CostVer2) (ret CostVer2) {
 			for factor, factorCost := range c.trace.factorCosts {
 				ret.trace.factorCosts[factor] += factorCost
 			}
-			if ret.trace.formula != "" {
-				ret.trace.formula += " + "
+			if c.trace.formula != "" { // this empty formula is created NewZeroCostVer2 and no update happened,
+				if ret.trace.formula != "" {
+					ret.trace.formula += " + "
+				}
+				ret.trace.formula += "(" + c.trace.formula + ")"
 			}
-			ret.trace.formula += "(" + c.trace.formula + ")"
 		}
 	}
 	return ret
