@@ -594,13 +594,13 @@ const unknownColumnID = math.MinInt64
 
 // StaleLastBucketThreshold is the threshold for detecting stale last bucket estimates.
 // If the last bucket's count is less than 30% of the average bucket count, we consider
-// it potentially stale and fall through to uniform distribution.
+// it potentially stale.
 const StaleLastBucketThreshold = 0.3
 
-// SignificantModifyThreshold is the minimum ratio of modifications to table size
-// required to consider applying the stale bucket heuristic. This prevents false
-// positives from small modifications that don't warrant estimation adjustments.
-const SignificantModifyThreshold = 0.01
+// bucketAwareRowAddedThreshold is the minimum ratio of newly added rows relative to
+// the average bucket size required to trigger the stale bucket heuristic.
+// If new rows >= (avgBucketSize * threshold), we consider applying the heuristic.
+const bucketAwareRowAddedThreshold = 0.5
 
 // MinRowCountForStaleHeuristic is the minimum original row count required to apply
 // the stale bucket heuristic. This prevents the heuristic from triggering on very
@@ -615,24 +615,24 @@ func IsLastBucketEndValueUnderrepresented(hg *statistics.Histogram, val types.Da
 		return false
 	}
 
-	originalRowCount := hg.TotalRowCount()
+	originalNonNullCount := hg.NotNullCount()
 
 	// Only apply heuristic to tables with sufficient size to avoid false positives
 	// on very small tables where a few new rows create misleadingly high growth ratios
-	if originalRowCount < MinRowCountForStaleHeuristic {
+	if originalNonNullCount < MinRowCountForStaleHeuristic {
 		return false
 	}
 
-	// This represents new rows added since ANALYZE (much better than modifyCount)
-	newRowsAdded := realtimeRowCount - int64(originalRowCount)
+	// This represents new rows added since ANALYZE
+	newRowsAdded := realtimeRowCount - int64(hg.TotalRowCount())
 	if newRowsAdded <= 0 {
 		return false
 	}
 
-	// Only apply heuristic when net growth is significant relative to original table size
-	// This focuses on new inserts rather than updates/deletes
-	growthRatio := float64(newRowsAdded) / originalRowCount
-	if growthRatio < SignificantModifyThreshold {
+	// Only apply heuristic when new rows are significant relative to average bucket size
+	// Use non-null count for bucket size since buckets contain non-null distributions
+	avgBucketSize := originalNonNullCount / float64(len(hg.Buckets))
+	if float64(newRowsAdded) < avgBucketSize*bucketAwareRowAddedThreshold {
 		return false
 	}
 
@@ -646,8 +646,8 @@ func IsLastBucketEndValueUnderrepresented(hg *statistics.Histogram, val types.Da
 	}
 
 	// Check if the count is suspiciously low compared to other buckets
-	totalHistCount := hg.NotNullCount()
-	avgBucketCount := totalHistCount / float64(len(hg.Buckets))
+	// Use same non-null count basis as bucket size calculation for consistency
+	avgBucketCount := originalNonNullCount / float64(len(hg.Buckets))
 
 	// If count is much less than average, it's likely underrepresented
 	return histCnt < avgBucketCount*StaleLastBucketThreshold
