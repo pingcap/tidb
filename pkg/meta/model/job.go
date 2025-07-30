@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1237,5 +1238,12 @@ func NewJobW(job *Job, bytes []byte) *JobW {
 }
 
 func init() {
-	SetJobVerInUse(JobVersion1)
+	// as the cluster might be upgraded from old TiDB version, so we set to v1
+	// initially, and then we detect the right version when DDL start.
+	ver := JobVersion1
+	if kerneltype.IsNextGen() {
+		// nextgen doesn't need to consider the compatibility with old TiDB versions,
+		ver = JobVersion2
+	}
+	SetJobVerInUse(ver)
 }

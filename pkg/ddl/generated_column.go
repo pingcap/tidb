@@ -261,6 +261,7 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, t
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint:forbidigo
 		if !sctx.GetSessionVars().EnableAutoIncrementInGenerated {
 			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
 				return errors.Trace(err)

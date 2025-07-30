@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -146,7 +147,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	})
 	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)
 	res := tk.MustQuery(explainStr)
@@ -758,7 +759,7 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 	tk.MustExec(insertStr)
 
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	})
 
 	wg := sync.WaitGroup{}

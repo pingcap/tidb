@@ -2410,6 +2410,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	for _, colInfo := range origin {
 		// Vector type is skip by hardcoded. Just because that collecting it is meanless for current TiDB.
 		if colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
+			skipCol = append(skipCol, colInfo)
 			continue
 		}
 		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
