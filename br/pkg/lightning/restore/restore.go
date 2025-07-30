@@ -1555,7 +1555,21 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 		manager, err := newChecksumManager(ctx, rc, kvStore)
+=======
+		etcdCli, err = clientv3.New(clientv3.Config{
+			Endpoints:        urlsWithScheme,
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              rc.tls.TLSConfig(),
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
+
+		manager, err := NewChecksumManager(ctx, rc, kvStore)
+>>>>>>> ea550644144 (lightning/importinto: set correct step to create single point allocator (#56602)):lightning/pkg/importer/import.go
 		if err != nil {
 			return errors.Trace(err)
 		}
