@@ -304,35 +304,3 @@ func containIn(lastDelta, curDelta deltaSchemaInfo) bool {
 
 	return true
 }
-
-type noop struct{}
-
-var _ validatorapi.Validator = (*noop)(nil)
-
-// NewNoop creates a new noop validator.
-// currently, SYSTEM ks info schema is not synced, so use a noop validator to avoid
-// "Information schema is changed during the execution" error.
-// TODO remove it when we sync SYSTEM ks info schema
-func NewNoop() validatorapi.Validator {
-	return &noop{}
-}
-
-func (*noop) Update(uint64, int64, int64, *transaction.RelatedSchemaChange) {}
-
-func (*noop) Check(uint64, int64, []int64, bool) (*transaction.RelatedSchemaChange, validatorapi.Result) {
-	return nil, validatorapi.ResultSucc
-}
-
-func (*noop) Stop() {}
-
-func (*noop) Restart(int64) {}
-
-func (*noop) Reset() {}
-
-func (*noop) IsStarted() bool {
-	return true
-}
-
-func (*noop) IsLeaseExpired() bool {
-	return false
-}

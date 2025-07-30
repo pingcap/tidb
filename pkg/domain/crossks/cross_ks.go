@@ -15,13 +15,19 @@
 package crossks
 
 import (
+	"context"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -35,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -91,7 +98,8 @@ func (m *Manager) GetOrCreate(
 
 	getStoreFn := getOrCreateStore
 	failpoint.InjectCall("beforeGetStore", &getStoreFn)
-	store, err := getStoreFn(ks)
+	var store kv.Storage
+	store, err = getStoreFn(ks)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +113,7 @@ func (m *Manager) GetOrCreate(
 	}()
 
 	coordinator := newSchemaCoordinator()
-	isValidator := isvalidator.NewNoop()
+	isValidator := isvalidator.New(vardef.GetSchemaLease())
 	sessPool := util.NewSessionPool(
 		crossKSSessPoolSize, ksSessFactoryGetter(ks, isValidator),
 		func(r pools.Resource) {
@@ -128,25 +136,86 @@ func (m *Manager) GetOrCreate(
 		},
 	)
 
-	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
-	isLoader := issyncer.NewLoaderForCrossKS(store, infoCache)
-	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	var etcdCli *clientv3.Client
+	etcdCli, err = kvstore.NewEtcdCli(store)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		if err != nil {
+			cancel()
+			err2 := etcdCli.Close()
+			if err2 != nil {
+				logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+			}
+		}
+	}()
+
+	virtualSvrID := uuid.New().String()
+	svrInfoSyncer := serverinfo.NewCrossKSSyncer(
+		virtualSvrID,
+		func() uint64 {
+			// this ID is used to allocate connection ID, since we don't accept
+			// in cross keyspace, we fix it to 0.
+			return 0
+		},
+		etcdCli,
+		&minStartTSReporter{},
+		ks,
+	)
+	if err = svrInfoSyncer.NewSessionAndStoreServerInfo(ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	_, _, _, _, err = isLoader.LoadWithTS(ver.Ver, false)
-	if err != nil {
-		return nil, err
+	schemaVerSyncer := schemaver.NewEtcdSyncer(etcdCli, virtualSvrID)
+	if err = schemaVerSyncer.Init(ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
+	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
+	isSyncer := issyncer.NewCrossKSSyncer(store, infoCache, vardef.GetSchemaLease(), sessPool, isValidator, ks)
+	isSyncer.InitRequiredFields(
+		func() sessmgr.InfoSchemaCoordinator {
+			return coordinator
+		},
+		schemaVerSyncer,
+		nil, nil,
+	)
+	if err = isSyncer.Reload(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sysTblMgr := systable.NewManager(sess.NewSessionPool(sessPool))
+	minJobIDRefresher := systable.NewMinJobIDRefresher(sysTblMgr)
+	isSyncer.SetMinJobIDRefresher(minJobIDRefresher)
 
 	mgr := &SessionManager{
-		store:       store,
-		infoCache:   infoCache,
-		isLoader:    isLoader,
-		sessPool:    sessPool,
-		coordinator: coordinator,
+		ctx:             ctx,
+		cancel:          cancel,
+		exitCh:          make(chan struct{}),
+		store:           store,
+		etcdCli:         etcdCli,
+		schemaVerSyncer: schemaVerSyncer,
+		infoCache:       infoCache,
+		isSyncer:        isSyncer,
+		sessPool:        sessPool,
+		coordinator:     coordinator,
+		isValidator:     isValidator,
+		svrInfoSyncer:   svrInfoSyncer,
 	}
+
+	mgr.wg.RunWithLog(func() {
+		svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
+	})
+	mgr.wg.RunWithLog(func() {
+		isSyncer.SyncLoop(ctx)
+	})
+	mgr.wg.RunWithLog(func() {
+		isSyncer.MDLCheckLoop(ctx)
+	})
+	mgr.wg.RunWithLog(func() {
+		minJobIDRefresher.Start(ctx)
+	})
 	m.sessMgrs[ks] = mgr
 	return mgr, nil
 }
@@ -156,16 +225,8 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for ks, mgr := range m.sessMgrs {
-		mgr.sessPool.Close()
-		if ks == keyspace.System {
-			// lifecycle of SYSTEM store is managed outside, skip close.
-			continue
-		}
-		err := mgr.store.Close()
-		if err != nil {
-			logutil.BgLogger().Error("failed to close store", zap.String("keyspace", ks), zap.Error(err))
-		}
+	for _, mgr := range m.sessMgrs {
+		mgr.close()
 	}
 	m.sessMgrs = make(map[string]*SessionManager)
 }
@@ -179,11 +240,19 @@ func getOrCreateStore(targetKS string) (kv.Storage, error) {
 
 // SessionManager manages sessions for a specific keyspace.
 type SessionManager struct {
-	store       kv.Storage
-	infoCache   *infoschema.InfoCache
-	isLoader    *issyncer.Loader
-	sessPool    util.DestroyableSessionPool
-	coordinator *schemaCoordinator
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              util.WaitGroupWrapper
+	exitCh          chan struct{}
+	store           kv.Storage
+	etcdCli         *clientv3.Client
+	schemaVerSyncer schemaver.Syncer
+	infoCache       *infoschema.InfoCache
+	isSyncer        *issyncer.Syncer
+	sessPool        util.DestroyableSessionPool
+	coordinator     *schemaCoordinator
+	isValidator     validatorapi.Validator
+	svrInfoSyncer   *serverinfo.Syncer
 }
 
 // Store returns the kv.Storage instance used by the session manager.
@@ -204,4 +273,23 @@ func (m *SessionManager) SessPool() util.DestroyableSessionPool {
 // Coordinator returns the InfoSchemaCoordinator used by the session manager.
 func (m *SessionManager) Coordinator() sessmgr.InfoSchemaCoordinator {
 	return m.coordinator
+}
+
+func (m *SessionManager) close() {
+	ks := m.store.GetKeyspace()
+	m.sessPool.Close()
+	close(m.exitCh)
+	m.cancel()
+	m.wg.Wait()
+	m.schemaVerSyncer.Close()
+	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
+	if err := m.etcdCli.Close(); err != nil {
+		logger.Error("failed to close etcd client", zap.Error(err))
+	}
+	// lifecycle of SYSTEM store is managed outside, skip close.
+	if ks != keyspace.System {
+		if err := m.store.Close(); err != nil {
+			logger.Error("failed to close store", zap.Error(err))
+		}
+	}
 }
