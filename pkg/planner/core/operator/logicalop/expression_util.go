@@ -26,12 +26,12 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return nil
 	}
 	exprCtx := p.SCtx().GetExprCtx()
-	if expression.MaybeOverOptimized4PlanCache(exprCtx, conds...) {
-		return nil
-	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	for _, cond := range conds {
 		if expression.IsConstNull(cond) {
+			if expression.MaybeOverOptimized4PlanCache(exprCtx, conds...) {
+				return nil
+			}
 			dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 			dual.SetSchema(p.Schema())
 			return dual
