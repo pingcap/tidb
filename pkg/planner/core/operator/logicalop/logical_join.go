@@ -271,7 +271,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, false)
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 		predicates = p.outerJoinPropConst(predicates)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
@@ -1684,8 +1684,9 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 
 // outerJoinPropConst propagates constant equal and column equal conditions over outer join.
 func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
-	outerTable := p.Children()[0]
-	innerTable := p.Children()[1]
+	children := p.Children()
+	innerTable := children[1]
+	outerTable := children[0]
 	if p.JoinType == RightOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
 	}
