@@ -1293,8 +1293,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
-		_, memoryUsageStream, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
-		memoryUsage, encodeThreadCnt, useStream := mydump.AdjustEncodeThreadCnt(memoryUsageStream, memoryUsageFull, e.Plan.ThreadCnt)
+		_, memoryUsage, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
+		encodeThreadCnt := mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
 
 		if err != nil {
 			return errors.Trace(err)
@@ -1302,8 +1302,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		for _, dataFile := range dataFiles {
 			// To reduce the memory usage, we only use streaming mode to read file.
 			dataFile.ParquetMeta = mydump.ParquetFileMeta{
-				MemoryUsage:  memoryUsage,
-				UseStreaming: useStream,
+				MemoryUsage: memoryUsage,
 			}
 		}
 

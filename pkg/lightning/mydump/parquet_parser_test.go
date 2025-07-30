@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joechenrh/arrow-go/v18/parquet"
-	"github.com/joechenrh/arrow-go/v18/parquet/schema"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -215,11 +215,6 @@ func TestParquetVariousTypes(t *testing.T) {
 		assert.Equal(t, row[i].GetString(), rowValue[i])
 	}
 
-	type TestDecimal struct {
-		Decimal1   int32  `parquet:"name=decimal1, type=INT32, convertedtype=DECIMAL, scale=3, precision=5"`
-		DecimalRef *int32 `parquet:"name=decimal2, type=INT32, convertedtype=DECIMAL, scale=3, precision=5"`
-	}
-
 	pc = []ParquetColumn{
 		{
 			Name:      "decimal1",
@@ -279,10 +274,6 @@ func TestParquetVariousTypes(t *testing.T) {
 			assert.Equal(t, val.Kind(), reader.lastRow.Row[i].Kind())
 			assert.Equal(t, val.GetValue(), reader.lastRow.Row[i].GetValue())
 		}
-	}
-
-	type TestBool struct {
-		BoolVal bool `parquet:"name=bool_val, type=BOOLEAN"`
 	}
 
 	pc = []ParquetColumn{
@@ -396,8 +387,8 @@ func TestHiveParquetParser(t *testing.T) {
 		require.NoError(t, err)
 		lastRow := reader.LastRow()
 		require.Equal(t, 2, len(lastRow.Row))
-		require.Equal(t, types.KindString, lastRow.Row[1].Kind())
-		ts, err := time.Parse(utcTimeLayout, lastRow.Row[1].GetString())
+		require.Equal(t, types.KindMysqlTime, lastRow.Row[1].Kind())
+		ts, err := lastRow.Row[1].GetMysqlTime().GoTime(time.UTC)
 		require.NoError(t, err)
 		require.Equal(t, results[i], ts)
 	}

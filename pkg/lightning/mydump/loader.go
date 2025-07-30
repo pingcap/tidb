@@ -91,9 +91,8 @@ type MDTableMeta struct {
 
 // ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
 type ParquetFileMeta struct {
-	Rows         int64 // row count
-	MemoryUsage  int   // memory usage for reader
-	UseStreaming bool  // whether use streaming mode
+	Rows        int64 // row count
+	MemoryUsage int   // memory usage for reader
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
@@ -281,8 +280,6 @@ type mdLoaderSetup struct {
 	sampledParquetRowSizes sync.Map
 	// sampled memory usage for streaming parquet read
 	sampledParquetMemoryUsage sync.Map
-	// sampled memory usage for non-streaming parquet read
-	sampledParquetMemoryUsageFull sync.Map
 }
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
@@ -486,7 +483,6 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 
 			v, _ = s.sampledParquetMemoryUsage.Load(tableName)
 			info.FileMeta.ParquetMeta.MemoryUsage, _ = v.(int)
-			info.FileMeta.ParquetMeta.UseStreaming = true
 		}
 
 		switch info.FileMeta.Type {
@@ -621,17 +617,16 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
 	case SourceTypeParquet:
 		var (
-			totalRowCount   int64
-			rowSize         float64
-			memoryUsage     int
-			memoryUsageFull int
-			tableName       = info.TableName.String()
+			totalRowCount int64
+			rowSize       float64
+			memoryUsage   int
+			tableName     = info.TableName.String()
 		)
 
 		// Only sample once for each table
 		_, loaded := s.sampledParquetRowSizes.LoadOrStore(tableName, 0)
 		if !loaded {
-			rowSize, memoryUsage, memoryUsageFull, err =
+			rowSize, memoryUsage, err =
 				SampleStatisticsFromParquet(ctx, info.FileMeta, s.loader.GetStore())
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
@@ -641,7 +636,6 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 			}
 			s.sampledParquetRowSizes.Store(tableName, rowSize)
 			s.sampledParquetMemoryUsage.Store(tableName, memoryUsage)
-			s.sampledParquetMemoryUsageFull.Store(tableName, memoryUsageFull)
 		}
 
 		totalRowCount, err = ReadParquetFileRowCountByFile(ctx, s.loader.GetStore(), info.FileMeta)

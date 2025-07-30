@@ -21,7 +21,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/joechenrh/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	tidbmemory "github.com/pingcap/tidb/pkg/util/memory"
@@ -107,22 +107,14 @@ func ReleaseMemoryForParquet() {
 // AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
 // It's used for IMPORT INTO.
 func AdjustEncodeThreadCnt(
-	memoryUsageStream, memoryUsageFull, threadCnt int,
-) (memoryUsage, adjustCnt int, useStream bool) {
+	memoryUsage, threadCnt int,
+) int {
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
-		return memoryUsage, threadCnt, true
+		return threadCnt
 	}
 
-	streamThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageStream, threadCnt), 1)
-	fullThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageFull, threadCnt), 1)
-
-	// TODO(joechenrh): use a more proper way to choose mode.
-	if streamThreadCnt == fullThreadCnt {
-		return memoryUsageFull, fullThreadCnt, false
-	}
-
-	return memoryUsageStream, streamThreadCnt, true
+	return max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsage, threadCnt), 1)
 }
 
 func init() {
