@@ -723,6 +723,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
+var (
+	// testCheckReorgTimeout is used to mock timeout when reorg data.
+	testCheckReorgTimeout = int32(0)
+)
+
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
 	sysTZ := w.loc
 	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, handle, rawRow, sysTZ, w.rowMap)
@@ -766,7 +771,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
+			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&testCheckReorgTimeout, 0, 1) {
 				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
 			}
 		}

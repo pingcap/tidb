@@ -26,14 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes PhysicalMaxOneRow.
-func (p PhysicalMaxOneRow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalMaxOneRow {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
@@ -309,14 +301,6 @@ func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
 func (p PhysicalIndexReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
 	p.SetSchema(nil)
-	return &p
-}
-
-// Init initializes PhysicalIndexJoin.
-func (p PhysicalIndexJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalIndexJoin {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexJoin, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
 	return &p
 }
 

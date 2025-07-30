@@ -19,6 +19,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
@@ -112,11 +113,11 @@ func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan
 func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalHashJoin)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalJoin = *basePlan
+	cloned.BasePhysicalJoin = *basePlan
 	cloned.EqualConditions = cloneScalarFunctionsForPlanCache(op.EqualConditions, nil)
 	cloned.NAEqualConditions = cloneScalarFunctionsForPlanCache(op.NAEqualConditions, nil)
 	if op.runtimeFilterList != nil {
@@ -129,11 +130,11 @@ func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 func (op *PhysicalMergeJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalMergeJoin)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalJoin = *basePlan
+	cloned.BasePhysicalJoin = *basePlan
 	return cloned, true
 }
 
@@ -238,33 +239,6 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexJoin)
-	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.basePhysicalJoin = *basePlan
-	if op.innerPlan != nil {
-		innerPlan, ok := op.innerPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.innerPlan = innerPlan.(base.PhysicalPlan)
-	}
-	cloned.Ranges = op.Ranges.CloneForPlanCache()
-	cloned.KeyOff2IdxOff = make([]int, len(op.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, op.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.CompareFilters = op.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = cloneColumnsForPlanCache(op.OuterHashKeys, nil)
-	cloned.InnerHashKeys = cloneColumnsForPlanCache(op.InnerHashKeys, nil)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexHashJoin)
 	*cloned = *op
@@ -272,7 +246,7 @@ func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (bas
 	if !ok {
 		return nil, false
 	}
-	cloned.PhysicalIndexJoin = *inlj.(*PhysicalIndexJoin)
+	cloned.PhysicalIndexJoin = *inlj.(*physicalop.PhysicalIndexJoin)
 	cloned.Self = cloned
 	return cloned, true
 }

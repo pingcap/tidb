@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -94,9 +95,8 @@ func New(
 
 		mdlCheckCh: make(chan struct{}),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
-			mu:         sync.Mutex{},
-			jobsVerMap: make(map[int64]int64),
-			jobsIDsMap: make(map[int64]string),
+			mu:   sync.Mutex{},
+			jobs: make(map[int64]*mdldef.JobMDL),
 		},
 	}
 	do.schemaValidator = isvalidator.New(schemaLease)
@@ -158,19 +158,22 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	defer s.mdlCheckTableInfo.mu.Unlock()
 
 	s.mdlCheckTableInfo.newestVer = domainSchemaVer
-	s.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
-	s.mdlCheckTableInfo.jobsIDsMap = make(map[int64]string, len(rows))
+	s.mdlCheckTableInfo.jobs = make(map[int64]*mdldef.JobMDL, len(rows))
 	for i := range rows {
-		s.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
-		s.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
+		jobID := rows[i].GetInt64(0)
+
+		s.mdlCheckTableInfo.jobs[jobID] = &mdldef.JobMDL{
+			Ver:      rows[i].GetInt64(1),
+			TableIDs: util.Str2Int64Map(rows[i].GetString(2)),
+		}
 	}
 }
 
 // MDLCheckLoop is a loop that checks the MDL locks periodically.
 func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 	ticker := time.Tick(mdlCheckLookDuration)
-	var saveMaxSchemaVersion int64
-	jobNeedToSync := false
+	var lastCheckedVersion int64
+	haveJobToCheck := false
 	jobCache := make(map[int64]int64, 1000)
 
 	for {
@@ -188,38 +191,38 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 
 		s.mdlCheckTableInfo.mu.Lock()
 		maxVer := s.mdlCheckTableInfo.newestVer
-		if maxVer > saveMaxSchemaVersion {
-			saveMaxSchemaVersion = maxVer
-		} else if !jobNeedToSync {
+		if maxVer > lastCheckedVersion {
+			lastCheckedVersion = maxVer
+		} else if !haveJobToCheck {
 			// Schema doesn't change, and no job to check in the last run.
 			s.mdlCheckTableInfo.mu.Unlock()
 			continue
 		}
 
-		jobNeedToCheckCnt := len(s.mdlCheckTableInfo.jobsVerMap)
-		if jobNeedToCheckCnt == 0 {
-			jobNeedToSync = false
+		checkingJobCnt := len(s.mdlCheckTableInfo.jobs)
+		if checkingJobCnt == 0 {
+			haveJobToCheck = false
 			s.mdlCheckTableInfo.mu.Unlock()
 			continue
 		}
 
-		jobsVerMap := make(map[int64]int64, len(s.mdlCheckTableInfo.jobsVerMap))
-		jobsIDsMap := make(map[int64]string, len(s.mdlCheckTableInfo.jobsIDsMap))
-		maps.Copy(jobsVerMap, s.mdlCheckTableInfo.jobsVerMap)
-		maps.Copy(jobsIDsMap, s.mdlCheckTableInfo.jobsIDsMap)
+		jobs := maps.Clone(s.mdlCheckTableInfo.jobs)
 		s.mdlCheckTableInfo.mu.Unlock()
 
-		jobNeedToSync = true
+		haveJobToCheck = true
 
 		sm := s.info.GetSessionManager()
 		if sm == nil {
 			logutil.BgLogger().Info("session manager is nil")
 		} else {
-			sm.CheckOldRunningTxn(jobsVerMap, jobsIDsMap)
+			sm.CheckOldRunningTxn(jobs)
 		}
 
-		if len(jobsVerMap) == jobNeedToCheckCnt {
-			jobNeedToSync = false
+		// if there are sessions using older schema version to access tables
+		// involved in a DDL job, CheckOldRunningTxn will remove it from 'jobs',
+		// so the remaining items are the jobs that can proceed to the next step.
+		if len(jobs) == checkingJobCnt {
+			haveJobToCheck = false
 		}
 
 		// Try to gc jobCache.
@@ -227,15 +230,17 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 			jobCache = make(map[int64]int64, 1000)
 		}
 
-		for jobID, ver := range jobsVerMap {
+		for jobID, jMDL := range jobs {
+			ver := jMDL.Ver
 			if cver, ok := jobCache[jobID]; ok && cver >= ver {
 				// Already update, skip it.
 				continue
 			}
-			logutil.BgLogger().Info("mdl gets lock, update self version to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+			logutil.BgLogger().Info("mdl gets lock, update self version to owner",
+				zap.Int64("jobID", jobID), zap.Int64("version", ver))
 			err := s.schemaVerSyncer.UpdateSelfVersion(context.Background(), jobID, ver)
 			if err != nil {
-				jobNeedToSync = true
+				haveJobToCheck = true
 				logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
 					zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
 			} else {
@@ -468,11 +473,6 @@ func (s *Syncer) postReload(oldVer, currVer int64, change *transaction.RelatedSc
 // InfoSchema gets the latest information schema from domain.
 func (s *Syncer) InfoSchema() infoschema.InfoSchema {
 	return s.loader.infoCache.GetLatest()
-}
-
-// GetInfoSyncer returns the InfoSyncer.
-func (s *Syncer) GetInfoSyncer() *infosync.InfoSyncer {
-	return s.info
 }
 
 // GetSchemaValidator returns the schema validator.

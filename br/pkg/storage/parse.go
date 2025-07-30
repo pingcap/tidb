@@ -91,6 +91,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 			s3Options = options.S3
 		}
 		ExtractQueryParameters(u, &s3Options)
+		s3Options.setForcePathStyle(rawURL)
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}

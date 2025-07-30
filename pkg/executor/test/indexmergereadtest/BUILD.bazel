@@ -15,6 +15,7 @@ go_test(
         "//pkg/executor",
         "//pkg/meta/autoid",
         "//pkg/session",
+        "//pkg/session/sessmgr",
         "//pkg/testkit",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",

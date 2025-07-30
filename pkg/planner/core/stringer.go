@@ -170,7 +170,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *logicalop.LogicalMaxOneRow, *PhysicalMaxOneRow:
+	case *logicalop.LogicalMaxOneRow, *physicalop.PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *logicalop.LogicalLimit, *physicalop.PhysicalLimit:
 		str = "Limit"
@@ -277,7 +277,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
 	case *physicalop.PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
-	case *PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

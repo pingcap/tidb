@@ -104,11 +104,10 @@ type BindingMatchInfo struct {
 }
 
 // MatchSQLBindingForPlanCache matches binding for plan cache.
-func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string, ignoreBinding bool) {
+func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string) {
 	binding, matched, _ := matchSQLBinding(sctx, stmtNode, info)
 	if matched {
 		bindingSQL = binding.BindSQL
-		ignoreBinding = binding.Hint.ContainTableHint(hint.HintIgnorePlanCache)
 	}
 	return
 }

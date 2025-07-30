@@ -127,7 +127,7 @@ func TestAnalyzeDynamicPartitionedTableIndexes(t *testing.T) {
 func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	tk.MustExec("create database example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
@@ -183,7 +183,7 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 func TestPerformanceOfValidateAndPrepare(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	tk.MustExec("create database example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")

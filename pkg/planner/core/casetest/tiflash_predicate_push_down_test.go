@@ -77,7 +77,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 				output[i].SQL = tt
 				output[i].Plan = normalizedPlanRows
 			})
-			require.Equal(t, normalizedPlanRows, output[i].Plan, tt)
+			require.Equal(t, output[i].Plan, normalizedPlanRows, tt)
 		}
 	})
 }

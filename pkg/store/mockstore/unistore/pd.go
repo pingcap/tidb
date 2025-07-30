@@ -300,6 +300,9 @@ func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit ui
 
 // LoadKeyspace loads and returns target keyspace's metadata.
 func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
+	if c.keyspaceMeta == nil {
+		return nil, errors.New("keyspace is unsupported")
+	}
 	if c.keyspaceMeta.Name != name {
 		return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 	}

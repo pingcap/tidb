@@ -374,6 +374,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      nodeCnt,
 		Store:                sch.store,
+		ThreadCnt:            task.Concurrency,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {

@@ -20,22 +20,23 @@ import (
 	"net"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 )
 
 // GenerateExecID used to generate IP:port as exec_id value
 // This function is used by distributed task execution to generate serverID string to
 // correlated one subtask to on TiDB node to be executed.
-func GenerateExecID(info *infosync.ServerInfo) string {
+func GenerateExecID(info *serverinfo.ServerInfo) string {
 	return net.JoinHostPort(info.IP, fmt.Sprintf("%d", info.Port))
 }
 
 // MatchServerInfo will check if the schedulerID matched in all serverInfos.
-func MatchServerInfo(serverInfos []*infosync.ServerInfo, schedulerID string) bool {
+func MatchServerInfo(serverInfos []*serverinfo.ServerInfo, schedulerID string) bool {
 	return FindServerInfo(serverInfos, schedulerID) >= 0
 }
 
 // FindServerInfo will find the schedulerID in all serverInfos.
-func FindServerInfo(serverInfos []*infosync.ServerInfo, schedulerID string) int {
+func FindServerInfo(serverInfos []*serverinfo.ServerInfo, schedulerID string) int {
 	for i, serverInfo := range serverInfos {
 		serverID := GenerateExecID(serverInfo)
 		if serverID == schedulerID {

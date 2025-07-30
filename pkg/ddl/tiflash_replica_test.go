@@ -35,11 +35,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -147,7 +147,7 @@ func TestSetTableFlashReplica(t *testing.T) {
 }
 
 // setUpRPCService setup grpc server to handle cop request for test.
-func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm util.SessionManager) (*grpc.Server, string) {
+func setUpRPCService(t *testing.T, addr string, dom *domain.Domain, sm sessmgr.Manager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)

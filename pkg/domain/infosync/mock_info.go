@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 )
@@ -34,7 +35,7 @@ var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{
 
 // MockGlobalServerInfoManager manages serverInfos in Distributed unit tests.
 type MockGlobalServerInfoManager struct {
-	infos          []*ServerInfo
+	infos          []*serverinfo.ServerInfo
 	mu             sync.Mutex
 	mockServerPort uint // used to mock ServerInfo, then every mock server will have different port
 }
@@ -71,10 +72,10 @@ func (m *MockGlobalServerInfoManager) DeleteByExecID(execID string) {
 }
 
 // GetAllServerInfo return all serverInfo in a map.
-func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*ServerInfo {
+func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*serverinfo.ServerInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	allInfo := make(map[string]*ServerInfo)
+	allInfo := make(map[string]*serverinfo.ServerInfo)
 	for _, info := range m.infos {
 		allInfo[info.ID] = info
 	}
@@ -82,12 +83,12 @@ func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*ServerInfo 
 }
 
 // getServerInfo gets self tidb server information.
-func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
+func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter func() uint64) *serverinfo.ServerInfo {
 	cfg := config.GetGlobalConfig()
 
 	// TODO: each mock server can have different config
-	info := &ServerInfo{
-		StaticServerInfo: StaticServerInfo{
+	info := &serverinfo.ServerInfo{
+		StaticInfo: serverinfo.StaticInfo{
 			ID:             id,
 			IP:             cfg.AdvertiseAddress,
 			Port:           m.mockServerPort,
@@ -96,7 +97,7 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
 		},
-		DynamicServerInfo: DynamicServerInfo{
+		DynamicInfo: serverinfo.DynamicInfo{
 			Labels: cfg.Labels,
 		},
 	}

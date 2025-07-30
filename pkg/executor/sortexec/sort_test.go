@@ -23,9 +23,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,7 +55,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	tk.MustExec("use test")
 
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -80,7 +81,7 @@ func (*TiDBConfigProvider) GetComponentName() string {
 // Handle is the handler for memory usage alarm.
 type Handle struct {
 	exitCh         chan struct{}
-	sm             atomic.Pointer[util.SessionManager]
+	sm             atomic.Pointer[sessmgr.Manager]
 	configProvider ConfigProvider
 }
 
@@ -92,9 +93,9 @@ func NewMemoryUsageAlarmHandle(exitCh chan struct{}, provider ConfigProvider) *H
 	}
 }
 
-// SetSessionManager sets the SessionManager which is used to fetching the info
+// SetSessionManager sets the Manager which is used to fetching the info
 // of all active sessions.
-func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
+func (eqh *Handle) SetSessionManager(sm sessmgr.Manager) *Handle {
 	eqh.sm.Store(&sm)
 	return eqh
 }
@@ -180,7 +181,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
-func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
+func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm sessmgr.Manager) {
 	if !record.initialized {
 		record.initMemoryUsageAlarmRecord()
 		if record.err != nil {
@@ -248,7 +249,7 @@ func (record *memoryUsageAlarm) needRecord(memoryUsage uint64) (bool, AlarmReaso
 	return false, NoReason
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager, alarmReason AlarmReason) {
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm sessmgr.Manager, alarmReason AlarmReason) {
 	fields := make([]zap.Field, 0, 6)
 	componentName := record.configProvider.GetComponentName()
 	fields = append(fields, zap.Bool(fmt.Sprintf("is %s_memory_limit set", componentName), record.isServerMemoryLimitSet))
@@ -289,7 +290,7 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 	}
 }
 
-func getPlanString(info *util.ProcessInfo) string {
+func getPlanString(info *sessmgr.ProcessInfo) string {
 	var buf strings.Builder
 	rows, _ := plancodec.DecodeBinaryPlan4Connection(info.BriefBinaryPlan, types.ExplainFormatROW, true)
 	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info"))
@@ -302,7 +303,7 @@ func getPlanString(info *util.ProcessInfo) string {
 	return buf.String()
 }
 
-func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *os.File) {
+func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*sessmgr.ProcessInfo, f *os.File) {
 	if _, err := f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n"); err != nil {
 		logutil.BgLogger().Error("write top 10 memory sql info fail", zap.Error(err))
 	}
@@ -319,7 +320,7 @@ func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *
 	}
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo) int, pinfo []*util.ProcessInfo) strings.Builder {
+func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *sessmgr.ProcessInfo) int, pinfo []*sessmgr.ProcessInfo) strings.Builder {
 	slices.SortFunc(pinfo, cmp)
 	list := pinfo
 	var buf strings.Builder
@@ -357,21 +358,21 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 	return buf
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+func (record *memoryUsageAlarm) getTop10SqlInfoByMemoryUsage(pinfo []*sessmgr.ProcessInfo) strings.Builder {
+	return record.getTop10SqlInfo(func(i, j *sessmgr.ProcessInfo) int {
 		return cmp.Compare(j.MemTracker.MaxConsumed(), i.MemTracker.MaxConsumed())
 	}, pinfo)
 }
 
-func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*util.ProcessInfo) strings.Builder {
-	return record.getTop10SqlInfo(func(i, j *util.ProcessInfo) int {
+func (record *memoryUsageAlarm) getTop10SqlInfoByCostTime(pinfo []*sessmgr.ProcessInfo) strings.Builder {
+	return record.getTop10SqlInfo(func(i, j *sessmgr.ProcessInfo) int {
 		return i.Time.Compare(j.Time)
 	}, pinfo)
 }
 
-func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir string) error {
+func (record *memoryUsageAlarm) recordSQL(sm sessmgr.Manager, recordDir string) error {
 	processInfo := sm.ShowProcessList()
-	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
+	pinfo := make([]*sessmgr.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
 		if len(info.Info) != 0 {
 			pinfo = append(pinfo, info)

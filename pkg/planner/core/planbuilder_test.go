@@ -342,7 +342,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(sel))
 
 	// maxOneRow
-	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow := &physicalop.PhysicalMaxOneRow{}
 	maxOneRow = maxOneRow.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
@@ -406,15 +406,15 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
 
 	// index join
-	baseJoin := basePhysicalJoin{
+	baseJoin := physicalop.BasePhysicalJoin{
 		LeftJoinKeys:    []*expression.Column{col},
 		RightJoinKeys:   nil,
 		OtherConditions: []expression.Expression{col},
 	}
 
-	indexJoin := &PhysicalIndexJoin{
-		basePhysicalJoin: baseJoin,
-		innerPlan:        indexScan,
+	indexJoin := &physicalop.PhysicalIndexJoin{
+		BasePhysicalJoin: baseJoin,
+		InnerPlan:        indexScan,
 		Ranges:           ranger.Ranges{},
 	}
 	indexJoin = indexJoin.Init(ctx, stats, 0)

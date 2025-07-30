@@ -51,8 +51,8 @@ HashJoin	2481.25	root		left outer join, left side:TableReader, equal:[eq(explain
 ├─TableReader(Build)	1985.00	root		data:Selection
 │ └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c1))
 │   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false, stats:partial[c1:missing]
-└─TableReader(Probe)	1998.00	root		data:TableRangeScan
-  └─TableRangeScan	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
+└─TableReader(Probe)	1999.00	root		data:TableRangeScan
+  └─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
@@ -116,7 +116,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true, desc
+    └─TableFullScan	20.98	cop[tikv]	table:t1	keep order:true, desc
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info

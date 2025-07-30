@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sessmgr",
+    srcs = ["processinfo.go"],
+    importpath = "github.com/pingcap/tidb/pkg/session/sessmgr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema/issyncer/mdldef",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/resourcegroup",
+        "//pkg/session/cursor",
+        "//pkg/session/txninfo",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/util/disk",
+        "//pkg/util/execdetails",
+        "//pkg/util/memory",
+        "//pkg/util/ppcpuusage",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
+
+go_test(
+    name = "sessmgr_test",
+    timeout = "short",
+    srcs = ["processinfo_test.go"],
+    embed = [":sessmgr"],
+    flaky = True,
+    deps = [
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/util/memory",
+        "@com_github_stretchr_testify//require",
+    ],
+)

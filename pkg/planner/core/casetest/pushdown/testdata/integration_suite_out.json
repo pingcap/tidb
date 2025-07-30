@@ -19,7 +19,7 @@
           "└─Limit 1.00 root  offset:0, count:1",
           "  └─TableReader 1.00 root  data:Limit",
           "    └─Limit 1.00 cop[tiflash]  offset:0, count:1",
-          "      └─TableFullScan 1.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+          "      └─TableFullScan 100.99 cop[tiflash] table:t keep order:true, stats:pseudo"
         ]
       }
     ]

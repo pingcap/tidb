@@ -542,10 +542,7 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	// Make the regions scale like: [1, 1024), [1024, 2048), [2048, 3072), [3072, 4096]
 	tk.MustQuery("split table t between(0) and (4096) regions 4")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockReorgTimeoutInOneRegion", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockReorgTimeoutInOneRegion"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockReorgTimeoutInOneRegion", `return(true)`)
 	tk.MustExec("alter table t modify column b decimal(3,1)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
 }

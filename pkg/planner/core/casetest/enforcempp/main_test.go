@@ -29,7 +29,7 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite")
+	testDataMap.LoadTestSuiteData("testdata", "enforce_mpp_suite", true)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

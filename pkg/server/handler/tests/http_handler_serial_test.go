@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/zap"
 )
 
@@ -715,4 +716,29 @@ func TestTTL(t *testing.T) {
 	obj, err = doTrigger("test_ttl", "t2")
 	require.Nil(t, obj)
 	require.EqualError(t, err, "http status: 400 Bad Request, table test_ttl.t2 not exists")
+}
+
+func TestGC(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	var data url.Values
+	resp, err := ts.FormStatus("/txn-gc-states", data)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	resp, err = ts.FetchStatus("/txn-gc-states")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Verify the resp body.
+	decoder := json.NewDecoder(resp.Body)
+	var state gc.GCState
+	err = decoder.Decode(&state)
+	require.NoError(t, err)
+
+	var empty gc.GCState
+	require.NotEqual(t, empty, state)
 }

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
@@ -35,7 +36,7 @@ func TestLogFormat(t *testing.T) {
 	mockTooLongQuery := make([]byte, 1024*9)
 
 	var refCount stmtctx.ReferenceCount = 0
-	info := &ProcessInfo{
+	info := &sessmgr.ProcessInfo{
 		ID:            233,
 		User:          "PingCAP",
 		Host:          "127.0.0.1",
