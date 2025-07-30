@@ -226,11 +226,11 @@ type collator interface {
 
 func TestCampareInvalidUTF8Rune(t *testing.T) {
 	collaters := []collator{
-		&generalCICollator{},                                   // index: 0
-		&unicode0900AICICollator{},                             // index: 1
-		&unicodeCICollator{},                                   // index: 2
-		&gbkChineseCICollator{},                                // index: 3
-		&gbkBinCollator{charset.NewCustomGBKEncoder()},         // index: 4
+		&generalCICollator{},                           // index: 0
+		&unicode0900AICICollator{},                     // index: 1
+		&unicodeCICollator{},                           // index: 2
+		&gbkChineseCICollator{},                        // index: 3
+		&gbkBinCollator{charset.NewCustomGBKEncoder()}, // index: 4
 	}
 
 	for i, c := range collaters {
