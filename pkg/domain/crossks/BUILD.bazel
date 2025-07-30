@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "coordinator.go",
         "cross_ks.go",
-        "reporter.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/domain/crossks",
     visibility = ["//visibility:public"],
@@ -30,7 +29,6 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@io_etcd_go_etcd_client_v3//concurrency",
         "@org_uber_go_zap//:zap",
     ],
 )
