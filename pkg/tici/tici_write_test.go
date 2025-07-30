@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
@@ -65,10 +66,17 @@ func startStubMetaService(t *testing.T) (cleanup func(), dialOpt grpc.DialOption
 func newTestTiCIDataWriter() *DataWriter {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{}}
 	idx := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx")}
+	logger := zaptest.NewLogger(nil).With(
+		zap.Int64("tableID", tbl.ID),
+		zap.String("tableName", tbl.Name.O),
+		zap.Int64("indexID", idx.ID),
+		zap.String("indexName", idx.Name.O),
+	)
 	return &DataWriter{
 		tblInfo: tbl,
 		idxInfo: idx,
 		schema:  "testdb",
+		logger:  logger,
 	}
 }
 
@@ -109,6 +117,7 @@ func TestDataWriterWriteHeader_ProtoFail(t *testing.T) {
 	w := newTestTiCIDataWriter()
 	w.tblInfo = nil
 	w.idxInfo = nil
+	w.logger = zaptest.NewLogger(t) // ensure logger is not nil
 	mockWriter, _ := newStubTICIFileWriter(t, false)
 	w.ticiFileWriter = mockWriter
 	err := w.WriteHeader(context.Background(), 1)
@@ -178,6 +187,10 @@ func TestTiCIDataWriterGroup_WriteHeader(t *testing.T) {
 	for _, w := range group.writers {
 		mockFileWriter, _ := newStubTICIFileWriter(t, false)
 		w.ticiFileWriter = mockFileWriter
+		// Ensure logger is not nil for safety
+		if w.logger == nil {
+			w.logger = zaptest.NewLogger(t)
+		}
 	}
 	group.writable.Store(true)
 	err := group.WriteHeader(ctx, 1)
@@ -193,6 +206,9 @@ func TestTiCIDataWriterGroup_WritePairs(t *testing.T) {
 	for _, w := range group.writers {
 		mockFileWriter, _ := newStubTICIFileWriter(t, false)
 		w.ticiFileWriter = mockFileWriter
+		if w.logger == nil {
+			w.logger = zaptest.NewLogger(t)
+		}
 	}
 	group.writable.Store(true)
 	pairs := []*sst.Pair{{Key: []byte("k"), Value: []byte("v")}}
@@ -210,6 +226,9 @@ func TestTiCIDataWriterGroup_WritePairs_Fail(t *testing.T) {
 		mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
 		mockWriter.fail = true
 		w.ticiFileWriter = mockFileWriter
+		if w.logger == nil {
+			w.logger = zaptest.NewLogger(t)
+		}
 	}
 	group.writable.Store(true)
 	pairs := []*sst.Pair{{Key: []byte("k"), Value: []byte("v")}}
@@ -267,6 +286,9 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 	for _, w := range group.writers {
 		mockFileWriter, _ := newStubTICIFileWriter(t, false)
 		w.ticiFileWriter = mockFileWriter
+		if w.logger == nil {
+			w.logger = zaptest.NewLogger(t)
+		}
 	}
 
 	old := newTiCIManager
