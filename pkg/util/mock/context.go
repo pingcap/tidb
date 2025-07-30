@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -73,7 +73,7 @@ type Context struct {
 	schValidator  validatorapi.Validator
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
-	sm            util.SessionManager
+	sm            sessmgr.Manager
 	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
@@ -176,8 +176,8 @@ func (*Context) ExecuteInternal(_ context.Context, _ string, _ ...any) (sqlexec.
 }
 
 // ShowProcess implements sessionctx.Context ShowProcess interface.
-func (*Context) ShowProcess() *util.ProcessInfo {
-	return &util.ProcessInfo{}
+func (*Context) ShowProcess() *sessmgr.ProcessInfo {
+	return &sessmgr.ProcessInfo{}
 }
 
 // SetIsDDLOwner sets return value of IsDDLOwner.
@@ -496,12 +496,12 @@ func (c *Context) GetStore() kv.Storage {
 }
 
 // GetSessionManager implements the sessionctx.Context interface.
-func (c *Context) GetSessionManager() util.SessionManager {
+func (c *Context) GetSessionManager() sessmgr.Manager {
 	return c.sm
 }
 
 // SetSessionManager set the session manager.
-func (c *Context) SetSessionManager(sm util.SessionManager) {
+func (c *Context) SetSessionManager(sm sessmgr.Manager) {
 	c.sm = sm
 }
 

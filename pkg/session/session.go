@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -93,6 +94,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -184,7 +186,7 @@ func (h *StmtHistory) Count() int {
 
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
-	processInfo atomic.Pointer[util.ProcessInfo]
+	processInfo atomic.Pointer[sessmgr.ProcessInfo]
 	txn         LazyTxn
 
 	mu struct {
@@ -207,7 +209,7 @@ type session struct {
 	sessionPlanCache sessionctx.SessionPlanCache
 
 	sessionVars    *variable.SessionVars
-	sessionManager util.SessionManager
+	sessionManager sessmgr.Manager
 
 	pctx    *planContextImpl
 	exprctx *sessionexpr.ExprContext
@@ -433,11 +435,11 @@ func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return s.sessionPlanCache
 }
 
-func (s *session) SetSessionManager(sm util.SessionManager) {
+func (s *session) SetSessionManager(sm sessmgr.Manager) {
 	s.sessionManager = sm
 }
 
-func (s *session) GetSessionManager() util.SessionManager {
+func (s *session) GetSessionManager() sessmgr.Manager {
 	return s.sessionManager
 }
 
@@ -1481,7 +1483,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		sqlCPUUsages = nil
 	}
 
-	pi := util.ProcessInfo{
+	pi := sessmgr.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
 		DB:                    s.sessionVars.CurrentDB,
@@ -1560,8 +1562,8 @@ func (s *session) UpdateProcessInfo() {
 	s.processInfo.Store(shallowCP)
 }
 
-func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
-	return util.OOMAlarmVariablesInfo{
+func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
+	return sessmgr.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
@@ -4174,7 +4176,7 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() *util.ProcessInfo {
+func (s *session) ShowProcess() *sessmgr.ProcessInfo {
 	return s.processInfo.Load()
 }
 
@@ -4879,8 +4881,8 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 	return true
 }
 
-// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s sessionapi.Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
+func RemoveLockDDLJobs(s sessionapi.Session, jobs map[int64]*mdldef.JobMDL, printLog bool) {
 	sv := s.GetSessionVars()
 	if sv.InRestrictedSQL {
 		return
@@ -4891,16 +4893,19 @@ func RemoveLockDDLJobs(s sessionapi.Session, job2ver map[int64]int64, job2ids ma
 		return
 	}
 	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
-		for jobID, ver := range job2ver {
-			ids := util.Str2Int64Map(job2ids[jobID])
-			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
-				delete(job2ver, jobID)
+		for jobID, jobMDL := range jobs {
+			if _, ok := jobMDL.TableIDs[tblID.(int64)]; ok && value.(int64) < jobMDL.Ver {
+				delete(jobs, jobID)
 				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
+				logFn := logutil.BgLogger().Debug
 				if elapsedTime > time.Minute && printLog {
-					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
-				} else {
-					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+					logFn = logutil.BgLogger().Info
 				}
+				logFn("old running transaction block DDL",
+					zap.Int64("table ID", tblID.(int64)),
+					zap.Int64("jobID", jobID),
+					zap.Uint64("connection ID", sv.ConnectionID),
+					zap.Duration("elapsed time", elapsedTime))
 			}
 		}
 		return true

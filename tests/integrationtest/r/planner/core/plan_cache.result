@@ -1166,8 +1166,6 @@ select @@last_plan_from_cache;
 drop table if exists t;
 create table t (a int, b int, key(a), key(b));
 prepare stmt from 'select /*+ ignore_plan_cache() */ * from t';
-Level	Code	Message
-Warning	1105	skip prepared plan-cache: ignore plan cache by hint
 prepare stmt from 'select * from t order by ?';
 Level	Code	Message
 Warning	1105	skip prepared plan-cache: query has 'order by ?' is un-cacheable
@@ -1195,7 +1193,7 @@ create binding for select * from t where a<1 using select /*+ ignore_plan_cache(
 execute st using @a;
 a
 Level	Code	Message
-Warning	1105	skip prepared plan-cache: ignore plan cache by binding
+Warning	1105	skip prepared plan-cache: ignore_plan_cache hint used in SQL binding
 prepare st from 'select * from t where a>?';
 set @a=1;
 execute st using @a;

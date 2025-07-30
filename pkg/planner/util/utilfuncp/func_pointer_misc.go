@@ -261,6 +261,22 @@ var GetPlanCostVer24PhysicalProjection func(pp base.PhysicalPlan, taskType prope
 // Attach2Task4PhysicalProjection will be called by PhysicalProjection in physicalOp pkg.
 var Attach2Task4PhysicalProjection func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// GetCost4PhysicalIndexJoin will be called by PhysicalIndexJoin in physicalOp pkg.
+var GetCost4PhysicalIndexJoin func(pp base.PhysicalPlan,
+	outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64
+
+// GetPlanCostVer14PhysicalIndexJoin calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalIndexJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetIndexJoinCostVer24PhysicalIndexJoin will be called by PhysicalIndexJoin in physicalOp pkg.
+var GetIndexJoinCostVer24PhysicalIndexJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, indexJoinType int) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalIndexJoin will be called by PhysicalIndexJoin in physicalOp pkg.
+var Attach2Task4PhysicalIndexJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -284,6 +300,9 @@ var CloneExpressionsForPlanCache func(exprs, cloned []expression.Expression) []e
 
 // CloneColumnsForPlanCache is used to clone columns for plan cache.
 var CloneColumnsForPlanCache func(cols, cloned []*expression.Column) []*expression.Column
+
+// CloneConstantsForPlanCache is used to clone constants for plan cache.
+var CloneConstantsForPlanCache func(constants, cloned []*expression.Constant) []*expression.Constant
 
 // ****************************************** optimize portal *********************************************
 
