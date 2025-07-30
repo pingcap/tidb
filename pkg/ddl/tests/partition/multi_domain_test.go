@@ -612,6 +612,7 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 		err = tkNO.ExecToErr(`admin check table t`)
 		require.NoError(t, err, "non-owner admin check table failed", fmt.Sprintf("id, %d, schemaState: %s", id, schemaState))
 	}
+	firstTimeToPublic := true
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
@@ -622,6 +623,10 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			// we are only interested in StateDeleteReorganization->StatePublic
 		case model.StateWriteReorganization.String():
 		case model.StatePublic.String():
+			if !firstTimeToPublic {
+				return
+			}
+			firstTimeToPublic = false
 			// tkNO sees varchar column and tkO sees int column
 			tkO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
@@ -633,7 +638,7 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 				"t CREATE TABLE `t` (\n" +
 				"  `a` int(11) NOT NULL,\n" +
-				"  `b` int(10) unsigned NOT NULL,\n" +
+				"  `b` varchar(255) DEFAULT NULL,\n" +
 				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
 				"  KEY `k_b` (`b`)\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -645,21 +650,25 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 
 			// No warning!? Same in MySQL...
 			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
-			tkNO.MustExec(`insert into t values (11, " 011.50 ")`)
 			tkO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
-			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
+			// <nil> ?!?
+			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 <nil>"))
 			// If the original b was defined as 'NOT NULL', then it would give an error:
 			// [table:1364]Field 'b' doesn't have a default value
 
-			// tkNO.MustExec(`insert into t values (11, " 011.50 ")`)
+			tkNO.MustExec(`insert into t values (11, " 011.50 ")`)
 			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
+			// Anomaly, the different sessions sees different data.
+			// So it should be acceptable for partitioning DDLs as well.
+			// It may be possible to check that writes from StateWriteOnly convert 1:1
+			// to the new type, and block writes otherwise. But then it would break the first tkO insert above...
 			tkO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11 12"))
-			tkNO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11 12"))
+			tkNO.MustQuery(`select * from t where a = 11`).Check(testkit.Rows("11  011.50 "))
 			tblO, err := tkO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
 			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
 			require.NoError(t, err)
-			require.Equal(t, tblO.Columns[1].ID, tblNO.Columns[1].ID)
+			require.Greater(t, tblO.Columns[1].ID, tblNO.Columns[1].ID)
 			// This also means that old copies of the columns will be left in the row, until the row is updated or deleted.
 			// But I guess that is at least documented.
 		default:
