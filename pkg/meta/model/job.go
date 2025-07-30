@@ -810,21 +810,20 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type           ActionType `json:"type"`
-	JobArgs        JobArgs    `json:"-"`
-	args           []any
-	RawArgs        json.RawMessage `json:"raw_args"`
-	SchemaState    SchemaState     `json:"schema_state"`
-	SnapshotVer    uint64          `json:"snapshot_ver"`
-	RealStartTS    uint64          `json:"real_start_ts"`
-	Revertible     bool            `json:"revertible"`
-	State          JobState        `json:"state"`
-	RowCount       int64           `json:"row_count"`
-	Warning        *terror.Error   `json:"warning"`
-	CtxVars        []any           `json:"-"`
-	SchemaVer      int64           `json:"schema_version"`
-	ReorgTp        ReorgType       `json:"reorg_tp"`
-	ReorgCompleted bool            `json:"reorg_complete"`
+	Type        ActionType `json:"type"`
+	JobArgs     JobArgs    `json:"-"`
+	args        []any
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	RealStartTS uint64          `json:"real_start_ts"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
+	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []any           `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
+	ReorgTp     ReorgType       `json:"reorg_tp"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -847,10 +846,6 @@ func (sub *SubJob) IsFinished() bool {
 
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
-	reorgMeta := parentJob.ReorgMeta
-	if reorgMeta != nil {
-		reorgMeta.Completed = sub.ReorgCompleted
-	}
 	return Job{
 		Version:         parentJob.Version,
 		ID:              parentJob.ID,
@@ -874,7 +869,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       reorgMeta,
+		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
@@ -898,7 +893,6 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaVer = ver
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
-		sub.ReorgCompleted = proxyJob.ReorgMeta.Completed
 	}
 }
 

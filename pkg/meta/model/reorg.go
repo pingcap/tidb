@@ -62,7 +62,6 @@ func (s BackfillState) String() string {
 
 // DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
-	Completed         bool                             `json:"completed"`
 	SQLMode           mysql.SQLMode                    `json:"sql_mode"`
 	Warnings          map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount     map[errors.ErrorID]int64         `json:"warnings_count"`

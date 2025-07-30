@@ -402,8 +402,8 @@ func moveIndexInfoToDest(tblInfo *model.TableInfo, changingCol *model.ColumnInfo
 				break
 			}
 		}
-		// For the indexes that still contains other changing column, skip removing it now.
-		// We leave the removal work to the last modify column job.
+		// For the indexes that still contains other changing column, skip swaping it now.
+		// We leave the swaping work to the last modify column job.
 		if !hasOtherChangingCol {
 			swapIndexInfoByID(tblInfo, oldIdxInfos[i].ID, changingIdxInfos[i].ID)
 		}
@@ -431,6 +431,9 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 			indexInfos = append(indexInfos, idx)
 		}
 	}
+	// In multi-schema change, if more than one column of an index is being modified,
+	// the added hidden index will be changed(including index ID) in place by the latter modified column subjob.
+	// We need to sort by index ID to ensure the order of changing indexes equals to the old indexes.
 	slices.SortFunc(indexInfos, func(idxA, idxB *model.IndexInfo) int {
 		if idxA.ID < idxB.ID {
 			return -1
