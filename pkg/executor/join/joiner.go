@@ -353,12 +353,8 @@ func (j *baseJoiner) Clone() baseJoiner {
 	if !j.defaultInner.IsEmpty() {
 		base.defaultInner = j.defaultInner.CopyConstruct()
 	}
-	if j.lUsed != nil {
-		base.lUsed = slices.Clone(j.lUsed)
-	}
-	if j.rUsed != nil {
-		base.rUsed = slices.Clone(j.rUsed)
-	}
+	base.lUsed = slices.Clone(j.lUsed)
+	base.rUsed = slices.Clone(j.rUsed)
 	return base
 }
 
