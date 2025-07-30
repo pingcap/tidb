@@ -387,7 +387,7 @@ func getJobInfoFromSQL(ctx context.Context, conn sqlexec.SQLExecutor, sql string
 }
 
 // GetJobsByGroupKey gets jobs with given group key.
-// If groupKey is empty, it will return all jobs with not-null group key.
+// If group key is not specified, it will return all jobs with group key set.
 func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, groupKey string, hasSuperPriv bool) ([]*JobInfo, error) {
 	sql := baseQuerySQL
 	args := []any{}
@@ -397,15 +397,13 @@ func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, grou
 		args = append(args, user)
 	}
 
-	if groupKey == "N/A" {
-		// "N/A" is used to indicate that the group key is not set.
-		whereClause = append(whereClause, "group_key IS NULL")
-	} else if groupKey != "" {
+	if groupKey != "" {
 		whereClause = append(whereClause, "GROUP_KEY = %?")
 		args = append(args, groupKey)
 	} else {
 		whereClause = append(whereClause, "GROUP_KEY is not NULL")
 	}
+
 	if len(whereClause) > 0 {
 		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
 	}
