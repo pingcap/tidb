@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -65,7 +67,7 @@ func (m *Manager) getWithoutLock(ks string) (*SessionManager, bool) {
 // GetOrCreate gets or creates a session manager for the specified keyspace.
 func (m *Manager) GetOrCreate(
 	ks string,
-	ksSessFactoryGetter func(string) pools.Factory,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (_ *SessionManager, err error) {
 	// misusing this function might cause data written to the wrong keyspace, or
 	// corrupt user data, and it's harder to diagnose those issues, so we use
@@ -99,6 +101,30 @@ func (m *Manager) GetOrCreate(
 		}
 	}()
 
+	coordinator := newSchemaCoordinator()
+	isValidator := isvalidator.NewNoop()
+	sessPool := util.NewSessionPool(
+		crossKSSessPoolSize, ksSessFactoryGetter(ks, isValidator),
+		func(r pools.Resource) {
+			_, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			coordinator.StoreInternalSession(r)
+		},
+		func(r pools.Resource) {
+			sctx, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			intest.AssertFunc(func() bool {
+				txn, _ := sctx.Txn(false)
+				return txn == nil || !txn.Valid()
+			})
+			coordinator.DeleteInternalSession(r)
+		},
+		func(r pools.Resource) {
+			intest.Assert(r != nil)
+			coordinator.DeleteInternalSession(r)
+		},
+	)
+
 	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
 	isLoader := issyncer.NewLoaderForCrossKS(store, infoCache)
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -112,29 +138,11 @@ func (m *Manager) GetOrCreate(
 	}
 
 	mgr := &SessionManager{
-		store:     store,
-		infoCache: infoCache,
-		isLoader:  isLoader,
-		// TODO register to a separate session manager when we start syncer for
-		// system keyspace.
-		sessPool: util.NewSessionPool(
-			crossKSSessPoolSize, ksSessFactoryGetter(ks),
-			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-			},
-			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				intest.AssertFunc(func() bool {
-					txn, _ := sctx.Txn(false)
-					return txn == nil || !txn.Valid()
-				})
-			},
-			func(r pools.Resource) {
-				intest.Assert(r != nil)
-			},
-		),
+		store:       store,
+		infoCache:   infoCache,
+		isLoader:    isLoader,
+		sessPool:    sessPool,
+		coordinator: coordinator,
 	}
 	m.sessMgrs[ks] = mgr
 	return mgr, nil
@@ -168,10 +176,11 @@ func getOrCreateStore(targetKS string) (kv.Storage, error) {
 
 // SessionManager manages sessions for a specific keyspace.
 type SessionManager struct {
-	store     kv.Storage
-	infoCache *infoschema.InfoCache
-	isLoader  *issyncer.Loader
-	sessPool  util.DestroyableSessionPool
+	store       kv.Storage
+	infoCache   *infoschema.InfoCache
+	isLoader    *issyncer.Loader
+	sessPool    util.DestroyableSessionPool
+	coordinator *schemaCoordinator
 }
 
 // Store returns the kv.Storage instance used by the session manager.
