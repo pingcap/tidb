@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -139,11 +140,11 @@ func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
 func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
-	_, inPredicateType := FindPredicateType(ctx, inPredicate)
-	_, notEQPredicateType := FindPredicateType(ctx, notEQPredicate)
-	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
-		return inPredicate, true
-	}
+	intest.AssertFunc(func() bool {
+		_, inPredicateType := FindPredicateType(ctx, inPredicate)
+		_, notEQPredicateType := FindPredicateType(ctx, notEQPredicate)
+		return inPredicateType == inListPredicate && notEQPredicateType == notEqualPredicate
+	}, "Input's paredicate types are not as expected.")
 	v := inPredicate.(*expression.ScalarFunction)
 	notEQValue := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
 	// do not simplify != NULL since it is always false.

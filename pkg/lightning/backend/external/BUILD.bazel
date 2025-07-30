@@ -33,6 +33,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/log",
         "//pkg/lightning/membuf",
+        "//pkg/lightning/metric",
         "//pkg/metrics",
         "//pkg/util",
         "//pkg/util/hack",

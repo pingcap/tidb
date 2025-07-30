@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -309,31 +308,6 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
-// mergeCollector collects the bytes and row count in merge step.
-type mergeCollector struct {
-	summary *execute.SubtaskSummary
-	counter prometheus.Counter
-}
-
-func newMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *mergeCollector {
-	var counter prometheus.Counter
-	if me, ok := metric.GetCommonMetric(ctx); ok {
-		counter = me.BytesCounter.WithLabelValues(metric.StateMerged)
-	}
-	return &mergeCollector{
-		summary: summary,
-		counter: counter,
-	}
-}
-
-func (c *mergeCollector) Add(bytes, rowCnt int64) {
-	c.summary.Bytes.Add(bytes)
-	c.summary.RowCnt.Add(rowCnt)
-	if c.counter != nil {
-		c.counter.Add(float64(bytes))
-	}
-}
-
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	taskID    int64
@@ -401,8 +375,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	collector := newMergeCollector(ctx, &m.summary)
-
 	partSize := m.dataKVPartSize
 	if sm.KVGroup != dataKVGroup {
 		partSize = m.indexKVPartSize
@@ -415,7 +387,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		external.DefaultOneWriterBlockSize,
 		onClose,
-		collector,
+		external.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
 		false,
 		engineapi.OnDuplicateKeyIgnore)

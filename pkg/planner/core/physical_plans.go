@@ -61,7 +61,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalSelection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalProjection{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTopN{}
-	_ base.PhysicalPlan = &PhysicalMaxOneRow{}
+	_ base.PhysicalPlan = &physicalop.PhysicalMaxOneRow{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableDual{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
@@ -77,7 +77,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalHashAgg{}
 	_ base.PhysicalPlan = &PhysicalStreamAgg{}
 	_ base.PhysicalPlan = &PhysicalApply{}
-	_ base.PhysicalPlan = &PhysicalIndexJoin{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
@@ -89,7 +89,7 @@ var (
 
 	_ PhysicalJoin = &PhysicalHashJoin{}
 	_ PhysicalJoin = &PhysicalMergeJoin{}
-	_ PhysicalJoin = &PhysicalIndexJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &PhysicalIndexHashJoin{}
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
@@ -1143,7 +1143,7 @@ type PhysicalApply struct {
 }
 
 // PhysicalJoinImplement has an extra bool return value compared with PhysicalJoin interface.
-// This will override basePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
+// This will override BasePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
 // base.PhysicalJoin interface.
 func (*PhysicalApply) PhysicalJoinImplement() bool { return false }
 
@@ -1192,160 +1192,13 @@ func (la *PhysicalApply) MemoryUsage() (sum int64) {
 type PhysicalJoin interface {
 	base.PhysicalPlan
 	PhysicalJoinImplement()
-	getInnerChildIdx() int
+	GetInnerChildIdx() int
 	GetJoinType() logicalop.JoinType
-}
-
-type basePhysicalJoin struct {
-	physicalop.PhysicalSchemaProducer
-
-	JoinType logicalop.JoinType
-
-	LeftConditions  expression.CNFExprs
-	RightConditions expression.CNFExprs
-	OtherConditions expression.CNFExprs
-
-	InnerChildIdx int
-	OuterJoinKeys []*expression.Column
-	InnerJoinKeys []*expression.Column
-	LeftJoinKeys  []*expression.Column
-	RightJoinKeys []*expression.Column
-	// IsNullEQ is used for cases like Except statement where null key should be matched with null key.
-	// <1,null> is exactly matched with <1,null>, where the null value should not be filtered and
-	// the null is exactly matched with null only. (while in NAAJ null value should also be matched
-	// with other non-null item as well)
-	IsNullEQ      []bool
-	DefaultValues []types.Datum
-
-	LeftNAJoinKeys  []*expression.Column
-	RightNAJoinKeys []*expression.Column
-}
-
-func (p *basePhysicalJoin) GetJoinType() logicalop.JoinType {
-	return p.JoinType
-}
-
-// PhysicalJoinImplement implements base.PhysicalJoin interface.
-func (*basePhysicalJoin) PhysicalJoinImplement() {}
-
-func (p *basePhysicalJoin) getInnerChildIdx() int {
-	return p.InnerChildIdx
-}
-
-func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, bool) {
-	cloned := new(basePhysicalJoin)
-	base, ok := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, newSelf)
-	if !ok {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = cloneExpressionsForPlanCache(p.LeftConditions, nil)
-	cloned.RightConditions = cloneExpressionsForPlanCache(p.RightConditions, nil)
-	cloned.OtherConditions = cloneExpressionsForPlanCache(p.OtherConditions, nil)
-	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = cloneColumnsForPlanCache(p.OuterJoinKeys, nil)
-	cloned.InnerJoinKeys = cloneColumnsForPlanCache(p.InnerJoinKeys, nil)
-	cloned.LeftJoinKeys = cloneColumnsForPlanCache(p.LeftJoinKeys, nil)
-	cloned.RightJoinKeys = cloneColumnsForPlanCache(p.RightJoinKeys, nil)
-	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
-	copy(cloned.IsNullEQ, p.IsNullEQ)
-	for _, d := range p.DefaultValues {
-		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
-	}
-	cloned.LeftNAJoinKeys = cloneColumnsForPlanCache(p.LeftNAJoinKeys, nil)
-	cloned.RightNAJoinKeys = cloneColumnsForPlanCache(p.RightNAJoinKeys, nil)
-	return cloned, true
-}
-
-func (p *basePhysicalJoin) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalJoin, error) {
-	cloned := new(basePhysicalJoin)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, newSelf)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = util.CloneExprs(p.LeftConditions)
-	cloned.RightConditions = util.CloneExprs(p.RightConditions)
-	cloned.OtherConditions = util.CloneExprs(p.OtherConditions)
-	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = util.CloneCols(p.OuterJoinKeys)
-	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
-	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
-	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
-	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
-	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
-	for _, d := range p.DefaultValues {
-		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
-	}
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
-	for _, fun := range p.LeftConditions {
-		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
-	}
-	for _, fun := range p.RightConditions {
-		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
-	}
-	for _, fun := range p.OtherConditions {
-		corCols = append(corCols, expression.ExtractCorColumns(fun)...)
-	}
-	return corCols
-}
-
-const emptyBasePhysicalJoinSize = int64(unsafe.Sizeof(basePhysicalJoin{}))
-
-// MemoryUsage return the memory usage of basePhysicalJoin
-func (p *basePhysicalJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = emptyBasePhysicalJoinSize + p.PhysicalSchemaProducer.MemoryUsage() + int64(cap(p.IsNullEQ))*size.SizeOfBool +
-		int64(cap(p.LeftConditions)+cap(p.RightConditions)+cap(p.OtherConditions))*size.SizeOfInterface +
-		int64(cap(p.OuterJoinKeys)+cap(p.InnerJoinKeys)+cap(p.LeftJoinKeys)+cap(p.RightNAJoinKeys)+cap(p.LeftNAJoinKeys)+
-			cap(p.RightNAJoinKeys))*size.SizeOfPointer + int64(cap(p.DefaultValues))*types.EmptyDatumSize
-
-	for _, cond := range p.LeftConditions {
-		sum += cond.MemoryUsage()
-	}
-	for _, cond := range p.RightConditions {
-		sum += cond.MemoryUsage()
-	}
-	for _, cond := range p.OtherConditions {
-		sum += cond.MemoryUsage()
-	}
-	for _, col := range p.LeftJoinKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.RightJoinKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.InnerJoinKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.OuterJoinKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, datum := range p.DefaultValues {
-		sum += datum.MemUsage()
-	}
-	for _, col := range p.LeftNAJoinKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.RightNAJoinKeys {
-		sum += col.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalHashJoin represents hash join implementation of LogicalJoin.
 type PhysicalHashJoin struct {
-	basePhysicalJoin
+	physicalop.BasePhysicalJoin
 
 	Concurrency     uint
 	EqualConditions []*expression.ScalarFunction
@@ -1405,11 +1258,11 @@ func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2(sctx base.PlanContext) bool {
 func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalHashJoin)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalJoin = *base
+	cloned.BasePhysicalJoin = *base
 	cloned.Concurrency = p.Concurrency
 	cloned.UseOuterToBuild = p.UseOuterToBuild
 	for _, c := range p.EqualConditions {
@@ -1452,7 +1305,7 @@ func (p *PhysicalHashJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfSlice + size.SizeOfBool*2 + size.SizeOfUint8
+	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfUint + size.SizeOfSlice + size.SizeOfBool*2 + size.SizeOfUint8
 
 	for _, expr := range p.EqualConditions {
 		sum += expr.MemoryUsage()
@@ -1475,7 +1328,7 @@ func (p *PhysicalHashJoin) RightIsBuildSide() bool {
 func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
 	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
 	leftNAJoinKeys, rightNAJoinKeys := p.GetNAJoinKeys()
-	baseJoin := basePhysicalJoin{
+	baseJoin := physicalop.BasePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
@@ -1490,7 +1343,7 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 		InnerChildIdx:   innerIdx,
 	}
 	hashJoin := PhysicalHashJoin{
-		basePhysicalJoin:  baseJoin,
+		BasePhysicalJoin:  baseJoin,
 		EqualConditions:   p.EqualConditions,
 		NAEqualConditions: p.NAEQConditions,
 		Concurrency:       uint(p.SCtx().GetSessionVars().HashJoinConcurrency()),
@@ -1499,88 +1352,9 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 	return hashJoin
 }
 
-// PhysicalIndexJoin represents the plan of index look up join.
-// NOTICE: When adding any member variables, remember to modify the Clone method.
-type PhysicalIndexJoin struct {
-	basePhysicalJoin
-
-	innerPlan base.PhysicalPlan
-
-	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges ranger.MutableRanges
-	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
-	KeyOff2IdxOff []int
-	// IdxColLens stores the length of each index column.
-	IdxColLens []int
-	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
-	// e.g. select * from t, t1 where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
-	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b+10
-	//      need to be evaluated after we fetch the data of t1.
-	// This struct stores them and evaluate them to ranges.
-	CompareFilters *ColWithCmpFuncManager
-	// OuterHashKeys indicates the outer keys used to build hash table during
-	// execution. OuterJoinKeys is the prefix of OuterHashKeys.
-	OuterHashKeys []*expression.Column
-	// InnerHashKeys indicates the inner keys used to build hash table during
-	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
-	InnerHashKeys []*expression.Column
-	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
-	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexJoin)
-	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.basePhysicalJoin = *base
-	if p.innerPlan != nil {
-		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
-	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
-	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexJoin
-func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
-	if p.innerPlan != nil {
-		sum += p.innerPlan.MemoryUsage()
-	}
-	if p.CompareFilters != nil {
-		sum += p.CompareFilters.MemoryUsage()
-	}
-
-	for _, col := range p.OuterHashKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.InnerHashKeys {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
 type PhysicalIndexMergeJoin struct {
-	PhysicalIndexJoin
+	physicalop.PhysicalIndexJoin
 
 	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
 	KeyOff2KeyOffOrderByIdx []int
@@ -1608,7 +1382,7 @@ func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
 
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
-	PhysicalIndexJoin
+	physicalop.PhysicalIndexJoin
 	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
 	KeepOuterOrder bool
@@ -1618,16 +1392,16 @@ type PhysicalIndexHashJoin struct {
 func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalIndexHashJoin)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalJoin = *base
+	cloned.BasePhysicalJoin = *base
 	physicalIndexJoin, err := p.PhysicalIndexJoin.Clone(newCtx)
 	if err != nil {
 		return nil, err
 	}
-	indexJoin, ok := physicalIndexJoin.(*PhysicalIndexJoin)
+	indexJoin, ok := physicalIndexJoin.(*physicalop.PhysicalIndexJoin)
 	intest.Assert(ok)
 	cloned.PhysicalIndexJoin = *indexJoin
 	cloned.KeepOuterOrder = p.KeepOuterOrder
@@ -1645,7 +1419,7 @@ func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
 
 // PhysicalMergeJoin represents merge join implementation of LogicalJoin.
 type PhysicalMergeJoin struct {
-	basePhysicalJoin
+	physicalop.BasePhysicalJoin
 
 	CompareFuncs []expression.CompareFunc `plan-cache-clone:"shallow"`
 	// Desc means whether inner child keep desc order.
@@ -1658,7 +1432,7 @@ func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalJoin.MemoryUsage() + size.SizeOfSlice + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
+	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfSlice + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
 	return
 }
 
@@ -1859,11 +1633,11 @@ func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalMergeJoin)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalJoin = *base
+	cloned.BasePhysicalJoin = *base
 	cloned.CompareFuncs = append(cloned.CompareFuncs, p.CompareFuncs...)
 	cloned.Desc = p.Desc
 	return cloned, nil
@@ -2128,32 +1902,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Ranges[0].IsPointNonNullable(tc)
 }
 
-// PhysicalMaxOneRow is the physical operator of maxOneRow.
-type PhysicalMaxOneRow struct {
-	physicalop.BasePhysicalPlan
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalMaxOneRow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalMaxOneRow)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalPlan = *base
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalMaxOneRow
-func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.BasePhysicalPlan.MemoryUsage()
-}
-
 // PhysicalWindow is the physical operator of window function.
 type PhysicalWindow struct {
 	physicalop.PhysicalSchemaProducer
@@ -2379,13 +2127,13 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
 func BuildMergeJoinPlan(ctx base.PlanContext, joinType logicalop.JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
-	baseJoin := basePhysicalJoin{
+	baseJoin := physicalop.BasePhysicalJoin{
 		JoinType:      joinType,
 		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},
 		LeftJoinKeys:  leftKeys,
 		RightJoinKeys: rightKeys,
 	}
-	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
+	return PhysicalMergeJoin{BasePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
 }
 
 // SafeClone clones this op.PhysicalPlan and handles its panic.

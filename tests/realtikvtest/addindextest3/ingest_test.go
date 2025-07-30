@@ -28,12 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	disttestutil "github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -213,58 +211,6 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 		wg.Wait()
 		tk.MustExec("admin check table t")
 	}
-}
-
-func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
-	if vardef.EnableDistTask.Load() {
-		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
-	}
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
-	tk.MustExec("create table t (a int primary key);")
-	var sb strings.Builder
-	sb.WriteString("insert into t values ")
-	for i := range 20 {
-		sb.WriteString(fmt.Sprintf("(%d000)", i))
-		if i != 19 {
-			sb.WriteString(",")
-		}
-	}
-	tk.MustExec(sb.String())
-	tk.MustQuery("split table t between (0) and (20000) regions 20;").Check(testkit.Rows("19 1"))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`))
-	done := make(chan error, 1)
-	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
-	testutil.SessionExecInGoroutine(store, "addindexlit", "alter table t add index idx(a);", done)
-
-	running := true
-	cnt := [3]int{1, 2, 4}
-	offset := 0
-	for running {
-		select {
-		case err := <-done:
-			require.NoError(t, err)
-			running = false
-		case wg := <-ddl.TestCheckWorkerNumCh:
-			offset = (offset + 1) % 3
-			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", cnt[offset]))
-			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
-			wg.Done()
-		}
-	}
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum"))
-	tk.MustExec("admin check table t;")
-	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
-	require.Len(t, rows, 1)
-	jobTp := rows[0][12].(string)
-	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
 func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {

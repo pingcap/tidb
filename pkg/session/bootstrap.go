@@ -30,10 +30,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -111,12 +113,12 @@ const (
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
-	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
-		"Host CHAR(255) NOT NULL DEFAULT ''," +
-		"User CHAR(80) NOT NULL DEFAULT ''," +
-		"Priv LONGTEXT NOT NULL DEFAULT ''," +
-		"PRIMARY KEY (Host, User)," +
-		"KEY i_user (User))"
+	CreateGlobalPrivTable = `CREATE TABLE IF NOT EXISTS mysql.global_priv (
+		Host CHAR(255) NOT NULL DEFAULT '',
+		User CHAR(80) NOT NULL DEFAULT '',
+		Priv LONGTEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (Host, User),
+		KEY i_user (User))`
 
 	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
 	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
@@ -1163,15 +1165,81 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: CreateIndexAdvisorResultsTable},
 	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: CreateTiDBKernelOptionsTable},
 	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: CreateTiDBWorkloadValuesTable},
+	// NOTE: if you need to add more tables to 'mysql' database, please also add
+	// an entry to versionedBootstrapSchemas, to make sure the table is created
+	// correctly in nextgen kennel.
+}
+
+type versionedBootstrapSchema struct {
+	ver       meta.NextGenBootTableVersion
+	databases []DatabaseBasicInfo
+}
+
+const (
+	// 52 is the number of system tables as we do this change.
+	// as tablesInSystemDatabase is shared with classic kernel, it's simple to
+	// use a slice to hold all system tables in classic kernel. but in nextgen,
+	// we need to make those tables versioned, as we don't create system tables
+	// through DDL, we need this version to avoid create tables again.
+	// if we add more system tables later, we should increase the version, and
+	// add another versionedBootstrapSchema entry.
+	tableCountInFirstVerOnNextGen = 52
+)
+
+// used in nextgen, to create system tables directly through meta kv, without
+// going through DDL, so we can create them with reversed ID range.
+var versionedBootstrapSchemas = []versionedBootstrapSchema{
+	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[:tableCountInFirstVerOnNextGen]},
+		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+	}},
+}
+
+func bootstrapSchemas(store kv.Storage) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		currVer, err := m.GetNextGenBootTableVersion()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		largestVer := currVer
+		for _, vt := range versionedBootstrapSchemas {
+			if currVer >= vt.ver {
+				continue
+			}
+			logutil.BgLogger().Info("bootstrap tables", zap.Int("currVer", int(currVer)),
+				zap.Int("targetVer", int(vt.ver)))
+			for _, bdb := range vt.databases {
+				if err = m.CreateSysDatabaseByIDIfNotExists(bdb.Name, bdb.ID); err != nil {
+					return err
+				}
+				if len(bdb.Tables) > 0 {
+					if err = createAndSplitTables(store, m, bdb.ID, bdb.Tables); err != nil {
+						return err
+					}
+				}
+			}
+			largestVer = max(largestVer, vt.ver)
+		}
+		if largestVer > currVer {
+			return m.SetNextGenBootTableVersion(largestVer)
+		}
+		return nil
+	})
 }
 
 // doDDLWorks executes DDL statements in bootstrap stage.
 func doDDLWorks(s sessionapi.Session) {
-	for _, db := range systemDatabases {
-		mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
-	}
-	for _, tbl := range tablesInSystemDatabase {
-		mustExecute(s, tbl.SQL)
+	// for nextgen, system schemas are created in bootstrapSessionImpl
+	if kerneltype.IsClassic() {
+		for _, db := range systemDatabases {
+			mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", db.Name)
+		}
+		for _, tbl := range tablesInSystemDatabase {
+			mustExecute(s, tbl.SQL)
+		}
 	}
 	// Create bind_info table.
 	insertBuiltinBindInfoRow(s)
