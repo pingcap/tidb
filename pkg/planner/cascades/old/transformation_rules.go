@@ -15,6 +15,7 @@
 package old
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"math"
 	"slices"
 
@@ -430,7 +431,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		// TODO: Remove this check when we have implemented TiFlashAggregation.
 		return false
 	}
-	return plannercore.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
+	return physicalop.CheckAggCanPushCop(agg.SCtx(), agg.AggFuncs, agg.GroupByItems, kv.TiKV)
 }
 
 // OnTransform implements Transformation interface.
@@ -449,8 +450,8 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
 
-	partialPref, finalPref, firstRowFuncMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
-		&plannercore.AggInfo{
+	partialPref, finalPref, firstRowFuncMap := physicalop.BuildFinalModeAggregation(agg.SCtx(),
+		&physicalop.AggInfo{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
 			Schema:       aggSchema,
@@ -460,7 +461,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
+		physicalop.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 
 	partialAgg := logicalop.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,
