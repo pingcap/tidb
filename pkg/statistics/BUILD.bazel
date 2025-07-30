@@ -82,7 +82,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 38,
+=======
+    shard_count = 40,
+>>>>>>> 39c35fc9d96 (planner: Use NDV from the sample for TopN/Buckets (#62094))
     deps = [
         "//pkg/config",
         "//pkg/meta/model",

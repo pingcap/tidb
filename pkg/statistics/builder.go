@@ -335,6 +335,10 @@ func BuildHistAndTopN(
 		return nil, nil, errors.Trace(err)
 	}
 	curCnt := float64(0)
+	// sampleNDV is the number of distinct values in the samples, which may differ from the real NDV due to sampling.
+	// Initialize to 1 because the first time in the loop we don't increment the sampleNDV - we increment upon change
+	// of value, and the first value is always new.
+	sampleNDV := int64(1)
 	var corrXYSum float64
 
 	// Iterate through the samples
@@ -355,8 +359,14 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
+<<<<<<< HEAD
 		// case 2-1, do not add a count of 1 if we're sampling
 		if curCnt == 1 && sampleFactor > 1 && allowPruning {
+=======
+		sampleNDV++
+		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
+		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
+>>>>>>> 39c35fc9d96 (planner: Use NDV from the sample for TopN/Buckets (#62094))
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -416,15 +426,33 @@ func BuildHistAndTopN(
 	}
 
 	if allowPruning {
+		// Prune out any TopN values that have the same count as the remaining average.
 		topNList = pruneTopNItem(topNList, ndv, nullCount, sampleNum, count)
+		if sampleNDV > 1 && sampleFactor > 1 && ndv > sampleNDV && len(topNList) >= int(sampleNDV) {
+			// If we're sampling, and TopN contains everything in the sample - trim TopN so
+			// that buckets will be built. This can help address issues in optimizer
+			// cardinality estimation if TopN contains all values in the sample, but the
+			// length of the TopN is less than the true column/index NDV. Ensure that we keep
+			// at least one item in the topN list. If the sampleNDV is small, all remaining
+			// values are likely to added as the last value of a bucket such that skew will
+			// still be recognized.
+			keepTopN := max(1, sampleNDV-1)
+			topNList = topNList[:keepTopN]
+		}
 	}
 
 	topn := &TopN{TopN: topNList}
 	lenTopN := int64(len(topn.TopN))
 
+<<<<<<< HEAD
 	// Step2: exclude topn from samples
+=======
+	haveAllNDV := sampleNDV == lenTopN && lenTopN > 0
+
+	// Step2: exclude TopN from samples if the NDV is larger than the number of topN items.
+>>>>>>> 39c35fc9d96 (planner: Use NDV from the sample for TopN/Buckets (#62094))
 	lenSamples := int64(len(samples))
-	if lenTopN > 0 && lenTopN < hg.NDV && lenSamples > 0 {
+	if lenTopN > 0 && !haveAllNDV && lenSamples > 0 && numBuckets > 0 {
 		for i := int64(0); i < lenSamples; i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
 			if err != nil {
@@ -479,8 +507,13 @@ func BuildHistAndTopN(
 		topNTotalCount += topn.TopN[i].Count
 	}
 
+<<<<<<< HEAD
 	if uint64(count) <= topNTotalCount || hg.NDV <= lenTopN {
 		// If we've collected everything  - don't create any buckets
+=======
+	if haveAllNDV || numBuckets <= 0 {
+		// If we've collected everything or numBuckets == 0 - don't create any buckets
+>>>>>>> 39c35fc9d96 (planner: Use NDV from the sample for TopN/Buckets (#62094))
 		return hg, topn, nil
 	}
 
