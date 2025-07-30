@@ -37,9 +37,6 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 			return dual
 		}
 	}
-	if len(conds) != 1 {
-		return nil
-	}
 	return nil
 }
 
