@@ -673,7 +673,6 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
-	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=off")
 	tk.MustExec("analyze table t all columns")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
