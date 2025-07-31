@@ -1777,14 +1777,40 @@ func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk
 // extractOrderByColumns extracts column names from ORDER BY clause
 // Input: "ORDER BY `item_id`,`photo_index`"
 // Output: ["`item_id`", "`photo_index`"]
+// Handles column names that contain commas by respecting backtick quoting
 func extractOrderByColumns(orderByClause string) []string {
 	// Remove "ORDER BY " prefix
 	columnsStr := strings.TrimPrefix(orderByClause, "ORDER BY ")
+	
+	// Handle empty clause
+	if columnsStr == "" {
+		return []string{""}
+	}
 
-	// Split by comma and trim spaces
-	columns := strings.Split(columnsStr, ",")
-	for i, col := range columns {
-		columns[i] = strings.TrimSpace(col)
+	var columns []string
+	var currentColumn strings.Builder
+	inBackticks := false
+	
+	for i := 0; i < len(columnsStr); i++ {
+		ch := columnsStr[i]
+		
+		if ch == '`' {
+			inBackticks = !inBackticks
+			currentColumn.WriteByte(ch)
+		} else if ch == ',' && !inBackticks {
+			// Found a column separator outside of backticks
+			if col := strings.TrimSpace(currentColumn.String()); col != "" {
+				columns = append(columns, col)
+			}
+			currentColumn.Reset()
+		} else {
+			currentColumn.WriteByte(ch)
+		}
+	}
+	
+	// Add the last column
+	if col := strings.TrimSpace(currentColumn.String()); col != "" {
+		columns = append(columns, col)
 	}
 
 	return columns
