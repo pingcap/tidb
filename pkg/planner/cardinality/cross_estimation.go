@@ -106,29 +106,18 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 		selectivity := dsStatsInfo.RowCount / rowCount
 		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
 	}
-	// Estimate the difference between each stage of filtering, as this represents the possible scan range when
-	// the LIMIT rows will be found. orderRatio is the estimated percentage of that range when the first
-	// row is expected to be found. This formula is to bias away from non-filtering (or poorly filtering)
-	// indexes that provide order, where filtering exists outside of that index or table.
+	// Estimate the difference between index matching and other filtering, as this represents
+	// the possible scan range when the LIMIT rows will be found. orderRatio is the estimated
+	// percentage of the range when the first row is expected to be found. If orderRatio is 0,
+	// it means that we expect to find the rows immediately. If orderRatio is 1, it means that
+	// it is the estimated percentage of that range when the first row is expected to be found.
+	// This is to bias away from non-filtering (or poorly filtering) indexes that provide
+	// order, where filtering exists outside of that index or table.
 	// Such plans have high risk since we cannot estimate when rows will be found.
 	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-	if path.CountAfterAccess > rowCount && orderRatio >= 0 {
-		rowsToMeetFirst := 0.0
-		if len(path.IndexFilters) > 0 && path.CountAfterIndex > 0 && path.CountAfterAccess > path.CountAfterIndex {
-			// First target - if there is index filtering, we need to estimate the number of
-			// index rows that need to be scanned.
-			rowsToMeetFirst = path.CountAfterAccess - path.CountAfterIndex
-			if path.CountAfterIndex > dsStatsInfo.RowCount {
-				// After index filtering, consider table rows scanned.
-				rowsToMeetFirst += path.CountAfterIndex - dsStatsInfo.RowCount
-			}
-		} else if len(path.TableFilters) > 0 && path.CountAfterAccess > dsStatsInfo.RowCount {
-			// Second target - if there is no index filtering, but there is table filtering,
-			// we need to estimate the number of table rows that need to be scanned.
-			rowsToMeetFirst = (path.CountAfterAccess - dsStatsInfo.RowCount)
-		}
-		rowsToMeetFirst = max(0, (rowsToMeetFirst-rowCount)) * orderRatio
+	if path.CountAfterAccess > rowCount && orderRatio > 0 {
+		rowsToMeetFirst := (path.CountAfterAccess - rowCount) * orderRatio
 		rowCount += rowsToMeetFirst
 	} else if orderRatio == 0 {
 		// If the order ratio is 0, it means that we expect to find the rows immediately.
