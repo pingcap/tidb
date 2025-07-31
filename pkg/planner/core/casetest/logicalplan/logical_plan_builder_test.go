@@ -21,10 +21,9 @@ import (
 )
 
 func TestGroupBySchema(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec(`CREATE TABLE mysql_3 (
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test;")
+		testKit.MustExec(`CREATE TABLE mysql_3 (
     col_int_auto_increment INT(10) AUTO_INCREMENT,
     col_pk_char CHAR(60) NOT NULL,
     col_pk_date DATE NOT NULL,
@@ -33,7 +32,7 @@ func TestGroupBySchema(t *testing.T) {
     col_date DATE,
     PRIMARY KEY (col_int_auto_increment, col_pk_char, col_datetime, col_int, col_date)
 );`)
-	tk.MustQuery(`explain format='brief' SELECT *
+		testKit.MustQuery(`explain format='brief' SELECT *
 FROM mysql_3 t1
 WHERE EXISTS
     (SELECT DISTINCT a1.*
@@ -44,4 +43,5 @@ WHERE EXISTS
                RIGHT JOIN mysql_3 a2
                WHERE t1.col_pk_date IS NULL
                GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	})
 }
