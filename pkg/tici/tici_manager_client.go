@@ -78,6 +78,7 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 			Type:         int32(tblInfo.Columns[offset].GetType()),
 			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
 			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
+			Flag:         uint32(tblInfo.Columns[offset].GetFlag()),
 			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
 			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
 			IsArray:      len(indexInfo.Columns) > 1,
@@ -378,4 +379,22 @@ func ModelPrimaryKeyToTiCIIndexInfo(
 		Columns:   pkColumns,
 		IsUnique:  pkIndex.Unique,
 	}
+}
+
+// DropFullTextIndex drop full text index on TiCI.
+func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int64) error {
+	req := &DropIndexRequest{
+		TableId: tableID,
+		IndexId: indexID,
+	}
+	resp, err := t.metaServiceClient.DropIndex(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp.Status != 0 {
+		logutil.BgLogger().Error("drop full text index failed", zap.Int64("table ID", req.TableId), zap.Int64("index ID", req.IndexId), zap.String("errorMessage", resp.ErrorMessage))
+		return nil
+	}
+	logutil.BgLogger().Info("drop full text index success", zap.Int64("index ID", req.TableId), zap.Int64("index ID", req.IndexId))
+	return nil
 }
