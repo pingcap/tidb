@@ -109,7 +109,10 @@ func keyspaceValidateMiddleware(next http.Handler) http.HandlerFunc {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			w.Write(body)
+			_, err = w.Write(body)
+			if err != nil {
+				logutil.BgLogger().Error("failed to write response", zap.Error(err))
+			}
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -310,7 +313,12 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 	// handle liveness probe.
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	// handle health
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"status":"standby"}`)) })
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		_, err := w.Write([]byte(`{"status":"standby"}`))
+		if err != nil {
+			logutil.BgLogger().Error("failed to write response", zap.Error(err))
+		}
+	})
 	httpServer = &http.Server{
 		Handler: mux,
 	}
@@ -369,7 +377,10 @@ func (c *LoadKeyspaceController) EndStandby(err error) {
 		if httpServer != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			httpServer.Shutdown(ctx)
+			err := httpServer.Shutdown(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("failed to shutdown standby http server", zap.Error(err))
+			}
 		}
 	})
 }
