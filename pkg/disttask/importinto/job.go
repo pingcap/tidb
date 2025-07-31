@@ -346,7 +346,7 @@ func GetLastUpdateTimeForRunningJob(ctx context.Context, jobID int64) (types.Tim
 		return err
 	})
 
-	if rs[0].IsNull(10) {
+	if rs[0].IsNull(0) {
 		return types.ZeroTime, err
 	}
 

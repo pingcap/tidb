@@ -2633,26 +2633,24 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 	groupMap := make(map[string]*groupInfo)
 	for _, info := range infos {
 		if _, ok := groupMap[info.GroupKey]; !ok {
-			subtaskUpdateTime, err := importinto.GetLastUpdateTimeForRunningJob(ctx, info.ID)
-			if err != nil {
-				return err
-			}
-
-			updateTime := info.UpdateTime
-			if !subtaskUpdateTime.IsZero() {
-				updateTime = subtaskUpdateTime
-			}
-
 			groupMap[info.GroupKey] = &groupInfo{
 				groupKey:   info.GroupKey,
 				startTime:  types.ZeroTime,
-				updateTime: updateTime,
+				updateTime: types.ZeroTime,
 			}
+		}
+
+		subtaskUpdateTime, err := importinto.GetLastUpdateTimeForRunningJob(ctx, info.ID)
+		if err != nil {
+			return err
 		}
 
 		gInfo := groupMap[info.GroupKey]
 		if gInfo.startTime.IsZero() || info.CreateTime.Compare(gInfo.startTime) < 0 {
 			gInfo.startTime = info.CreateTime
+		}
+		if gInfo.updateTime.IsZero() || subtaskUpdateTime.Compare(gInfo.updateTime) > 0 {
+			gInfo.updateTime = subtaskUpdateTime
 		}
 
 		gInfo.jobCount++
@@ -2678,8 +2676,16 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 		e.result.AppendInt64(4, gInfo.completed)
 		e.result.AppendInt64(5, gInfo.failed)
 		e.result.AppendInt64(6, gInfo.canceled)
-		e.result.AppendTime(7, gInfo.startTime)
-		e.result.AppendTime(8, gInfo.updateTime)
+		if gInfo.startTime.IsZero() {
+			e.result.AppendNull(7)
+		} else {
+			e.result.AppendTime(7, gInfo.startTime)
+		}
+		if gInfo.updateTime.IsZero() {
+			e.result.AppendNull(8)
+		} else {
+			e.result.AppendTime(8, gInfo.updateTime)
+		}
 	}
 	return nil
 }

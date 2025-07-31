@@ -365,6 +365,87 @@ func TestShowImportProgress(t *testing.T) {
 	checkShowInfo("post-process", "0B", "0B", "N/A", "0B/s", "N/A", 100)
 }
 
+func TestShowImportGroup(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	conn := tk.Session().GetSQLExecutor()
+
+	// global sort
+	taskMeta := importinto.TaskMeta{
+		Plan: importer.Plan{
+			CloudStorageURI: "s3://test-bucket/test-path",
+		},
+	}
+
+	taskSummary := &importer.Summary{
+		EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+		MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
+		IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
+		ImportedRows:  100,
+	}
+
+	var err error
+	taskMeta.TaskResult, err = json.Marshal(taskSummary)
+	require.NoError(t, err)
+	bytes, err := json.Marshal(taskMeta)
+	require.NoError(t, err)
+
+	type importJob struct {
+		SchemaName string
+		TableName  string
+		TableID    int64
+		GroupKey   string
+	}
+
+	importJobs := []importJob{
+		{"test", "t1", 1, "group1"},
+		{"test", "t2", 2, "group1"},
+		{"test", "t3", 3, "group2"},
+		{"test", "t4", 4, ""}, // not displayed in show import groups
+	}
+
+	for _, job := range importJobs {
+		jobID, err := importer.CreateJob(ctx, conn, job.SchemaName, job.TableName, job.TableID,
+			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
+		require.NoError(t, err)
+
+		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
+		require.NoError(t, err)
+
+		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepEncodeAndSort,
+			"", bytes, proto.ImportInto, 11)
+	}
+
+	rs := tk.MustQuery("show import groups").Sort().Rows()
+	require.Len(t, rs, 2)
+	require.Equal(t, "group1", rs[0][0])
+	require.Equal(t, "2", rs[0][1])
+	require.Equal(t, "group2", rs[1][0])
+	require.Equal(t, "1", rs[1][1])
+
+	rs = tk.MustQuery(`show import group "nonexist"`).Sort().Rows()
+	require.Len(t, rs, 0)
+
+	rs = tk.MustQuery(`show import group "group2"`).Sort().Rows()
+	require.Len(t, rs, 1)
+	require.Equal(t, "group2", rs[0][0])
+	require.Equal(t, "1", rs[0][1])
+}
+
 func TestFormatTime(t *testing.T) {
 	require.Equal(t, "1 d 00:00:00", importinto.FormatSecondAsTime(86400))
 	require.Equal(t, "2 d 00:00:01", importinto.FormatSecondAsTime(172801))

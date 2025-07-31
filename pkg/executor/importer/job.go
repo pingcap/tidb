@@ -311,9 +311,6 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	if !row.IsNull(4) {
 		endTime = row.GetTime(4)
 	}
-	if !row.IsNull(4) {
-		updateTime = row.GetTime(4)
-	}
 
 	parameters := ImportParameters{}
 	parametersStr := row.GetString(9)
