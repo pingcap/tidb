@@ -48,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -406,6 +408,10 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.ConditionExprString = conditionString
+		idxInfo.AffectColumn, err = buildAffectColumn(idxInfo, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = ast.IndexTypeBtree
@@ -1084,6 +1090,15 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 		return ver, errors.Trace(err)
 	}
 
+	var reorgTp model.ReorgType
+	reorgTp, err = pickBackfillType(job)
+	if err != nil {
+		if !isRetryableJobError(err, job.ErrorCount) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, err
+	}
+
 	allIndexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
 	for _, arg := range args.IndexArgs {
 		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, model.ColumnarIndexTypeNA, job.Type == model.ActionAddPrimaryKey, arg)
@@ -1091,11 +1106,21 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		allIndexInfos = append(allIndexInfos, indexInfo)
 		// The condition in the index option is not marshaled, so we need to set it here.
 		if len(arg.ConditionString) > 0 {
 			indexInfo.ConditionExprString = arg.ConditionString
+			// As we've updated the `ConditionExprString`, we need to rebuild the AffectColumn.
+			indexInfo.AffectColumn, err = buildAffectColumn(indexInfo, tblInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 		}
+		if indexInfo.HasCondition() && (reorgTp == model.ReorgTypeTxn || reorgTp == model.ReorgTypeTxnMerge) {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+		}
+		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
 
 	originalState := allIndexInfos[0].State
@@ -1104,14 +1129,6 @@ SwitchIndexState:
 	switch allIndexInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
-		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(job)
-		if err != nil {
-			if !isRetryableJobError(err, job.ErrorCount) {
-				job.State = model.JobStateCancelled
-			}
-			return ver, err
-		}
 		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
@@ -2083,7 +2100,10 @@ func newAddIndexTxnWorker(
 	if job.Type == model.ActionModifyColumn {
 		// For modify column with indexes, we only need to add the index one by one.
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, currElement.ID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		if err != nil {
+			return nil, err
+		}
 		allIndexes = append(allIndexes, index)
 	} else {
 		for _, elem := range elements {
@@ -2091,7 +2111,10 @@ func newAddIndexTxnWorker(
 				continue
 			}
 			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-			index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+			index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+			if err != nil {
+				return nil, err
+			}
 			allIndexes = append(allIndexes, index)
 		}
 	}
@@ -2221,7 +2244,11 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			if err != nil {
 				return false, err
 			}
+
 			for _, index := range w.indexes {
+				if index.Meta().HasCondition() {
+					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
+				}
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
@@ -2413,6 +2440,17 @@ func writeChunk(
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
+
+	indexConditionChecker := make([]func(row chunk.Row) (bool, error), len(indexes))
+	for i, index := range indexes {
+		if index.Meta().HasCondition() {
+			indexConditionChecker[i], err = buildIndexConditionChecker(copCtx, tblInfo, index.Meta())
+			if err != nil {
+				return 0, 0, errors.Trace(err)
+			}
+		}
+	}
+
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2426,6 +2464,16 @@ func writeChunk(
 			return 0, totalBytes, errors.Trace(err)
 		}
 		for i, index := range indexes {
+			if index.Meta().HasCondition() {
+				ok, err := indexConditionChecker[i](row)
+				if err != nil {
+					return 0, 0, errors.Trace(err)
+				}
+				if !ok {
+					continue
+				}
+			}
+
 			idxID := index.Meta().ID
 			idxDataBuf = ExtractDatumByOffsets(ectx,
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
@@ -3615,6 +3663,13 @@ func CheckAndBuildIndexConditionString(tblInfo *model.TableInfo, indexConditionE
 		return "", nil
 	}
 
+	// Be careful, in `CREATE TABLE` statement, the `tblInfo.Partition` is always nil here. We have to
+	// check it in `buildTablePartitionInfo` again.
+	if tblInfo.Partition != nil {
+		return "", dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+			"partial index on partitioned table is not supported")
+	}
+
 	// check partial index condition expression
 	err := checkIndexCondition(tblInfo, indexConditionExpr)
 	if err != nil {
@@ -3795,4 +3850,41 @@ func checkIndexCondition(tblInfo *model.TableInfo, indexCondition ast.ExprNode) 
 		return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
 			"the kind of partial index condition is not supported")
 	}
+}
+
+func buildAffectColumn(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]*model.IndexColumn, error) {
+	ectx := exprstatic.NewExprContext()
+
+	// Build affect column for partial index.
+	if idxInfo.HasCondition() {
+		cols, err := tables.ExtractColumnsFromCondition(ectx, idxInfo, tblInfo, true)
+		if err != nil {
+			return nil, err
+		}
+		return tables.DedupIndexColumns(cols), nil
+	}
+
+	return nil, nil
+}
+
+// buildIndexConditionChecker builds an expression for evaluating the index condition based on
+// the given columns.
+func buildIndexConditionChecker(copCtx copr.CopContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (func(row chunk.Row) (bool, error), error) {
+	schema, names := copCtx.GetBase().GetSchemaAndNames()
+
+	exprCtx := copCtx.GetBase().ExprCtx
+	expr, err := expression.ParseSimpleExpr(exprCtx, idxInfo.ConditionExprString, expression.WithInputSchemaAndNames(schema, names, tblInfo))
+	if err != nil {
+		return nil, err
+	}
+
+	return func(row chunk.Row) (bool, error) {
+		datum, isNull, err := expr.EvalInt(exprCtx.GetEvalCtx(), row)
+		if err != nil {
+			return false, err
+		}
+		// If the result is NULL, it usually means the original column itself is NULL.
+		// In this case, we should refuse to consider the index for partial index condition.
+		return datum > 0 && !isNull, nil
+	}, nil
 }
