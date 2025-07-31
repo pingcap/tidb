@@ -116,12 +116,14 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 	// Such plans have high risk since we cannot estimate when rows will be found.
 	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-	if path.CountAfterAccess > rowCount && orderRatio > 0 {
-		rowsToMeetFirst := (path.CountAfterAccess - rowCount) * orderRatio
-		rowCount += rowsToMeetFirst
-	} else if orderRatio == 0 {
-		// If the order ratio is 0, it means that we expect to find the rows immediately.
-		rowCount = min(rowCount, expectedCnt)
+	if path.CountAfterAccess > rowCount && orderRatio >= 0 && (len(path.IndexFilters) > 0 || len(path.TableFilters) > 0) {
+		if orderRatio > 0 {
+			rowsToMeetFirst := (path.CountAfterAccess - rowCount) * orderRatio
+			rowCount += rowsToMeetFirst
+		} else if orderRatio == 0 {
+			// If the order ratio is 0, it means that we expect to find the rows immediately.
+			rowCount = min(rowCount, expectedCnt)
+		}
 	}
 	return rowCount
 }
