@@ -146,7 +146,10 @@ func NewAddIndexIngestPipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		if err != nil {
+			return nil, err
+		}
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
@@ -206,7 +209,10 @@ func NewWriteIndexToExternalStoragePipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		if err != nil {
+			return nil, err
+		}
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)

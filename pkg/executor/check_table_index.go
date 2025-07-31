@@ -223,7 +223,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 		return err
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
-		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
 	}
 
@@ -231,7 +234,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
-		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}

@@ -300,6 +300,11 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	return ColumnarIndexTypeNA
 }
 
+// HasPartialCondition checks whether the index has a partial condition.
+func (index *IndexInfo) HasPartialCondition() bool {
+	return len(index.PartialConditionExprString) > 0
+}
+
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
 func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...ast.CIStr) *IndexInfo {
 	for _, index := range indices {
