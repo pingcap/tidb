@@ -78,7 +78,7 @@ func main() {
 		}
 	}
 
-	err := app.GoServe()
+	err = app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)
