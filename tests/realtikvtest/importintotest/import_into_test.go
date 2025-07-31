@@ -1391,15 +1391,18 @@ func (s *mockGCSSuite) TestTableMode() {
 	// Test occur retryable error when checksum
 	s.tk.MustExec("truncate table table_mode")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError", `return`)
+	getError := false
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			if err != nil && *errP == common.ErrWriteTooSlow {
+				getError = true
 				testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError")
 			}
 		},
 	)
 	s.tk.MustQuery(loadDataSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
+	require.True(s.T(), getError)
 
 	// Test import into check table is empty get error.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
