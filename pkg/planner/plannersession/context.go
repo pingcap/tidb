@@ -32,6 +32,7 @@ type PlanCtxExtended struct {
 	sctx                   sessionctx.Context
 	nullRejectCheckExprCtx *exprctx.NullRejectCheckExprContext
 	readonlyUserVars       map[string]struct{}
+	hasFTSFunc             bool
 }
 
 // NewPlanCtxExtended creates a new PlanCtxExtended.
@@ -66,7 +67,18 @@ func (ctx *PlanCtxExtended) GetReadonlyUserVarMap() map[string]struct{} {
 	return ctx.readonlyUserVars
 }
 
+// SetHasFTSFunc sets the has FTS function flag.
+func (ctx *PlanCtxExtended) SetHasFTSFunc() {
+	ctx.hasFTSFunc = true
+}
+
+// HasFTSFunc checks if the FTS function is used.
+func (ctx *PlanCtxExtended) HasFTSFunc() bool {
+	return ctx.hasFTSFunc
+}
+
 // Reset resets the local
 func (ctx *PlanCtxExtended) Reset() {
 	ctx.readonlyUserVars = nil
+	ctx.hasFTSFunc = false
 }

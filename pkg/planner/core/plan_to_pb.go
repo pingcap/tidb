@@ -423,10 +423,6 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 	}
 	if store == kv.TiFlash {
 		executorID := p.ExplainID().String()
-		queryColumns := make([]*model.ColumnInfo, 0, len(p.prop.FullTextProp.QueryColumns))
-		for _, col := range p.prop.FullTextProp.QueryColumns {
-			queryColumns = append(queryColumns, FindColumnInfoByID(tableColumns, col.ID))
-		}
 		unique := false
 		idxExec := &tipb.IndexScan{
 			TableId:          p.Table.ID,
@@ -435,14 +431,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			Desc:             false,
 			Unique:           &unique,
 			PrimaryColumnIds: pkColIDs,
-			FtsQueryInfo: &tipb.FTSQueryInfo{
-				QueryType:   tipb.FTSQueryType_FTSQueryTypeNoScore,
-				IndexId:     p.Index.ID,
-				Columns:     util.ColumnsToProto(queryColumns, p.Table.PKIsHandle, true, false),
-				ColumnNames: nil,
-				QueryText:   p.prop.FullTextProp.QueryJSONStr,
-				QueryFunc:   tipb.ScalarFuncSig_FTSMatchWord,
-			},
+			FtsQueryInfo:     p.FtsQueryInfo,
 		}
 		return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec, ExecutorId: &executorID}, nil
 	}

@@ -181,6 +181,7 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *Physi
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 	p.IndexStoreType = p.IndexPlans[0].(*PhysicalIndexScan).StoreType
 	p.SetSchema(p.tablePlan.Schema())
+	p.adjustReadReqType(ctx)
 	return &p
 }
 
