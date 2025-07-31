@@ -106,14 +106,15 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 		selectivity := dsStatsInfo.RowCount / rowCount
 		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
 	}
-	// Estimate the difference between index matching and other filtering, as this represents
-	// the possible scan range when the LIMIT rows will be found. orderRatio is the estimated
-	// percentage of the range when the first row is expected to be found. If orderRatio is 0,
-	// it means that we expect to find the rows immediately. If orderRatio is 1, it means that
-	// it is the estimated percentage of that range when the first row is expected to be found.
-	// This is to bias away from non-filtering (or poorly filtering) indexes that provide
-	// order, where filtering exists outside of that index or table.
-	// Such plans have high risk since we cannot estimate when rows will be found.
+	// Estimate the difference between index matching and other filtering, as this represents the possible
+	// scan range when the LIMIT rows will be found. orderRatio controls the estimated percentage of the range when
+	// the first row is expected to be found. For example:
+	// 0 means that we expect to find the rows immediately.
+	// 0.5 means 50% of the range must be scanned.
+	// 1 means that the full range must be scanned.
+	// -1 disables this adjustment.
+	// This is to bias away from non-filtering (or poorly filtering) indexes that provide order, where filtering
+	// exists outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
 	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 	if path.CountAfterAccess > rowCount && orderRatio >= 0 && (len(path.IndexFilters) > 0 || len(path.TableFilters) > 0) {
