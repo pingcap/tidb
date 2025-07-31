@@ -769,8 +769,10 @@ func TestInsertNullIntoNotNullGenerated(t *testing.T) {
 		c2 varchar(16) GENERATED ALWAYS AS (concat(c1, c1)) VIRTUAL NOT NULL,
 		KEY idx (c2)
 	)`)
+	tk.ExecToErr(`insert into t3 set id = 2, c1 = null`)
 	tk.MustExec(`insert into t3(id, c1) values(1, "aaaa")`)
 	tk.MustExec(`insert ignore into t3 set id = 1, c1 = "bbbb" on duplicate key update id = 2, c1 = null`)
-	tk.MustExec(`insert into t3 set id = 2, c1 = "cccc" on duplicate key update c1 = "dddd"`)
-	tk.MustQuery(`select * from t3`).Check(testkit.Rows("2 dddd dddddddd"))
+	tk.ExecToErr(`insert into t3 set id = 2, c1 = "cccc" on duplicate key update c1 = "dddd"`)
+	tk.MustExec(`delete from t3 where id = 2`)
+	tk.MustQuery(`select * from t3`).Check(testkit.Rows())
 }

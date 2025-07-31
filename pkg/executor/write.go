@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -235,15 +236,13 @@ func updateRecord(
 		}
 	}
 
-	// A corner case for generated column:
-	// When we get old data from getOldRow, the type of generated column may be KindNull.
-	// But if NotNullFlag flag is set for the generated column,
-	// the type of corresponding datum needs to be set explicitly by HandleBadNull.
-	// So we have to manually set the type for old datum to make index record updated properly.
+	// When the generated value is null and the column itself is not nullable. This value can be
+	// inserted successfully by ON DUPLICATE KEY UPDATE. But when we want to update this record
+	// later, we should return an error for null values.
 	for i, col := range t.Cols() {
 		if col.IsGenerated() && oldData[i].IsNull() &&
 			(mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) {
-			oldData[i] = table.GetZeroValue(col.ToInfo())
+			return false, false, plannererrors.ErrBadNull.GenWithStackByArgs(col.Name.O)
 		}
 	}
 
