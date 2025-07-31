@@ -92,7 +92,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 			"Increase Factor", idx.GetIncreaseFactor(realtimeCnt),
 		)
 	}
-	if idx != nil && idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
+	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
 		result, corrResult, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
