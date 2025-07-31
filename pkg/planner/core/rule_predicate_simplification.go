@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
