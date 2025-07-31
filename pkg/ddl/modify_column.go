@@ -72,9 +72,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	defer func() {
-		printTableInfo(tblInfo)
-	}()
 
 	if job.IsRollingback() {
 		// For those column-type-change jobs which don't reorg the data.
@@ -558,6 +555,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		if !done {
 			return ver, err
 		}
+		failpoint.InjectCall("afterReorgWorkForModifyColumn")
 
 		oldIdxInfos := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		if tblInfo.TTLInfo != nil {
@@ -568,9 +566,9 @@ func (w *worker) doModifyColumnTypeWithData(
 		updateChangingObjState(oldCol, oldIdxInfos, model.StateWriteOnly)
 		updateChangingObjState(changingCol, changingIdxInfos, model.StatePublic)
 		markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
-		updateChangingCol(changingCol)
 		moveColumnInfoToDest(tblInfo, oldCol, changingCol, pos)
 		moveIndexInfoToDest(tblInfo, changingCol, oldIdxInfos, changingIdxInfos)
+		updateModifyingCols(oldCol, changingCol)
 
 		job.SchemaState = model.StatePublic
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)

@@ -365,14 +365,14 @@ func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
 	}
 }
 
-func updateChangingCol(col *model.ColumnInfo) *model.ColumnInfo {
-	col.ChangeStateInfo = nil
+func updateModifyingCols(oldCol, changingCol *model.ColumnInfo) {
+	changingCol.ChangeStateInfo = nil
 	// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
 	// so that there is no error in getting the default value from OriginDefaultValue.
 	// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
 	// So it can set OriginDefaultValue to nil.
-	col.OriginDefaultValue = nil
-	return col
+	changingCol.OriginDefaultValue = nil
+	oldCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: changingCol.Offset}
 }
 
 func moveColumnInfoToDest(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo, pos *ast.ColumnPosition) {
@@ -927,22 +927,6 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-func printTableInfo(tblInfo *model.TableInfo) {
-	for _, col := range tblInfo.Columns {
-		logutil.DDLLogger().Info("column", zap.Int64("id", col.ID), zap.String("name", col.Name.O))
-	}
-
-	for _, idx := range tblInfo.Indices {
-		idxCols := make([]string, 0, len(idx.Columns))
-		for _, idxCol := range idx.Columns {
-			idxCols = append(idxCols, idxCol.Name.O)
-		}
-
-		logutil.DDLLogger().Info("index", zap.Int64("id", idx.ID),
-			zap.String("name", idx.Name.O), zap.Strings("idxCols", idxCols))
-	}
 }
 
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
