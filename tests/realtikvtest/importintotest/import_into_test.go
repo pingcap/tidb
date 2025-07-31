@@ -1405,9 +1405,10 @@ func (s *mockGCSSuite) TestTableMode() {
 	require.True(s.T(), getError)
 
 	// Test import into check table is empty get error.
+	s.tk.MustExec("truncate table table_mode")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
 	err = s.tk.QueryToErr(loadDataSQL)
-	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
+	require.ErrorContains(s.T(), err, "check is empty get error")
 	s.adminRepairTable("import_into", "table_mode", createTableSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
@@ -1415,7 +1416,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	// Test import into check table is not empty before alter table mode to Import.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
 	err = s.tk.QueryToErr(loadDataSQL)
-	require.ErrorContains(s.T(), err, "target table is not empty")
+	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
 	s.adminRepairTable("import_into", "table_mode", createTableSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
@@ -1423,7 +1424,7 @@ func (s *mockGCSSuite) TestTableMode() {
 
 func (s *mockGCSSuite) adminRepairTable(db, table, createTableSQL string) {
 	domainutil.RepairInfo.SetRepairMode(true)
-	domainutil.RepairInfo.SetRepairTableList([]string{table})
+	domainutil.RepairInfo.SetRepairTableList([]string{db + "." + table})
 	dom := domain.GetDomain(s.tk.Session())
 	dbInfo, ok := dom.InfoCache().GetLatest().SchemaByName(ast.NewCIStr(db))
 	require.True(s.T(), ok)
