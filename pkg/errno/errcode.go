@@ -1162,8 +1162,10 @@ const (
 	ErrResourceGroupInvalidForRole            = 8257
 
 	// Reserved for future use.
-	ErrEngineAttributeInvalidFormat = 8270
-	ErrStorageClassInvalidSpec      = 8271
+	ErrEngineAttributeInvalidFormat           = 8270
+	ErrStorageClassInvalidSpec                = 8271
+	ErrDropColumnReferencedByPartialCondition = 8272
+	ErrCheckPartialIndexWithoutFastCheck      = 8273
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

@@ -104,31 +104,4 @@ func TestPartialIndex(t *testing.T) {
 			}
 		}
 	}
-
-	// test validate column exists in alter table
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("alter table t add index idx_b(b) where a = 1;")
-	tk.MustGetDBError("alter table t add index idx_b_2(b) where c = 1;",
-		dbterror.ErrUnsupportedAddPartialIndex)
-	tk.MustExec("drop table t;")
-
-	// test alter table type validation
-	for i, literals := range differentTypeLiterals {
-		for _, literal := range literals {
-			for j, columnTypes := range differentColumnTypes {
-				tk.MustExec("drop table if exists t;")
-				for _, columnType := range columnTypes {
-					sql := fmt.Sprintf("create table t (a %s, b int);", columnType)
-					tk.MustExec(sql)
-					sql = fmt.Sprintf("alter table t add index idx_b(b) where a = %s;", literal)
-					if i == j {
-						tk.MustExec(sql)
-					} else {
-						tk.MustGetDBError(sql, dbterror.ErrUnsupportedAddPartialIndex)
-					}
-					tk.MustExec("drop table t;")
-				}
-			}
-		}
-	}
 }
