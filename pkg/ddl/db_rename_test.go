@@ -347,7 +347,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	}
 
 	// Switch to new client (tidb3)
-	waitFor("t1", "public", 4)
+	waitFor("t2", "public", 4)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`insert into test2.t2 values (null, "t2 first null")`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from test2.t2`).Sort().Check(testkit.Rows("4 3 t2 first null"))
