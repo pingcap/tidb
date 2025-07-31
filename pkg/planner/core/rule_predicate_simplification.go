@@ -185,9 +185,6 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	if len(predicates) == 0 {
 		return predicates
 	}
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println(`wwz`)
-	}
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
 	// In some scenarios, we need to perform constant propagation,
