@@ -71,5 +71,4 @@ func TestPredicateSimplification(t *testing.T) {
 		res := tk.MustQuery("explain format=brief " + tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
-
 }
