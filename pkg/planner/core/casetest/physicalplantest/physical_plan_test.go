@@ -241,32 +241,33 @@ func TestUnmatchedTableInHint(t *testing.T) {
 }
 
 func TestIssue37520(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t1, t2")
-		testKit.MustExec("create table t1(a int primary key, b int);")
-		testKit.MustExec("create table t2(a int, b int, index ia(a));")
+	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
-		var input []string
-		var output []struct {
-			SQL  string
-			Plan []string
-			Warn []string
-		}
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int);")
+	tk.MustExec("create table t2(a int, b int, index ia(a));")
 
-		planSuiteData := GetPlanSuiteData()
-		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
 
-		for i, ts := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = ts
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
-				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
-			})
-			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
-		}
-	})
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
 }
 
 func TestMPPHints(t *testing.T) {
