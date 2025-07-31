@@ -732,3 +732,9 @@ timezone.*
     curl http://{TiDBIP}:10080/ingest/max-ingest-per-sec -X POST -d "{\"value\": 0.5}"
     curl http://{TiDBIP}:10080/ingest/max-ingest-inflight -X POST -d "{\"value\": 2}"
     ```
+
+42. Get TiDB transaction GC states:
+
+     ```shell
+     curl http://{TiDBIP}:10080/txn-gc-states
+     ```

@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -67,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -859,8 +861,8 @@ func (s *Server) checkConnectionCount() error {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
-	rs := make(map[uint64]*util.ProcessInfo)
+func (s *Server) ShowProcessList() map[uint64]*sessmgr.ProcessInfo {
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	maps.Copy(rs, s.GetUserProcessList())
 	if s.dom != nil {
 		maps.Copy(rs, s.dom.SysProcTracker().GetSysProcessList())
@@ -869,10 +871,10 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 }
 
 // GetUserProcessList returns all process info that are created by user.
-func (s *Server) GetUserProcessList() map[uint64]*util.ProcessInfo {
+func (s *Server) GetUserProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
@@ -927,7 +929,7 @@ func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.
 }
 
 // GetProcessInfo implements the SessionManager interface.
-func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (s *Server) GetProcessInfo(id uint64) (*sessmgr.ProcessInfo, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
@@ -937,7 +939,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 				return pinfo, true
 			}
 		}
-		return &util.ProcessInfo{}, false
+		return &sessmgr.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
 }
@@ -1191,7 +1193,7 @@ func setSystemTimeZoneVariable() {
 }
 
 // CheckOldRunningTxn implements SessionManager interface.
-func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 
@@ -1202,7 +1204,7 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 	}
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
+			session.RemoveLockDDLJobs(client.ctx.Session, jobs, printLog)
 		}
 	}
 }

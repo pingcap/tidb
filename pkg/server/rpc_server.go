@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -47,7 +47,7 @@ import (
 )
 
 // NewRPCServer creates a new rpc server.
-func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
+func NewRPCServer(config *config.Config, dom *domain.Domain, sm sessmgr.Manager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("r", v),
@@ -89,7 +89,7 @@ type rpcServer struct {
 	*sysutil.DiagnosticsServer
 	tikvpb.TikvServer
 	dom *domain.Domain
-	sm  util.SessionManager
+	sm  sessmgr.Manager
 }
 
 // Coprocessor implements the TiKVServer interface.

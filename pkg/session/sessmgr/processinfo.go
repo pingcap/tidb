@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package sessmgr
 
 import (
 	"crypto/tls"
@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -206,9 +207,9 @@ func serverStatus2Str(state uint16) string {
 	return strings.Join(l, "; ")
 }
 
-// SessionManager is an interface for session manage. Show processlist and
+// Manager is an interface for session manage. Show processlist and
 // kill statement rely on this interface.
-type SessionManager interface {
+type Manager interface {
 	ShowProcessList() map[uint64]*ProcessInfo
 	ShowTxnList() []*txninfo.TxnInfo
 	GetProcessInfo(id uint64) (*ProcessInfo, bool)
@@ -216,16 +217,16 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
-	// StoreInternalSession puts the internal session pointer to the map in the SessionManager.
+	// StoreInternalSession puts the internal session pointer to the map in the Manager.
 	StoreInternalSession(se any)
-	// DeleteInternalSession deletes the internal session pointer from the map in the SessionManager.
+	// DeleteInternalSession deletes the internal session pointer from the map in the Manager.
 	DeleteInternalSession(se any)
-	// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager.
+	// ContainsInternalSession checks if the internal session pointer is in the map in the Manager.
 	ContainsInternalSession(se any) bool
 	// GetInternalSessionStartTSList gets all startTS of every transactions running in the current internal sessions.
 	GetInternalSessionStartTSList() []uint64
 	// CheckOldRunningTxn checks if there is an old transaction running in the current sessions
-	CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string)
+	CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL)
 	// KillNonFlashbackClusterConn kill all non flashback cluster connections.
 	KillNonFlashbackClusterConn()
 	// GetConAttrs gets the connection attributes

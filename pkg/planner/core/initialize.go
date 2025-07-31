@@ -26,22 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes PhysicalProjection.
-func (p PhysicalProjection) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProjection {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalMaxOneRow.
-func (p PhysicalMaxOneRow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalMaxOneRow {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
@@ -148,26 +132,25 @@ func (p PhysicalMergeJoin) Init(ctx base.PlanContext, stats *property.StatsInfo,
 	return &p
 }
 
-// Init initializes basePhysicalAgg.
-func (base basePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *basePhysicalAgg {
-	base.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, &base, offset)
-	base.SetStats(stats)
-	return &base
-}
-
-func (base basePhysicalAgg) initForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashAgg {
-	p := &PhysicalHashAgg{base, ""}
+func initForHash(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
+	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	baseAgg := pp.(*physicalop.BasePhysicalAgg)
+	p := &PhysicalHashAgg{*baseAgg, ""}
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
+	p.SetSchema(schema)
 	return p
 }
 
-func (base basePhysicalAgg) initForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalStreamAgg {
-	p := &PhysicalStreamAgg{base}
+func initForStream(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
+	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
+	baseAgg := pp.(*physicalop.BasePhysicalAgg)
+	p := &PhysicalStreamAgg{*baseAgg}
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
+	p.SetSchema(schema)
 	return p
 }
 
@@ -305,14 +288,6 @@ func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
 func (p PhysicalIndexReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
 	p.SetSchema(nil)
-	return &p
-}
-
-// Init initializes PhysicalIndexJoin.
-func (p PhysicalIndexJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalIndexJoin {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexJoin, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
 	return &p
 }
 

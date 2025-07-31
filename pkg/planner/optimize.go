@@ -76,7 +76,6 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
 		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
@@ -236,6 +235,10 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		sessVars.StmtCtx.AppendWarning(warn)
 	}
 
+	if sessVars.StmtCtx.StmtHints.IgnorePlanCache {
+		sessVars.StmtCtx.SetSkipPlanCache("ignore_plan_cache hint used in SQL query")
+	}
+
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 		oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 		if err != nil {
@@ -302,6 +305,10 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
+
+			if sessVars.StmtCtx.StmtHints.IgnorePlanCache {
+				sessVars.StmtCtx.SetSkipPlanCache("ignore_plan_cache hint used in SQL binding")
+			}
 
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)

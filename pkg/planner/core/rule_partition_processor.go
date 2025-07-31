@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -877,7 +878,14 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	// AllConds and PushedDownConds may become inconsistent in subsequent ApplyPredicateSimplification calls.
 	// They must be kept in sync to ensure correctness after PR #61571.
 	ds.PushedDownConds = pushDownNotOnConds(exprCtx, ds.PushedDownConds)
-
+	ds.PushedDownConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds, false)
+	ds.AllConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.AllConds, false)
+	// Return table dual when filter is constant false or null.
+	dual := logicalop.Conds2TableDual(ds, ds.AllConds)
+	if dual != nil {
+		appendNoPartitionChildTraceStep(ds, dual, opt)
+		return dual, nil
+	}
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not
 	// apply for some partitions like:
