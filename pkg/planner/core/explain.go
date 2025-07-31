@@ -456,51 +456,6 @@ func (p *PhysicalExpand) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePhysicalAgg) ExplainInfo() string {
-	return p.explainInfo(false)
-}
-
-func (p *basePhysicalAgg) explainInfo(normalized bool) string {
-	sortedExplainExpressionList := expression.SortedExplainExpressionList
-	if normalized {
-		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
-			return expression.SortedExplainNormalizedExpressionList(exprs)
-		}
-	}
-
-	builder := &strings.Builder{}
-	if len(p.GroupByItems) > 0 {
-		builder.WriteString("group by:")
-		builder.Write(sortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
-		builder.WriteString(", ")
-	}
-	for i := range p.AggFuncs {
-		builder.WriteString("funcs:")
-		var colName string
-		if normalized {
-			colName = p.Schema().Columns[i].ExplainNormalizedInfo()
-		} else {
-			colName = p.Schema().Columns[i].ExplainInfo(p.SCtx().GetExprCtx().GetEvalCtx())
-		}
-		builder.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), p.AggFuncs[i], normalized))
-		builder.WriteString("->")
-		builder.WriteString(colName)
-		if i+1 < len(p.AggFuncs) {
-			builder.WriteString(", ")
-		}
-	}
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		fmt.Fprintf(builder, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return builder.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
 	return p.PhysicalIndexJoin.ExplainInfoInternal(false, true)
 }
