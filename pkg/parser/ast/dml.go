@@ -3328,7 +3328,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 	case ShowImportGroups:
 		if n.ShowGroupKey != "" {
 			ctx.WriteKeyWord("IMPORT GROUP ")
-			ctx.WriteName(n.ShowGroupKey)
+			ctx.WriteString(n.ShowGroupKey)
 		} else {
 			ctx.WriteKeyWord("IMPORT GROUPS")
 			restoreShowLikeOrWhereOpt()

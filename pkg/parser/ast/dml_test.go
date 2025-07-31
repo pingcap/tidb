@@ -531,6 +531,14 @@ func TestImportActions(t *testing.T) {
 			sourceSQL: "show import jobs where aa > 1",
 			expectSQL: "SHOW IMPORT JOBS WHERE `aa`>1",
 		},
+		{
+			sourceSQL: "show import groups",
+			expectSQL: "SHOW IMPORT GROUPS",
+		},
+		{
+			sourceSQL: "show import group '123'",
+			expectSQL: "SHOW IMPORT GROUP '123'",
+		},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node
