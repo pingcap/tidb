@@ -33,12 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
->>>>>>> 4440d9c3e94 (infoschema: use the cloned structure instead of the original structure when applying diff (#62284))
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -1373,12 +1369,12 @@ func TestFix62253(t *testing.T) {
 	tk2.MustQuery("show create schema test;").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET ascii */ /*T![placement] PLACEMENT POLICY=`p1` */"))
 
 	is1 := sessiontxn.GetTxnManager(tk1.Session()).GetTxnInfoSchema()
-	dbInfo1, ok := is1.SchemaByName(ast.NewCIStr("test"))
+	dbInfo1, ok := is1.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, ok)
 	require.Equal(t, "utf8mb4", dbInfo1.Charset)
 	require.Nil(t, dbInfo1.PlacementPolicyRef)
 	is2 := sessiontxn.GetTxnManager(tk2.Session()).GetTxnInfoSchema()
-	dbInfo2, ok := is2.SchemaByName(ast.NewCIStr("test"))
+	dbInfo2, ok := is2.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, ok)
 	require.Equal(t, "ascii", dbInfo2.Charset)
 	require.Equal(t, "p1", dbInfo2.PlacementPolicyRef.Name.L)

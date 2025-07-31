@@ -106,12 +106,8 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
-<<<<<<< HEAD
         "//pkg/sessionctx/variable",
-=======
-        "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
->>>>>>> 4440d9c3e94 (infoschema: use the cloned structure instead of the original structure when applying diff (#62284))
         "//pkg/store/driver",
         "//pkg/table",
         "//pkg/testkit",
