@@ -1405,7 +1405,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
 	err = s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
-	s.adminRepairTable("import_into", "import_into.table_mode", createTableSQL)
+	s.adminRepairTable("import_into", "table_mode", createTableSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
 
@@ -1413,7 +1413,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
 	err = s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "target table is not empty")
-	s.adminRepairTable("import_into", "import_into.table_mode", createTableSQL)
+	s.adminRepairTable("import_into", "table_mode", createTableSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
 }
