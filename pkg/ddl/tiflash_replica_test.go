@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -226,6 +227,27 @@ func TestSetTiFlashReplicaForTemporaryTable(t *testing.T) {
 	tk.MustExec("drop table temp")
 	tk.MustExec("create temporary table temp like normal")
 	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
+}
+
+func TestSetTiFlashReplicaForAddGBKColumn(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("alter table t set tiflash replica 1;")
+	tbl := external.GetTableByName(t, tk, "test", "t")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustGetErrCode("alter table t add column c1 varchar(10) character set gbk;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add column c1 varchar(10) character set gbk, add column c2 varchar(10) character set gbk;", errno.ErrUnsupportedDDLOperation)
+
+	tk.MustExec("create table tgbk (id int) charset = gbk;")
+	tk.MustExec("alter table tgbk set tiflash replica 1;")
+	tbl = external.GetTableByName(t, tk, "test", "tgbk")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10), add column c2 varchar(10);", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestSetTableFlashReplicaForSystemTable(t *testing.T) {

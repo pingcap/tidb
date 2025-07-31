@@ -84,6 +84,10 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		if err = checkUnsupportedCharsetForTiFlash(tblInfo, columnInfo.Name, columnInfo.FieldType); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	originalState := columnInfo.State
@@ -162,6 +166,9 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		}
 		return nil, err
 	}
+	if err = checkUnsupportedCharsetForTiFlash(t.Meta(), specNewColumn.Name.Name, *specNewColumn.Tp); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -170,6 +177,14 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 
 	return CreateNewColumn(ctx, schema, spec, t, specNewColumn)
+}
+
+func checkUnsupportedCharsetForTiFlash(tbl *model.TableInfo, colName ast.CIStr, colTp types.FieldType) error {
+	if tbl.TiFlashReplica != nil && (tbl.Charset == charset.CharsetGBK || colTp.GetCharset() == charset.CharsetGBK) {
+		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and GBK encoding", colName, tbl.Name)
+	}
+
+	return nil
 }
 
 func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
