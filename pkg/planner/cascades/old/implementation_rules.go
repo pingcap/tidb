@@ -611,7 +611,7 @@ func (*ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
-	physicalWindow := plannercore.PhysicalWindow{
+	physicalWindow := physicalop.PhysicalWindow{
 		WindowFuncDescs: lw.WindowFuncDescs,
 		PartitionBy:     lw.PartitionBy,
 		OrderBy:         lw.OrderBy,
