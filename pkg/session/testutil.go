@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
-	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
@@ -42,7 +41,7 @@ var (
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	testenv.SetGOMAXPROCSForTest()
 	if kerneltype.IsNextGen() {
-		testutil.UpdateConfigForNextgen(t)
+		testenv.UpdateConfigForNextgen(t)
 	}
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)

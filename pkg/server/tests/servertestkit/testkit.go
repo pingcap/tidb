@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	testkitutil "github.com/pingcap/tidb/pkg/testkit/testutil"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -98,7 +98,7 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	require.NoError(t, err)
 	session.SetSchemaLease(ddlLeaseDuration)
 	if kerneltype.IsNextGen() {
-		testkitutil.UpdateConfigForNextgen(t)
+		testenv.UpdateConfigForNextgen(t)
 	}
 	ts.Domain, err = session.BootstrapSession(ts.Store)
 	require.NoError(t, err)

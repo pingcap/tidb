@@ -17,7 +17,7 @@ go_library(
         "//pkg/session",
         "//pkg/store/mockstore",
         "//pkg/testkit",
-        "//pkg/testkit/testutil",
+        "//pkg/testkit/testenv",
         "//pkg/util/cpuprofile",
         "//pkg/util/topsql/collector/mock",
         "//pkg/util/topsql/state",

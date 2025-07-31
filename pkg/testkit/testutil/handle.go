@@ -20,8 +20,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -50,19 +48,4 @@ func MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int6
 	}
 	slices.Sort(ordered)
 	return ordered
-}
-
-// UpdateConfigForNextgen updates the global config to use SYSTEM keyspace.
-func UpdateConfigForNextgen(t testing.TB) {
-	t.Helper()
-	// in nextgen, SYSTEM ks must be bootstrapped first, to make UT easier, we
-	// always run them inside SYSTEM keyspace, if your test requires bootstrapping
-	// multiple keyspace, you should use CreateMockStoreAndDomainForKS instead.
-	bak := *config.GetGlobalConfig()
-	t.Cleanup(func() {
-		config.StoreGlobalConfig(&bak)
-	})
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = keyspace.System
-	})
 }

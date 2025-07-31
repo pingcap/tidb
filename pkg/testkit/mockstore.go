@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit/testutil"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -320,7 +320,7 @@ func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Du
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	if kerneltype.IsNextGen() {
-		testutil.UpdateConfigForNextgen(t)
+		testenv.UpdateConfigForNextgen(t)
 	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
@@ -414,7 +414,7 @@ func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...m
 // CreateMockStoreAndDomainWithSchemaLease return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	if kerneltype.IsNextGen() {
-		testutil.UpdateConfigForNextgen(t)
+		testenv.UpdateConfigForNextgen(t)
 	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
