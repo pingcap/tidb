@@ -251,11 +251,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	children := p.Children()
 	rightChild := children[1]
 	leftChild := children[0]
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	leftCond = expression.RemoveDupExprs(leftCond)
 	rightCond = expression.RemoveDupExprs(rightCond)
-	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
-	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
+	rightCond = constraint.DeleteTrueExprsBySchema(rightChild.Schema(), rightCond)
+	leftCond = constraint.DeleteTrueExprsBySchema(leftChild.Schema(), leftCond)
 	leftRet, lCh := leftChild.PredicatePushDown(leftCond, opt)
 	rightRet, rCh := rightChild.PredicatePushDown(rightCond, opt)
 	addSelection(p, lCh, leftRet, 0, opt)
