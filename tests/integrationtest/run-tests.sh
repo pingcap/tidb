@@ -219,14 +219,20 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
+    start_options="-P $port -status $status -config $config_file"
     echo "start tidb-server, log file: $mysql_tester_log"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        $start_options="$start_options -store tikv -path ${TIKV_PATH}"
     else
-        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        $start_options="$start_options -store unistore -path ''"
     fi
+
+    if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
+        start_options="$start_options -keyspace-name SYSTEM"
+    fi
+
+    $tidb_server $start_options  > $mysql_tester_log 2>&1 &
+    SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 
