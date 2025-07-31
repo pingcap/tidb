@@ -1429,7 +1429,7 @@ func TestInitStatsLite(t *testing.T) {
 	require.True(t, colBStats1.IsFullLoad())
 	idxBStats1 := statsTbl2.GetIdx(idxBID)
 	require.True(t, idxBStats1.IsFullLoad())
-	require.True(t, colCStats.IsAllEvicted())
+	require.True(t, colCStats.IsFullLoad())
 
 	// sync stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
