@@ -21,6 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -29,10 +31,20 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
+
+// indexPartialCondition is a data structure to help implement the partial index.
+type indexPartialCondition struct {
+	partialConditionExpr expression.Expression
+	// partialConditionEvalBufferPool stores many eval buffer to avoid allocating chunk for evaluating partial condition for each time.
+	// It's only initialized if the `partialConditionExpr` is not nil.
+	partialConditionEvalBufferPool sync.Pool
+	columnsInfoInPartialCondition  []*model.ColumnInfo
+}
 
 // index is the data structure for index data in the KV store.
 type index struct {
@@ -44,6 +56,8 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+
+	indexPartialCondition
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -58,13 +72,47 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
 	}
-	return index
+
+	partialConditionString := indexInfo.PartialConditionExprString
+	if len(partialConditionString) > 0 {
+		var err error
+		ectx := exprstatic.NewExprContext()
+
+		index.partialConditionExpr, err = expression.ParseSimpleExpr(ectx, partialConditionString, expression.WithTableInfo("", tblInfo))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		index.partialConditionEvalBufferPool = sync.Pool{
+			New: func() any {
+				evalBufferTypes := make([]*types.FieldType, 0, len(tblInfo.Columns)+1)
+				for _, col := range tblInfo.Columns {
+					if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+						continue
+					}
+					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+				}
+				if !tblInfo.PKIsHandle {
+					// Add an extra `_tidb_rowid` column
+					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+				}
+
+				evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
+				return &evalBuffer
+			},
+		}
+
+		// Get the columns in the partial condition expression.
+		for _, col := range expression.ExtractColumns(index.partialConditionExpr) {
+			index.columnsInfoInPartialCondition = append(index.columnsInfoInPartialCondition, tblInfo.Columns[col.Index])
+		}
+	}
+	return index, nil
 }
 
 // Meta returns index info.
@@ -155,6 +203,41 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 	}
 out:
 	return vals
+}
+
+// MeetPartialCondition checks whether the row meets the partial condition of the index.
+func (c *index) MeetPartialCondition(row []types.Datum) (bool, error) {
+	if c.partialConditionExpr == nil {
+		return true, nil
+	}
+
+	evalBuffer := c.partialConditionEvalBufferPool.Get().(*chunk.MutRow)
+	defer c.partialConditionEvalBufferPool.Put(evalBuffer)
+	evalBuffer.SetDatums(row...)
+
+	return c.MeetPartialConditionWithChunk(evalBuffer.ToRow())
+}
+
+// MeetPartialConditionWithChunk checks whether the row meets the partial condition of the index using a chunk.Row.
+func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (bool, error) {
+	if c.partialConditionExpr == nil {
+		// always return true if the index has no partial condition.
+		return true, nil
+	}
+
+	ectx := exprstatic.NewExprContext()
+	datum, isNull, err := c.partialConditionExpr.EvalInt(ectx.GetEvalCtx(), row)
+	if err != nil {
+		return false, err
+	}
+	// If the result is NULL, it usually means the original column itself is NULL.
+	// In this case, we should refuse to consider the index for partial condition.
+	return datum > 0 && !isNull, nil
+}
+
+// ColumnsInPartialCondition returns the referenced columns in the partial condition of the index.
+func (c *index) ColumnsInPartialCondition() []*model.ColumnInfo {
+	return c.columnsInfoInPartialCondition
 }
 
 // Create creates a new entry in the kvIndex data.

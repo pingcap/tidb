@@ -3176,6 +3176,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t, col.ColumnInfo)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	return true, nil
 }
 
@@ -7075,4 +7080,17 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 		scatterScope = val
 	}
 	return scatterScope
+}
+
+func checkColumnReferencedByPartialCondition(t table.Table, col *model.ColumnInfo) error {
+	// Check whether alter column is referenced by a partial condition
+	for _, idx := range t.Indices() {
+		for _, referencedCol := range idx.ColumnsInPartialCondition() {
+			if referencedCol.ID == col.ID {
+				return dbterror.ErrAlterColumnReferencedByPartialCondition.GenWithStackByArgs(col.Name.O, idx.Meta().Name.O)
+			}
+		}
+	}
+
+	return nil
 }

@@ -514,6 +514,9 @@ var (
 	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
 	// ErrStorageClassInvalidSpec is reserved for future use.
 	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
+
+	// ErrAlterColumnReferencedByPartialCondition is returned when alter column referenced by partial condition.
+	ErrAlterColumnReferencedByPartialCondition = ClassDDL.NewStd(mysql.ErrAlterColumnReferencedByPartialCondition)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
