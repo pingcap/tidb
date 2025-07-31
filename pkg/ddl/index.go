@@ -2021,7 +2021,10 @@ func newAddIndexTxnWorker(
 	if job.Type == model.ActionModifyColumn {
 		// For modify column with indexes, we only need to add the index one by one.
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, currElement.ID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		if err != nil {
+			return nil, err
+		}
 		allIndexes = append(allIndexes, index)
 	} else {
 		for _, elem := range elements {
@@ -2029,7 +2032,10 @@ func newAddIndexTxnWorker(
 				continue
 			}
 			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-			index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+			index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+			if err != nil {
+				return nil, err
+			}
 			allIndexes = append(allIndexes, index)
 		}
 	}
@@ -2159,7 +2165,11 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			if err != nil {
 				return false, err
 			}
+
 			for _, index := range w.indexes {
+				if index.Meta().HasCondition() {
+					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
+				}
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)

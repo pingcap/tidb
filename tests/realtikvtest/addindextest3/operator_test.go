@@ -159,7 +159,8 @@ func TestBackfillOperators(t *testing.T) {
 			},
 		}
 		pTbl := tbl.(table.PhysicalTable)
-		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		require.NoError(t, err)
 		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
@@ -436,7 +437,8 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx)
 		pTbl := tbl.(table.PhysicalTable)
-		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		require.NoError(t, err)
 		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()

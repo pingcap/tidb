@@ -3177,6 +3177,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t, col.ColumnInfo)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	return true, nil
 }
 
@@ -4934,6 +4939,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		conditionString, err = CheckAndBuildIndexConditionString(tblInfo, indexOption.PartialCondition)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if len(conditionString) > 0 {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index after creating table is not supported yet")
 		}
 	}
 	args := &model.ModifyIndexArgs{
@@ -7072,4 +7080,17 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 		scatterScope = val
 	}
 	return scatterScope
+}
+
+func checkColumnReferencedByPartialCondition(t table.Table, col *model.ColumnInfo) error {
+	// Check whether alter column is referenced by a partial index condition
+	for _, idx := range t.Indices() {
+		for _, referencedCol := range idx.ColumnsInCondition() {
+			if referencedCol.ID == col.ID {
+				return dbterror.ErrAlterColumnReferencedByPartialCondition.GenWithStackByArgs(col.Name.O, idx.Meta().Name.O)
+			}
+		}
+	}
+
+	return nil
 }

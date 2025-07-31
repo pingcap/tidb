@@ -139,7 +139,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
-		if idx.MVIndex || idx.IsColumnarIndex() {
+		if idx.MVIndex || idx.IsColumnarIndex() || len(idx.ConditionExprString) > 0 {
 			continue
 		}
 		idxNames = append(idxNames, idx.Name.O)
@@ -162,7 +162,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// TODO: Make the value of concurrency adjustable. And we can consider the number of records.
 	if len(e.srcs) == 1 {
 		err = e.checkIndexHandle(ctx, e.srcs[0])
-		if err == nil && e.srcs[0].index.MVIndex {
+		if err == nil && shouldCheckTableRecordForIndex(e.srcs[0].index) {
 			err = e.checkTableRecord(ctx, 0)
 		}
 		if err != nil {
@@ -185,7 +185,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				select {
 				case src := <-taskCh:
 					err1 := e.checkIndexHandle(ctx, src)
-					if err1 == nil && src.index.MVIndex {
+					if err1 == nil && shouldCheckTableRecordForIndex(src.index) {
 						for offset, idx := range e.indexInfos {
 							if idx.ID == src.index.ID {
 								err1 = e.checkTableRecord(ctx, offset)
@@ -216,6 +216,10 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 }
 
+func shouldCheckTableRecordForIndex(idx *model.IndexInfo) bool {
+	return idx.MVIndex || len(idx.ConditionExprString) > 0
+}
+
 func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) error {
 	idxInfo := e.indexInfos[idxOffset]
 	txn, err := e.Ctx().Txn(true)
@@ -223,7 +227,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 		return err
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
-		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		return admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, e.table, idx)
 	}
 
@@ -231,7 +238,10 @@ func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) er
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
-		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		idx, err := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
+		if err != nil {
+			return err
+		}
 		if err := admin.CheckRecordAndIndex(ctx, e.Ctx(), txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}
