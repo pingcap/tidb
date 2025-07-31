@@ -195,13 +195,13 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
 		} else if job.Type == model.ActionRenameTable {
-			// The schema/table name stored in job is new schema/old table respectively.
-			// So here we show both new for running rename table job to keep consistency.
+			// For running rename table jobs, we use old table name stored in job
+			// since TableInfo is not set yet. So we extract the new table name from
+			// job args for consistent output.
 			if arg, err := model.GetRenameTableArgs(job); err == nil && len(arg.NewTableName.L) > 0 {
 				tableName = arg.NewTableName.L
 			}
 		}
-
 		if job.BinlogInfo.MultipleTableInfos != nil {
 			tablenames := new(strings.Builder)
 			for i, affect := range job.BinlogInfo.MultipleTableInfos {
