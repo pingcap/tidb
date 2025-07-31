@@ -761,6 +761,10 @@ func GetModifiableColumnJob(
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
+	err = checkColumnReferencedByPartialCondition(t, col.ColumnInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	newColName := specNewColumn.Name.Name
 	if newColName.L == model.ExtraHandleName.L {
 		return nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)

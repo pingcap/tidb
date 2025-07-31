@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/session"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -143,11 +145,14 @@ func NewAddIndexIngestPipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		if err != nil {
+			return nil, err
+		}
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), idxInfos, reqSrc)
+	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -198,11 +203,14 @@ func NewWriteIndexToExternalStoragePipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		if err != nil {
+			return nil, err
+		}
 		indexes = append(indexes, index)
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
-	copCtx, err := NewReorgCopContext(store, reorgMeta, tbl.Meta(), idxInfos, reqSrc)
+	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -290,6 +298,9 @@ type IndexRecordChunk struct {
 	Err   error
 	Done  bool
 	ctx   *OperatorCtx
+	// tableScanRowCount is the number of rows scanned by the corresponding TableScanTask.
+	// If the index is a partial index, the number of rows in the Chunk may be less than tableScanRowCount.
+	tableScanRowCount int64
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
@@ -471,6 +482,8 @@ func NewTableScanOperator(
 	reorgMeta *model.DDLReorgMeta,
 	cpOp ingest.CheckpointOperator,
 ) *TableScanOperator {
+	intest.AssertNotNil(reorgMeta)
+
 	totalCount := new(atomic.Int64)
 	pool := workerpool.NewWorkerPool(
 		"TableScanOperator",
@@ -539,6 +552,20 @@ func (w *tableScanWorker) Close() {
 	}
 }
 
+func (w *tableScanWorker) newDistSQLCtx() *distsqlctx.DistSQLContext {
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	distSQLCtx, err := newReorgDistSQLCtxWithReorgMeta(
+		w.se.GetClient(),
+		w.reorgMeta,
+		warnHandler,
+	)
+	if err != nil {
+		w.ctx.onError(err)
+		return nil
+	}
+	return distSQLCtx
+}
+
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
@@ -549,7 +576,15 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			failpoint.Return(errors.New("mock scan record error"))
 		})
 		failpoint.InjectCall("scanRecordExec", w.reorgMeta)
-		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
+		selExpr, err := w.copCtx.GetCondition()
+		if err != nil {
+			return err
+		}
+
+		// create a new distsqlCtx for each task because the `distsqlCtx` contains `RuntimeStatsColl`, which
+		// will be modified during the execution.
+		distsqlCtx := w.newDistSQLCtx()
+		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), distsqlCtx, startTS, task.Start, task.End, selExpr)
 		if err != nil {
 			return err
 		}
@@ -557,6 +592,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			w.cpOp.AddChunk(task.ID, task.End)
 		}
 		var done bool
+		var lastTableScanRowCount int64
 		for !done {
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
@@ -566,7 +602,15 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx})
+
+			var tableScanRowCount int64
+			if distsqlCtx.RuntimeStatsColl != nil {
+				_, tableScanRowCount = distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
+			} else {
+				tableScanRowCount = int64(srcChk.NumRows())
+			}
+			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount})
+			lastTableScanRowCount = tableScanRowCount
 		}
 		return rs.Close()
 	})
@@ -575,12 +619,11 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	}
 	for i, idxResult := range idxResults {
 		sender(idxResult)
-		rowCnt := idxResult.Chunk.NumRows()
 		if w.cpOp != nil {
 			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, rowCnt, done)
+			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
 		}
-		w.totalCount.Add(int64(rowCnt))
+		w.totalCount.Add(idxResult.tableScanRowCount)
 	}
 }
 
@@ -774,19 +817,21 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 		ID: ck.ID,
 	}
 	w.initSessCtx()
-	count, _, err := w.WriteChunk(&ck)
+	// TODO: find a place to display the added count
+	_, _, err := w.WriteChunk(&ck)
 	if err != nil {
 		w.ctx.onError(err)
 		return
 	}
-	if count == 0 {
+	scannedCount := ck.tableScanRowCount
+	if scannedCount == 0 {
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
 		return
 	}
 	if w.totalCount != nil {
-		w.totalCount.Add(int64(count))
+		w.totalCount.Add(scannedCount)
 	}
-	result.Added = count
+	result.Added = int(scannedCount)
 	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}

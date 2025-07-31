@@ -212,7 +212,7 @@ type IndexInfo struct {
 	VectorInfo          *VectorIndexInfo   `json:"vector_index"`                  // VectorInfo is the vector index information.
 	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`                // InvertedInfo is the inverted index information.
 	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`               // FullTextInfo is the FULLTEXT index information.
-	ConditionExprString string             `json:"partial_condition_expr_string"` // PartialConditionExprString is the string representation of the partial index condition.
+	ConditionExprString string             `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
 }
 
 // Hash64 implement HashEquals interface.
@@ -298,6 +298,11 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 		return ColumnarIndexTypeFulltext
 	}
 	return ColumnarIndexTypeNA
+}
+
+// HasCondition checks whether the index has a partial index condition.
+func (index *IndexInfo) HasCondition() bool {
+	return len(index.ConditionExprString) > 0
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
