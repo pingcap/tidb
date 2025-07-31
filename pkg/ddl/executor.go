@@ -3175,6 +3175,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
 	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t, col.ColumnInfo)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
 	return true, nil
 }
 
@@ -4135,13 +4140,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				logutil.DDLLogger().Warn("admin check table before drop",
-					zap.String("database", fullti.Schema.O),
-					zap.String("table", fullti.Name.O),
-				)
-				exec := ctx.GetRestrictedSQLExecutor()
-				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				err := adminCheckTableBeforeDrop(ctx, fullti)
 				if err != nil {
 					return err
 				}
@@ -4209,6 +4208,40 @@ func (e *executor) dropTableObject(
 		for _, table := range notExistTables {
 			sessVars.StmtCtx.AppendNote(dropExistErr.FastGenByArgs(table))
 		}
+	}
+	return nil
+}
+
+// adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
+// Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
+// using it in other places by mistake, it's named like this.
+func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+	logutil.DDLLogger().Warn("admin check table before drop",
+		zap.String("database", fullti.Schema.O),
+		zap.String("table", fullti.Name.O),
+	)
+	exec := ctx.GetRestrictedSQLExecutor()
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
+	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
+	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
+	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
+	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	if err != nil {
+		return err
+	}
+	if !originalFastTableCheck {
+		defer func() {
+			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
+			if err != nil {
+				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
+			}
+		}()
+	}
+	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -4932,6 +4965,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		conditionString, err = CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if len(conditionString) > 0 && !job.ReorgMeta.IsFastReorg {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
 		}
 	}
 	args := &model.ModifyIndexArgs{
@@ -6965,4 +7001,17 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 		scatterScope = val
 	}
 	return scatterScope
+}
+
+func checkColumnReferencedByPartialCondition(t table.Table, col *model.ColumnInfo) error {
+	// Check whether alter column is referenced by a partial index condition
+	for _, idx := range t.Indices() {
+		for _, referencedCol := range idx.ColumnsInCondition() {
+			if referencedCol.ID == col.ID {
+				return dbterror.ErrDropColumnReferencedByPartialCondition.GenWithStackByArgs(col.Name.O, idx.Meta().Name.O)
+			}
+		}
+	}
+
+	return nil
 }
