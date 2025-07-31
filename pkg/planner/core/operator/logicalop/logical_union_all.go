@@ -54,7 +54,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, 
 		if err != nil {
 			return nil, nil, err
 		}
-		addSelection(p, newChild, retCond, i, opt)
+		AddSelection(p, newChild, retCond, i, opt)
 	}
 	return nil, p, nil
 }

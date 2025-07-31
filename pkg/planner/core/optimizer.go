@@ -952,16 +952,16 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalPlan) {
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
-	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
-		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
-			propagateProbeParents(plan.Children()[1-join.getInnerChildIdx()], probeParents)
+	case *PhysicalApply, *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
+			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
 			// The core logic of this method:
 			// Record every Apply and Index Join we met, record it in a slice, and set it in their inner children.
 			newParents := make([]base.PhysicalPlan, len(probeParents), len(probeParents)+1)
 			copy(newParents, probeParents)
 			newParents = append(newParents, plan)
-			propagateProbeParents(plan.Children()[join.getInnerChildIdx()], newParents)
+			propagateProbeParents(plan.Children()[join.GetInnerChildIdx()], newParents)
 		}
 	case *PhysicalTableReader:
 		propagateProbeParents(x.tablePlan, probeParents)
