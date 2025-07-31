@@ -233,12 +233,14 @@ func TestSetTiFlashReplicaForAddGBKColumn(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	// GBK
 	tk.MustExec("create table t (id int);")
 	tk.MustExec("alter table t set tiflash replica 1;")
 	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
-	tk.MustGetErrCode("alter table t add column c1 varchar(10) character set gbk;", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter table t add column c1 varchar(10) character set gbk;", "[ddl:8200]unsupported add column 'c1' when altering 't' with TiFlash replicas and gbk encoding")
 	tk.MustGetErrCode("alter table t add column c1 varchar(10) character set gbk, add column c2 varchar(10) character set gbk;", errno.ErrUnsupportedDDLOperation)
 
 	tk.MustExec("create table tgbk (id int) charset = gbk;")
@@ -248,6 +250,23 @@ func TestSetTiFlashReplicaForAddGBKColumn(t *testing.T) {
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
 	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10);", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10), add column c2 varchar(10);", errno.ErrUnsupportedDDLOperation)
+
+	// GB18030
+	tk.MustExec("create table t1 (id int);")
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tbl = external.GetTableByName(t, tk, "test", "t1")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustContainErrMsg("alter table t1 add column c1 varchar(10) character set GB18030;", "[ddl:8200]unsupported add column 'c1' when altering 't1' with TiFlash replicas and gb18030 encoding")
+	tk.MustGetErrCode("alter table t1 add column c1 varchar(10) character set GB18030, add column c2 varchar(10) character set GB18030;", errno.ErrUnsupportedDDLOperation)
+
+	tk.MustExec("create table tgb18030 (id int) charset = GB18030;")
+	tk.MustExec("alter table tgb18030 set tiflash replica 1;")
+	tbl = external.GetTableByName(t, tk, "test", "tgb18030")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustGetErrCode("alter table tgb18030 add column c1 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tgb18030 add column c1 varchar(10), add column c2 varchar(10);", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestSetTableFlashReplicaForSystemTable(t *testing.T) {

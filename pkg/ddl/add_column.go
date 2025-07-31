@@ -180,8 +180,13 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 }
 
 func checkUnsupportedCharsetForTiFlash(tbl *model.TableInfo, colName ast.CIStr, colTp types.FieldType) error {
-	if tbl.TiFlashReplica != nil && (tbl.Charset == charset.CharsetGBK || colTp.GetCharset() == charset.CharsetGBK) {
-		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and GBK encoding", colName, tbl.Name)
+	colCharset := colTp.GetCharset()
+	if tbl.Charset == charset.CharsetGBK || tbl.Charset == charset.CharsetGB18030 {
+		colCharset = tbl.Charset
+	}
+
+	if tbl.TiFlashReplica != nil && (colCharset == charset.CharsetGBK || colCharset == charset.CharsetGB18030) {
+		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and %s encoding", colName, tbl.Name, colCharset)
 	}
 
 	return nil
