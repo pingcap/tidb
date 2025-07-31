@@ -506,6 +506,11 @@ func TestShowRunningRenameTable(t *testing.T) {
 			require.Len(t, rs, 1)
 			require.Equal(t, "test2", rs[0][1])
 			require.Equal(t, "t2", rs[0][2])
+
+			rs = tk2.MustQuery("select db_name, table_name from information_schema.ddl_jobs where job_type = 'rename table'").Rows()
+			require.Len(t, rs, 1)
+			require.Equal(t, "test2", rs[0][0])
+			require.Equal(t, "t2", rs[0][1])
 		}
 	})
 
