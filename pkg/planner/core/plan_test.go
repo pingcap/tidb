@@ -547,7 +547,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
 		for partialIsCop := range 2 {
 			for isMPPTask := range 2 {
-				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
+				partial, final, _ := physicalop.BuildFinalModeAggregation(sctx, &physicalop.AggInfo{
 					AggFuncs:     aggFuncs,
 					GroupByItems: groubyItems,
 					Schema:       aggSchemaBuilder(sctx, aggFuncs),

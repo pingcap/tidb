@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -320,7 +321,7 @@ func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Du
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	if kerneltype.IsNextGen() {
-		updateConfigForNextgen(t)
+		testenv.UpdateConfigForNextgen(t)
 	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
@@ -414,7 +415,7 @@ func CreateMockStoreWithSchemaLease(t testing.TB, lease time.Duration, opts ...m
 // CreateMockStoreAndDomainWithSchemaLease return a new mock kv.Storage and *domain.Domain.
 func CreateMockStoreAndDomainWithSchemaLease(t testing.TB, lease time.Duration, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
 	if kerneltype.IsNextGen() {
-		updateConfigForNextgen(t)
+		testenv.UpdateConfigForNextgen(t)
 	}
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
@@ -433,18 +434,4 @@ func SetTiFlashReplica(t testing.TB, dom *domain.Domain, dbName, tableName strin
 		Count:     1,
 		Available: true,
 	}
-}
-
-func updateConfigForNextgen(t testing.TB) {
-	t.Helper()
-	// in nextgen, SYSTEM ks must be bootstrapped first, to make UT easier, we
-	// always run them inside SYSTEM keyspace, if your test requires bootstrapping
-	// multiple keyspace, you should use CreateMockStoreAndDomainForKS instead.
-	bak := *config.GetGlobalConfig()
-	t.Cleanup(func() {
-		config.StoreGlobalConfig(&bak)
-	})
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = keyspace.System
-	})
 }

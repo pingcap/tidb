@@ -277,6 +277,14 @@ var GetIndexJoinCostVer24PhysicalIndexJoin func(pp base.PhysicalPlan, taskType p
 // Attach2Task4PhysicalIndexJoin will be called by PhysicalIndexJoin in physicalOp pkg.
 var Attach2Task4PhysicalIndexJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// InitForHash will be called by BasePhysicalAgg in physicalOp pkg.
+var InitForHash func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
+	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
+
+// InitForStream will be called by BasePhysicalAgg in physicalOp pkg.
+var InitForStream func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
+	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
