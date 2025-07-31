@@ -421,15 +421,10 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
 	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
-	if matched {
-		// Check if this last bucket end value should fall through to uniform distribution
-		if IsLastBucketEndValueUnderrepresented(&idx.Histogram, val, histCnt, realtimeRowCount, modifyCount, sctx) {
-			matched = false
-		}
-
-		if matched {
-			return histCnt
-		}
+	// also check if this last bucket end value is underrepresented
+	if matched && !IsLastBucketEndValueUnderrepresented(
+		&idx.Histogram, val, histCnt, realtimeRowCount, modifyCount, sctx) {
+		return histCnt
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))

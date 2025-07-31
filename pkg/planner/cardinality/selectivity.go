@@ -645,12 +645,8 @@ func IsLastBucketEndValueUnderrepresented(hg *statistics.Histogram, val types.Da
 		return false
 	}
 
-	// Check if the count is suspiciously low compared to other buckets
-	// Use same non-null count basis as bucket size calculation for consistency
-	avgBucketCount := originalNonNullCount / float64(len(hg.Buckets))
-
 	// If count is much less than average, it's likely underrepresented
-	return histCnt < avgBucketCount*StaleLastBucketThreshold
+	return histCnt < avgBucketSize*StaleLastBucketThreshold
 }
 
 // getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
