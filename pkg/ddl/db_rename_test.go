@@ -500,7 +500,7 @@ func TestShowRunningRenameTable(t *testing.T) {
 	tk1.MustExec("create table t1 (a int, b int)")
 
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
-		if job.State == model.JobStateRunning {
+		if job.State != model.JobStateSynced {
 			tk2 := testkit.NewTestKit(t, store)
 			rs := tk2.MustQuery("admin show ddl jobs where state != 'synced'").Rows()
 			require.Len(t, rs, 1)

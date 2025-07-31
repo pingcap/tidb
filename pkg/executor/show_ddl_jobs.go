@@ -194,7 +194,14 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		finishTS = job.BinlogInfo.FinishedTS
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
+		} else if job.Type == model.ActionRenameTable {
+			// The schema/table name stored in job is new schema/old table respectively.
+			// So here we show both new for running rename table job to keep consistency.
+			if arg, err := model.GetRenameTableArgs(job); err == nil && len(arg.NewTableName.L) > 0 {
+				tableName = arg.NewTableName.L
+			}
 		}
+
 		if job.BinlogInfo.MultipleTableInfos != nil {
 			tablenames := new(strings.Builder)
 			for i, affect := range job.BinlogInfo.MultipleTableInfos {
@@ -218,14 +225,6 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 	if len(tableName) == 0 {
 		tableName = getTableName(e.is, job.TableID)
-	}
-
-	if job.Type == model.ActionRenameTable {
-		// The schema/table name stored in job is new schema/old table respectively.
-		// So here we show both new for running rename table job to keep consistency.
-		if arg, err := model.GetRenameTableArgs(job); err == nil && len(arg.NewTableName.L) > 0 {
-			tableName = arg.NewTableName.L
-		}
 	}
 
 	createTime := ts2Time(job.StartTS, e.TZLoc)
