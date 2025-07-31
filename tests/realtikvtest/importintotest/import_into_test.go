@@ -39,11 +39,13 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -1403,7 +1405,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
 	err = s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
-	adminRepairTable(s.tk, "import_into.table_mode", createTableSQL)
+	s.adminRepairTable("import_into", "import_into.table_mode", createTableSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
 
@@ -1411,13 +1413,19 @@ func (s *mockGCSSuite) TestTableMode() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
 	err = s.tk.QueryToErr(loadDataSQL)
 	require.ErrorContains(s.T(), err, "target table is not empty")
-	adminRepairTable(s.tk, "import_into.table_mode", createTableSQL)
+	s.adminRepairTable("import_into", "import_into.table_mode", createTableSQL)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
 }
 
-func adminRepairTable(tk *testkit.TestKit, table, createTableSQL string) {
+func (s *mockGCSSuite) adminRepairTable(db, table, createTableSQL string) {
 	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{table})
-	tk.MustExec("admin repair table " + table + " " + createTableSQL)
+	dom := domain.GetDomain(s.tk.Session())
+	dbInfo, ok := dom.InfoCache().GetLatest().SchemaByName(ast.NewCIStr(db))
+	require.True(s.T(), ok)
+	tableInfo, err := dom.InfoCache().GetLatest().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
+	s.NoError(err)
+	domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tableInfo.Meta())
+	s.tk.MustExec("admin repair table " + table + " " + createTableSQL)
 }
