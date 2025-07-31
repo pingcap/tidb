@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -202,7 +203,6 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
-	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -255,12 +255,8 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 
 // Check for constant false condition.
 func unsatisfiableExpression(ctx base.PlanContext, p expression.Expression) bool {
-	if constExpr, ok := p.(*expression.Constant); ok {
-		if b, err := constExpr.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx()); err == nil && b == 0 {
-			return true
-		}
-	}
-	return false
+	sc := ctx.GetSessionVars().StmtCtx
+	return logicalop.IsConstFalse(sc, p)
 }
 
 func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {

@@ -43,7 +43,7 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 		return nil
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	if isConstFalse(sc, conds[0]) {
+	if IsConstFalse(sc, conds[0]) {
 		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
 		dual.SetSchema(p.Schema())
 		return dual
@@ -51,7 +51,8 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	return nil
 }
 
-func isConstFalse(sc *stmtctx.StatementContext, cond expression.Expression) bool {
+// IsConstFalse is to whether the expression is the const-false value
+func IsConstFalse(sc *stmtctx.StatementContext, cond expression.Expression) bool {
 	con, ok := cond.(*expression.Constant)
 	if !ok {
 		return false
