@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
@@ -61,11 +62,17 @@ type blockParser struct {
 
 	// cache
 	remainBuf *bytes.Buffer
+	// holds the cached parsable data after last readBlock. all data inside is
+	// unparsed at the moment of the return of last readBlock, for current unparsed
+	// data, use buf.
 	appendBuf *bytes.Buffer
 
 	// the Logger associated with this parser for reporting failure
 	Logger  log.Logger
 	metrics *metric.Metrics
+
+	checkRowLen bool
+	rowStartPos int64
 }
 
 func makeBlockParser(
@@ -182,9 +189,18 @@ func NewChunkParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
+		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
 		escFlavor:   escFlavor,
 	}
+}
+
+func (parser *blockParser) beginRowLenCheck() {
+	parser.checkRowLen = true
+	parser.rowStartPos = parser.pos
+}
+
+func (parser *blockParser) endRowLenCheck() {
+	parser.checkRowLen = false
 }
 
 // SetPos changes the reported position and row ID.

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -60,7 +60,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 
 	taskCh := make(chan *checksumTask, len(tasks))
 	resultCh := make(chan *checksumResult, len(tasks))
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go e.checksumWorker(taskCh, resultCh)
 	}
 
@@ -69,11 +69,11 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	}
 	close(taskCh)
 
-	for i := 0; i < len(tasks); i++ {
+	for range tasks {
 		result := <-resultCh
 		if result.err != nil {
 			err = result.err
-			logutil.Logger(ctx).Error("checksum failed", zap.Error(err))
+			logutil.Logger(ctx).Warn("checksum failed", zap.Error(err))
 			continue
 		}
 		logutil.Logger(ctx).Info(
@@ -321,7 +321,7 @@ func (c *checksumContext) handleResponse(update *tipb.ChecksumResponse) {
 
 func getChecksumTableConcurrency(ctx sessionctx.Context) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.TiDBChecksumTableConcurrency)
+	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBChecksumTableConcurrency)
 	if err != nil {
 		return 0, err
 	}

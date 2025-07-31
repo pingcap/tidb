@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -38,7 +37,7 @@ var (
 // NOTE: not all VectorSearch functions are supported by the index. The caller
 // needs to check the distance function name.
 type VSInfo struct {
-	DistanceFnName model.CIStr
+	DistanceFnName ast.CIStr
 	FnPbCode       tipb.ScalarFuncSig
 	Vec            types.VectorFloat32
 	Column         *Column

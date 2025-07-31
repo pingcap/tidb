@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
@@ -25,7 +26,7 @@ var (
 )
 
 // GetScope gets the status variables scope.
-func (*ddl) GetScope(_ string) variable.ScopeFlag {
+func (*ddl) GetScope(_ string) vardef.ScopeFlag {
 	// Now ddl status variables scope are all default scope.
 	return variable.DefaultStatusVarScopeFlag
 }

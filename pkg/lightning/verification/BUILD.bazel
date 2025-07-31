@@ -16,7 +16,7 @@ go_test(
     timeout = "short",
     srcs = ["checksum_test.go"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
         ":verification",
         "//pkg/lightning/common",

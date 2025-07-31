@@ -128,7 +128,7 @@
           "└─IndexJoin 1.00 root  inner join, inner:IndexLookUp, outer key:test.tp.c, inner key:test.t.b, equal cond:eq(test.tp.c, test.t.b)",
           "  ├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
-          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:allEvicted]",
+          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:unInitialized]",
           "  └─IndexLookUp(Probe) 1.00 root  ",
           "    ├─Selection(Build) 1.00 cop[tikv]  not(isnull(test.t.b))",
           "    │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:idx(b) range: decided by [eq(test.t.b, test.tp.c)], keep order:false, stats:partial[idx:allEvicted, a:allEvicted, b:allEvicted]",
@@ -142,7 +142,7 @@
           "└─HashJoin 1.00 root  inner join, equal:[eq(test.tp.c, test.t.b)]",
           "  ├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
-          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:allEvicted]",
+          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false",
           "  └─TableReader(Probe) 3.00 root  data:Selection",
           "    └─Selection 3.00 cop[tikv]  not(isnull(test.t.b))",
           "      └─TableFullScan 3.00 cop[tikv] table:t keep order:false"
@@ -160,7 +160,7 @@
           "  │   └─TableRangeScan 3.00 cop[tikv] table:t range:[-inf,10), keep order:false",
           "  └─TableReader(Probe) 4.00 root partition:p0 data:Selection",
           "    └─Selection 4.00 cop[tikv]  gt(test.tp.c, 10), not(isnull(test.tp.c))",
-          "      └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:allEvicted]"
+          "      └─TableFullScan 6.00 cop[tikv] table:tp keep order:false"
         ]
       }
     ]

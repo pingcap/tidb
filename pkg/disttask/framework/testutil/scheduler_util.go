@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -93,10 +94,22 @@ func GetMockSchedulerExt(ctrl *gomock.Controller, schedulerInfo SchedulerInfo) s
 				return nil, stepInfo.Err
 			}
 			res := make([][]byte, stepInfo.SubtaskCnt)
-			for i := 0; i < stepInfo.SubtaskCnt; i++ {
-				res[i] = []byte(fmt.Sprintf("subtask-%d", i))
+			for i := range stepInfo.SubtaskCnt {
+				res[i] = fmt.Appendf(nil, "subtask-%d", i)
 			}
 			return res, nil
+		},
+	).AnyTimes()
+	mockScheduler.EXPECT().ModifyMeta(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ []byte, modifies []proto.Modification) ([]byte, error) {
+			var sb strings.Builder
+			for i, m := range modifies {
+				if i > 0 {
+					sb.WriteString(",")
+				}
+				sb.WriteString(fmt.Sprintf("%s=%d", m.Type, m.To))
+			}
+			return []byte(sb.String()), nil
 		},
 	).AnyTimes()
 

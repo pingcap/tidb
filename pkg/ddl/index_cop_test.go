@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,7 +38,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 	tk.MustExec("use test")
 
 	testFetchRows := func(db, tb, idx string) ([]kv.Handle, [][]types.Datum) {
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tb))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tb))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.FindIndexByName(idx)
@@ -75,12 +75,12 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 	// Test nonclustered primary key table.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint, b int, index idx (b));")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	hds, vals := testFetchRows("test", "t", "idx")
 	require.Len(t, hds, 8)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		require.Equal(t, hds[i].IntValue(), int64(i+1))
 		require.Len(t, vals[i], 1)
 		require.Equal(t, vals[i][0].GetInt64(), int64(i))
@@ -89,12 +89,12 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 	// Test clustered primary key table(pk_is_handle).
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint primary key, b int, index idx (b));")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	hds, vals = testFetchRows("test", "t", "idx")
 	require.Len(t, hds, 8)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		require.Equal(t, hds[i].IntValue(), int64(i))
 		require.Len(t, vals[i], 1)
 		require.Equal(t, vals[i][0].GetInt64(), int64(i))
@@ -103,12 +103,12 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 	// Test clustered primary key table(common_handle).
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a varchar(10), b int, c char(10), primary key (a, c) clustered, index idx (b));")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		tk.MustExec("insert into t values (?, ?, ?)", strconv.Itoa(i), i, strconv.Itoa(i))
 	}
 	hds, vals = testFetchRows("test", "t", "idx")
 	require.Len(t, hds, 8)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		require.Equal(t, hds[i].String(), fmt.Sprintf("{%d, %d}", i, i))
 		require.Len(t, vals[i], 1)
 		require.Equal(t, vals[i][0].GetInt64(), int64(i))

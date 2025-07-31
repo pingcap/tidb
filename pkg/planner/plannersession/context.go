@@ -31,6 +31,7 @@ var _ planctx.PlanContext = struct {
 type PlanCtxExtended struct {
 	sctx                   sessionctx.Context
 	nullRejectCheckExprCtx *exprctx.NullRejectCheckExprContext
+	readonlyUserVars       map[string]struct{}
 }
 
 // NewPlanCtxExtended creates a new PlanCtxExtended.
@@ -53,4 +54,19 @@ func (ctx *PlanCtxExtended) GetNullRejectCheckExprCtx() exprctx.ExprContext {
 // AdviseTxnWarmup advises the txn to warm up.
 func (ctx *PlanCtxExtended) AdviseTxnWarmup() error {
 	return sessiontxn.GetTxnManager(ctx.sctx).AdviseWarmup()
+}
+
+// SetReadonlyUserVarMap sets the readonly user variable map.
+func (ctx *PlanCtxExtended) SetReadonlyUserVarMap(readonlyUserVars map[string]struct{}) {
+	ctx.readonlyUserVars = readonlyUserVars
+}
+
+// GetReadonlyUserVarMap gets the readonly user variable map.
+func (ctx *PlanCtxExtended) GetReadonlyUserVarMap() map[string]struct{} {
+	return ctx.readonlyUserVars
+}
+
+// Reset resets the local
+func (ctx *PlanCtxExtended) Reset() {
+	ctx.readonlyUserVars = nil
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -35,7 +36,7 @@ const SelectionFactor = 0.8
 // should be adjusted by the limit number 1, because only one row is returned.
 func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo, dsStatisticTable *statistics.Table,
-	path *util.AccessPath, expectedCnt float64, desc bool) float64 {
+	path *util.AccessPath, expectedCnt float64, isMatchProp, desc bool) float64 {
 	rowCount := path.CountAfterAccess
 	if expectedCnt < dsStatsInfo.RowCount {
 		selectivity := dsStatsInfo.RowCount / path.CountAfterAccess
@@ -57,6 +58,16 @@ func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 		} else if abs := math.Abs(corr); abs < 1 {
 			correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
 			rowCount = min(path.CountAfterAccess, uniformEst/correlationFactor)
+		}
+	}
+
+	if isMatchProp && path.CountAfterAccess > rowCount {
+		// if orderRatio is enabled, we use it to recognize that we must scan more rows to find the first row.
+		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+		// Record the variable usage for explain explore.
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+		if orderRatio > 0 {
+			rowCount += max(0, path.CountAfterAccess-rowCount) * orderRatio
 		}
 	}
 	return rowCount
@@ -95,6 +106,7 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 		// This formula is to bias away from non-filtering (or poorly filtering) indexes that provide order due, where filtering exists
 		// outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
 		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio >= 0 {
 			rowsToMeetFirst := (((path.CountAfterAccess - path.CountAfterIndex) * orderRatio) + (path.CountAfterIndex - dsStatsInfo.RowCount)) * orderRatio
 			rowCount = rowsToMeetFirst + expectedCnt
@@ -156,7 +168,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}
-	rangeCounts, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
+	rangeCounts, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -166,7 +178,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
+		rangeCount, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
@@ -182,30 +194,30 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, bool) {
+func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, float64, bool) {
 	var err error
-	var count float64
+	var count, corrCount float64
 	rangeCounts := make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.GetIdx(idxID)
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
-				return nil, false
+				return nil, 0, false
 			}
-			count, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
+			count, corrCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
 			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
-				return nil, false
+				return nil, 0, false
 			}
 			count, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
 		}
 		if err != nil {
-			return nil, false
+			return nil, 0, false
 		}
 		rangeCounts[i] = count
 	}
-	return rangeCounts, true
+	return rangeCounts, corrCount, true
 }
 
 // convertRangeFromExpectedCnt builds new ranges used to estimate row count we need to scan in table scan before finding specified
@@ -226,7 +238,7 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 		}
 		convertedRanges = []*ranger.Range{{LowVal: ranges[i].HighVal, HighVal: []types.Datum{types.MaxValueDatum()}, LowExclude: !ranges[i].HighExclude, Collators: ranges[i].Collators}}
 	} else {
-		for i = 0; i < len(ranges); i++ {
+		for i = range ranges {
 			if count+rangeCounts[i] >= expectedCnt {
 				break
 			}

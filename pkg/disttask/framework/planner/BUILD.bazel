@@ -9,7 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/planner",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
+        "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/kv",
@@ -28,6 +28,7 @@ go_test(
     deps = [
         ":planner",
         "//pkg/disttask/framework/mock",
+        "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/kv",
         "//pkg/testkit",

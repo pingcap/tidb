@@ -31,7 +31,7 @@ type GlobalConfigTestSuite struct {
 
 func SetUpSuite() *GlobalConfigTestSuite {
 	s := &GlobalConfigTestSuite{}
-	s.rpc, s.client, s.cluster, _ = New("", nil)
+	s.rpc, s.client, s.cluster, _ = New("", nil, nil)
 	return s
 }
 
@@ -80,7 +80,7 @@ func TestWatch(t *testing.T) {
 	ch, err := s.client.WatchGlobalConfig(context.Background(), "/global/config", 0)
 	require.Equal(t, err, nil)
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		res := <-ch
 		require.NotEqual(t, res[0].Value, "")
 	}

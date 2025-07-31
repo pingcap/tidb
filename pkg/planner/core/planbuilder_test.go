@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -33,16 +36,18 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,24 +101,24 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
-		{Index: &model.IndexInfo{Name: pmodel.NewCIStr("idx")}},
+		{Index: &model.IndexInfo{Name: ast.NewCIStr("idx")}},
 		genTiFlashPath(tblInfo),
 	}
 
-	path := getPathByIndexName(accessPath, pmodel.NewCIStr("idx"), tblInfo)
+	path := getPathByIndexName(accessPath, ast.NewCIStr("idx"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("id"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("id"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[0], path)
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("not exists"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("not exists"), tblInfo)
 	require.Nil(t, path)
 
 	tblInfo = &model.TableInfo{
@@ -121,7 +126,7 @@ func TestGetPathByIndexName(t *testing.T) {
 		PKIsHandle: false,
 	}
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
 }
 
@@ -209,8 +214,8 @@ func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
-	sort1 := &PhysicalSort{ByItems: byItems}
-	sort2 := &PhysicalSort{ByItems: byItems}
+	sort1 := &physicalop.PhysicalSort{ByItems: byItems}
+	sort2 := &physicalop.PhysicalSort{ByItems: byItems}
 	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
 		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, whiteList, nil)
@@ -332,33 +337,33 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
-	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &physicalop.PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
 
 	// maxOneRow
-	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow := &physicalop.PhysicalMaxOneRow{}
 	maxOneRow = maxOneRow.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
-	lim := &PhysicalLimit{Count: 1, Offset: 2}
+	lim := &physicalop.PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(lim))
 
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
-	sort := &PhysicalSort{ByItems: byItems}
+	sort := &physicalop.PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sort))
 
 	// topN
-	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
+	topN := &physicalop.PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
 	topN = topN.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
@@ -399,6 +404,22 @@ func TestPhysicalPlanClone(t *testing.T) {
 	mergeJoin = mergeJoin.Init(ctx, stats, 0)
 	mergeJoin.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
+
+	// index join
+	baseJoin := physicalop.BasePhysicalJoin{
+		LeftJoinKeys:    []*expression.Column{col},
+		RightJoinKeys:   nil,
+		OtherConditions: []expression.Expression{col},
+	}
+
+	indexJoin := &PhysicalIndexJoin{
+		BasePhysicalJoin: baseJoin,
+		innerPlan:        indexScan,
+		Ranges:           ranger.Ranges{},
+	}
+	indexJoin = indexJoin.Init(ctx, stats, 0)
+	indexJoin.SetSchema(schema)
+	require.NoError(t, checkPhysicalPlanClone(indexJoin))
 }
 
 //go:linkname valueInterface reflect.valueInterface
@@ -473,7 +494,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 
 	switch v1.Kind() {
 	case reflect.Array:
-		for i := 0; i < v1.Len(); i++ {
+		for i := range v1.Len() {
 			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
@@ -494,7 +515,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
-		for i := 0; i < v1.Len(); i++ {
+		for i := range v1.Len() {
 			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
@@ -513,13 +534,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 		}
 		if v1.Pointer() == v2.Pointer() {
 			typeName := v1.Type().String()
-			inWhiteList := false
-			for _, whiteName := range whiteTypeList {
-				if whiteName == typeName {
-					inWhiteList = true
-					break
-				}
-			}
+			inWhiteList := slices.Contains(whiteTypeList, typeName)
 			if inWhiteList {
 				return nil
 			}
@@ -686,23 +701,23 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
-		Schema: pmodel.NewCIStr("test"),
-		Name:   pmodel.NewCIStr("my_table"),
+		Schema: ast.NewCIStr("test"),
+		Name:   ast.NewCIStr("my_table"),
 	}
 	columns := []*model.ColumnInfo{
 		{
 			ID:        1,
-			Name:      pmodel.NewCIStr("id"),
+			Name:      ast.NewCIStr("id"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			ID:        2,
-			Name:      pmodel.NewCIStr("name"),
+			Name:      ast.NewCIStr("name"),
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
 		{
 			ID:        3,
-			Name:      pmodel.NewCIStr("age"),
+			Name:      ast.NewCIStr("age"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
@@ -714,19 +729,19 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	}
 
 	// Test case 1: AllColumns.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.AllColumns, nil, nil, nil, false, false)
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, ast.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
 	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
 
-	// TODO(hi-rustin): Find a better way to mock SQL execution.
+	// TODO(0xPoe): Find a better way to mock SQL execution.
 	// Test case 2: PredicateColumns(default)
 
 	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, ast.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }
@@ -740,12 +755,12 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 
 	tables := []*ast.TableName{
 		{
-			Schema: pmodel.NewCIStr("test"),
-			Name:   pmodel.NewCIStr("t1"),
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: pmodel.NewCIStr("test"),
-			Name:   pmodel.NewCIStr("t2"),
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("t2"),
 		},
 	}
 
@@ -883,36 +898,42 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 
 func TestTraffic(t *testing.T) {
 	tests := []struct {
-		sql  string
-		cols int
+		sql   string
+		cols  int
+		privs []string
 	}{
 		{
-			sql: "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
+			sql:   "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN"},
 		},
 		{
-			sql: "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
+			sql:   "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
+			privs: []string{"TRAFFIC_REPLAY_ADMIN"},
 		},
 		{
-			sql:  "show traffic jobs",
-			cols: 7,
+			sql:   "show traffic jobs",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
+			cols:  8,
 		},
 		{
-			sql: "cancel traffic jobs",
+			sql:   "cancel traffic jobs",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
 		},
 	}
 
 	parser := parser.New()
 	sctx := MockContext()
 	ctx := context.TODO()
-	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	for _, test := range tests {
+		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 		stmt, err := parser.ParseOneStmt(test.sql, "", "")
-		require.NoError(t, err)
+		require.NoError(t, err, test.sql)
 		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
-		require.NoError(t, err)
+		require.NoError(t, err, test.sql)
 		traffic, ok := p.(*Traffic)
-		require.True(t, ok)
-		require.Equal(t, test.cols, len(traffic.names))
+		require.True(t, ok, test.sql)
+		require.Equal(t, test.cols, len(traffic.names), test.sql)
+		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
 	}
 }
 
@@ -1032,4 +1053,27 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	}
 	_, err = GetMaxWriteSpeedFromExpression(opt)
 	require.Equal(t, "parse max_write_speed value error: invalid size: 'MiB'", err.Error())
+}
+
+func TestProcessNextGenS3Path(t *testing.T) {
+	u, err := url.Parse("S3://bucket?External-id=abc")
+	require.NoError(t, err)
+	_, err = processSemNextGenS3Path(u)
+	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
+
+	bak := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "sem-next-gen"
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = bak
+		})
+	})
+	u, err = url.Parse("s3://bucket")
+	require.NoError(t, err)
+	newPath, err := processSemNextGenS3Path(u)
+	require.NoError(t, err)
+	require.Equal(t, "s3://bucket?external-id=sem-next-gen", newPath)
 }

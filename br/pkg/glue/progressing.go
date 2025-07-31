@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/vbauerster/mpb/v7"
 	"github.com/vbauerster/mpb/v7/decor"
+	"go.uber.org/zap"
 	"golang.org/x/term"
 )
 
@@ -187,4 +190,81 @@ func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
 		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
 			color.RedString("ABORTED"))),
 	)
+}
+
+type ProgressBar interface {
+	Increment()
+	Done()
+}
+
+type MultiProgress interface {
+	AddTextBar(string, int64) ProgressBar
+	Wait()
+}
+
+func (ops ConsoleOperations) StartMultiProgress() MultiProgress {
+	if !ops.OutputIsTTY() {
+		return &NopMultiProgress{}
+	}
+	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
+	return &TerminalMultiProgress{
+		progress: pb,
+	}
+}
+
+type NopMultiProgress struct{}
+
+type LogBar struct {
+	name  string
+	total int64
+}
+
+func (nmp *NopMultiProgress) AddTextBar(name string, total int64) ProgressBar {
+	log.Info("progress start", zap.String("name", name))
+	return &LogBar{
+		name:  name,
+		total: total,
+	}
+}
+
+func (nmp *NopMultiProgress) Wait() {}
+
+func (lb *LogBar) Increment() {
+	if atomic.AddInt64(&lb.total, -1) <= 0 {
+		log.Info("progress done", zap.String("name", lb.name))
+	}
+}
+
+func (lb *LogBar) Done() {}
+
+type TerminalBar struct {
+	bar *mpb.Bar
+}
+
+func (tb *TerminalBar) Increment() {
+	tb.bar.Increment()
+}
+
+func (tb *TerminalBar) Done() {
+	tb.bar.Abort(false)
+	tb.bar.Wait()
+}
+
+type TerminalMultiProgress struct {
+	progress *mpb.Progress
+}
+
+func (tmp *TerminalMultiProgress) AddTextBar(name string, total int64) ProgressBar {
+	bar := tmp.progress.New(total,
+		mpb.NopStyle(),
+		mpb.PrependDecorators(decor.Name(name)),
+		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
+			color.RedString("ABORTED"),
+		)),
+	)
+	return &TerminalBar{bar: bar}
+}
+
+func (tmp *TerminalMultiProgress) Wait() {
+	tmp.progress.Wait()
 }

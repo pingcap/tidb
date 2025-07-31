@@ -16,6 +16,7 @@ package testkit
 
 import (
 	"crypto/tls"
+	"maps"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -23,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -35,7 +36,7 @@ type MockSessionManager struct {
 	SerID    uint64
 	TxnInfo  []*txninfo.TxnInfo
 	Dom      *domain.Domain
-	Conn     map[uint64]sessiontypes.Session
+	Conn     map[uint64]sessionapi.Session
 	mu       sync.Mutex
 	ConAttrs map[uint64]map[string]string
 
@@ -76,9 +77,7 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	}
 	msm.mu.Unlock()
 	if msm.Dom != nil {
-		for connID, pi := range msm.Dom.SysProcTracker().GetSysProcessList() {
-			ret[connID] = pi
-		}
+		maps.Copy(ret, msm.Dom.SysProcTracker().GetSysProcessList())
 	}
 	return ret
 }
@@ -135,6 +134,17 @@ func (msm *MockSessionManager) StoreInternalSession(s any) {
 	}
 	msm.internalSessions[s] = struct{}{}
 	msm.mu.Unlock()
+}
+
+// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager
+func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if msm.internalSessions == nil {
+		return false
+	}
+	_, ok := msm.internalSessions[se]
+	return ok
 }
 
 // DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager

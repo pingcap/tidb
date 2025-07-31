@@ -29,7 +29,7 @@ import (
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -84,7 +84,7 @@ func (h tidbCodecFuncHelper) findCommonOrPartitionedTable(
 	tblName string,
 ) (table.Table, int64, error) {
 	tblName, partName := h.extractTablePartition(tblName)
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -399,7 +399,7 @@ func (h tidbCodecFuncHelper) decodeIndexKey(
 			return "", errors.Trace(err)
 		}
 		ds := make([]types.Datum, 0, len(colInfos))
-		for i := 0; i < len(colInfos); i++ {
+		for i := range colInfos {
 			d, err := tablecodec.DecodeColumnValue(values[i], tps[i], loc)
 			if err != nil {
 				return "", errors.Trace(err)
@@ -414,7 +414,7 @@ func (h tidbCodecFuncHelper) decodeIndexKey(
 		ret["table_id"] = tableID
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]any, len(targetIndex.Columns))
-		for i := 0; i < len(targetIndex.Columns); i++ {
+		for i := range targetIndex.Columns {
 			dtStr, err := h.datumToJSONObject(&ds[i])
 			if err != nil {
 				return "", errors.Trace(err)

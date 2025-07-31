@@ -17,6 +17,9 @@ package util_test
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -54,4 +57,18 @@ func TestIsSpecialGlobalIndex(t *testing.T) {
 		}
 	}
 	require.Equal(t, cnt, len(tblInfo.Indices))
+}
+
+func TestCallSCtxFailed(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+
+	var sctxWithFailure sessionctx.Context
+	err := util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+		sctxWithFailure = sctx
+		return errors.New("simulated error")
+	})
+	require.Error(t, err)
+	require.Equal(t, "simulated error", err.Error())
+	notReleased := infosync.ContainsInternalSessionForTest(sctxWithFailure)
+	require.False(t, notReleased)
 }

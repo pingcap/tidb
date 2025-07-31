@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
@@ -132,7 +133,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	}
 
 	p.is = is
-	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")
+	err = p.sctx.GetSessionVars().SetSystemVar(vardef.TiDBSnapshot, "")
 
 	return err
 }

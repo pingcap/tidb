@@ -700,7 +700,7 @@ select approx_count_distinct(c,d) from t;
 approx_count_distinct(c,d)
 5
 select count(c,d) from t;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t" 
 select d*2 as ee, sum(c) from t group by ee order by ee;
 ee	sum(c)
 2	2
@@ -2026,6 +2026,7 @@ insert into mysql.opt_rule_blacklist value("decorrelate");
 drop table if exists test;
 create table test (a int);
 insert into test value(1);
+analyze table test;
 select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
 sum(a)	(select NULL from test where tt.a = test.a limit 1)	(select NULL from test where tt.a = test.a limit 1)	(select NULL from test where tt.a = test.a limit 1)
 1	NULL	NULL	NULL
@@ -2036,26 +2037,31 @@ Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
   ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:Apply
   │ ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:HashAgg
   │ │ ├─HashAgg(Build)	1.00	root		funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->executor__aggregate.test.a
-  │ │ │ └─Projection	10000.00	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#28, executor__aggregate.test.a->Column#29
-  │ │ │   └─TableReader	10000.00	root		data:TableFullScan
-  │ │ │     └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+  │ │ │ └─Projection	1.00	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#28, executor__aggregate.test.a->Column#29
+  │ │ │   └─TableReader	1.00	root		data:TableFullScan
+  │ │ │     └─TableFullScan	1.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
   │ │ └─Projection(Probe)	1.00	root		<nil>->Column#12
   │ │   └─Limit	1.00	root		offset:0, count:1
   │ │     └─TableReader	1.00	root		data:Limit
   │ │       └─Limit	1.00	cop[tikv]		offset:0, count:1
   │ │         └─Selection	1.00	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │ │           └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+  │ │           └─TableFullScan	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
   │ └─Projection(Probe)	1.00	root		<nil>->Column#15
   │   └─Limit	1.00	root		offset:0, count:1
   │     └─TableReader	1.00	root		data:Limit
   │       └─Limit	1.00	cop[tikv]		offset:0, count:1
   │         └─Selection	1.00	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │           └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+  │           └─TableFullScan	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
   └─Projection(Probe)	1.00	root		<nil>->Column#18
     └─Limit	1.00	root		offset:0, count:1
       └─TableReader	1.00	root		data:Limit
         └─Limit	1.00	cop[tikv]		offset:0, count:1
           └─Selection	1.00	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-            └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+            └─TableFullScan	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
+select distinct avg(nullif(77.15, PI()));
+avg(nullif(77.15, PI()))
+77.1500000000000000000000000000000000
+Level	Code	Message
+Warning	1265	Data truncated for column '%s' at row %d

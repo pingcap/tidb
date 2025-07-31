@@ -9,7 +9,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/tracing",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/meta/model",
         "@com_github_opentracing_basictracer_go//:basictracer-go",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
     ],
@@ -27,7 +26,6 @@ go_test(
     embed = [":tracing"],
     flaky = True,
     deps = [
-        "//pkg/meta/model",
         "//pkg/testkit/testsetup",
         "@com_github_opentracing_basictracer_go//:basictracer-go",
         "@com_github_opentracing_opentracing_go//:opentracing-go",

@@ -120,7 +120,7 @@ func randGen(client *rawkv.Client, startKey, endKey []byte, maxLen int, concurre
 	const batchSize = 32
 
 	errCh := make(chan error, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			for {
 				// FIXME: because of the incompatibility of `BatchPut`,
@@ -129,7 +129,7 @@ func randGen(client *rawkv.Client, startKey, endKey []byte, maxLen int, concurre
 				// keys := make([][]byte, 0, batchSize)
 				// values := make([][]byte, 0, batchSize)
 
-				for i := 0; i < batchSize; i++ {
+				for range batchSize {
 					key := randKey(startKey, endKey, maxLen)
 					value := randValue()
 
@@ -171,7 +171,7 @@ Retry:
 		upperUnbounded := false
 		lowerUnbounded := false
 
-		for i := 0; i < maxLen; i++ {
+		for i := range maxLen {
 			upperBound := 256
 			if !upperUnbounded {
 				if i >= len(endKey) {
@@ -216,7 +216,7 @@ Retry:
 //nolint:gosec
 func randValue() []byte {
 	result := make([]byte, 0, 512)
-	for i := 0; i < 512; i++ {
+	for i := range 512 {
 		value := rand.Intn(257)
 		if value == 256 {
 			if i > 0 {

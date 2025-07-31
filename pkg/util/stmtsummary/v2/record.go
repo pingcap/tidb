@@ -48,6 +48,8 @@ type StmtRecord struct {
 	NormalizedSQL string `json:"normalized_sql"`
 	TableNames    string `json:"table_names"`
 	IsInternal    bool   `json:"is_internal"`
+	BindingSQL    string `json:"binding_sql"`
+	BindingDigest string `json:"binding_digest"`
 	// Basic
 	SampleSQL        string   `json:"sample_sql"`
 	Charset          string   `json:"charset"`
@@ -156,6 +158,8 @@ type StmtRecord struct {
 
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
+
+	stmtsummary.StmtNetworkTrafficSummary
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -193,6 +197,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	if len(binPlan) > MaxEncodedPlanSizeInBytes {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
+	bindingSQL, bindingDigest := info.LazyInfo.GetBindingSQLAndDigest()
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
@@ -201,6 +206,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		NormalizedSQL: info.NormalizedSQL,
 		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
+		BindingSQL:    bindingSQL,
+		BindingDigest: bindingDigest,
 		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
@@ -414,12 +421,15 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	} else {
 		r.MinResultRows = 0
 	}
-	r.SumKVTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitKVRespDuration))
-	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
-	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
+	r.SumKVTotal += time.Duration(info.TiKVExecDetails.WaitKVRespDuration)
+	r.SumPDTotal += time.Duration(info.TiKVExecDetails.WaitPDRespDuration)
+	r.SumBackoffTotal += time.Duration(info.TiKVExecDetails.BackoffDuration)
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
 	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
 	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
+
+	// Networks
+	r.StmtNetworkTrafficSummary.Add(info.TiKVExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
 }
@@ -623,14 +633,10 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},
@@ -690,6 +696,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
+		TiKVExecDetails:   &util.ExecDetails{},
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},
 	}
@@ -713,4 +720,8 @@ func (*mockLazyInfo) GetBinaryPlan() string {
 
 func (*mockLazyInfo) GetPlanDigest() string {
 	return ""
+}
+
+func (*mockLazyInfo) GetBindingSQLAndDigest() (sql string, digest string) {
+	return "", ""
 }

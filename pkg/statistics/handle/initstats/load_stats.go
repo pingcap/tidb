@@ -20,13 +20,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 )
 
-// getConcurrency gets the concurrency of loading stats.
+// GetConcurrency gets the concurrency of loading stats.
 // the concurrency is from 2 to 16.
 // when Performance.ForceInitStats is true, the concurrency is from 2 to GOMAXPROCS(0)-2.
 // -2 is to ensure that the system has enough resources to handle other tasks. such as GC and stats cache internal.
 // when Performance.ForceInitStats is false, the concurrency is from 2 to GOMAXPROCS(0)/2.
 // it is to ensure that concurrency doesn't affect the performance of customer's business.
-func getConcurrency() int {
+func GetConcurrency() int {
 	var concurrency int
 	if config.GetGlobalConfig().Performance.ForceInitStats {
 		concurrency = runtime.GOMAXPROCS(0) - 2

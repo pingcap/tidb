@@ -15,9 +15,7 @@
 package kv
 
 import (
-	"maps"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -31,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -48,11 +47,7 @@ type litExprContext struct {
 
 // NewExpressionContext creates a new `*ExprContext` for lightning import.
 func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timestamp int64) (*litExprContext, error) {
-	flags := types.DefaultStmtFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
-			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
+	flags := util.GetTypeFlagsForImportInto(types.DefaultStmtFlags, sqlMode)
 
 	errLevels := stmtctx.DefaultStmtErrLevels
 	errLevels[errctx.ErrGroupTruncate] = errctx.ResolveErrLevel(flags.IgnoreTruncateErr(), flags.TruncateAsWarning())
@@ -122,11 +117,6 @@ type litTableMutateContext struct {
 	reservedRowIDAlloc    stmtctx.ReservedRowIDAlloc
 	enableMutationChecker bool
 	assertionLevel        variable.AssertionLevel
-	tableDelta            struct {
-		sync.Mutex
-		// tblID -> (colID -> deltaSize)
-		m map[int64]map[int64]int64
-	}
 }
 
 // AlternativeAllocators implements the `table.MutateContext` interface.
@@ -188,25 +178,9 @@ func (ctx *litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSuppo
 }
 
 // UpdatePhysicalTableDelta implements the `table.StatisticsSupport` interface.
-func (ctx *litTableMutateContext) UpdatePhysicalTableDelta(
-	physicalTableID int64, _ int64,
-	_ int64, cols variable.DeltaCols,
+func (*litTableMutateContext) UpdatePhysicalTableDelta(
+	_, _, _ int64,
 ) {
-	ctx.tableDelta.Lock()
-	defer ctx.tableDelta.Unlock()
-	if ctx.tableDelta.m == nil {
-		ctx.tableDelta.m = make(map[int64]map[int64]int64)
-	}
-	tableMap := ctx.tableDelta.m
-	colSize := tableMap[physicalTableID]
-	tableMap[physicalTableID] = cols.UpdateColSizeMap(colSize)
-}
-
-// GetColumnSize returns the colum size map (colID -> deltaSize) for the given table ID.
-func (ctx *litTableMutateContext) GetColumnSize(tblID int64) (ret map[int64]int64) {
-	ctx.tableDelta.Lock()
-	defer ctx.tableDelta.Unlock()
-	return maps.Clone(ctx.tableDelta.m[tblID])
 }
 
 // GetCachedTableSupport implements the `table.MutateContext` interface.

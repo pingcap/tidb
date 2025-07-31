@@ -26,14 +26,13 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -51,7 +50,7 @@ type TTLTimerData struct {
 
 // TTLTimersSyncer is used to sync timers for ttl
 type TTLTimersSyncer struct {
-	pool           util.SessionPool
+	pool           syssession.Pool
 	cli            timerapi.TimerClient
 	key2Timers     map[string]*timerapi.TimerRecord
 	lastPullTimers time.Time
@@ -62,7 +61,7 @@ type TTLTimersSyncer struct {
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
-func NewTTLTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
+func NewTTLTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) *TTLTimersSyncer {
 	return &TTLTimersSyncer{
 		pool:        pool,
 		cli:         cli,
@@ -82,34 +81,33 @@ func (g *TTLTimersSyncer) SetDelayDeleteInterval(interval time.Duration) {
 // ManualTriggerTTLTimer triggers a TTL job for a physical table which returns a function to wait the job done.
 // This returned function returns a bool value to indicates whether the job is finished.
 func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.PhysicalTable) (func() (string, bool, error), error) {
-	se, err := getSession(g.pool)
-	if err != nil {
-		return nil, err
-	}
-	defer se.Close()
+	var timerID string
+	var reqID string
+	err := withSession(g.pool, func(se session.Session) error {
+		timer, err := g.syncOneTimer(ctx, se, tbl.Schema, tbl.TableInfo, tbl.PartitionDef, true)
+		if err != nil {
+			return err
+		}
 
-	timer, err := g.syncOneTimer(ctx, se, tbl.Schema, tbl.TableInfo, tbl.PartitionDef, true)
-	if err != nil {
-		return nil, err
-	}
+		timerID = timer.ID
+		reqID, err = g.cli.ManualTriggerEvent(ctx, timer.ID)
+		if err != nil {
+			return err
+		}
 
-	reqID, err := g.cli.ManualTriggerEvent(ctx, timer.ID)
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
 	return func() (string, bool, error) {
-		se, err = getSession(g.pool)
-		if err != nil {
-			return "", false, err
-		}
-		defer se.Close()
-
-		if err = ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
 
-		timer, err = g.cli.GetTimerByID(ctx, timer.ID)
+		timer, err := g.cli.GetTimerByID(ctx, timerID)
 		if err != nil {
 			return "", false, err
 		}
@@ -130,12 +128,21 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 		}
 
 		jobID := timer.ManualEventID
-		rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
+		found := false
+		err = withSession(g.pool, func(se session.Session) error {
+			rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
+			if err != nil {
+				return err
+			}
+			found = len(rows) > 0
+			return nil
+		})
+
 		if err != nil {
 			return "", false, err
 		}
 
-		if len(rows) == 0 {
+		if !found {
 			return "", false, nil
 		}
 
@@ -150,7 +157,7 @@ func (g *TTLTimersSyncer) Reset() {
 	g.lastSyncTime = zeroTime
 	g.lastSyncVer = 0
 	if len(g.key2Timers) > 0 {
-		maps.Clear(g.key2Timers)
+		clear(g.key2Timers)
 	}
 }
 
@@ -174,7 +181,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		newKey2Timers := make(map[string]*timerapi.TimerRecord, len(g.key2Timers))
 		timers, err := g.cli.GetTimers(ctx, timerapi.WithKeyPrefix(timerKeyPrefix))
 		if err != nil {
-			logutil.BgLogger().Error("failed to pull timers", zap.Error(err))
+			logutil.BgLogger().Warn("failed to pull timers", zap.Error(err))
 			return
 		}
 
@@ -185,21 +192,22 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		g.lastPullTimers = g.nowFunc()
 	}
 
-	se, err := getSession(g.pool)
+	currentTimerKeys := make(map[string]struct{})
+	err := withSession(g.pool, func(se session.Session) error {
+		ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
+		for _, v := range ch {
+			for _, tblInfo := range v.TableInfos {
+				for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
+					currentTimerKeys[key] = struct{}{}
+				}
+			}
+		}
+		return nil
+	})
+
 	if err != nil {
 		logutil.BgLogger().Error("failed to sync TTL timers", zap.Error(err))
 		return
-	}
-	defer se.Close()
-
-	currentTimerKeys := make(map[string]struct{})
-	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
-	for _, v := range ch {
-		for _, tblInfo := range v.TableInfos {
-			for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
-				currentTimerKeys[key] = struct{}{}
-			}
-		}
 	}
 
 	for key, timer := range g.key2Timers {
@@ -233,7 +241,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 	}
 }
 
-func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo) []string {
+func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Session, schema ast.CIStr, tblInfo *model.TableInfo) []string {
 	if tblInfo.Partition == nil {
 		key := buildTimerKey(tblInfo, nil)
 		if _, err := g.syncOneTimer(ctx, se, schema, tblInfo, nil, false); err != nil {
@@ -255,7 +263,7 @@ func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Ses
 	return keys
 }
 
-func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) bool {
+func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema ast.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) bool {
 	if timer == nil {
 		return true
 	}
@@ -269,7 +277,7 @@ func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema pm
 		timer.SchedPolicyExpr != policyExpr
 }
 
-func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition, skipCache bool) (*timerapi.TimerRecord, error) {
+func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, schema ast.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition, skipCache bool) (*timerapi.TimerRecord, error) {
 	key := buildTimerKey(tblInfo, partition)
 	tags := getTimerTags(schema, tblInfo, partition)
 	ttlInfo := tblInfo.TTLInfo
@@ -365,7 +373,7 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 	return timer, nil
 }
 
-func getTimerTags(schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) []string {
+func getTimerTags(schema ast.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) []string {
 	dbTag := fmt.Sprintf("db=%s", schema.O)
 	tblTag := fmt.Sprintf("table=%s", tblInfo.Name.O)
 	if partition != nil {
@@ -406,7 +414,7 @@ func getTTLTableStatus(ctx context.Context, se session.Session, tblInfo *model.T
 		return nil, nil
 	}
 
-	return cache.RowToTableStatus(se, rows[0])
+	return cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 }
 
 // getTTLSchedulePolicy returns the timer's schedule policy and expression for a TTL job

@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -29,10 +29,10 @@ func TestCreateMultiValuedIndexHasBinaryCollation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create table test.t (pk varchar(4) primary key clustered, j json, str varchar(255), value int, key idx((cast(j as char(100) array)), str));")
-	is := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.NotNil(t, is)
 
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	foundIndex := false

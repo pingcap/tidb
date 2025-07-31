@@ -130,7 +130,7 @@ func TestStaticRecordSetExceedGCTime(t *testing.T) {
 	tk.MustExec("truncate table t")
 
 	// Update the safe point
-	store.(tikv.Storage).UpdateSPCache(startTS+1, time.Now())
+	store.(tikv.Storage).UpdateTxnSafePointCache(startTS+1, time.Now())
 
 	// Check data, it'll get an error
 	chk := srs.NewChunk(nil)
@@ -213,7 +213,7 @@ func TestCursorWillBlockMinStartTS(t *testing.T) {
 
 	infoSyncer := dom.InfoSyncer()
 	require.Eventually(t, func() bool {
-		infoSyncer.ReportMinStartTS(store)
+		infoSyncer.ReportMinStartTS(store, nil)
 		return infoSyncer.GetMinStartTS() == initialStartTS
 	}, time.Second*5, time.Millisecond*100)
 
@@ -221,7 +221,7 @@ func TestCursorWillBlockMinStartTS(t *testing.T) {
 	require.NoError(t, srs.Close())
 
 	require.Eventually(t, func() bool {
-		infoSyncer.ReportMinStartTS(store)
+		infoSyncer.ReportMinStartTS(store, nil)
 		return infoSyncer.GetMinStartTS() == secondStartTS
 	}, time.Second*5, time.Millisecond*100)
 }

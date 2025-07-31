@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -39,7 +38,7 @@ var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	FuncName model.CIStr
+	FuncName ast.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType           *types.FieldType `plan-cache-clone:"shallow"`
@@ -187,10 +186,13 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
-	for _, arg := range args {
-		if isNull(arg) {
-			*arg.GetType(ctx) = *retFieldTp
-			arg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+	for i, arg := range args {
+		argflags := arg.GetType(ctx)
+		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
+			newarg := arg.Clone()
+			*newarg.GetType(ctx) = *retFieldTp.Clone()
+			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
+			args[i] = newarg
 		}
 	}
 }
@@ -199,13 +201,6 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
 func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
-	defer func() {
-		if err == nil && ret != nil && checkOrInit != nil {
-			if sf, ok := ret.(*ScalarFunction); ok {
-				ret, err = checkOrInit(sf)
-			}
-		}
-	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
@@ -270,9 +265,16 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: ast.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
+	}
+	if checkOrInit != nil {
+		sf2, err := checkOrInit(sf)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sf = sf2
 	}
 	if fold == 1 {
 		return FoldConstant(ctx, sf), nil
@@ -292,9 +294,9 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 }
 
 // ScalarFunctionCallBack is the definition of callback of calling a newFunction.
-type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
+type ScalarFunctionCallBack func(function *ScalarFunction) (*ScalarFunction, error)
 
-func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
+func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, error) {
 	// todo: more scalar function init actions can be added here, or setting up with customized init callback.
 	if function.FuncName.L == ast.Grouping {
 		if !function.Function.(*BuiltinGroupingImplSig).isMetaInited {
@@ -727,6 +729,7 @@ func (sf *ScalarFunction) Equals(other any) bool {
 // ReHashCode is used after we change the argument in place.
 func ReHashCode(sf *ScalarFunction) {
 	sf.hashcode = sf.hashcode[:0]
+	sf.hashcode = slices.Grow(sf.hashcode, 1+len(sf.FuncName.L)+len(sf.GetArgs())*8+1)
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
@@ -737,6 +740,23 @@ func ReHashCode(sf *ScalarFunction) {
 	if sf.FuncName.L == ast.Cast {
 		evalTp := sf.RetType.EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
+	}
+	if sf.FuncName.L == ast.Grouping {
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
+		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()
+		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(marks)))
+		for _, mark := range marks {
+			sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(mark)))
+			// we need to sort map keys to ensure the hashcode is deterministic.
+			keys := make([]uint64, 0, len(mark))
+			for k := range mark {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			for _, k := range keys {
+				sf.hashcode = codec.EncodeInt(sf.hashcode, int64(k))
+			}
+		}
 	}
 }
 

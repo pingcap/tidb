@@ -36,12 +36,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -126,7 +125,8 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
+		// Use updateVersionAndTableInfoWithCheck to validate the table before making it public
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -543,7 +543,7 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
-				_, dependColNames, err := findDependedColumnNames(pmodel.NewCIStr(""), pmodel.NewCIStr(""), colDef)
+				_, dependColNames, err := findDependedColumnNames(ast.NewCIStr(""), ast.NewCIStr(""), colDef)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -555,7 +555,7 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionCheck:
-				if !variable.EnableCheckConstraint.Load() {
+				if !vardef.EnableCheckConstraint.Load() {
 					ctx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
@@ -605,7 +605,9 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
-
+	if _, ok := option.Expr.(*ast.ColumnNameExpr); ok {
+		return hasDefaultValue, errors.New("column name is not yet supported as a default value")
+	}
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
 		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {

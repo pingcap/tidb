@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -40,13 +41,13 @@ func TestMockAPI(t *testing.T) {
 	require.Error(t, err)
 
 	// valid option, invalid value
-	err = mock.SetGlobalSysVar(context.Background(), DefaultAuthPlugin, "invalidvalue")
+	err = mock.SetGlobalSysVar(context.Background(), vardef.DefaultAuthPlugin, "invalidvalue")
 	require.Error(t, err)
 
 	// valid option, valid value
-	err = mock.SetGlobalSysVar(context.Background(), DefaultAuthPlugin, "mysql_native_password")
+	err = mock.SetGlobalSysVar(context.Background(), vardef.DefaultAuthPlugin, "mysql_native_password")
 	require.NoError(t, err)
-	err = mock.SetGlobalSysVarOnly(context.Background(), DefaultAuthPlugin, "mysql_native_password", true)
+	err = mock.SetGlobalSysVarOnly(context.Background(), vardef.DefaultAuthPlugin, "mysql_native_password", true)
 	require.NoError(t, err)
 
 	// Test GetTiDBTableValue

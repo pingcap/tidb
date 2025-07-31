@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -253,7 +253,7 @@ func MakeTableRegions(
 				regions, sizes, err = MakeSourceFileRegion(egCtx, cfg, info)
 			}
 			if err != nil {
-				log.FromContext(egCtx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+				logutil.Logger(egCtx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 				return err
 			}
 			result := fileRegionRes{info: info, regions: regions, sizes: sizes, err: err}
@@ -288,7 +288,7 @@ func MakeTableRegions(
 
 	batchSize := CalculateBatchSize(float64(cfg.EngineDataSize), meta.IsRowOrdered, float64(meta.TotalSize))
 
-	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+	logutil.Logger(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxChunkSize", cfg.MaxChunkSize),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
@@ -351,7 +351,7 @@ func MakeSourceFileRegion(
 		regionSize = fi.FileMeta.RealSize
 	}
 	if regionSize > tableRegionSizeWarningThreshold {
-		log.FromContext(ctx).Warn(
+		logutil.Logger(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
 			zap.Int64("size", regionSize))
@@ -430,10 +430,7 @@ func SplitLargeCSV(
 			columns = parser.Columns()
 		}
 		startOffset, _ = parser.Pos()
-		endOffset = startOffset + maxRegionSize
-		if endOffset > dataFile.FileMeta.FileSize {
-			endOffset = dataFile.FileMeta.FileSize
-		}
+		endOffset = min(startOffset+maxRegionSize, dataFile.FileMeta.FileSize)
 		_ = parser.Close()
 	}
 	divisor := int64(cfg.ColumnCnt)
@@ -465,9 +462,9 @@ func SplitLargeCSV(
 					_ = parser.Close()
 					return nil, nil, err
 				}
-				log.FromContext(ctx).Warn("file contains no terminator at end",
+				logutil.Logger(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
-					zap.String("terminator", cfg.CSV.Terminator))
+					zap.String("terminator", cfg.CSV.LinesTerminatedBy))
 				pos = dataFile.FileMeta.FileSize
 			}
 			endOffset = pos

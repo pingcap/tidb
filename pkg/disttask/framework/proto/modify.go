@@ -27,6 +27,10 @@ func (t ModificationType) String() string {
 const (
 	// ModifyConcurrency is the type for modifying task concurrency.
 	ModifyConcurrency ModificationType = "modify_concurrency"
+	// ModifyBatchSize is the type for modifying batch size of add-index.
+	ModifyBatchSize ModificationType = "modify_batch_size"
+	// ModifyMaxWriteSpeed is the type for modifying max write speed of add-index.
+	ModifyMaxWriteSpeed ModificationType = "modify_max_write_speed"
 )
 
 // ModifyParam is the parameter for task modification.

@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -64,7 +64,11 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		var (
+			val types.Datum
+			err error
+		)
+		val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -111,7 +115,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	for i := 0; i < len(stmt.dbName); i++ {
+	for i := range stmt.dbName {
 		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
@@ -273,7 +277,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	if intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil {
 		return true
 	}
-	enableInstancePlanCache := variable.EnableInstancePlanCache.Load()
+	enableInstancePlanCache := vardef.EnableInstancePlanCache.Load()
 	return enableInstancePlanCache
 }
 
@@ -336,10 +340,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	stmtCtx := sessVars.StmtCtx
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
-	p, names, err := OptimizeAstNode(ctx, sctx, nodeW, is)
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
+	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)
 	if err != nil {
 		return nil, nil, err
 	}

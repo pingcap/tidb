@@ -40,10 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -71,15 +72,15 @@ func TestEarlyClose(t *testing.T) {
 
 	N := 100
 	// Insert N rows.
-	var values []string
-	for i := 0; i < N; i++ {
+	values := make([]string, 0, N)
+	for i := range N {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("earlyclose"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -88,7 +89,7 @@ func TestEarlyClose(t *testing.T) {
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), N/2)
 
 	ctx := context.Background()
-	for i := 0; i < N/2; i++ {
+	for range N / 2 {
 		rss, err := tk.Session().Execute(ctx, "select * from earlyclose order by id")
 		require.NoError(t, err)
 		rs := rss[0]
@@ -114,7 +115,7 @@ func TestEarlyClose(t *testing.T) {
 type stats struct {
 }
 
-func (s stats) GetScope(_ string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
+func (s stats) GetScope(_ string) vardef.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
 
 func (s stats) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	m := make(map[string]any)
@@ -299,8 +300,8 @@ func TestShow(t *testing.T) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
-	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW PROCESSLIST;", tk.Session().ShowProcess().ID)))
-	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW FULL PROCESSLIST;", tk.Session().ShowProcess().ID)))
+	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Query 0 autocommit SHOW PROCESSLIST;", tk.Session().ShowProcess().ID)))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Query 0 autocommit SHOW FULL PROCESSLIST;", tk.Session().ShowProcess().ID)))
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
@@ -653,8 +654,8 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
 
 	// Insert 100 rows.
-	var values []string
-	for i := 0; i < 100; i++ {
+	values := make([]string, 0, 100)
+	for i := range 100 {
 		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
 	}
 	tk.MustExec("insert dist values " + strings.Join(values, ","))
@@ -785,7 +786,7 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 11 _TIDB_ROWID"))
 	// Row ID is original + step.
-	for i := 0; i < int(10); i++ {
+	for range int(10) {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
@@ -879,7 +880,7 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 func generateBatchSQL(paramCount int) (sql string, paramSlice []any) {
 	params := make([]any, 0, paramCount)
 	placeholders := make([]string, 0, paramCount)
-	for i := 0; i < paramCount; i++ {
+	for i := range paramCount {
 		params = append(params, i)
 		placeholders = append(placeholders, "(?)")
 	}
@@ -943,7 +944,7 @@ func TestBatchInsertDelete(t *testing.T) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 	// for on duplicate key
-	for i := 0; i < 320; i++ {
+	for i := range 320 {
 		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
 	}
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
@@ -1005,7 +1006,7 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("create table com_batch_insert (c int)")
 	sql := "insert into com_batch_insert values "
 	values := make([]string, 0, 200)
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		values = append(values, "(1)")
 	}
 	sql = sql + strings.Join(values, ",")
@@ -1080,7 +1081,7 @@ func TestCoprocessorPriority(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 
 	// Insert some data to make sure plan build IndexLookup for t1.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 	}
 
@@ -1165,13 +1166,13 @@ func TestPessimisticConflictRetryAutoID(t *testing.T) {
 	var err []error
 	wg.Add(concurrency)
 	err = make([]error, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 		tk.MustExec("set autocommit = 1")
 		go func(idx int) {
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				sql := fmt.Sprintf("insert into t(idx, c) values (1, %[1]d) on duplicate key update c = %[1]d", i)
 				_, e := tk.Exec(sql)
 				if e != nil {
@@ -1203,11 +1204,11 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	wgCount := concurrency + 1
 	wg.Add(wgCount)
 	err = make([]error, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		go func(idx int) {
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				sql := fmt.Sprintf("insert into t(idx, c) select 1 as idx, 1 as c from src on duplicate key update c = %[1]d", i)
 				_, e := tk.Exec(sql)
 				if e != nil {
@@ -1223,7 +1224,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	go func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			_, e := tk.Exec("insert into src values (null);")
 			if e != nil {
 				insertErr = e

@@ -49,7 +49,7 @@ import (
 	server_err "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -76,7 +76,7 @@ type PacketIO struct {
 func NewPacketIO(bufReadConn *util.BufferedReadConn) *PacketIO {
 	p := &PacketIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
 	p.SetBufferedReadConn(bufReadConn)
-	p.SetMaxAllowedPacket(variable.DefMaxAllowedPacket)
+	p.SetMaxAllowedPacket(vardef.DefMaxAllowedPacket)
 	return p
 }
 

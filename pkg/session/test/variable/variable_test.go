@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -79,7 +80,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	tk.MustQuery("split table t6 INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
 	count := 10
-	for i := 0; i < count; i++ {
+	for i := range count {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
 		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
 	}
@@ -118,7 +119,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
-		for i := 0; i < count; i++ {
+		for i := range count {
 			expect = append(expect, fmt.Sprintf("%v", i))
 		}
 		tk.MustQuery(sql).Sort().Check(testkit.Rows(expect...))
@@ -196,10 +197,10 @@ func TestCorrectScopeError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeNone, Name: "sv_none", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal, Name: "sv_global", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeSession, Name: "sv_session", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "sv_both", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeNone, Name: "sv_none", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal, Name: "sv_global", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeSession, Name: "sv_session", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "sv_both", Value: "acdc"})
 
 	// check set behavior
 
@@ -417,8 +418,8 @@ func TestGeneralLogNonzeroTxnStartTS(t *testing.T) {
 	defer func() { logutil.GeneralLogger = oldGL }()
 
 	// enable general log
-	oldVar := variable.ProcessGeneralLog.Swap(true)
-	defer variable.ProcessGeneralLog.Store(oldVar)
+	oldVar := vardef.ProcessGeneralLog.Swap(true)
+	defer vardef.ProcessGeneralLog.Store(oldVar)
 
 	store := testkit.CreateMockStore(t)
 

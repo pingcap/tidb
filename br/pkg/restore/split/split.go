@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -225,7 +226,12 @@ func PaginateScanRegion(
 		scanStartKey := startKey
 		for {
 			var batch []*RegionInfo
-			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			if err != nil {
+				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			} else {
+				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit, opt.WithAllowFollowerHandle())
+			}
+
 			if err != nil {
 				err = errors.Annotatef(berrors.ErrPDBatchScanRegion.Wrap(err), "scan regions from start-key:%s, err: %s",
 					redact.Key(scanStartKey), err.Error())
@@ -306,7 +312,11 @@ func ScanRegionsWithRetry(
 	// because it's not easy to check multierr equals normal error.
 	// see https://github.com/pingcap/tidb/issues/33419.
 	_ = utils.WithRetry(ctx, func() error {
-		regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
+		if err != nil {
+			regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
+		} else {
+			regions, err = client.ScanRegions(ctx, startKey, endKey, limit, opt.WithAllowFollowerHandle())
+		}
 		if err != nil {
 			err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
 				redact.Key(startKey), err.Error())

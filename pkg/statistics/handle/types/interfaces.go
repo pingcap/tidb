@@ -16,7 +16,6 @@ package types
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -48,7 +47,7 @@ type StatsGC interface {
 
 	// DeleteTableStatsFromKV deletes table statistics from kv.
 	// A statsID refers to statistic of a table or a partition.
-	DeleteTableStatsFromKV(statsIDs []int64) (err error)
+	DeleteTableStatsFromKV(statsIDs []int64, soft bool) (err error)
 }
 
 // ColStatsTimeInfo records usage information of this column stats.
@@ -109,8 +108,8 @@ type IndexUsage interface {
 
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
-	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
+	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
+	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
@@ -325,6 +324,13 @@ type PartitionStatisticLoadTask struct {
 // PersistFunc is used to persist JSONTable in the partition level.
 type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
 
+// MetaUpdate records a meta update for a partition or table.
+type MetaUpdate struct {
+	PhysicalID  int64
+	Count       int64
+	ModifyCount int64
+}
+
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
@@ -343,26 +349,17 @@ type StatsReadWriter interface {
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
 
-	// SaveStatsToStorage save the stats data to the storage.
-	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
+	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
 
-	// SaveTableStatsToStorage saves the stats of a table to storage.
-	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
-	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
-
-	// InsertColStats2KV inserts columns stats to kv.
-	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
-
-	// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
-	// new columns and indices which belong to this table.
-	InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error)
-
-	// UpdateStatsVersion will set statistics version to the newest TS,
-	// then tidb-server will reload automatic.
-	UpdateStatsVersion() error
+	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
+	// Set it to true if the column/index stats is updated.
+	SaveMetaToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
@@ -451,34 +448,6 @@ type NeededItemTask struct {
 	Retry     int
 }
 
-// StatsLoad is used to load stats concurrently
-// TODO(hawkingrei): Our implementation of loading statistics is flawed.
-// Currently, we enqueue tasks that require loading statistics into a channel,
-// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
-// we filter out duplicate tasks. However, the issue with this approach is that it does
-// not filter out all duplicate tasks, but only the duplicates within the number of workers.
-// Such an implementation is not reasonable.
-//
-// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
-//
-// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
-// │                                                                                       │
-// │                                       singleflight                                    │
-// │                                                                                       │
-// └───────────────────────────────────────────────────────────────────────────────────────┘
-//
-//		            │                │
-//	   ┌────────────▼──────┐ ┌───────▼───────────┐
-//	   │                   │ │                   │
-//	   │  syncload worker  │ │  syncload worker  │
-//	   │                   │ │                   │
-//	   └───────────────────┘ └───────────────────┘
-type StatsLoad struct {
-	NeededItemsCh  chan *NeededItemTask
-	TimeoutItemsCh chan *NeededItemTask
-	sync.Mutex
-}
-
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
@@ -491,10 +460,10 @@ type StatsSyncLoad interface {
 	AppendNeededItem(task *NeededItemTask, timeout time.Duration) error
 
 	// SubLoadWorker will start a goroutine to handle the load requests.
-	SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
+	SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
 
 	// HandleOneTask will handle one task.
-	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+	HandleOneTask(lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
 }
 
 // GlobalStatsInfo represents the contextual information pertaining to global statistics.
@@ -546,6 +515,9 @@ type StatsHandle interface {
 
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
 
 	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
 	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table

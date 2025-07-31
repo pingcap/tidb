@@ -27,15 +27,13 @@ import (
 
 // Index represents an index histogram.
 type Index struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.IndexInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.IndexInfo
 	Histogram
 	StatsLoadedStatus
 	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Flag     int64
 	// PhysicalID is the physical table id,
 	// or it could possibly be -1, which means "stats not available".
 	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
@@ -49,10 +47,8 @@ func (idx *Index) Copy() *Index {
 	}
 	nc := &Index{
 		PhysicalID: idx.PhysicalID,
-		Flag:       idx.Flag,
 		StatsVer:   idx.StatsVer,
 	}
-	idx.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if idx.CMSketch != nil {
 		nc.CMSketch = idx.CMSketch.Copy()
 	}
@@ -95,10 +91,6 @@ func (idx *Index) DropUnnecessaryData() {
 	idx.Histogram.Buckets = make([]Bucket, 0)
 	idx.Histogram.Scalars = make([]scalar, 0)
 	idx.evictedStatus = AllEvicted
-}
-
-func (idx *Index) isStatsInitialized() bool {
-	return idx.statsInitialized
 }
 
 // GetStatsVer returns the version of the current stats
@@ -144,7 +136,7 @@ func IndexStatsIsInvalid(sctx planctx.PlanContext, idxStats *Index, coll *HistCo
 	}
 	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
 	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
-	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad {
+	if (idxStats == nil || !idxStats.IsFullLoad()) && !coll.CanNotTriggerLoad && !sctx.GetSessionVars().InRestrictedSQL {
 		asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 			TableID:          coll.PhysicalID,
 			ID:               cid,

@@ -22,7 +22,7 @@ import (
 	dbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -621,11 +621,7 @@ func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, tabl
 }
 
 // GetPrimaryKeyAndColumnTypes gets all primary columns and their types in ordinal order
-func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) ([]string, []string, error) {
-	var (
-		colNames, colTypes []string
-		err                error
-	)
+func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (colNames, colTypes []string, err error) {
 	colNames, err = GetPrimaryKeyColumns(tctx, conn, meta.DatabaseName(), meta.TableName())
 	if err != nil {
 		return nil, nil, err
@@ -1115,7 +1111,7 @@ func buildCompareClause(buf *bytes.Buffer, quotaCols []string, bound []string, c
 		if i > 0 {
 			buf.WriteString("or(")
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			buf.WriteString(quotaCols[j])
 			buf.WriteByte(equal)
 			buf.WriteString(bound[j])
@@ -1168,7 +1164,7 @@ func buildBetweenClause(buf *bytes.Buffer, quotaCols []string, low []string, up 
 			buf.WriteString("false")
 			return
 		}
-		for i := 0; i < commonLen; i++ {
+		for i := range commonLen {
 			if i > 0 {
 				buf.WriteString(" and ")
 			}
@@ -1559,7 +1555,7 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 		}
 		last := len(schemas) - 1
 		if last < 0 || schemas[last].Name.O != tableSchema {
-			dbInfo := &model.DBInfo{Name: pmodel.CIStr{O: tableSchema}}
+			dbInfo := &model.DBInfo{Name: ast.CIStr{O: tableSchema}}
 			dbInfo.Deprecated.Tables = make([]*model.TableInfo, 0, len(tables[tableSchema]))
 			schemas = append(schemas, dbInfo)
 			last++
@@ -1571,14 +1567,14 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				for partitionName, partitionID := range ptm {
 					partition.Definitions = append(partition.Definitions, model.PartitionDefinition{
 						ID:   partitionID,
-						Name: pmodel.CIStr{O: partitionName},
+						Name: ast.CIStr{O: partitionName},
 					})
 				}
 			}
 		}
 		schemas[last].Deprecated.Tables = append(schemas[last].Deprecated.Tables, &model.TableInfo{
 			ID:        tidbTableID,
-			Name:      pmodel.CIStr{O: tableName},
+			Name:      ast.CIStr{O: tableName},
 			Partition: partition,
 		})
 		return nil

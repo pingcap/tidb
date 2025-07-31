@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -102,11 +103,11 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
 		var bestJoin, whateverValidOne base.LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
+			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
 			if newJoin == nil {
 				continue
 			}
-			_, err := newJoin.RecursiveDeriveStats(nil)
+			_, _, err := newJoin.RecursiveDeriveStats(nil)
 			if err != nil {
 				return nil, err
 			}
@@ -139,16 +140,16 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
-		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		s.curJoinGroup = slices.Delete(s.curJoinGroup, bestIdx, bestIdx+1)
 		s.otherConds = finalRemainOthers
 	}
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan) (base.LogicalPlan, []expression.Expression) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
-	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
+	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
 }

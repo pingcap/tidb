@@ -154,7 +154,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		return errors.Trace(err)
 	}
 
-	backupRange := rtree.Range{StartKey: cfg.StartKey, EndKey: cfg.EndKey}
+	backupRange := rtree.KeyRange{StartKey: cfg.StartKey, EndKey: cfg.EndKey}
 
 	if cfg.RemoveSchedulers {
 		restore, e := mgr.RemoveSchedulers(ctx)
@@ -191,7 +191,10 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	updateCh := g.StartProgress(
 		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
 
-	progressCallBack := func() {
+	progressCallBack := func(unit backup.ProgressUnit) {
+		if unit == backup.UnitRange {
+			return
+		}
 		updateCh.Inc()
 	}
 
@@ -210,13 +213,13 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		CompressionLevel: cfg.CompressionLevel,
 		CipherInfo:       &cfg.CipherInfo,
 	}
-	rg := rtree.Range{
+	rg := rtree.KeyRange{
 		StartKey: backupRange.StartKey,
 		EndKey:   backupRange.EndKey,
 	}
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, []rtree.Range{rg}, req, 1, nil, metaWriter, progressCallBack)
+	_, err = client.BackupRanges(ctx, []rtree.KeyRange{rg}, req, 1, backup.RangesSentThreshold, nil, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}

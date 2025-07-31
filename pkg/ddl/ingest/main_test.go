@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ingest
+package ingest_test
 
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"go.uber.org/goleak"
 )
 
@@ -30,6 +31,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.Cleanup(testutil.CheckIngestLeakageForTest),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }

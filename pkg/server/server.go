@@ -34,6 +34,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"         //nolint:goimports
 	_ "net/http/pprof" // #nosec G108 for pprof
@@ -55,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -125,6 +125,9 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+
+	userResLock  sync.RWMutex // userResLock used to protect userResource
+	userResource map[string]*userResourceLimits
 
 	capability uint32
 	dom        *domain.Domain
@@ -247,13 +250,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
 	}
 	s.capability = defaultCapability
-	setTxnScope()
 	setSystemTimeZoneVariable()
 
 	tlsConfig, autoReload, err := util.LoadTLSCertificates(
@@ -408,18 +411,6 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_cert", cert)
 	variable.SetSysVar("ssl_key", key)
 	variable.SetSysVar("ssl_ca", ca)
-}
-
-func setTxnScope() {
-	variable.SetSysVar(variable.TiDBTxnScope, func() string {
-		if !variable.EnableLocalTxn.Load() {
-			return kv.GlobalTxnScope
-		}
-		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
-			return kv.GlobalTxnScope
-		}
-		return kv.LocalTxnScope
-	}())
 }
 
 // Export config-related metrics
@@ -719,6 +710,14 @@ func (s *Server) onConn(conn *clientConn) {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
+	if err := conn.increaseUserConnectionsCount(); err != nil {
+		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			Warn("failed to increase the count of connections", zap.Error(err),
+				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+		return
+	}
+	defer conn.decreaseUserConnectionCount()
+
 	if !s.registerConn(conn) {
 		return
 	}
@@ -801,9 +800,7 @@ func (s *Server) checkConnectionCount() error {
 		return nil
 	}
 
-	s.rwlock.RLock()
-	conns := len(s.clients)
-	s.rwlock.RUnlock()
+	conns := s.ConnectionCount()
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
@@ -816,13 +813,9 @@ func (s *Server) checkConnectionCount() error {
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	rs := make(map[uint64]*util.ProcessInfo)
-	for connID, pi := range s.getUserProcessList() {
-		rs[connID] = pi
-	}
+	maps.Copy(rs, s.getUserProcessList())
 	if s.dom != nil {
-		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
-			rs[connID] = pi
-		}
+		maps.Copy(rs, s.dom.SysProcTracker().GetSysProcessList())
 	}
 	return rs
 }
@@ -1009,9 +1002,7 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	conns := make(map[uint64]*clientConn)
 
 	s.rwlock.Lock()
-	for k, v := range s.clients {
-		conns[k] = v
-	}
+	maps.Copy(conns, s.clients)
 	s.rwlock.Unlock()
 
 	allDone := make(chan struct{})
@@ -1076,6 +1067,14 @@ func (s *Server) StoreInternalSession(se any) {
 	s.internalSessions[se] = struct{}{}
 	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
+}
+
+// ContainsInternalSession implements SessionManager interface.
+func (s *Server) ContainsInternalSession(se any) bool {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	_, ok := s.internalSessions[se]
+	return ok
 }
 
 // DeleteInternalSession implements SessionManager interface.

@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,12 +45,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	server2 "github.com/pingcap/tidb/pkg/server"
@@ -1054,7 +1056,7 @@ func TestPprof(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 	retryTime := 100
-	for retry := 0; retry < retryTime; retry++ {
+	for range retryTime {
 		resp, err := ts.FetchStatus("/debug/pprof/heap")
 		if err == nil {
 			_, err = io.ReadAll(resp.Body)
@@ -1138,7 +1140,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
-	tbs, err := info.SchemaTableInfos(context.Background(), pmodel.NewCIStr("test"))
+	tbs, err := info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
@@ -1151,7 +1153,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	// One table in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc = httptest.NewRecorder()
-	tbs, err = info.SchemaTableInfos(context.Background(), pmodel.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
 	require.Equal(t, 1, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
@@ -1165,7 +1167,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	// Two tables in a schema.
 	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
-	tbs, err = info.SchemaTableInfos(context.Background(), pmodel.NewCIStr("test"))
+	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
 	require.Equal(t, 2, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
@@ -1225,12 +1227,13 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
+	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
-	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
@@ -1307,7 +1310,7 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 			}
 		}
 	}()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		testUpdateLabels()
 	}
 	close(done)
@@ -1429,35 +1432,41 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	require.NoError(t, err)
 	ddlID := do.DDL().GetID()
 	// check the result for upgrade show
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s0": {
-			ID:           ddlID,
-			IP:           "127.0.0.1",
-			Port:         4000,
-			JSONServerID: 0,
-			ServerVersionInfo: infosync.ServerVersionInfo{
-				Version: "ver",
-				GitHash: "hash",
+			StaticInfo: serverinfo.StaticInfo{
+				ID:           ddlID,
+				IP:           "127.0.0.1",
+				Port:         4000,
+				JSONServerID: 0,
+				VersionInfo: serverinfo.VersionInfo{
+					Version: "ver",
+					GitHash: "hash",
+				},
 			},
 		},
 		"s2": {
-			ID:           "ID2",
-			IP:           "127.0.0.1",
-			Port:         4002,
-			JSONServerID: 2,
-			ServerVersionInfo: infosync.ServerVersionInfo{
-				Version: "ver2",
-				GitHash: "hash2",
+			StaticInfo: serverinfo.StaticInfo{
+				ID:           "ID2",
+				IP:           "127.0.0.1",
+				Port:         4002,
+				JSONServerID: 2,
+				VersionInfo: serverinfo.VersionInfo{
+					Version: "ver2",
+					GitHash: "hash2",
+				},
 			},
 		},
 		"s1": {
-			ID:           "ID1",
-			IP:           "127.0.0.1",
-			Port:         4001,
-			JSONServerID: 1,
-			ServerVersionInfo: infosync.ServerVersionInfo{
-				Version: "ver",
-				GitHash: "hash",
+			StaticInfo: serverinfo.StaticInfo{
+				ID:           "ID1",
+				IP:           "127.0.0.1",
+				Port:         4001,
+				JSONServerID: 1,
+				VersionInfo: serverinfo.VersionInfo{
+					Version: "ver",
+					GitHash: "hash",
+				},
 			},
 		},
 	}
@@ -1523,4 +1532,67 @@ func TestIssue52608(t *testing.T) {
 	on, addr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
 	require.Equal(t, on, true)
 	require.Equal(t, addr[:10], "127.0.0.1:")
+}
+
+func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	time.Sleep(time.Second)
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+	infosync.SetEtcdClient(client)
+
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
+
+	testUpdateLabels := func() {
+		labels := map[string]string{}
+		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, labels)
+	}
+	testStoreTopology := func() {
+		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
+	}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				testStoreTopology()
+			}
+		}
+	}()
+	for range 100 {
+		testUpdateLabels()
+	}
+	close(done)
+	wg.Wait()
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
 }

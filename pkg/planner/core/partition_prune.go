@@ -17,7 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	tmodel "github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -26,14 +26,14 @@ import (
 // PartitionPruning finds all used partitions according to query conditions, it will
 // return nil if condition match none of partitions. The return value is a array of the
 // idx in the partition definitions array, use pi.Definitions[idx] to get the partition ID
-func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []ast.CIStr,
 	columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	s := PartitionProcessor{}
 	pi := tbl.Meta().Partition
 	switch pi.Type {
-	case model.PartitionTypeHash, model.PartitionTypeKey:
+	case ast.PartitionTypeHash, ast.PartitionTypeKey:
 		return s.pruneHashOrKeyPartition(ctx, tbl, partitionNames, conds, columns, names)
-	case model.PartitionTypeRange:
+	case ast.PartitionTypeRange:
 		rangeOr, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names)
 		if err != nil {
 			return nil, err
@@ -41,13 +41,13 @@ func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
 		ret = handleDroppingForRange(pi, partitionNames, ret)
 		return ret, nil
-	case model.PartitionTypeList:
+	case ast.PartitionTypeList:
 		return s.pruneListPartition(ctx, tbl, partitionNames, conds, columns)
 	}
 	return []int{FullRange}, nil
 }
 
-func handleDroppingForRange(pi *tmodel.PartitionInfo, partitionNames []model.CIStr, usedPartitions []int) []int {
+func handleDroppingForRange(pi *tmodel.PartitionInfo, partitionNames []ast.CIStr, usedPartitions []int) []int {
 	if pi.CanHaveOverlappingDroppingPartition() {
 		if len(usedPartitions) == 1 && usedPartitions[0] == FullRange {
 			usedPartitions = make([]int, 0, len(pi.Definitions))

@@ -1010,7 +1010,7 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	// test for config `toml` and `json` tag names
 	c1 := Config{}
 	st := reflect.TypeOf(c1)
-	for i := 0; i < st.NumField(); i++ {
+	for i := range st.NumField() {
 		field := st.Field(i)
 		require.Equal(t, field.Tag.Get("json"), field.Tag.Get("toml"))
 	}
@@ -1371,6 +1371,21 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 	})
 }
 
+func TestGetGlobalTiKVWorkerURL(t *testing.T) {
+	conf := NewConfig()
+	require.Empty(t, conf.TiKVWorkerURL)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVWorkerURL = "tikv-worker-0:10080"
+	})
+
+	require.Equal(t, "tikv-worker-0:10080", GetGlobalConfig().TiKVWorkerURL)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVWorkerURL = ""
+	})
+}
+
 func TestAutoScalerConfig(t *testing.T) {
 	conf := NewConfig()
 	require.False(t, conf.UseAutoScaler)
@@ -1408,4 +1423,12 @@ enforce-mpp = 1
 	err = conf.Load(configFile)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
+}
+
+func TestKeyspaceName(t *testing.T) {
+	conf := NewConfig()
+	conf.KeyspaceName = "#!"
+	require.ErrorContains(t, conf.Valid(), "is invalid")
+	conf.KeyspaceName = "abc"
+	require.NoError(t, conf.Valid())
 }

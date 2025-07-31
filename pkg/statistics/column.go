@@ -26,11 +26,10 @@ import (
 
 // Column represents a column histogram.
 type Column struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.ColumnInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.ColumnInfo
 	Histogram
 
 	// StatsLoadedStatus indicates the status of column statistics
@@ -39,7 +38,6 @@ type Column struct {
 	// or it could possibly be -1, which means "stats not available".
 	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
-	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
 	IsHandle bool
@@ -52,11 +50,9 @@ func (c *Column) Copy() *Column {
 	}
 	nc := &Column{
 		PhysicalID: c.PhysicalID,
-		Flag:       c.Flag,
 		StatsVer:   c.StatsVer,
 		IsHandle:   c.IsHandle,
 	}
-	c.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if c.CMSketch != nil {
 		nc.CMSketch = c.CMSketch.Copy()
 	}
@@ -154,6 +150,10 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 		}()
 	}
 	if sctx != nil {
+		if sctx.GetSessionVars().InRestrictedSQL {
+			inValidForCollPseudo = true
+			return true
+		}
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&

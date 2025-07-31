@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -62,7 +63,8 @@ type ClientDiscover struct {
 }
 
 const (
-	autoIDLeaderPath = "tidb/autoid/leader"
+	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
+	AutoIDLeaderPath = "tidb/autoid/leader"
 )
 
 // NewClientDiscover creates a ClientDiscover object.
@@ -72,8 +74,16 @@ func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
 	}
 }
 
+// GetAutoIDServiceLeaderEtcdPath exported for test.
+func GetAutoIDServiceLeaderEtcdPath(keyspaceID uint32) string {
+	if keyspaceID == uint32(tikv.NullspaceID) {
+		return AutoIDLeaderPath
+	}
+	return "/" + AutoIDLeaderPath
+}
+
 // GetClient gets the AutoIDAllocClient.
-func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, uint64, error) {
+func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (autoid.AutoIDAllocClient, uint64, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
 	if cli != nil {
@@ -87,14 +97,25 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 	if d.mu.AutoIDAllocClient != nil {
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
-
-	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
+	// write a for loop to retry in case of etcd connection error.
+	var resp *clientv3.GetResponse
+	var err error
+	var bo backoffer
+retry:
+	resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, 0, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		if err := ctx.Err(); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		bo.Backoff()
+		goto retry
 	}
+	bo.Reset()
 
 	addr := string(resp.Kvs[0].Value)
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -128,18 +149,21 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
 	defer r.End()
 
+	logutil.BgLogger().Info("alloc autoid",
+		zap.Int64("dbID", sp.dbID))
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 	}
 
 	var bo backoffer
+	start := time.Now()
 retry:
-	cli, ver, err := sp.GetClient(ctx)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	start := time.Now()
+	clientStart := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
@@ -149,10 +173,13 @@ retry:
 		IsUnsigned: sp.isUnsigned,
 		KeyspaceID: sp.keyspaceID,
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			sp.resetConn(ver, err)
+			if err := ctx.Err(); err != nil {
+				return 0, 0, errors.Trace(err)
+			}
 			bo.Backoff()
 			goto retry
 		}
@@ -169,8 +196,8 @@ retry:
 	return resp.Min, resp.Max, err
 }
 
-const backoffMin = 200 * time.Millisecond
-const backoffMax = 5 * time.Second
+const backoffMin = 5 * time.Millisecond
+const backoffMax = 100 * time.Millisecond
 
 type backoffer struct {
 	time.Duration
@@ -254,7 +281,7 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {
 	var bo backoffer
 retry:
-	cli, ver, err := sp.GetClient(ctx)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return errors.Trace(err)
 	}

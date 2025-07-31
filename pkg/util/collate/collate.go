@@ -51,14 +51,6 @@ var (
 const (
 	// DefaultLen is set for datum if the string datum don't know its length.
 	DefaultLen = 0
-	// first byte of a 2-byte encoding starts 110 and carries 5 bits of data
-	b2Mask = 0x1F // 0001 1111
-	// first byte of a 3-byte encoding starts 1110 and carries 4 bits of data
-	b3Mask = 0x0F // 0000 1111
-	// first byte of a 4-byte encoding starts 11110 and carries 3 bits of data
-	b4Mask = 0x07 // 0000 0111
-	// non-first bytes start 10 and carry 6 bits of data
-	mbMask = 0x3F // 0011 1111
 )
 
 // Collator provides functionality for comparing strings for a given
@@ -104,7 +96,7 @@ func NewCollationEnabled() bool {
 func CompatibleCollate(collate1, collate2 string) bool {
 	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
 		return true
-	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin" || collate1 == "latin1_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin" || collate1 == "latin1_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin" || collate2 == "latin1_bin") {
 		return true
 	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
 		return true
@@ -286,32 +278,6 @@ func sign(i int) int {
 	return 0
 }
 
-// decode rune by hand
-func decodeRune(s string, si int) (r rune, newIndex int) {
-	b := s[si]
-	switch runeLen(b) {
-	case 1:
-		r = rune(b)
-		newIndex = si + 1
-	case 2:
-		r = rune(b&b2Mask)<<6 |
-			rune(s[1+si]&mbMask)
-		newIndex = si + 2
-	case 3:
-		r = rune(b&b3Mask)<<12 |
-			rune(s[si+1]&mbMask)<<6 |
-			rune(s[si+2]&mbMask)
-		newIndex = si + 3
-	default:
-		r = rune(b&b4Mask)<<18 |
-			rune(s[si+1]&mbMask)<<12 |
-			rune(s[si+2]&mbMask)<<6 |
-			rune(s[si+3]&mbMask)
-		newIndex = si + 4
-	}
-	return
-}
-
 func runeLen(b byte) int {
 	if b < 0x80 {
 		return 1
@@ -333,7 +299,7 @@ func IsDefaultCollationForUTF8MB4(collate string) bool {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci" ||
-		collate == "utf8mb4_0900_ai_ci"
+		collate == "utf8mb4_0900_ai_ci" || collate == "gb18030_chinese_ci"
 }
 
 // ConvertAndGetBinCollation converts collation to binary collation
@@ -351,6 +317,8 @@ func ConvertAndGetBinCollation(collate string) string {
 		return "utf8mb4_bin"
 	case "gbk_chinese_ci":
 		return "gbk_bin"
+	case "gb18030_chinese_ci":
+		return "gb18030_bin"
 	}
 
 	return collate
@@ -453,4 +421,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKBin)] = &gbkBinCollator{charset.NewCustomGBKEncoder()}
 	newCollatorMap[charset.CollationGBKChineseCI] = &gbkChineseCICollator{}
 	newCollatorIDMap[CollationName2ID(charset.CollationGBKChineseCI)] = &gbkChineseCICollator{}
+	newCollatorMap[charset.CollationGB18030Bin] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030Bin)] = &gb18030BinCollator{charset.NewCustomGB18030Encoder()}
+	newCollatorMap[charset.CollationGB18030ChineseCI] = &gb18030ChineseCICollator{}
+	newCollatorIDMap[CollationName2ID(charset.CollationGB18030ChineseCI)] = &gb18030ChineseCICollator{}
 }

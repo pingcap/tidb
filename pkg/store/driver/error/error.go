@@ -35,8 +35,8 @@ var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout    = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
 	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerTimeout)
-	// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
-	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
+	// ErrTxnAbortedByGC is the error that a transaction has been run for too long and aborted by GC.
+	ErrTxnAbortedByGC = dbterror.ClassTiKV.NewStd(errno.ErrTxnAbortedByGC)
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
 	ErrTiKVStaleCommand = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStaleCommand)
 	// ErrQueryInterrupted is the error when the query is interrupted.
@@ -150,9 +150,21 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerBusy
 	}
 
+	var txnAbortedByGC *tikverr.ErrTxnAbortedByGC
+	if stderrs.As(err, &txnAbortedByGC) {
+		return ErrTxnAbortedByGC.GenWithStackByArgs(
+			txnAbortedByGC.TxnStartTS, txnAbortedByGC.TxnStartTSTime,
+			txnAbortedByGC.TxnSafePoint, txnAbortedByGC.TxnSafePointTime,
+		)
+	}
+
 	var gcTooEarly *tikverr.ErrGCTooEarly
 	if stderrs.As(err, &gcTooEarly) {
-		return ErrGCTooEarly.GenWithStackByArgs(gcTooEarly.TxnStartTS, gcTooEarly.GCSafePoint)
+		// The old error type doesn't contain the exact value of txn start ts and the (GC or txn) safe point, and its
+		// fields are in time.Time format. Pass "<unknown>" to replace the value.
+		// It's expected that `tikverr.ErrTxnAbortedByGC` should never occur again, and are replaced by
+		// tikverr.ErrTxnAbortedByGC.
+		return ErrTxnAbortedByGC.GenWithStackByArgs("<unknown>", gcTooEarly.TxnStartTS, "<unknown>", gcTooEarly.GCSafePoint)
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVStaleCommand) {

@@ -84,7 +84,7 @@ type ApplyRuleTask struct {
 }
 
 // NewApplyRuleTask return a new apply rule task.
-func NewApplyRuleTask(ctx cascadesctx.CascadesContext, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
+func NewApplyRuleTask(ctx cascadesctx.Context, gE *memo.GroupExpression, r rule.Rule) *ApplyRuleTask {
 	return &ApplyRuleTask{
 		BaseTask: BaseTask{
 			ctx: ctx,
@@ -102,11 +102,12 @@ func (a *ApplyRuleTask) Execute() error {
 	}
 	pa := a.rule.Pattern()
 	binder := rule.NewBinder(pa, a.gE)
-	for holder := binder.Next(); holder != nil; {
+	holder := binder.Next()
+	for ; holder != nil; holder = binder.Next() {
 		if !a.rule.PreCheck(holder) {
 			continue
 		}
-		newExprs, err := a.rule.XForm(holder)
+		newExprs, remove, err := a.rule.XForm(holder)
 		if err != nil {
 			return err
 		}
@@ -117,6 +118,9 @@ func (a *ApplyRuleTask) Execute() error {
 			}
 			// YAMS only care about logical plan now.
 			a.Push(NewOptGroupExpressionTask(a.ctx, newGroupExpr))
+		}
+		if remove {
+			a.ctx.GetMemo().RemoveOut(a.gE.GetGroup(), a.gE)
 		}
 	}
 	a.gE.SetExplored(a.rule.ID())

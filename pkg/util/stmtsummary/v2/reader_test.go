@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -228,8 +228,8 @@ func TestMemReader(t *testing.T) {
 	timeLocation, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	columns := []*model.ColumnInfo{
-		{Name: pmodel.NewCIStr(DigestStr)},
-		{Name: pmodel.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
 	}
 
 	ss := NewStmtSummary4Test(3)
@@ -282,8 +282,8 @@ func TestHistoryReader(t *testing.T) {
 	timeLocation, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	columns := []*model.ColumnInfo{
-		{Name: pmodel.NewCIStr(DigestStr)},
-		{Name: pmodel.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
 	}
 
 	func() {
@@ -430,8 +430,8 @@ func TestHistoryReaderInvalidLine(t *testing.T) {
 	timeLocation, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	columns := []*model.ColumnInfo{
-		{Name: pmodel.NewCIStr(DigestStr)},
-		{Name: pmodel.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(DigestStr)},
+		{Name: ast.NewCIStr(ExecCountStr)},
 	}
 
 	reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, nil, 2)

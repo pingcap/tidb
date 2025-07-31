@@ -100,7 +100,7 @@ func (w *worker) processJob(job priorityqueue.AnalysisJob) {
 	}()
 
 	if err := job.Analyze(w.statsHandle, w.sysProcTracker); err != nil {
-		statslogutil.StatsLogger().Error(
+		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"Auto analyze job execution failed",
 			zap.Stringer("job", job),
 			zap.Error(err),
