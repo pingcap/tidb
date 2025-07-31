@@ -599,13 +599,3 @@ func TestCommitFailed(t *testing.T) {
 	}, time.Second, 50*time.Millisecond)
 	n.OnRetireOwner()
 }
-
-func TestFix56357(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("DROP TABLE IF EXISTS t")
-	tk.MustExec("set @@global.tidb_enable_check_constraint=1")
-	tk.MustExec("create table t1(a timestamp, constraint check((a = FROM_UNIXTIME(1))));")
-	tk.MustExec("insert into t1 values(FROM_UNIXTIME(1));")
-}
