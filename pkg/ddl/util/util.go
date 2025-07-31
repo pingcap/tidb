@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -186,21 +185,9 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	return errors.Trace(err)
 }
 
-// LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
-func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
-	// close issue #21391
-	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return loadGlobalVars(ctx, sctx, []string{vardef.TiDBDDLReorgWorkerCount, vardef.TiDBDDLReorgBatchSize, vardef.TiDBRowFormatVersion})
-}
-
-// LoadDDLVars loads ddl variable from mysql.global_variables.
-func LoadDDLVars(ctx sessionctx.Context) error {
-	return loadGlobalVars(context.Background(), ctx, []string{vardef.TiDBDDLErrorCountLimit})
-}
-
-// loadGlobalVars loads global variable from mysql.global_variables.
-func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+// LoadGlobalVars loads global variable from mysql.global_variables.
+func LoadGlobalVars(sctx sessionctx.Context, varNames ...string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	e := sctx.GetRestrictedSQLExecutor()
 	var buf strings.Builder
 	buf.WriteString(loadGlobalVarsSQL)
@@ -220,6 +207,7 @@ func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varValue := row.GetString(1)
+		//nolint:forbidigo
 		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
 			return err
 		}
@@ -375,6 +363,13 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 			return errors.Trace(err)
 		}
 
+		// Mock error for test
+		failpoint.Inject("PutKVToEtcdError", func(val failpoint.Value) {
+			if val.(bool) && strings.Contains(key, "all_schema_versions") {
+				failpoint.Continue()
+			}
+		})
+
 		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
 		_, err = etcdCli.Put(childCtx, key, val, opts...)
 		cancel()
@@ -419,6 +414,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	defer terror.Call(rs.Close)
+	//nolint:forbidigo
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
 		return false, errors.Trace(err)

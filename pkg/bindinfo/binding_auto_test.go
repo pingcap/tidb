@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -126,45 +127,109 @@ func TestIsSimplePointPlan(t *testing.T) {
 	require.False(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         HashJoin    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
         └─Point_Get_5   root    1       table:t, handle:2               0       time:143.2µs, open:1.71µs, close:5.92µs, loops:1, Get:{num_rpc:1, total_time:40µs}      N/A             N/A`))
+	require.False(t, bindinfo.IsSimplePointPlan(``))
+	require.False(t, bindinfo.IsSimplePointPlan(`  \n   `))
 }
 
 func TestRelevantOptVarsAndFixes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	tk.MustExec(`create table t1 (a int, b int, c varchar(10), key(a), key(b))`)
 	tk.MustExec(`create table t2 (a int, b int, c varchar(10), key(a), key(b))`)
 
-	type testCase struct {
-		query string
-		vars  string
-		fixes string
+	var input []string
+	var output []struct {
+		Vars  string
+		Fixes string
 	}
-	cases := []testCase{
-		{"select 1 from t1", "[tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor]", "[45132 52869]"},
-		{"select 1 from t1 where a=1", "[tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor]", "[52869]"},
-		{"select * from t1 where a=1", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[52869]"},
-		{"select * from t1 where a>1", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[45132 52869]"},
-		{"select a from t1 where a=1", "[tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor]", "[52869]"},
-		{"select max(a) from t1 where a=1", "[tidb_opt_hash_agg_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_ordering_index_selectivity_ratio tidb_opt_stream_agg_cost_factor tidb_opt_topn_cost_factor]", "[52869]"},
-		{"select sum(b) from t1 where a=1", "[tidb_opt_hash_agg_cost_factor tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_stream_agg_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[52869]"},
-		{"select a from t1 where a=1 order by b", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_sort_cost_factor tidb_opt_table_rowid_scan_cost_factor]", "[45132 52869]"},
-		{"select a from t1 where a=1 order by b limit 10", "[tidb_opt_index_lookup_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_table_range_scan_cost_factor tidb_opt_table_rowid_scan_cost_factor tidb_opt_topn_cost_factor]", "[52869]"},
-		{"select 1 from t1, t2 where t1.a=t2.a", "[tidb_opt_hash_join_cost_factor tidb_opt_index_join_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_merge_join_cost_factor]", "[44855 45132 52869]"},
-		{"select 1 from t1, t2 where t1.a=t2.b", "[tidb_opt_hash_join_cost_factor tidb_opt_index_join_cost_factor tidb_opt_index_reader_cost_factor tidb_opt_index_scan_cost_factor tidb_opt_merge_join_cost_factor]", "[44855 45132 52869]"},
-		{"select 1 from t1, t2 where t1.c=t2.c", "[tidb_opt_hash_join_cost_factor tidb_opt_table_full_scan_cost_factor tidb_opt_table_reader_cost_factor]", "[52869]"},
-	}
-
-	for _, c := range cases {
-		p := parser.New()
-		stmt, err := p.ParseOneStmt(c.query, "", "")
+	bindingAutoSuiteData.LoadTestCases(t, &input, &output)
+	p := parser.New()
+	for i, sql := range input {
+		p.Reset()
+		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		vars, fixes, err := bindinfo.RecordRelevantOptVarsAndFixes(tk.Session(), stmt)
 		require.NoError(t, err)
-		require.Equal(t, fmt.Sprintf("%v", vars), c.vars)
-		require.Equal(t, fmt.Sprintf("%v", fixes), c.fixes)
+		testdata.OnRecord(func() {
+			output[i].Vars = fmt.Sprintf("%v", vars)
+			output[i].Fixes = fmt.Sprintf("%v", fixes)
+		})
+		require.Equal(t, fmt.Sprintf("%v", vars), output[i].Vars)
+		require.Equal(t, fmt.Sprintf("%v", fixes), output[i].Fixes)
 	}
+}
+
+func TestExplainExploreInStmtStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustQuery(`explain explore select count(1) from t where a=1`)
+	rs := tk.MustQuery("select digest_text, sample_user from information_schema.tidb_statements_stats where digest_text = 'select count ( ? ) from `t` where `a` = ?'").Rows()
+	require.True(t, len(rs) > 0)
+	require.True(t, rs[0][1].(string) != "") // user name is not empty
+}
+
+func TestExplainExploreAnalyze(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`insert into t values (1, 2), (2, 3), (3, 4), (4, 5)`)
+
+	checkExecInfo := func(sql string, hasExecInfo bool) {
+		rs := tk.MustQuery(sql).Rows()
+		for _, row := range rs {
+			latency := row[4].(string)
+			execTimes := row[5].(string)
+			retRows := row[7].(string)
+			if !hasExecInfo {
+				require.Equal(t, latency, "0")
+				require.Equal(t, execTimes, "0")
+				require.Equal(t, retRows, "0")
+			} else {
+				require.NotEqual(t, latency, "0")
+				require.NotEqual(t, execTimes, "0")
+				require.NotEqual(t, retRows, "0")
+			}
+		}
+	}
+
+	checkExecInfo(`explain explore select * from t where a=1`, false)
+	checkExecInfo(`explain explore analyze select * from t where a=1`, true)
+	checkExecInfo(`explain explore select * from t where b<10`, false)
+	checkExecInfo(`explain explore analyze select * from t where b<10`, true)
+	checkExecInfo(`explain explore select count(1) from t where b<10`, false)
+	checkExecInfo(`explain explore analyze select count(1) from t where b<10`, true)
+}
+
+func TestExplainExploreVerifyAndBind(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`insert into t values (1, 2), (2, 3), (3, 4), (4, 5)`)
+
+	tk.MustQuery(`select * from t`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	require.True(t, len(tk.MustQuery(`show global bindings`).Rows()) == 0) // no binding
+
+	rs := tk.MustQuery(`explain explore select * from t`).Rows()
+	runStmt := rs[0][12].(string)     // explain analyze <plan_digest>
+	bindingStmt := rs[0][13].(string) // create global binding from history using plan digest <plan_digest>
+
+	require.True(t, strings.HasPrefix(runStmt, "EXPLAIN ANALYZE"))
+	require.True(t, strings.HasPrefix(bindingStmt, "CREATE GLOBAL BINDING"))
+
+	rs = tk.MustQuery(runStmt).Rows()
+	require.True(t, strings.Contains(rs[0][0].(string), "TableReader")) // table scan and no error
+
+	tk.MustExec(bindingStmt)
+	tk.MustQuery(`select * from t`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	require.True(t, len(tk.MustQuery(`show global bindings`).Rows()) == 1)
 }
 
 func TestPlanGeneration(t *testing.T) {
@@ -172,6 +237,9 @@ func TestPlanGeneration(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
+	tk.MustExec(`create table t1 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, key(a), key(b))`)
+	tk.MustExec(`create table t3 (a int, b int, c int, key(a), key(b))`)
 
 	var input []string
 	var output []struct {

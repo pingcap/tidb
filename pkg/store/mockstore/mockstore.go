@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
@@ -223,6 +225,16 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	}
 	for _, f := range options {
 		f(&opt)
+	}
+	if kerneltype.IsNextGen() {
+		// in nextgen, all stores must have a keyspace meta set. to simplify the
+		// test, we set the default keyspace meta to system keyspace.
+		if opt.keyspaceMeta == nil {
+			opt.keyspaceMeta = &keyspacepb.KeyspaceMeta{
+				Id:   1,
+				Name: keyspace.System,
+			}
+		}
 	}
 
 	var (

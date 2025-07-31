@@ -62,8 +62,7 @@ func (c *cowExprRef) Set(i int, changed bool, val Expression) {
 	if !changed {
 		return
 	}
-	c.new = make([]Expression, len(c.ref))
-	copy(c.new, c.ref)
+	c.new = slices.Clone(c.ref)
 	c.new[i] = val
 }
 
@@ -501,7 +500,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		oldCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
 		if err != nil {
-			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+			logutil.BgLogger().Warn("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"), zap.Error(err))
 			return false, false, v
 		}
 		var tmpArgForCollCheck []Expression
@@ -521,7 +520,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				tmpArgForCollCheck[idx] = newFuncExpr
 				newCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
 				if err != nil {
-					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+					logutil.BgLogger().Warn("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"), zap.Error(err))
 					return false, failed, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
@@ -1018,17 +1017,12 @@ func containOuterNot(expr Expression, not bool) bool {
 
 // Contains tests if `exprs` contains `e`.
 func Contains(ectx EvalContext, exprs []Expression, e Expression) bool {
-	for _, expr := range exprs {
-		// Check string equivalence if one of the expressions is a clone.
-		sameString := false
-		if e != nil && expr != nil {
-			sameString = (e.StringWithCtx(ectx, errors.RedactLogDisable) == expr.StringWithCtx(ectx, errors.RedactLogDisable))
+	return slices.ContainsFunc(exprs, func(expr Expression) bool {
+		if expr == nil {
+			return e == nil
 		}
-		if e == expr || sameString {
-			return true
-		}
-	}
-	return false
+		return e == expr || expr.Equal(ectx, e)
+	})
 }
 
 // ExtractFiltersFromDNFs checks whether the cond is DNF. If so, it will get the extracted part and the remained part.
@@ -1404,16 +1398,18 @@ func IsImmutableFunc(expr Expression) bool {
 // are mutable or have side effects, we cannot remove it even if it has duplicates;
 // if the plan is going to be cached, we cannot remove expressions containing `?` neither.
 func RemoveDupExprs(exprs []Expression) []Expression {
-	res := make([]Expression, 0, len(exprs))
+	if len(exprs) <= 1 {
+		return exprs
+	}
 	exists := make(map[string]struct{}, len(exprs))
-	for _, expr := range exprs {
+	return slices.DeleteFunc(exprs, func(expr Expression) bool {
 		key := string(expr.HashCode())
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
-			res = append(res, expr)
 			exists[key] = struct{}{}
+			return false
 		}
-	}
-	return res
+		return true
+	})
 }
 
 // GetUint64FromConstant gets a uint64 from constant expression.
@@ -1553,7 +1549,7 @@ func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bo
 // 2. Whether the statement can be cached.
 // 3. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
-func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
+func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs ...Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
 	if !ctx.IsUseCache() {
 		return false
@@ -1579,7 +1575,7 @@ func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
+func RemoveMutableConst(ctx BuildContext, exprs ...Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -1594,7 +1590,10 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			return RemoveMutableConst(ctx, v.GetArgs())
+			err := RemoveMutableConst(ctx, v.GetArgs()...)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

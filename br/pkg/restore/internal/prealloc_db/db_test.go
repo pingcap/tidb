@@ -92,8 +92,9 @@ func TestRestoreAutoIncID(t *testing.T) {
 	uniqueMap := make(map[restore.UniqueTableName]bool)
 
 	preallocId := func(tables []*metautil.Table) {
-		ids := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
+		ids, err := prealloctableid.New(tables)
+		require.NoErrorf(t, err, "Error create prealloc ids: %s", err)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}
@@ -251,9 +252,12 @@ func cloneTableInfos(
 				Info: newTableInfo,
 			})
 		}
-
-		ids = prealloctableid.New(tableInfos)
-		return ids.Alloc(allocater)
+		var err error
+		ids, err = prealloctableid.New(tableInfos)
+		if err != nil {
+			return err
+		}
+		return ids.PreallocIDs(allocater)
 	})
 	require.NoError(t, err)
 	db.RegisterPreallocatedIDs(ids)
@@ -390,8 +394,9 @@ func TestCreateTablesInDb(t *testing.T) {
 	require.NoError(t, err)
 
 	preallocId := func(tables []*metautil.Table) {
-		ids := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
+		ids, allocErr := prealloctableid.New(tables)
+		require.NoErrorf(t, allocErr, "Error create prealloc ids: %s", allocErr)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}
@@ -444,8 +449,9 @@ func TestDDLJobMap(t *testing.T) {
 	}
 
 	preallocId := func(tables []*metautil.Table) {
-		ids := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
+		ids, allocErr := prealloctableid.New(tables)
+		require.NoErrorf(t, allocErr, "Error create prealloc ids: %s", allocErr)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}
@@ -585,8 +591,9 @@ func TestCreateTableConsistent(t *testing.T) {
 	tk.MustExec("drop sequence test.s;")
 
 	preallocId := func(tables []*metautil.Table) {
-		ids := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
+		ids, allocErr := prealloctableid.New(tables)
+		require.NoError(t, allocErr)
+		ids.PreallocIDs(&allocator)
 		db.RegisterPreallocatedIDs(ids)
 		allocator += testAllocator(len(tables))
 	}

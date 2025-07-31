@@ -250,7 +250,7 @@ func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err er
 
 func rollingbackAddColumanrIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.SchemaState == model.StateWriteReorganization {
-		// Add vector index workers are started. need to ask them to exit.
+		// Add columnar index workers are started. need to ask them to exit.
 		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
 		ver, err = w.onCreateColumnarIndex(jobCtx, job)
 	} else {
@@ -668,7 +668,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 			// Once `convertJob2RollbackJob` meets an error, the job state can't be set as `JobStateRollingback` since
 			// job state and args may not be correctly overwritten. The job will be fetched to run with the cancelling
 			// state again. So we should check the error count here.
-			if err1 := loadDDLVars(w); err1 != nil {
+			if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
 				logger.Error("load DDL global variable failed", zap.Error(err1))
 			}
 			errorCount := vardef.GetDDLErrorCountLimit()

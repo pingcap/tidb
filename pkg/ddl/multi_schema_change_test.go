@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -821,6 +823,56 @@ func TestMultiSchemaChangePollJobCount(t *testing.T) {
 	tk.MustExec("alter table t add column b int,  modify column a bigint, add column c char(10);")
 	require.Equal(t, 29, runOneJobCounter)
 	require.Equal(t, 9, pollJobCounter)
+}
+
+func TestMultiSchemaChangeMDLView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	unistoreMDLView := session.CreateTiDBMDLView
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_processlist", "processlist")
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_tidb_trx", "tidb_trx")
+	tk.MustExec(unistoreMDLView)
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add column b int, add column c int;")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select count(*) from mysql.tidb_mdl_view;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
+}
+
+func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	defer func() {
+		tk.MustExec("set global tidb_enable_metadata_lock = default;")
+	}()
+
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{"drop column", "alter table t drop column col2, drop column col3"},
+		{"drop index", "alter table t drop index idx2, drop index idx3"},
+		{"modify column", "alter table t modify column col2 bigint, modify column col3 bigint"},
+		{"modify column with reorg", "alter table t modify column col2 varchar(4), modify column col3 varchar(4)"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("set global tidb_enable_metadata_lock = on;")
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t(col1 int, col2 int, col3 int, index idx2(col2), index idx3(col2));")
+			tk.MustExec("set global tidb_enable_metadata_lock = off;")
+			tk.MustExec(tc.sql)
+		})
+	}
 }
 
 type cancelOnceHook struct {

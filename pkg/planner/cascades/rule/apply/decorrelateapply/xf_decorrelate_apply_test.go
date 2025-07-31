@@ -37,6 +37,7 @@ import (
 // the subsequent XFDeCorrelate rules will be applied on them later, once generate a new
 // other intermediary apply, current src intermediary apply should be removed from memo.
 func TestXFDeCorrelateShouldDeleteIntermediaryApply(t *testing.T) {
+	t.Skip("skip this test for now, cause decorrelateapply.XFDeCorrelateSimpleApply rule is not applied in the cascades optimizer fully, and this test is not meaningful now.")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))

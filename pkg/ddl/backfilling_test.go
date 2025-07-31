@@ -507,7 +507,7 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 			FieldTypes: []*types.FieldType{},
 		},
 	}
-	opCtx, cancel := NewDistTaskOperatorCtx(context.Background(), 1, 1)
+	opCtx, cancel := NewDistTaskOperatorCtx(context.Background())
 	w := tableScanWorker{
 		copCtx:        copCtx,
 		ctx:           opCtx,
@@ -527,4 +527,120 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 		w.srcChkPool.Put(chk)
 	}
 	cancel()
+}
+
+func TestSplitRangesByKeys(t *testing.T) {
+	k := func(ord int) kv.Key {
+		return kv.Key([]byte{byte(ord)})
+	}
+	tests := []struct {
+		name      string
+		ranges    []kv.KeyRange
+		splitKeys []kv.Key
+		expected  []kv.KeyRange
+	}{
+		{
+			name: "empty split keys",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+		},
+		{
+			name: "single split key in middle",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(5)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+		{
+			name: "multiple split keys in one range",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(20)},
+			},
+			splitKeys: []kv.Key{k(5), k(10), k(15)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+				{StartKey: k(10), EndKey: k(15)},
+				{StartKey: k(15), EndKey: k(20)},
+			},
+		},
+		{
+			name: "split keys across multiple ranges",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+				{StartKey: k(10), EndKey: k(20)},
+			},
+			splitKeys: []kv.Key{k(5), k(15)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+				{StartKey: k(10), EndKey: k(15)},
+				{StartKey: k(15), EndKey: k(20)},
+			},
+		},
+		{
+			name: "split key less than range start",
+			ranges: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(3)},
+			expected: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split key greater than range end",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(15)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split key equals range start",
+			ranges: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(5)},
+			expected: []kv.KeyRange{
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split key equals range end",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(10)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+		},
+		{
+			name: "split keys overlaps with range start and end",
+			ranges: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(10)},
+			},
+			splitKeys: []kv.Key{k(0), k(5), k(10)},
+			expected: []kv.KeyRange{
+				{StartKey: k(0), EndKey: k(5)},
+				{StartKey: k(5), EndKey: k(10)},
+			},
+		},
+	}
+	for _, tt := range tests {
+		result := splitRangesByKeys(tt.ranges, tt.splitKeys)
+		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
+	}
 }

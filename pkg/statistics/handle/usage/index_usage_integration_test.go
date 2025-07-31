@@ -51,7 +51,7 @@ func TestGCIndexUsage(t *testing.T) {
 	}
 
 	c := dom.StatsHandle().NewSessionIndexUsageCollector()
-	is := tk.Session().GetDomainInfoSchema()
+	is := tk.Session().GetLatestInfoSchema()
 	db, ok := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 

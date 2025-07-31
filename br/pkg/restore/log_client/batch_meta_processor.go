@@ -60,6 +60,7 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 	ctx context.Context,
 	hasExplicitFilter bool,
 	files []*backuppb.DataFileInfo,
+	schemasReplace *stream.SchemasReplace,
 ) error {
 	// starts gc row collector
 	rp.client.RunGCRowsLoader(ctx)
@@ -89,7 +90,12 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 			return errors.Trace(err)
 		}
 	} else {
-		log.Info("skip doing full reload for filtered PiTR")
+		// refresh metadata will sync data from TiKV to info schema one table at a time.
+		// this must succeed to ensure schema consistency
+		log.Info("refreshing schema meta")
+		if err := rp.client.RefreshMetaForTables(ctx, schemasReplace); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -144,6 +150,7 @@ func (mp *MetaKVInfoProcessor) ReadMetaKVFilesAndBuildInfo(
 	); err != nil {
 		return errors.Trace(err)
 	}
+	mp.tableMappingManager.CleanTempKV()
 	return nil
 }
 
@@ -162,7 +169,8 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 	// process entries to collect table IDs
 	for _, entry := range curSortedEntries {
 		// parse entry and do the table mapping, using tableHistoryManager as the collector
-		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf, mp.tableHistoryManager); err != nil {
+		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf, entry.Ts,
+			mp.tableHistoryManager); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}

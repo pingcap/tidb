@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1797,7 +1798,7 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	// Check the whether the repaired table is system table.
-	if util.IsMemOrSysDB(tn.Schema.L) {
+	if metadef.IsMemOrSysDB(tn.Schema.L) {
 		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
 		return
 	}
@@ -2049,10 +2050,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
 			lockedID = tableInfo.ID
 		}
-		dom := domain.GetDomain(sctx)
-		domainSchema := dom.InfoSchema()
-		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		tbl, err = domainSchema.TableByName(ctx, dbName, tableInfo.Name)
+		latestIS := sctx.GetLatestISWithoutSessExt().(infoschema.InfoSchema)
+		domainSchemaVer := latestIS.SchemaMetaVersion()
+		tbl, err = latestIS.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -2079,8 +2079,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 						copyTableInfo = tbl.Meta().Clone()
 					}
 					copyTableInfo.Indices[i].State = model.StateWriteReorganization
-					dbInfo, _ := domainSchema.SchemaByName(dbName)
-					allocs := autoid.NewAllocatorsFromTblInfo(dom, dbInfo.ID, copyTableInfo)
+					dbInfo, _ := latestIS.SchemaByName(dbName)
+					allocs := autoid.NewAllocatorsFromTblInfo(latestIS.GetAutoIDRequirement(), dbInfo.ID, copyTableInfo)
 					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
 					if err != nil {
 						return nil, err
@@ -2111,7 +2111,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
-		db, _ := infoschema.SchemaByTable(domainSchema, tbl.Meta())
+		db, _ := infoschema.SchemaByTable(latestIS, tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err

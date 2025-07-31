@@ -430,7 +430,7 @@ func MockContext() *mock.Context {
 	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	ctx.BindDomain(do)
+	ctx.BindDomainAndSchValidator(do, nil)
 	return ctx
 }
 

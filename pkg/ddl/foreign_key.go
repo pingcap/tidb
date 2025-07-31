@@ -152,6 +152,7 @@ func checkTableForeignKeysValid(sctx sessionctx.Context, is infoschema.InfoSchem
 	if !vardef.EnableForeignKey.Load() {
 		return nil
 	}
+	//nolint:forbidigo
 	fkCheck := sctx.GetSessionVars().ForeignKeyChecks
 	for _, fk := range tbInfo.ForeignKeys {
 		if fk.Version < model.FKVersion1 {
@@ -683,10 +684,7 @@ func checkForeignKeyConstrain(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	originValue := sctx.GetSessionVars().OptimizerEnableNAAJ
-	sctx.GetSessionVars().OptimizerEnableNAAJ = true
 	defer func() {
-		sctx.GetSessionVars().OptimizerEnableNAAJ = originValue
 		w.sessPool.Put(sctx)
 	}()
 

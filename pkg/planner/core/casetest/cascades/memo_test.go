@@ -34,6 +34,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCascadesTemplate(t *testing.T) {
+	// wrap your test body with.
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		// test your basic sql interface and assert the execution result.
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int primary key, b int)")
+		tk.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4)")
+		tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
+
+		// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		cascadesData := GetCascadesTemplateData()
+		cascadesData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+			})
+			res := tk.MustQuery("explain format=brief " + tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+		}
+	})
+}
+
 func TestDeriveStats(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -133,7 +161,7 @@ func TestGroupNDVCols(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
 	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")

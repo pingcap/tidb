@@ -42,10 +42,10 @@
         "SQL": "explain analyze format = 'binary' select * from t",
         "BinaryPlan": {
           "main": {
-            "name": "TableReader_5",
+            "name": "TableReader_6",
             "children": [
               {
-                "name": "TableFullScan_4",
+                "name": "TableFullScan_5",
                 "cost": 4546159.475587022,
                 "est_rows": 10000,
                 "act_rows": 2,
@@ -59,7 +59,7 @@
             "act_rows": 2,
             "task_type": 1,
             "store_type": 1,
-            "operator_info": "data:TableFullScan_4"
+            "operator_info": "data:TableFullScan_5"
           },
           "with_runtime_stats": true
         }
@@ -68,19 +68,19 @@
         "SQL": "explain analyze format = 'binary' select sum(t.a) from t join t2",
         "BinaryPlan": {
           "main": {
-            "name": "HashAgg_8",
+            "name": "HashAgg_11",
             "children": [
               {
-                "name": "Projection_44",
+                "name": "Projection_53",
                 "children": [
                   {
-                    "name": "HashJoin_22",
+                    "name": "HashJoin_28",
                     "children": [
                       {
-                        "name": "IndexReader_27",
+                        "name": "IndexReader_33",
                         "children": [
                           {
-                            "name": "IndexFullScan_26",
+                            "name": "IndexFullScan_32",
                             "cost": 1628000,
                             "est_rows": 10000,
                             "act_rows": 2,
@@ -97,13 +97,13 @@
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "index:IndexFullScan_26"
+                        "operator_info": "index:IndexFullScan_32"
                       },
                       {
-                        "name": "TableReader_29",
+                        "name": "TableReader_35",
                         "children": [
                           {
-                            "name": "TableFullScan_28",
+                            "name": "TableFullScan_34",
                             "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
@@ -120,7 +120,7 @@
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "data:TableFullScan_28"
+                        "operator_info": "data:TableFullScan_34"
                       }
                     ],
                     "cost": 1128387.6317058015,
@@ -153,10 +153,10 @@
         "SQL": "explain analyze format = 'binary' select a from t use index (ia) where a > 100",
         "BinaryPlan": {
           "main": {
-            "name": "IndexReader_6",
+            "name": "IndexReader_7",
             "children": [
               {
-                "name": "IndexRangeScan_5",
+                "name": "IndexRangeScan_6",
                 "cost": 542666.6666666667,
                 "est_rows": 3333.3333333333335,
                 "task_type": 2,
@@ -168,7 +168,7 @@
             "est_rows": 3333.3333333333335,
             "task_type": 1,
             "store_type": 1,
-            "operator_info": "index:IndexRangeScan_5"
+            "operator_info": "index:IndexRangeScan_6"
           },
           "with_runtime_stats": true
         }
@@ -177,13 +177,13 @@
         "SQL": "explain analyze format = 'binary' select a from t use index () where a > 100",
         "BinaryPlan": {
           "main": {
-            "name": "TableReader_7",
+            "name": "TableReader_8",
             "children": [
               {
-                "name": "Selection_6",
+                "name": "Selection_7",
                 "children": [
                   {
-                    "name": "TableFullScan_5",
+                    "name": "TableFullScan_6",
                     "cost": 4546159.475587022,
                     "est_rows": 10000,
                     "act_rows": 2,
@@ -203,7 +203,7 @@
             "est_rows": 3333.3333333333335,
             "task_type": 1,
             "store_type": 1,
-            "operator_info": "data:Selection_6"
+            "operator_info": "data:Selection_7"
           },
           "with_runtime_stats": true
         }
@@ -212,16 +212,16 @@
         "SQL": "explain analyze format = 'binary' with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
         "BinaryPlan": {
           "main": {
-            "name": "HashJoin_28",
+            "name": "HashJoin_30",
             "children": [
               {
-                "name": "TableReader_32",
+                "name": "TableReader_34",
                 "children": [
                   {
-                    "name": "Selection_31",
+                    "name": "Selection_33",
                     "children": [
                       {
-                        "name": "TableFullScan_30",
+                        "name": "TableFullScan_32",
                         "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 2,
@@ -246,16 +246,16 @@
                 "act_rows": 2,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:Selection_31"
+                "operator_info": "data:Selection_33"
               },
               {
-                "name": "TableReader_41",
+                "name": "TableReader_44",
                 "children": [
                   {
-                    "name": "Selection_40",
+                    "name": "Selection_43",
                     "children": [
                       {
-                        "name": "TableFullScan_39",
+                        "name": "TableFullScan_42",
                         "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 4,
@@ -280,7 +280,7 @@
                 "act_rows": 4,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:Selection_40"
+                "operator_info": "data:Selection_43"
               }
             ],
             "cost": 2103314.3700782694,
@@ -296,7 +296,7 @@
         "SQL": "explain analyze format = 'binary' WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte",
         "BinaryPlan": {
           "main": {
-            "name": "CTEFullScan_17",
+            "name": "CTEFullScan_25",
             "cost": 0.8982000000000001,
             "est_rows": 1.8,
             "act_rows": 5,
@@ -312,7 +312,7 @@
                   "name": "Projection_11",
                   "children": [
                     {
-                      "name": "TableDual_12",
+                      "name": "TableDual_13",
                       "est_rows": 1,
                       "act_rows": 1,
                       "task_type": 1,
@@ -331,13 +331,13 @@
                   "operator_info": "1->Column#2"
                 },
                 {
-                  "name": "Projection_13",
+                  "name": "Projection_15",
                   "children": [
                     {
-                      "name": "Selection_14",
+                      "name": "Selection_17",
                       "children": [
                         {
-                          "name": "CTETable_15",
+                          "name": "CTETable_19",
                           "est_rows": 1,
                           "act_rows": 5,
                           "task_type": 1,
@@ -382,13 +382,13 @@
             "name": "Update_4",
             "children": [
               {
-                "name": "TableReader_8",
+                "name": "TableReader_9",
                 "children": [
                   {
-                    "name": "Selection_7",
+                    "name": "Selection_8",
                     "children": [
                       {
-                        "name": "TableFullScan_6",
+                        "name": "TableFullScan_7",
                         "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 4,
@@ -408,7 +408,7 @@
                 "est_rows": 3333.3333333333335,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:Selection_7"
+                "operator_info": "data:Selection_8"
               }
             ],
             "task_type": 1,
@@ -437,10 +437,10 @@
             "name": "Insert_1",
             "children": [
               {
-                "name": "TableReader_7",
+                "name": "TableReader_8",
                 "children": [
                   {
-                    "name": "TableFullScan_6",
+                    "name": "TableFullScan_7",
                     "cost": 4546159.475587022,
                     "est_rows": 10000,
                     "act_rows": 2,
@@ -454,7 +454,7 @@
                 "act_rows": 2,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:TableFullScan_6"
+                "operator_info": "data:TableFullScan_7"
               }
             ],
             "task_type": 1,
@@ -471,10 +471,10 @@
             "name": "Delete_2",
             "children": [
               {
-                "name": "TableReader_6",
+                "name": "TableReader_7",
                 "children": [
                   {
-                    "name": "TableFullScan_5",
+                    "name": "TableFullScan_6",
                     "cost": 4546159.475587022,
                     "est_rows": 10000,
                     "act_rows": 8,
@@ -488,7 +488,7 @@
                 "act_rows": 8,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:TableFullScan_5"
+                "operator_info": "data:TableFullScan_6"
               }
             ],
             "task_type": 1,

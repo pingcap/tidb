@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -162,6 +164,8 @@ type SnapClient struct {
 
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 
+	temporarySystemTablesRenamed bool
+
 	// restoreUUID is the UUID of this restore.
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
@@ -188,6 +192,14 @@ func (rc *SnapClient) GetRestorer(checkpointRunner *checkpoint.CheckpointRunner[
 		rc.restorer = rc.getRestorerFn(checkpointRunner)
 	}
 	return rc.restorer
+}
+
+func (rc *SnapClient) CreatePreallocIDCheckpoint() *checkpoint.PreallocIDs {
+	if rc.preallocedIDs == nil {
+		return nil
+	}
+
+	return rc.preallocedIDs.CreateCheckpoint()
 }
 
 func (rc *SnapClient) closeConn() {
@@ -220,6 +232,24 @@ func (rc *SnapClient) SetRateLimit(rateLimit uint64) {
 
 func (rc *SnapClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
+}
+
+func (rc *SnapClient) CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical bool, tables []*metautil.Table) []*metautil.Table {
+	if !rc.temporarySystemTablesRenamed {
+		return tables
+	}
+	newTables := make([]*metautil.Table, 0, len(tables))
+	temporaryTableChecker := &TemporaryTableChecker{
+		loadStatsPhysical:    loadStatsPhysical,
+		loadSysTablePhysical: loadSysTablePhysical,
+	}
+	for _, table := range tables {
+		if _, ok := temporaryTableChecker.CheckTemporaryTables(table.DB.Name.O, table.Info.Name.O); ok {
+			continue
+		}
+		newTables = append(newTables, table)
+	}
+	return newTables
 }
 
 // GetClusterID gets the cluster id from down-stream cluster.
@@ -296,19 +326,79 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
+func getMinUserTableID(tables []*metautil.Table) int64 {
+	minUserTableID := int64(math.MaxInt64)
+	for _, table := range tables {
+		if !utils.IsSysOrTempSysDB(table.DB.Name.O) {
+			if table.Info.ID < minUserTableID {
+				minUserTableID = table.Info.ID
+			}
+			if table.Info.Partition != nil && table.Info.Partition.Definitions != nil {
+				for _, part := range table.Info.Partition.Definitions {
+					if part.ID < minUserTableID {
+						minUserTableID = part.ID
+					}
+				}
+			}
+		}
+	}
+	return minUserTableID
+}
+
 // AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
 // the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
-	preallocedTableIDs := tidalloc.New(tables)
-	if preallocedTableIDs == nil {
-		return errors.Errorf("failed to pre-alloc table IDs")
+// It returns whether any user table ID is not reused when need check.
+func (rc *SnapClient) AllocTableIDs(
+	ctx context.Context,
+	tables []*metautil.Table,
+	loadStatsPhysical, loadSysTablePhysical bool,
+	reusePreallocIDs *checkpoint.PreallocIDs,
+) (bool, error) {
+	var preallocedTableIDs *tidalloc.PreallocIDs
+	var err error
+	if reusePreallocIDs == nil {
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+		err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
+			preallocedTableIDs, err = tidalloc.NewAndPrealloc(tables, meta.NewMutator(txn))
+			return err
+		})
+		if err != nil {
+			return false, err
+		}
+	} else {
+		preallocedTableIDs, err = tidalloc.ReuseCheckpoint(reusePreallocIDs, tables)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 	}
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
-	})
-	if err != nil {
-		return err
+	userTableIDNotReusedWhenNeedCheck := false
+	if loadStatsPhysical {
+		minUserTableID := getMinUserTableID(tables)
+		start, _ := preallocedTableIDs.GetIDRange()
+		if minUserTableID != int64(math.MaxInt64) && minUserTableID < start {
+			userTableIDNotReusedWhenNeedCheck = true
+			loadStatsPhysical = false
+		}
+	}
+	if reusePreallocIDs != nil && (loadStatsPhysical || loadSysTablePhysical) {
+		temporaryTableChecker := &TemporaryTableChecker{
+			loadStatsPhysical:    loadStatsPhysical,
+			loadSysTablePhysical: loadSysTablePhysical,
+		}
+		for _, table := range tables {
+			if dbName, ok := temporaryTableChecker.CheckTemporaryTables(table.DB.Name.O, table.Info.Name.O); ok {
+				downstreamId, err := preallocedTableIDs.AllocID(table.Info.ID)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				if tableInfo, err := rc.dom.InfoSchema().TableInfoByName(ast.NewCIStr(dbName), table.Info.Name); err == nil {
+					if tableInfo.ID == downstreamId {
+						rc.temporarySystemTablesRenamed = true
+					}
+					break
+				}
+			}
+		}
 	}
 
 	log.Info("registering the table IDs", zap.Stringer("ids", preallocedTableIDs))
@@ -319,7 +409,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
 	rc.preallocedIDs = preallocedTableIDs
-	return nil
+	return userTableIDNotReusedWhenNeedCheck, nil
 }
 
 func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
@@ -331,7 +421,7 @@ func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
 
 	if start >= end {
 		log.Warn("PreAlloced IDs range is empty, no table to restore")
-		return [2]int64{start, end}, nil
+		return [2]int64{}, nil
 	}
 
 	return [2]int64{start, end}, nil
@@ -346,6 +436,7 @@ func (rc *SnapClient) InitCheckpoint(
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
 	logRestoredTS uint64,
+	hash []byte,
 	checkpointExists bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
@@ -363,8 +454,16 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
-					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+					"or just clean the checkpoint %v if the cluster has been cleaned up.",
 				rc.backupMeta.ClusterId, meta.UpstreamClusterID, snapshotCheckpointMetaManager)
+		}
+
+		if !bytes.Equal(meta.Hash, hash) {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
+					"Please don't use the checkpoint, "+
+					"or use the the same restore command. checkpoint manager: %v",
+				snapshotCheckpointMetaManager)
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
@@ -428,6 +527,8 @@ func (rc *SnapClient) InitCheckpoint(
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
 			LogRestoredTS:     logRestoredTS,
+			Hash:              hash,
+			PreallocIDs:       rc.CreatePreallocIDCheckpoint(),
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID
@@ -1240,6 +1341,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 
 	item, exists := rc.checkpointChecksum[tbl.Table.ID]
 	if !exists {
+		log.Info("did not find checksum from checkpoint, scanning table to calculate checksum")
 		startTS, err := restore.GetTSWithRetry(ctx, rc.pdClient)
 		if err != nil {
 			return errors.Trace(err)
@@ -1280,6 +1382,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 		checksumMatch = false
 	})
 	if !checksumMatch {
+		// Enhanced logging with more detailed information
 		logger.Error("failed in validate checksum",
 			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
@@ -1287,8 +1390,20 @@ func (rc *SnapClient) execAndValidateChecksum(
 			zap.Uint64("calculated total kvs", item.TotalKvs),
 			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
+			zap.Int64("table_id", tbl.Table.ID),
+			zap.String("table_info", tbl.Table.Name.String()),
 		)
-		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
+
+		// Create an error with more diagnostic details
+		return errors.Annotatef(berrors.ErrRestoreChecksumMismatch,
+			"checksum mismatch for table '%s.%s' (ID: %d): "+
+				"crc64xor (expected: %d, actual: %d), "+
+				"totalKvs (expected: %d, actual: %d), "+
+				"totalBytes (expected: %d, actual: %d)",
+			tbl.OldTable.DB.Name.O, tbl.OldTable.Info.Name.O, tbl.Table.ID,
+			expectedChecksumStats.Crc64Xor, item.Crc64xor,
+			expectedChecksumStats.TotalKvs, item.TotalKvs,
+			expectedChecksumStats.TotalBytes, item.TotalBytes)
 	}
 	logger.Info("success in validating checksum")
 	return nil

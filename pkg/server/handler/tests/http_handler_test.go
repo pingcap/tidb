@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1232,7 +1233,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
-	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
@@ -1431,38 +1432,38 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	require.NoError(t, err)
 	ddlID := do.DDL().GetID()
 	// check the result for upgrade show
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s0": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           ddlID,
 				IP:           "127.0.0.1",
 				Port:         4000,
 				JSONServerID: 0,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver",
 					GitHash: "hash",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           "ID2",
 				IP:           "127.0.0.1",
 				Port:         4002,
 				JSONServerID: 2,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver2",
 					GitHash: "hash2",
 				},
 			},
 		},
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           "ID1",
 				IP:           "127.0.0.1",
 				Port:         4001,
 				JSONServerID: 1,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver",
 					GitHash: "hash",
 				},
@@ -1548,8 +1549,8 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
 
-	ts.domain.InfoSyncer().Restart(ctx)
-	ts.domain.InfoSyncer().RestartTopology(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
 
 	testUpdateLabels := func() {
 		labels := map[string]string{}
@@ -1567,7 +1568,7 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		require.Equal(t, newLabels, labels)
 	}
 	testStoreTopology := func() {
-		require.NoError(t, ts.domain.InfoSyncer().StoreTopologyInfo(context.Background()))
+		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
 	}
 
 	done := make(chan struct{})

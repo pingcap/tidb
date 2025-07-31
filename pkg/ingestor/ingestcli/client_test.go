@@ -102,7 +102,7 @@ func TestClientIngest(t *testing.T) {
 	defer server.Close()
 
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
+	client := NewClient(server.URL, 12345, false, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
@@ -128,7 +128,7 @@ func TestClientIngestError(t *testing.T) {
 	// serverURL, err := url.Parse(server.URL)
 	// require.NoError(t, err)
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
+	client := NewClient(server.URL, 12345, false, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
@@ -165,11 +165,11 @@ func TestNextClientURL(t *testing.T) {
 		{inURL: "http://localhost:9000", forHTTP: "http://localhost:9000", forHTTPS: "http://localhost:9000"},
 		{inURL: "https://localhost:9000", forHTTP: "https://localhost:9000", forHTTPS: "https://localhost:9000"},
 	} {
-		cli := NewClient(c.inURL, 1, util.ClientWithTLS(nil), nil).(*client)
+		cli := NewClient(c.inURL, 1, false, util.ClientWithTLS(nil), nil).(*client)
 		require.Equal(t, "http://", cli.urlSchema)
 		require.Equal(t, c.forHTTP, cli.tikvWorkerURL)
 
-		cli = NewClient(c.inURL, 1, util.ClientWithTLS(&tls.Config{}), nil).(*client)
+		cli = NewClient(c.inURL, 1, true, util.ClientWithTLS(&tls.Config{}), nil).(*client)
 		require.Equal(t, "https://", cli.urlSchema)
 		require.Equal(t, c.forHTTPS, cli.tikvWorkerURL)
 	}

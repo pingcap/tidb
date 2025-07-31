@@ -33,38 +33,38 @@ import (
 func TestHashPartitionPruner(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_partition")
-	tk.MustExec("use test_partition")
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
-	tk.MustExec("create table t2(id int, a int, b int, primary key(id, a)) partition by hash(id + a) partitions 10;")
-	tk.MustExec("create table t1(id int primary key, a int, b int) partition by hash(id) partitions 10;")
-	tk.MustExec("create table t3(id int, a int, b int, primary key(id, a)) partition by hash(id) partitions 10;")
-	tk.MustExec("create table t4(d datetime, a int, b int, primary key(d, a)) partition by hash(year(d)) partitions 10;")
-	tk.MustExec("create table t5(d date, a int, b int, primary key(d, a)) partition by hash(month(d)) partitions 10;")
-	tk.MustExec("create table t6(a int, b int) partition by hash(a) partitions 3;")
-	tk.MustExec("create table t7(a int, b int) partition by hash(a + b) partitions 10;")
-	tk.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
-	tk.MustExec("create table t9(a bit(1) default null, b int(11) default null) partition by hash(a) partitions 3;") //issue #22619
-	tk.MustExec("create table t10(a bigint unsigned) partition BY hash (a);")
-	tk.MustExec("create table t11(a int, b int) partition by hash(a + a + a + b) partitions 5")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("create database test_partition")
+		testKit.MustExec("use test_partition")
+		testKit.MustExec("drop table if exists t1, t2;")
+		testKit.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+		testKit.MustExec("create table t2(id int, a int, b int, primary key(id, a)) partition by hash(id + a) partitions 10;")
+		testKit.MustExec("create table t1(id int primary key, a int, b int) partition by hash(id) partitions 10;")
+		testKit.MustExec("create table t3(id int, a int, b int, primary key(id, a)) partition by hash(id) partitions 10;")
+		testKit.MustExec("create table t4(d datetime, a int, b int, primary key(d, a)) partition by hash(year(d)) partitions 10;")
+		testKit.MustExec("create table t5(d date, a int, b int, primary key(d, a)) partition by hash(month(d)) partitions 10;")
+		testKit.MustExec("create table t6(a int, b int) partition by hash(a) partitions 3;")
+		testKit.MustExec("create table t7(a int, b int) partition by hash(a + b) partitions 10;")
+		testKit.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
+		testKit.MustExec("create table t9(a bit(1) default null, b int(11) default null) partition by hash(a) partitions 3;") //issue #22619
+		testKit.MustExec("create table t10(a bigint unsigned) partition BY hash (a);")
+		testKit.MustExec("create table t11(a int, b int) partition by hash(a + a + a + b) partitions 5")
 
-	var input []string
-	var output []struct {
-		SQL    string
-		Result []string
-	}
-	partitionPrunerData := getPartitionPrunerData()
-	partitionPrunerData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
-	}
+		var input []string
+		var output []struct {
+			SQL    string
+			Result []string
+		}
+		partitionPrunerData := getPartitionPrunerData()
+		partitionPrunerData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			})
+			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		}
+	})
 }
 
 type testTablePartitionInfo struct {
@@ -122,116 +122,116 @@ func checkPrunePartitionInfo(c *testing.T, query string, infos1 string, plan []s
 }
 
 func TestListColumnsPartitionPruner(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop database if exists test_partition;")
-	tk.MustExec("create database test_partition")
-	tk.MustExec("use test_partition")
-	tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
-	tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
-	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
-	tk.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
+		defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
 
-	// tk1 use to test partition table with index.
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set tidb_cost_model_version=2")
-	tk1.MustExec("drop database if exists test_partition_1;")
-	tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
-	tk1.MustExec("create database test_partition_1")
-	tk1.MustExec("use test_partition_1")
-	tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
-	tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
-	tk1.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
-	tk1.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+		tk.MustExec("drop database if exists test_partition;")
+		tk.MustExec("create database test_partition")
+		tk.MustExec("use test_partition")
+		tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
+		tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
+		tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+		tk.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
-	// tk2 use to compare the result with normal table.
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("set tidb_cost_model_version=2")
-	tk2.MustExec("drop database if exists test_partition_2;")
-	tk2.MustExec(`set @@session.tidb_regard_null_as_point=false`)
-	tk2.MustExec("create database test_partition_2")
-	tk2.MustExec("use test_partition_2")
-	tk2.MustExec("create table t1 (id int, a int, b int)")
-	tk2.MustExec("create table t2 (id int, a int, b int)")
-	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
-	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+		// tk1 use to test partition table with index.
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("drop database if exists test_partition_1;")
+		tk1.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+		tk1.MustExec("create database test_partition_1")
+		tk1.MustExec("use test_partition_1")
+		tk1.MustExec("create table t1 (id int, a int, b int, unique key (a,b,id)) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
+		tk1.MustExec("create table t2 (id int, a int, b int, unique key (a,b,id)) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
+		tk1.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+		tk1.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
-	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
-	tk1.MustExec("set @@tidb_enable_chunk_rpc = on")
+		// tk2 use to compare the result with normal table.
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("drop database if exists test_partition_2;")
+		tk2.MustExec(`set @@session.tidb_regard_null_as_point=false`)
+		tk2.MustExec("create database test_partition_2")
+		tk2.MustExec("use test_partition_2")
+		tk2.MustExec("create table t1 (id int, a int, b int)")
+		tk2.MustExec("create table t2 (id int, a int, b int)")
+		tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+		tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
-	var input []struct {
-		SQL    string
-		Pruner string
-	}
-	var output []struct {
-		SQL       string
-		Result    []string
-		Plan      []string
-		IndexPlan []string
-	}
-	partitionPrunerData := getPartitionPrunerData()
-	partitionPrunerData.LoadTestCases(t, &input, &output)
-	valid := false
-	for i, tt := range input {
-		// Test for table without index.
-		plan := tk.MustQuery("explain format = 'brief' " + tt.SQL)
-		planTree := testdata.ConvertRowsToStrings(plan.Rows())
-		// Test for table with index.
-		indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
-		indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
-		testdata.OnRecord(func() {
-			output[i].SQL = tt.SQL
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Sort().Rows())
-			// Test for table without index.
-			output[i].Plan = planTree
-			// Test for table with index.
-			output[i].IndexPlan = indexPlanTree
-		})
-		// compare the plan.
-		plan.Check(testkit.Rows(output[i].Plan...))
-		indexPlan.Check(testkit.Rows(output[i].IndexPlan...))
+		// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+		tk1.MustExec("set @@tidb_enable_chunk_rpc = on")
 
-		// compare the pruner information.
-		checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, planTree)
-		checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, indexPlanTree)
-
-		// compare the result.
-		result := tk.MustQuery(tt.SQL).Sort()
-		idxResult := tk1.MustQuery(tt.SQL)
-		result.Check(idxResult.Sort().Rows())
-		result.Check(testkit.Rows(output[i].Result...))
-
-		// If the query doesn't specified the partition, compare the result with normal table
-		if !strings.Contains(tt.SQL, "partition(") {
-			result.Check(tk2.MustQuery(tt.SQL).Sort().Rows())
-			valid = true
+		var input []struct {
+			SQL    string
+			Pruner string
 		}
-	}
-	require.True(t, valid)
+		var output []struct {
+			SQL       string
+			Result    []string
+			Plan      []string
+			IndexPlan []string
+		}
+		partitionPrunerData := getPartitionPrunerData()
+		partitionPrunerData.LoadTestCases(t, &input, &output, cascades, caller)
+		valid := false
+		for i, tt := range input {
+			// Test for table without index.
+			plan := tk.MustQuery("explain format = 'brief' " + tt.SQL)
+			planTree := testdata.ConvertRowsToStrings(plan.Rows())
+			// Test for table with index.
+			indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
+			indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
+			testdata.OnRecord(func() {
+				output[i].SQL = tt.SQL
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Sort().Rows())
+				// Test for table without index.
+				output[i].Plan = planTree
+				// Test for table with index.
+				output[i].IndexPlan = indexPlanTree
+			})
+			// compare the plan.
+			plan.Check(testkit.Rows(output[i].Plan...))
+			indexPlan.Check(testkit.Rows(output[i].IndexPlan...))
+
+			// compare the pruner information.
+			checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, planTree)
+			checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, indexPlanTree)
+
+			// compare the result.
+			result := tk.MustQuery(tt.SQL).Sort()
+			idxResult := tk1.MustQuery(tt.SQL)
+			result.Check(idxResult.Sort().Rows())
+			result.Check(testkit.Rows(output[i].Result...))
+
+			// If the query doesn't specified the partition, compare the result with normal table
+			if !strings.Contains(tt.SQL, "partition(") {
+				result.Check(tk2.MustQuery(tt.SQL).Sort().Rows())
+				valid = true
+			}
+		}
+		require.True(t, valid)
+	})
 }
 
 func TestPointGetIntHandleNotFirst(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec(`create table t (
 		c int,
 		a int not null,
 		b int,
 		primary key  (a) /*T![clustered_index] clustered */
 	  )`)
-	tk.MustExec(`insert into t values(1, 13, 1)`)
-	tk.MustQuery("select * from t WHERE `a` BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
-	tk.MustExec(`alter table t
+		testKit.MustExec(`insert into t values(1, 13, 1)`)
+		testKit.MustQuery("select * from t WHERE `a` BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
+		testKit.MustExec(`alter table t
 	  partition by range (a)
 	  (partition p0 values less than (10),
 	   partition p1 values less than (maxvalue))`)
 
-	tk.MustQuery("select * from t WHERE a BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
-	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 13 1"))
+		testKit.MustQuery("select * from t WHERE a BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
+		testKit.MustQuery(`select * from t`).Check(testkit.Rows("1 13 1"))
+	})
 }
 
 type ExtractTestCase struct {
@@ -358,62 +358,62 @@ func TestRangeDatePruningExtract(t *testing.T) {
 }
 
 func runExtractTestCases(t *testing.T, colType string, extractTestCases []ExtractTestCase) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
 
-	// Loop over different datatypes, DATE, DATETIME(fsp), TIMESTAMP(fsp)
-	pRanges := []string{
-		"1990-01-01 00:00:00.000000",
-		"1991-04-02 01:01:01.100000",
-		"1992-08-03 02:02:02.200000",
-		"1993-12-31 23:59:59.999999",
-	}
-	cmpOps := []string{"=", "<", ">", "<=", ">="}
-	for _, tc := range extractTestCases {
-		found := false
-		hasFsp := strings.HasSuffix(colType, ")")
-		for _, cType := range tc.ColumnTypes {
-			end := strings.TrimPrefix(colType, cType)
+		// Loop over different datatypes, DATE, DATETIME(fsp), TIMESTAMP(fsp)
+		pRanges := []string{
+			"1990-01-01 00:00:00.000000",
+			"1991-04-02 01:01:01.100000",
+			"1992-08-03 02:02:02.200000",
+			"1993-12-31 23:59:59.999999",
+		}
+		cmpOps := []string{"=", "<", ">", "<=", ">="}
+		for _, tc := range extractTestCases {
+			found := false
+			hasFsp := strings.HasSuffix(colType, ")")
+			for _, cType := range tc.ColumnTypes {
+				end := strings.TrimPrefix(colType, cType)
 
-			if end == "" || end[:1] == "(" {
-				found = true
+				if end == "" || end[:1] == "(" {
+					found = true
+				}
 			}
-		}
-		pRangesStrings := make([]string, 0, len(pRanges))
-		partDefs := ""
-		for i, pString := range pRanges {
-			r := tk.MustQuery(`SELECT EXTRACT(` + tc.TimeUnit + ` FROM '` + pString + `')`)
-			pRangesStrings = append(pRangesStrings, r.Rows()[0][0].(string))
-			if i > 0 {
-				partDefs += ", "
+			pRangesStrings := make([]string, 0, len(pRanges))
+			partDefs := ""
+			for i, pString := range pRanges {
+				r := testKit.MustQuery(`SELECT EXTRACT(` + tc.TimeUnit + ` FROM '` + pString + `')`)
+				pRangesStrings = append(pRangesStrings, r.Rows()[0][0].(string))
+				if i > 0 {
+					partDefs += ", "
+				}
+				partDefs += "PARTITION p" +
+					strconv.Itoa(i) +
+					" VALUES LESS THAN (" +
+					pRangesStrings[i] + ")"
 			}
-			partDefs += "PARTITION p" +
-				strconv.Itoa(i) +
-				" VALUES LESS THAN (" +
-				pRangesStrings[i] + ")"
-		}
-		tk.MustExec(`drop table if exists t`)
-		createSQL := `create table t (d ` + colType + `, f varchar(255)) partition by range (EXTRACT(` + tc.TimeUnit + ` FROM d)) (` + partDefs + `, partition pMax values less than (maxvalue))`
-		if !found {
-			tk.MustContainErrMsg(createSQL, `[ddl:1486]Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed`)
-			continue
-		}
-		tk.MustExec(createSQL)
-		for i, op := range cmpOps {
-			res := tk.MustQuery(`explain select * from t where d ` + op + ` '` + pRanges[1] + `'`)
+			testKit.MustExec(`drop table if exists t`)
+			createSQL := `create table t (d ` + colType + `, f varchar(255)) partition by range (EXTRACT(` + tc.TimeUnit + ` FROM d)) (` + partDefs + `, partition pMax values less than (maxvalue))`
+			if !found {
+				testKit.MustContainErrMsg(createSQL, `[ddl:1486]Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed`)
+				continue
+			}
+			testKit.MustExec(createSQL)
+			for i, op := range cmpOps {
+				res := testKit.MustQuery(`explain select * from t where d ` + op + ` '` + pRanges[1] + `'`)
+				parts := strings.TrimPrefix(res.Rows()[0][3].(string), "partition:")
+				require.Greater(t, len(tc.PruneResult), i, "PruneResults does not include enough values, colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
+				expects := tc.PruneResult[i]
+				if i == 0 && !hasFsp && tc.NoFspResult != "" {
+					expects = tc.NoFspResult
+				}
+				require.Equal(t, expects, parts, "colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
+			}
+			res := testKit.MustQuery(`explain select * from t where d between '` + pRanges[1] + `' and '` + pRanges[2] + `'`)
 			parts := strings.TrimPrefix(res.Rows()[0][3].(string), "partition:")
-			require.Greater(t, len(tc.PruneResult), i, "PruneResults does not include enough values, colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
-			expects := tc.PruneResult[i]
-			if i == 0 && !hasFsp && tc.NoFspResult != "" {
-				expects = tc.NoFspResult
-			}
-			require.Equal(t, expects, parts, "colType %s, EXTRACT %s, op %s", colType, tc.TimeUnit, op)
+			require.Equal(t, tc.PruneResult[len(cmpOps)], parts, "colType %s, EXTRACT %s, BETWEEN", colType, tc.TimeUnit)
 		}
-		res := tk.MustQuery(`explain select * from t where d between '` + pRanges[1] + `' and '` + pRanges[2] + `'`)
-		parts := strings.TrimPrefix(res.Rows()[0][3].(string), "partition:")
-		require.Equal(t, tc.PruneResult[len(cmpOps)], parts, "colType %s, EXTRACT %s, BETWEEN", colType, tc.TimeUnit)
-	}
+	})
 }
 
 func TestRangeTimePruningExtract(t *testing.T) {
@@ -526,232 +526,232 @@ func TestRangeTimePruningExtract(t *testing.T) {
 }
 
 func TestIssue59827(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `t` (" +
-		"`a` varchar(150) NOT NULL," +
-		"`b` varchar(100) NOT NULL," +
-		"`c` int NOT NULL DEFAULT '0'" +
-		",PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
-		" PARTITION BY LIST COLUMNS(`b`)" +
-		"(PARTITION `p0` VALUES IN ('0')," +
-		"PARTITION `p1` VALUES IN ('1')," +
-		"PARTITION `p2` VALUES IN ('2'))")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("CREATE TABLE `t` (" +
+			"`a` varchar(150) NOT NULL," +
+			"`b` varchar(100) NOT NULL," +
+			"`c` int NOT NULL DEFAULT '0'" +
+			",PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
+			" PARTITION BY LIST COLUMNS(`b`)" +
+			"(PARTITION `p0` VALUES IN ('0')," +
+			"PARTITION `p1` VALUES IN ('1')," +
+			"PARTITION `p2` VALUES IN ('2'))")
 
-	tk.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
-	tk.MustQuery("select * from t where a = 'b' and b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	tk.MustQuery("select * from t where a = 'b' and b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
+		testKit.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+		testKit.MustQuery("select * from t where a = 'b' and b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+		testKit.MustQuery("select * from t where a = 'b' and b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
 
-	tk.MustQuery("select * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and b = '1'").Check(testkit.Rows("b 1 1"))
-	tk.MustQuery("select * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and (b = '1')").Check(testkit.Rows("b 1 1"))
-	tk.MustQuery("select * from t where a = 'b' and b = ('2')").Check(testkit.Rows("b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and b = ('1')").Check(testkit.Rows("b 1 1"))
-	tk.MustQuery("explain select * from t where a = 'b' and b = '2'").CheckContain("partition:p2")
-	tk.MustQuery("explain select * from t where a = 'b' and (b = '2')").CheckContain("partition:p2")
+		testKit.MustQuery("select * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and b = '1'").Check(testkit.Rows("b 1 1"))
+		testKit.MustQuery("select * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and (b = '1')").Check(testkit.Rows("b 1 1"))
+		testKit.MustQuery("select * from t where a = 'b' and b = ('2')").Check(testkit.Rows("b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and b = ('1')").Check(testkit.Rows("b 1 1"))
+		testKit.MustQuery("explain select * from t where a = 'b' and b = '2'").CheckContain("partition:p2")
+		testKit.MustQuery("explain select * from t where a = 'b' and (b = '2')").CheckContain("partition:p2")
 
-	tk.MustExec("PREPARE stmt FROM 'select * from t where a = ? and b = ?'")
-	tk.MustExec("SET @a = 'b', @b = '2'")
-	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("b 2 2"))
-	tk.MustExec("SET @a = 'a', @b = '1'")
-	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("a 1 1"))
-	tk.MustExec("DEALLOCATE PREPARE stmt")
-	tk.MustExec(`PREPARE stmt FROM "select * from t where a = 'b' and b = ?"`)
-	tk.MustExec("SET @b = '2'")
-	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 2 2"))
-	tk.MustExec("SET @b = '1'")
-	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 1 1"))
-	tk.MustExec("DEALLOCATE PREPARE stmt")
+		testKit.MustExec("PREPARE stmt FROM 'select * from t where a = ? and b = ?'")
+		testKit.MustExec("SET @a = 'b', @b = '2'")
+		testKit.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("b 2 2"))
+		testKit.MustExec("SET @a = 'a', @b = '1'")
+		testKit.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("a 1 1"))
+		testKit.MustExec("DEALLOCATE PREPARE stmt")
+		testKit.MustExec(`PREPARE stmt FROM "select * from t where a = 'b' and b = ?"`)
+		testKit.MustExec("SET @b = '2'")
+		testKit.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 2 2"))
+		testKit.MustExec("SET @b = '1'")
+		testKit.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 1 1"))
+		testKit.MustExec("DEALLOCATE PREPARE stmt")
 
-	tk.MustExec("PREPARE stmt FROM 'select * from t where a = ? and (b = ?)'")
-	tk.MustExec("SET @a = 'b', @b = '2'")
-	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("b 2 2"))
-	tk.MustExec("SET @a = 'a', @b = '1'")
-	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("a 1 1"))
-	tk.MustExec("DEALLOCATE PREPARE stmt")
-	tk.MustExec(`PREPARE stmt FROM "select * from t where a = 'b' and b = (?)"`)
-	tk.MustExec("SET @b = '2'")
-	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 2 2"))
-	tk.MustExec("SET @b = '1'")
-	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 1 1"))
-	tk.MustExec("DEALLOCATE PREPARE stmt")
+		testKit.MustExec("PREPARE stmt FROM 'select * from t where a = ? and (b = ?)'")
+		testKit.MustExec("SET @a = 'b', @b = '2'")
+		testKit.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("b 2 2"))
+		testKit.MustExec("SET @a = 'a', @b = '1'")
+		testKit.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("a 1 1"))
+		testKit.MustExec("DEALLOCATE PREPARE stmt")
+		testKit.MustExec(`PREPARE stmt FROM "select * from t where a = 'b' and b = (?)"`)
+		testKit.MustExec("SET @b = '2'")
+		testKit.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 2 2"))
+		testKit.MustExec("SET @b = '1'")
+		testKit.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 1 1"))
+		testKit.MustExec("DEALLOCATE PREPARE stmt")
+	})
 }
 
 func TestIssue59827KeyPartitioning(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `t` (" +
-		"`a` varchar(150) NOT NULL," +
-		"`b` varchar(100) NOT NULL," +
-		"`c` int NOT NULL DEFAULT '0'" +
-		",PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
-		" PARTITION BY KEY(`b`) PARTITIONS 13")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("CREATE TABLE `t` (" +
+			"`a` varchar(150) NOT NULL," +
+			"`b` varchar(100) NOT NULL," +
+			"`c` int NOT NULL DEFAULT '0'" +
+			",PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
+			" PARTITION BY KEY(`b`) PARTITIONS 13")
 
-	tk.MustExec("insert into t values ('a','3',3),('b','1',1),('b', '2', 2),('xX','xX',10),('Yy','Yy',11)")
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
-	tk.MustQuery("select * from t where (b IN ('Xx','yY'))").Sort().Check(testkit.Rows("Yy Yy 11", "xX xX 10"))
-	tk.MustQuery("select * from t where b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where b = '2' or b = '1'").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-	tk.MustQuery("select * from t where (b IN ('Xx','yY'))").Sort().Check(testkit.Rows("Yy Yy 11", "xX xX 10"))
-	tk.MustQuery("select * from t where b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where b = '2' or b = '1'").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
-	tk.MustQuery("select * from t where (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustExec("insert into t values ('a','3',3),('b','1',1),('b', '2', 2),('xX','xX',10),('Yy','Yy',11)")
+		testKit.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+		testKit.MustQuery("select * from t where (b IN ('Xx','yY'))").Sort().Check(testkit.Rows("Yy Yy 11", "xX xX 10"))
+		testKit.MustQuery("select * from t where b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where b = '2' or b = '1'").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+		testKit.MustQuery("select * from t where (b IN ('Xx','yY'))").Sort().Check(testkit.Rows("Yy Yy 11", "xX xX 10"))
+		testKit.MustQuery("select * from t where b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where b = '2' or b = '1'").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+		testKit.MustQuery("select * from t where (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+	})
 }
 
 func TestIssue59827RangeColumns(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `t` (" +
-		"`a` varchar(150) COLLATE utf8mb4_general_ci NOT NULL," +
-		"`b` varchar(100) COLLATE utf8mb4_general_ci NOT NULL," +
-		"`c` int NOT NULL DEFAULT '0'," +
-		"PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
-		" PARTITION BY RANGE COLUMNS(`b`)" +
-		"(PARTITION `p0` VALUES LESS THAN ('1')," +
-		"PARTITION `p1` VALUES LESS THAN ('2')," +
-		"PARTITION `p2` VALUES LESS THAN ('3'))")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("CREATE TABLE `t` (" +
+			"`a` varchar(150) COLLATE utf8mb4_general_ci NOT NULL," +
+			"`b` varchar(100) COLLATE utf8mb4_general_ci NOT NULL," +
+			"`c` int NOT NULL DEFAULT '0'," +
+			"PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
+			" PARTITION BY RANGE COLUMNS(`b`)" +
+			"(PARTITION `p0` VALUES LESS THAN ('1')," +
+			"PARTITION `p1` VALUES LESS THAN ('2')," +
+			"PARTITION `p2` VALUES LESS THAN ('3'))")
 
-	tk.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
-	tk.MustQuery("select * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
-	tk.MustQuery("select * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
-	tk.MustQuery("explain select * from t where a = 'a' and b = '2'").CheckContain("partition:p2")
-	tk.MustQuery("explain select * from t where a = 'a' and (b = '2')").CheckContain("partition:p2")
+		testKit.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
+		testKit.MustQuery("select * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
+		testKit.MustQuery("select * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
+		testKit.MustQuery("explain select * from t where a = 'a' and b = '2'").CheckContain("partition:p2")
+		testKit.MustQuery("explain select * from t where a = 'a' and (b = '2')").CheckContain("partition:p2")
+	})
 }
 
 func TestIssue61134(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (" +
-		"a varchar(291)," +
-		"b int," +
-		"primary key(a)) partition by list columns (a)" +
-		"(partition p0 values in ('', '1'))")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t (" +
+			"a varchar(291)," +
+			"b int," +
+			"primary key(a)) partition by list columns (a)" +
+			"(partition p0 values in ('', '1'))")
 
-	tk.MustExec("insert into t values ('', 1)")
-	tk.MustQuery("explain select * from t where a in ('')").CheckContain("Point_Get")
-	tk.MustQuery("select * from t where a in ('')").Check(testkit.Rows(" 1"))
+		testKit.MustExec("insert into t values ('', 1)")
+		testKit.MustQuery("explain select * from t where a in ('')").CheckContain("Point_Get")
+		testKit.MustQuery("select * from t where a in ('')").Check(testkit.Rows(" 1"))
+	})
 }
 
 func TestIssue61176Char(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	testCase := []struct {
-		partitionBy string
-		partD       string
-		partY       string
-		partNull    string
-	}{
-		{
-			" PARTITION BY RANGE COLUMNS (a) (PARTITION pNULL VALUES LESS THAN (''), PARTITION p0 VALUES LESS THAN ('M'), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
-			"p0",
-			"p1",
-			"pNULL",
-		}, {
-			" PARTITION BY LIST COLUMNS (a) (PARTITION p0 VALUES IN ('D'), PARTITION p1 VALUES IN ('Y'), PARTITION pNULL VALUES IN (NULL))",
-			"p0",
-			"p1",
-			"pNULL",
-		}, {
-			" PARTITION BY KEY (a) PARTITIONS 2",
-			"p0",
-			"p1",
-			"p1",
-		},
-	}
-	for _, t := range testCase {
-		tk.MustExec(`CREATE TABLE t (a varchar(9), unique index (a))` + t.partitionBy)
-		tk.MustExec(`insert into t values ('Y'),('D'),(NULL)`)
-		tk.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
-		tk.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
-		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
-		tk.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
-		tk.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
-		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
-		tk.MustExec(`drop table t`)
-		tk.MustExec(`CREATE TABLE t (a varchar(9) PRIMARY KEY)` + t.partitionBy)
-		tk.MustExec(`insert into t values ('Y'),('D')`)
-		tk.MustContainErrMsg(`insert into t values (NULL)`, "[table:1048]Column 'a' cannot be null")
-		tk.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
-		tk.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
-		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
-		tk.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
-		tk.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
-		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:" + t.partNull})
-		tk.MustExec(`drop table t`)
-	}
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testCase := []struct {
+			partitionBy string
+			partD       string
+			partY       string
+			partNull    string
+		}{
+			{
+				" PARTITION BY RANGE COLUMNS (a) (PARTITION pNULL VALUES LESS THAN (''), PARTITION p0 VALUES LESS THAN ('M'), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+				"p0",
+				"p1",
+				"pNULL",
+			}, {
+				" PARTITION BY LIST COLUMNS (a) (PARTITION p0 VALUES IN ('D'), PARTITION p1 VALUES IN ('Y'), PARTITION pNULL VALUES IN (NULL))",
+				"p0",
+				"p1",
+				"pNULL",
+			}, {
+				" PARTITION BY KEY (a) PARTITIONS 2",
+				"p0",
+				"p1",
+				"p1",
+			},
+		}
+		for _, t := range testCase {
+			testKit.MustExec(`CREATE TABLE t (a varchar(9), unique index (a))` + t.partitionBy)
+			testKit.MustExec(`insert into t values ('Y'),('D'),(NULL)`)
+			testKit.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
+			testKit.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
+			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
+			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
+			testKit.MustExec(`drop table t`)
+			testKit.MustExec(`CREATE TABLE t (a varchar(9) PRIMARY KEY)` + t.partitionBy)
+			testKit.MustExec(`insert into t values ('Y'),('D')`)
+			testKit.MustContainErrMsg(`insert into t values (NULL)`, "[table:1048]Column 'a' cannot be null")
+			testKit.MustQuery(`select a from t where a <=> 'D'`).Check(testkit.Rows("D"))
+			testKit.MustQuery(`select a from t where a <=> 'Y'`).Check(testkit.Rows("Y"))
+			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 'D'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partD})
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 'Y'`).MultiCheckContain([]string{"Point_Get", "partition:" + t.partY})
+			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"TableRangeScan", "partition:" + t.partNull})
+			testKit.MustExec(`drop table t`)
+		}
+	})
 }
 
 func TestIssue61176Int(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	testCase := []struct {
-		partitionBy string
-		part1       string
-		part5       string
-		partNull    string
-	}{
-		{
-			" PARTITION BY RANGE (a) (PARTITION pNULL VALUES LESS THAN (0), PARTITION p0 VALUES LESS THAN (5), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
-			"p0",
-			"p1",
-			"pNULL",
-		}, {
-			" PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1), PARTITION p1 VALUES IN (5), PARTITION pNULL VALUES IN (NULL))",
-			"p0",
-			"p1",
-			"pNULL",
-		}, {
-			" PARTITION BY KEY (a) PARTITIONS 3",
-			"p2",
-			"p1",
-			"p1",
-		}, {
-			" PARTITION BY HASH (a) PARTITIONS 3",
-			"p1",
-			"p2",
-			"p0",
-		},
-	}
-	for _, t := range testCase {
-		tk.MustExec(`CREATE TABLE t (a int, unique index (a))` + t.partitionBy)
-		tk.MustExec(`insert into t values (1),(5),(NULL)`)
-		tk.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
-		tk.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
-		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
-		tk.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
-		tk.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
-		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
-		tk.MustExec(`drop table t`)
-		tk.MustExec(`CREATE TABLE t (a int PRIMARY KEY)` + t.partitionBy)
-		tk.MustExec(`insert into t values (1),(5)`)
-		tk.MustContainErrMsg(`insert into t values (NULL)`, "[table:1048]Column 'a' cannot be null")
-		tk.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
-		tk.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
-		tk.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
-		tk.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
-		tk.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
-		// TODO: Also do this for RANGE COLUMNS? Why is this different?!?
-		tk.MustQuery(`explain format=brief select a from t where a <=> NULL`).CheckContain("TableDual")
-		tk.MustExec(`drop table t`)
-	}
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testCase := []struct {
+			partitionBy string
+			part1       string
+			part5       string
+			partNull    string
+		}{
+			{
+				" PARTITION BY RANGE (a) (PARTITION pNULL VALUES LESS THAN (0), PARTITION p0 VALUES LESS THAN (5), PARTITION p1 VALUES LESS THAN (MAXVALUE))",
+				"p0",
+				"p1",
+				"pNULL",
+			}, {
+				" PARTITION BY LIST (a) (PARTITION p0 VALUES IN (1), PARTITION p1 VALUES IN (5), PARTITION pNULL VALUES IN (NULL))",
+				"p0",
+				"p1",
+				"pNULL",
+			}, {
+				" PARTITION BY KEY (a) PARTITIONS 3",
+				"p2",
+				"p1",
+				"p1",
+			}, {
+				" PARTITION BY HASH (a) PARTITIONS 3",
+				"p1",
+				"p2",
+				"p0",
+			},
+		}
+		for _, t := range testCase {
+			testKit.MustExec(`CREATE TABLE t (a int, unique index (a))` + t.partitionBy)
+			testKit.MustExec(`insert into t values (1),(5),(NULL)`)
+			testKit.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
+			testKit.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
+			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows("<nil>"))
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
+			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).MultiCheckContain([]string{"IndexRangeScan", "partition:" + t.partNull})
+			testKit.MustExec(`drop table t`)
+			testKit.MustExec(`CREATE TABLE t (a int PRIMARY KEY)` + t.partitionBy)
+			testKit.MustExec(`insert into t values (1),(5)`)
+			testKit.MustContainErrMsg(`insert into t values (NULL)`, "[table:1048]Column 'a' cannot be null")
+			testKit.MustQuery(`select a from t where a <=> 1`).Check(testkit.Rows("1"))
+			testKit.MustQuery(`select a from t where a <=> 5`).Check(testkit.Rows("5"))
+			testKit.MustQuery(`select a from t where a <=> NULL`).Check(testkit.Rows())
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 1`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part1})
+			testKit.MustQuery(`explain format=brief select a from t where a <=> 5`).MultiCheckContain([]string{"Point_Get", "partition:" + t.part5})
+			// TODO: Also do this for RANGE COLUMNS? Why is this different?!?
+			testKit.MustQuery(`explain format=brief select a from t where a <=> NULL`).CheckContain("TableDual")
+			testKit.MustExec(`drop table t`)
+		}
+	})
 }

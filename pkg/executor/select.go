@@ -323,7 +323,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 			}
 			_, planDigest := seVars.StmtCtx.GetPlanDigest()
 
-			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceIDBySettings()).
+			return kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).
 				SetPlanDigest(planDigest).
 				SetSQLDigest(digest).
 				EncodeTagWithKey(mutation.Key)
@@ -566,7 +566,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is)
+		e := newExecutorBuilder(sctx, is, nil)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -975,7 +975,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
-	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	sessDom := domain.GetDomain(ctx)
+	var logOnQueryExceedMemQuota func(uint64)
+	if sessDom != nil {
+		logOnQueryExceedMemQuota = sessDom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota
+	}
 	switch vardef.OOMAction.Load() {
 	case vardef.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}

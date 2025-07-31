@@ -125,7 +125,8 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != columnInfo.State)
+		// Use updateVersionAndTableInfoWithCheck to validate the table before making it public
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -208,6 +209,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			//nolint:forbidigo
 			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
 				if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 					return nil, errors.Trace(err)
@@ -604,7 +606,9 @@ func SetDefaultValue(ctx expression.BuildContext, col *table.Column, option *ast
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
-
+	if _, ok := option.Expr.(*ast.ColumnNameExpr); ok {
+		return hasDefaultValue, errors.New("column name is not yet supported as a default value")
+	}
 	// When the default value is expression, we skip check and convert.
 	if !col.DefaultIsExpr {
 		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {

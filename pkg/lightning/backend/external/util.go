@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -527,4 +528,46 @@ func doRemoveDuplicates[E any](
 		pivot = key
 	}
 	return in[:fillIdx], removed, totalDup
+}
+
+// DivideMergeSortDataFiles divides the data files into multiple groups for
+// merge sort. Each group will be assigned to a node for sorting.
+// The number of files in each group is limited to MaxMergeSortFileCountStep.
+func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
+	if nodeCnt == 0 {
+		return nil, errors.Errorf("unsupported zero node count")
+	}
+	if len(dataFiles) == 0 {
+		return [][]string{}, nil
+	}
+	adjustedMergeSortFileCountStep := GetAdjustedMergeSortFileCountStep(mergeConc)
+	dataFilesCnt := len(dataFiles)
+	result := make([][]string, 0, nodeCnt)
+	batches := len(dataFiles) / adjustedMergeSortFileCountStep
+	rounds := batches / nodeCnt
+	for range rounds * nodeCnt {
+		result = append(result, dataFiles[:adjustedMergeSortFileCountStep])
+		dataFiles = dataFiles[adjustedMergeSortFileCountStep:]
+	}
+	remainder := dataFilesCnt - (nodeCnt * rounds * adjustedMergeSortFileCountStep)
+	if remainder == 0 {
+		return result, nil
+	}
+	// adjust node cnt for remainder files to avoid having too much target files.
+	adjustNodeCnt := nodeCnt
+	maxTargetFilesPerSubtask := max(MergeSortMaxSubtaskTargetFiles, mergeConc)
+	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(GetAdjustedMergeSortOverlapThreshold(mergeConc)) {
+		adjustNodeCnt--
+		if adjustNodeCnt == 0 {
+			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
+		}
+	}
+	minimalFileCount := 32 // Each subtask should merge at least 32 files.
+	adjustNodeCnt = max(min(remainder/minimalFileCount, adjustNodeCnt), 1)
+	sizes := mathutil.Divide2Batches(remainder, adjustNodeCnt)
+	for _, s := range sizes {
+		result = append(result, dataFiles[:s])
+		dataFiles = dataFiles[s:]
+	}
+	return result, nil
 }

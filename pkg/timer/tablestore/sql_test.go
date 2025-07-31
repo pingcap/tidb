@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -595,7 +595,7 @@ func (p *mockSession) GetSessionVars() *variable.SessionVars {
 	return p.Context.GetSessionVars()
 }
 
-func (p *mockSession) GetSessionManager() util.SessionManager {
+func (p *mockSession) GetSessionManager() sessmgr.Manager {
 	return nil
 }
 
@@ -709,7 +709,7 @@ func TestWithSession(t *testing.T) {
 	sctx.AssertExpectations(t)
 	mockCb1.AssertExpectations(t)
 
-	// rollback in restore failed, should close session
+	// rollback in restore failed, should avoid re-use session
 	mockSuccessInit()
 	mockCb1.On("cb1", pool.se).Return(nil).Once()
 	require.NoError(t, core.withSession(func(se *syssession.Session) error {
@@ -717,16 +717,15 @@ func TestWithSession(t *testing.T) {
 		sctx.On("ExecuteInternal", matchCtx, "ROLLBACK", []any(nil)).
 			Return(nil, errors.New("ROLLBACK error")).
 			Once()
-		sctx.On("Close").Once()
 		mockCb1.MethodCalled("cb1", se)
 		return nil
 	}))
-	require.True(t, pool.se.IsInternalClosed())
+	require.True(t, pool.se.IsAvoidReuse())
 	sctx.AssertExpectations(t)
 	mockCb1.AssertExpectations(t)
 	resetSe()
 
-	// set timezone in restore failed should close session
+	// set timezone in restore failed should avoid re-use
 	mockSuccessInit()
 	mockCb1.On("cb1", pool.se).Return(nil).Once()
 	require.NoError(t, core.withSession(func(se *syssession.Session) error {
@@ -737,11 +736,10 @@ func TestWithSession(t *testing.T) {
 		sctx.On("ExecuteInternal", matchCtx, "SET @@time_zone=%?", mock.Anything).
 			Return(nil, errors.New("SET tz error")).
 			Once()
-		sctx.On("Close").Once()
 		mockCb1.MethodCalled("cb1", se)
 		return nil
 	}))
-	require.True(t, pool.se.IsInternalClosed())
+	require.True(t, pool.se.IsAvoidReuse())
 	sctx.AssertExpectations(t)
 	mockCb1.AssertExpectations(t)
 	resetSe()

@@ -309,7 +309,7 @@ func (m *JobManager) onTimerTick(se session.Session, rt *ttlTimerRuntime, syncer
 		return
 	}
 
-	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := se.GetLatestInfoSchema().(infoschema.InfoSchema)
 	if is.SchemaMetaVersion() > lastSyncVer || sinceLastSync > 2*time.Minute {
 		// only sync timer when information schema version upgraded, or it has not been synced for more than 2 minutes.
 		syncer.SyncTimers(m.ctx, is)
@@ -536,41 +536,53 @@ func (m *JobManager) checkNotOwnJob() {
 	}
 }
 
+func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*cache.TTLTask, error) {
+	timeoutJobCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+	defer cancel()
+
+	sql, args := cache.SelectFromTTLTaskWithJobID(jobID)
+	rows, err := se.ExecuteSQL(timeoutJobCtx, sql, args...)
+	cancel()
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+		return nil, err
+	}
+
+	allTasks := make([]*cache.TTLTask, 0, len(rows))
+	for _, r := range rows {
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", jobID))
+			return nil, err
+		}
+		allTasks = append(allTasks, task)
+	}
+
+	return allTasks, nil
+}
+
 func (m *JobManager) checkFinishedJob(se session.Session) {
 	// reverse iteration so that we could remove the job safely in the loop
-j:
 	for i := len(m.runningJobs) - 1; i >= 0; i-- {
 		job := m.runningJobs[i]
-
-		timeoutJobCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-
-		sql, args := cache.SelectFromTTLTaskWithJobID(job.id)
-		rows, err := se.ExecuteSQL(timeoutJobCtx, sql, args...)
-		cancel()
+		allTasks, err := m.findAllTasksForJob(se, job.id)
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+			logutil.Logger(m.ctx).Warn("fail to find all tasks for job. Skip check finished", zap.String("jobID", job.id), zap.Error(err))
 			continue
 		}
 
 		allFinished := true
-		allTasks := make([]*cache.TTLTask, 0, len(rows))
-		for _, r := range rows {
-			task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", job.id))
-				continue j
-			}
-			allTasks = append(allTasks, task)
-
-			if task.Status != "finished" {
+		for _, task := range allTasks {
+			if task.Status != cache.TaskStatusFinished {
 				allFinished = false
+				break
 			}
 		}
 
 		if allFinished {
 			logger := m.jobLogger(job)
 			logger.Info("job has finished")
-			summary, err := summarizeTaskResult(allTasks)
+			summary, err := summarizeTaskResultWithError(allTasks, nil)
 			if err != nil {
 				logger.Info("fail to summarize job", zap.Error(err))
 			}
@@ -584,7 +596,6 @@ j:
 			}
 			m.removeJob(job)
 		}
-		cancel()
 	}
 }
 
@@ -623,7 +634,11 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 				logger := m.jobLogger(job)
 				logger.Info(fmt.Sprintf("cancel job because %s", cancelReason))
-				summary, err := summarizeErr(errors.New(cancelReason))
+				allTasks, err := m.findAllTasksForJob(se, job.id)
+				if err != nil {
+					logger.Warn("fail to find all tasks for job. Summarize nothing for cancel job", zap.String("jobID", job.id), zap.Error(err))
+				}
+				summary, err := summarizeTaskResultWithError(allTasks, errors.New(cancelReason))
 				if err != nil {
 					logger.Warn("fail to summarize job", zap.Error(err))
 				}
@@ -651,7 +666,11 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		// when the job is locked, it can be found in `infoSchemaCache`. Therefore, it must have been dropped.
 		logger := m.jobLogger(job)
 		logger.Info("cancel job because the table has been dropped or it's no longer TTL table")
-		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
+		allTasks, err := m.findAllTasksForJob(se, job.id)
+		if err != nil {
+			logger.Warn("fail to find all tasks for job. Summarize nothing for cancel job", zap.String("jobID", job.id), zap.Error(err))
+		}
+		summary, err := summarizeTaskResultWithError(allTasks, errors.New("TTL table has been removed or the TTL on this table has been stopped"))
 		if err != nil {
 			logger.Warn("fail to summarize job", zap.Error(err))
 		}
@@ -941,7 +960,12 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 func (m *JobManager) updateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
 	if job.createTime.Add(ttlJobTimeout).Before(now) {
 		m.jobLogger(job).Info("job is timeout")
-		summary, err := summarizeErr(errors.New("job is timeout"))
+		tasks, err := m.findAllTasksForJob(se, job.id)
+		if err != nil {
+			m.jobLogger(job).Warn("fail to find all tasks for job. Summarize nothing for timeout job",
+				zap.String("jobID", job.id), zap.Error(err))
+		}
+		summary, err := summarizeTaskResultWithError(tasks, errors.New("job is timeout"))
 		if err != nil {
 			return errors.Wrapf(err, "fail to summarize job")
 		}
@@ -1021,22 +1045,9 @@ type TTLSummary struct {
 	SummaryText string `json:"-"`
 }
 
-func summarizeErr(err error) (*TTLSummary, error) {
-	summary := &TTLSummary{
-		ScanTaskErr: err.Error(),
-	}
-
-	buf, err := json.Marshal(summary)
-	if err != nil {
-		return nil, err
-	}
-	summary.SummaryText = string(buf)
-	return summary, nil
-}
-
-func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
+func summarizeTaskResultWithError(tasks []*cache.TTLTask, err error) (*TTLSummary, error) {
 	summary := &TTLSummary{}
-	var allErr error
+	allErr := err
 	for _, t := range tasks {
 		if t.State != nil {
 			summary.TotalRows += t.State.TotalRows
@@ -1143,7 +1154,7 @@ GROUP BY
 		records[r.TableID] = r
 	}
 
-	isVer := se.GetDomainInfoSchema()
+	isVer := se.GetLatestInfoSchema()
 	is, ok := isVer.(infoschema.InfoSchema)
 	if !ok {
 		logutil.Logger(ctx).Error(fmt.Sprintf("failed to cast information schema for type: %v", isVer))
@@ -1242,7 +1253,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) (ok bool) {
 }
 
 func (a *managerJobAdapter) canSubmitJobWithSession(tableID, physicalID int64, se session.Session) (bool, error) {
-	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := se.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		return false, nil
