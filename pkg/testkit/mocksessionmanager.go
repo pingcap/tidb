@@ -20,18 +20,19 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	"github.com/pingcap/tidb/pkg/util"
 )
 
 // MockSessionManager is a mocked session manager which is used for test.
 type MockSessionManager struct {
-	PS       []*util.ProcessInfo
+	PS       []*sessmgr.ProcessInfo
 	PSMu     sync.RWMutex
 	SerID    uint64
 	TxnInfo  []*txninfo.TxnInfo
@@ -60,11 +61,11 @@ func (msm *MockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	return rs
 }
 
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+// ShowProcessList implements the Manager.ShowProcessList interface.
+func (msm *MockSessionManager) ShowProcessList() map[uint64]*sessmgr.ProcessInfo {
 	msm.PSMu.RLock()
 	defer msm.PSMu.RUnlock()
-	ret := make(map[uint64]*util.ProcessInfo)
+	ret := make(map[uint64]*sessmgr.ProcessInfo)
 	if len(msm.PS) > 0 {
 		for _, item := range msm.PS {
 			ret[item.ID] = item
@@ -82,8 +83,8 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	return ret
 }
 
-// GetProcessInfo implements the SessionManager.GetProcessInfo interface.
-func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+// GetProcessInfo implements the Manager.GetProcessInfo interface.
+func (msm *MockSessionManager) GetProcessInfo(id uint64) (*sessmgr.ProcessInfo, bool) {
 	msm.PSMu.RLock()
 	defer msm.PSMu.RUnlock()
 	for _, item := range msm.PS {
@@ -101,7 +102,7 @@ func (msm *MockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 			return pinfo, true
 		}
 	}
-	return &util.ProcessInfo{}, false
+	return &sessmgr.ProcessInfo{}, false
 }
 
 // GetConAttrs returns the connection attributes of all connections
@@ -109,15 +110,15 @@ func (msm *MockSessionManager) GetConAttrs(user *auth.UserIdentity) map[uint64]m
 	return msm.ConAttrs
 }
 
-// Kill implements the SessionManager.Kill interface.
+// Kill implements the Manager.Kill interface.
 func (*MockSessionManager) Kill(uint64, bool, bool, bool) {
 }
 
-// KillAllConnections implements the SessionManager.KillAllConnections interface.
+// KillAllConnections implements the Manager.KillAllConnections interface.
 func (*MockSessionManager) KillAllConnections() {
 }
 
-// UpdateTLSConfig implements the SessionManager.UpdateTLSConfig interface.
+// UpdateTLSConfig implements the Manager.UpdateTLSConfig interface.
 func (*MockSessionManager) UpdateTLSConfig(*tls.Config) {
 }
 
@@ -136,7 +137,7 @@ func (msm *MockSessionManager) StoreInternalSession(s any) {
 	msm.mu.Unlock()
 }
 
-// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager
+// ContainsInternalSession checks if the internal session pointer is in the map in the Manager
 func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
 	msm.mu.Lock()
 	defer msm.mu.Unlock()
@@ -147,7 +148,7 @@ func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
 	return ok
 }
 
-// DeleteInternalSession is to delete the internal session pointer from the map in the SessionManager
+// DeleteInternalSession is to delete the internal session pointer from the map in the Manager
 func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()
 	delete(msm.internalSessions, s)
@@ -174,7 +175,7 @@ func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return ret
 }
 
-// KillNonFlashbackClusterConn implement SessionManager interface.
+// KillNonFlashbackClusterConn implement Manager interface.
 func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 	for _, se := range msm.Conn {
 		processInfo := se.ShowProcess()
@@ -192,10 +193,10 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 }
 
 // CheckOldRunningTxn is to get all startTS of every transactions running in the current internal sessions
-func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+func (msm *MockSessionManager) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	msm.mu.Lock()
 	for _, se := range msm.Conn {
-		session.RemoveLockDDLJobs(se, job2ver, job2ids, false)
+		session.RemoveLockDDLJobs(se, jobs, false)
 	}
 	msm.mu.Unlock()
 }

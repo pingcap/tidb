@@ -202,6 +202,8 @@ func NewTableImporter(
 		return nil, err
 	}
 
+	localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName)
+
 	return &TableImporter{
 		LoadDataController: e,
 		id:                 id,

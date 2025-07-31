@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -34,8 +35,6 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 		return false // plan-cache is disabled for this query
 	}
 
-	sc.InPreparedPlanBuilding = true
-	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
 		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
@@ -82,7 +81,7 @@ func rebuildRange(p base.Plan) error {
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *PhysicalIndexMergeJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
-	case *PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(sctx); err != nil {
 			return err
 		}

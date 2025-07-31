@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -712,25 +711,6 @@ func sendTasks(
 	return nil
 }
 
-var (
-	// TestCheckWorkerNumCh use for test adjust backfill worker.
-	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
-	// TestCheckWorkerNumber use for test adjust backfill worker.
-	TestCheckWorkerNumber = int32(vardef.DefTiDBDDLReorgWorkerCount)
-	// TestCheckReorgTimeout is used to mock timeout when reorg data.
-	TestCheckReorgTimeout = int32(0)
-)
-
-func loadDDLReorgVars(ctx context.Context, sessPool *sess.Pool) error {
-	// Get sessionctx from context resource pool.
-	sCtx, err := sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer sessPool.Put(sCtx)
-	return ddlutil.LoadDDLReorgVars(ctx, sCtx)
-}
-
 func makeupDecodeColMap(dbName ast.CIStr, t table.Table) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
@@ -1134,28 +1114,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	})
 
 	return eg.Wait()
-}
-
-func injectCheckBackfillWorkerNum(curWorkerSize int, isMergeWorker bool) error {
-	if isMergeWorker {
-		return nil
-	}
-	failpoint.Inject("checkBackfillWorkerNum", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
-			if num != 0 {
-				if num != curWorkerSize {
-					failpoint.Return(errors.Errorf("expected backfill worker num: %v, actual record num: %v", num, curWorkerSize))
-				}
-				var wg sync.WaitGroup
-				wg.Add(1)
-				TestCheckWorkerNumCh <- &wg
-				wg.Wait()
-			}
-		}
-	})
-	return nil
 }
 
 // recordIterFunc is used for low-level record iteration.

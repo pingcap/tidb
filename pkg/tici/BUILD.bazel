@@ -1,12 +1,14 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "tici",
+    name = "indexer",
     srcs = [
+        "indexer.pb.go",
+        "indexer_grpc.pb.go",
         "tici.pb.go",
         "tici_grpc.pb.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/tici",
+    importpath = "github.com/pingcap/tidb/pkg/indexer",
     visibility = ["//visibility:public"],
     deps = [
         "@org_golang_google_grpc//:grpc",
@@ -14,5 +16,35 @@ go_library(
         "@org_golang_google_grpc//status",
         "@org_golang_google_protobuf//reflect/protoreflect",
         "@org_golang_google_protobuf//runtime/protoimpl",
+    ],
+)
+
+go_test(
+    name = "tici_test",
+    timeout = "short",
+    srcs = [
+        "indexer.pb.go",
+        "indexer_grpc.pb.go",
+        "tici.pb.go",
+        "tici_grpc.pb.go",
+    ],
+    embed = [":tici"],
+    flaky = True,
+    shard_count = 34,
+    deps = [
+        "//br/pkg/storage",
+        "//pkg/lightning/membuf",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/types",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//mock",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//test/bufconn",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest",
     ],
 )

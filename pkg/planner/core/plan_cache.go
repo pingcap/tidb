@@ -340,11 +340,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	stmtCtx := sessVars.StmtCtx
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
-	// XXX: We should be able to remove InPreparedPlanBuilding.
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
 	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
 	if err != nil {
 		return nil, nil, err
 	}
