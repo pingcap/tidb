@@ -651,8 +651,7 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			// No warning!? Same in MySQL...
 			tkNO.MustQuery(`show warnings`).Check(testkit.Rows())
 			tkO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
-			// <nil> ?!?
-			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 <nil>"))
+			tkNO.MustQuery(`select * from t where a = 10`).Check(testkit.Rows("10 10"))
 			// If the original b was defined as 'NOT NULL', then it would give an error:
 			// [table:1364]Field 'b' doesn't have a default value
 
