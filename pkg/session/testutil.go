@@ -18,12 +18,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
@@ -39,6 +41,9 @@ var (
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	testenv.SetGOMAXPROCSForTest()
+	if kerneltype.IsNextGen() {
+		testutil.UpdateConfigForNextgen(t)
+	}
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	dom, err := BootstrapSession(store)

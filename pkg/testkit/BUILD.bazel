@@ -42,6 +42,7 @@ go_library(
         "//pkg/store/helper",
         "//pkg/store/mockstore",
         "//pkg/testkit/testenv",
+        "//pkg/testkit/testutil",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/breakpoint",

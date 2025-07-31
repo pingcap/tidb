@@ -105,6 +105,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/telemetry",
         "//pkg/testkit/testenv",
+        "//pkg/testkit/testutil",
         "//pkg/types",
         "//pkg/types/parser_driver",
         "//pkg/util",

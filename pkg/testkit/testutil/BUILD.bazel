@@ -10,6 +10,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/testkit/testutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
