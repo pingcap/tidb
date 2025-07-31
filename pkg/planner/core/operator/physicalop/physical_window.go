@@ -17,6 +17,7 @@ package physicalop
 import (
 	"bytes"
 	"fmt"
+
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -322,7 +323,7 @@ func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) 
 	var err error
 	windowExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, perrors.Trace(err)
 	}
 	executorID := p.ExplainID().String()
 	return &tipb.Executor{
