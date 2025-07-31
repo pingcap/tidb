@@ -185,6 +185,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
+	pushDownNotOnConds(exprCtx, simplifiedPredicate)
 	if propagateConstant {
 		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
 	} else {

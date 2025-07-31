@@ -1701,6 +1701,9 @@ func getGEAndDS(super base.LogicalPlan) (ge *memo.GroupExpression, ds *logicalop
 
 func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.PhysicalProperty,
 	planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+	if !super.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	// get the possible group expression and logical operator from common lp pointer.
 	ge, ds := getGEAndDS(super)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
@@ -2779,6 +2782,9 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 }
 
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
+	if !is.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
