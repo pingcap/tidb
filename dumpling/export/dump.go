@@ -1781,7 +1781,7 @@ func (d *Dumper) newTaskTableData(meta TableMeta, data TableDataIR, currentChunk
 func extractOrderByColumns(orderByClause string) []string {
 	// Remove "ORDER BY " prefix
 	columnsStr := strings.TrimPrefix(orderByClause, "ORDER BY ")
-	
+
 	// Handle empty clause
 	if columnsStr == "" {
 		return []string{""}
@@ -1790,10 +1790,10 @@ func extractOrderByColumns(orderByClause string) []string {
 	var columns []string
 	var currentColumn strings.Builder
 	inBackticks := false
-	
-	for i := 0; i < len(columnsStr); i++ {
+
+	for i := range len(columnsStr) {
 		ch := columnsStr[i]
-		
+
 		if ch == '`' {
 			inBackticks = !inBackticks
 			currentColumn.WriteByte(ch)
@@ -1807,7 +1807,7 @@ func extractOrderByColumns(orderByClause string) []string {
 			currentColumn.WriteByte(ch)
 		}
 	}
-	
+
 	// Add the last column
 	if col := strings.TrimSpace(currentColumn.String()); col != "" {
 		columns = append(columns, col)
