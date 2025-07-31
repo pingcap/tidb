@@ -121,7 +121,7 @@ func (t *RootTask) GetPlan() base.PhysicalPlan {
 	return t.p
 }
 
-// SetPlan sets the root task' plan.
+// SetPlan sets the root task's plan.
 func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
 }
@@ -179,6 +179,11 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 // AppendWarning appends a warning
 func (t *RootTask) AppendWarning(err error) {
 	t.warnings.AppendWarning(err)
+}
+
+// GetWarnings returns all warnings stored in the task
+func (t *RootTask) GetWarnings() []context.SQLWarn {
+	return t.warnings.GetWarnings()
 }
 
 // ************************************* RootTask End ******************************************
@@ -258,6 +263,11 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 // AppendWarning appends a warning
 func (t *MppTask) AppendWarning(err error) {
 	t.warnings.AppendWarning(err)
+}
+
+// GetWarnings returns all warnings stored in the task
+func (t *MppTask) GetWarnings() []context.SQLWarn {
+	return t.warnings.GetWarnings()
 }
 
 // ConvertToRootTaskImpl implements Task interface.
@@ -367,6 +377,11 @@ type CopTask struct {
 // AppendWarning appends a warning
 func (t *CopTask) AppendWarning(err error) {
 	t.warnings.AppendWarning(err)
+}
+
+// GetWarnings returns all warnings stored in the task
+func (t *CopTask) GetWarnings() []context.SQLWarn {
+	return t.warnings.GetWarnings()
 }
 
 // Invalid implements Task interface.

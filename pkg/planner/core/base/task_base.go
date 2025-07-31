@@ -14,6 +14,8 @@
 
 package base
 
+import "github.com/pingcap/tidb/pkg/util/context"
+
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.
 
@@ -36,6 +38,8 @@ type Task interface {
 	MemoryUsage() int64
 	// AppendWarning appends a warning
 	AppendWarning(err error)
+	// GetWarnings return warnings stored in the task
+	GetWarnings() []context.SQLWarn
 }
 
 // InvalidTask is just a common invalid singleton instance initialized by core's empty RootTask.

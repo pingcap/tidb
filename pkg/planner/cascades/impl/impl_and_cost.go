@@ -117,6 +117,12 @@ func ImplementMemoAndCost(rootGroup *memo.Group, planCounter *base.PlanCounterTp
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
+
+	// collect the warnings from task.
+	if warnings := task.GetWarnings(); len(warnings) > 0 {
+		sctx.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+	}
+
 	if err = task.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
