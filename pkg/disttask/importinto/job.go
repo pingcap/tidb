@@ -95,7 +95,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		if err2 != nil {
 			return err2
 		}
-		err2 = ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+		err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
 		if err2 != nil {
 			return err2
 		}

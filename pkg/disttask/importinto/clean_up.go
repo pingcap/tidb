@@ -60,7 +60,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 			return err
 		}
 		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			return ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
 		}); err != nil {
 			return err
 		}

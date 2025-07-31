@@ -169,7 +169,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		failpoint.Inject("errorWhenResetTableMode", func() {
 			failpoint.Return(errors.New("occur an error when reset table mode to normal"))
 		})
-		err2 := ddl.CreateAlterTableModeJob(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
+		err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
 		if err2 != nil {
 			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
 		} else {

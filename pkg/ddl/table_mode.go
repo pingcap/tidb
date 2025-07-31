@@ -89,8 +89,8 @@ func validateTableMode(origin, target model.TableMode) bool {
 	return true
 }
 
-// CreateAlterTableModeJob creates a DDL job for alter table mode.
-func CreateAlterTableModeJob(de Executor, sctx sessionctx.Context, mode model.TableMode, schemaID, tableID int64) error {
+// AlterTableMode creates a DDL job for alter table mode.
+func AlterTableMode(de Executor, sctx sessionctx.Context, mode model.TableMode, schemaID, tableID int64) error {
 	args := &model.AlterTableModeArgs{
 		TableMode: mode,
 		SchemaID:  schemaID,
