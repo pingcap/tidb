@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -184,6 +185,9 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	if len(predicates) == 0 {
 		return predicates
 	}
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println(`wwz`)
+	}
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
 	// In some scenarios, we need to perform constant propagation,
@@ -202,7 +206,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
-	pruneEmptyORBranches(sctx, simplifiedPredicate)
+	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -361,9 +365,9 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
 // and another scalar predicate.
-func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
+func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
-		return
+		return predicates
 	}
 	for i := range predicates {
 		for j := i + 1; j < len(predicates); j++ {
@@ -382,14 +386,21 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
+				if unsatisfiableExpression(sctx, predicates[j]) {
+					return []expression.Expression{predicates[j]}
+				}
 			} else if iType == orPredicate && jType == scalarPredicate {
 				predicates[i] = updateOrPredicate(sctx, ithPredicate, jthPredicate)
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
+				if unsatisfiableExpression(sctx, predicates[i]) {
+					return []expression.Expression{predicates[i]}
+				}
 			}
 		}
 	}
+	return predicates
 }
 
 // shortCircuitANDORLogicalConstants simplifies logical expressions by performing short-circuit evaluation
