@@ -2609,9 +2609,11 @@ type groupInfo struct {
 }
 
 func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
+	sctx := e.Ctx()
+
 	var hasSuperPriv bool
-	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
-		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
 	taskManager, err := fstorage.GetTaskManager()
@@ -2624,7 +2626,7 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
-		infos, err2 = importer.GetJobsByGroupKey(ctx, exec, e.Ctx().GetSessionVars().User.String(), e.ShowGroupKey, hasSuperPriv)
+		infos, err2 = importer.GetJobsByGroupKey(ctx, exec, sctx.GetSessionVars().User.String(), e.ShowGroupKey, hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err
@@ -2640,17 +2642,17 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 			}
 		}
 
-		subtaskUpdateTime, err := importinto.GetLastUpdateTimeForRunningJob(ctx, info.ID)
+		updateTime, err := importinto.GetJobLastUpdateTime(ctx, info.ID)
 		if err != nil {
 			return err
 		}
 
 		gInfo := groupMap[info.GroupKey]
-		if gInfo.startTime.IsZero() || info.CreateTime.Compare(gInfo.startTime) < 0 {
-			gInfo.startTime = info.CreateTime
+		if gInfo.startTime.IsZero() || info.StartTime.Compare(gInfo.startTime) < 0 {
+			gInfo.startTime = info.StartTime
 		}
-		if gInfo.updateTime.IsZero() || subtaskUpdateTime.Compare(gInfo.updateTime) > 0 {
-			gInfo.updateTime = subtaskUpdateTime
+		if gInfo.updateTime.IsZero() || updateTime.Compare(gInfo.updateTime) > 0 {
+			gInfo.updateTime = updateTime
 		}
 
 		gInfo.jobCount++

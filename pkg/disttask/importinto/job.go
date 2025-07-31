@@ -320,15 +320,15 @@ func GetRuntimeInfoForJob(
 	return ri, nil
 }
 
-// GetLastUpdateTimeForRunningJob get the last update time for given job.
-func GetLastUpdateTimeForRunningJob(ctx context.Context, jobID int64) (types.Time, error) {
+// GetJobLastUpdateTime get the last update time for given job from all subtasks.
+func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) {
 	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return types.ZeroTime, err
 	}
 	taskKey := TaskKey(jobID)
-	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	task, err := taskManager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return types.ZeroTime, err
 	}
@@ -347,7 +347,7 @@ func GetLastUpdateTimeForRunningJob(ctx context.Context, jobID int64) (types.Tim
 	})
 
 	if rs[0].IsNull(0) {
-		return types.ZeroTime, err
+		return types.ZeroTime, nil
 	}
 
 	return rs[0].GetTime(0), nil
