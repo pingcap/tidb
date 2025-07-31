@@ -172,28 +172,10 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
 		if err2 != nil {
 			callLog.Warn("alter table mode to normal failure", zap.Error(err2))
-		} else {
-			err2 = markTaskResetTableMode(ctx, taskManager, p.taskMeta)
 		}
 		if err != nil {
 			return err
 		}
 		return err2
 	})
-}
-
-func markTaskResetTableMode(ctx context.Context, taskManager *storage.TaskManager, taskMeta *TaskMeta) error {
-	task, err := taskManager.GetTaskByID(ctx, taskMeta.JobID)
-	if err != nil {
-		return err
-	}
-	task.ModifyParam = proto.ModifyParam{PrevState: task.State}
-	if err := taskManager.ModifyTaskByID(ctx, taskMeta.JobID, &task.ModifyParam); err != nil {
-		return err
-	}
-	taskMeta.ResetTableMode = true
-	if err := updateMeta(task, taskMeta); err != nil {
-		return err
-	}
-	return taskManager.ModifiedTask(ctx, task)
 }

@@ -47,8 +47,6 @@ type TaskMeta struct {
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
 	// so need to split them into engines before passing to scheduler.
 	ChunkMap map[int32][]importer.Chunk
-	// indicate the task alter table mode to Normal or not.
-	ResetTableMode bool
 }
 
 // ImportStepMeta is the meta of import step.
