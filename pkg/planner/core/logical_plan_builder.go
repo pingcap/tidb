@@ -3248,9 +3248,6 @@ func extractSingeValueColNamesFromWhere(p base.LogicalPlan, where ast.ExprNode, 
 }
 
 func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, sel *ast.SelectStmt) error {
-	if strings.Contains(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "LEFT(FROM_UNIXTIME(e), 10)") {
-		fmt.Sprintln(1)
-	}
 	gbyOrSingleValueColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
 	for _, byItem := range sel.GroupBy.Items {
