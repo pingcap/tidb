@@ -85,7 +85,7 @@ var allTestCase = []testCancelJob{
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateWriteOnly, true, true, nil},
 	// Add full text index
 	// TODO: enable test after support mock TiCI
-	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateNone, true, false, nil},
+	// {"alter table t add fulltext index fts_idx(ctxt)", true, model.StateNone, true, false, nil},
 	// {"alter table t add fulltext index fts_idx(ctxt)", true, model.StateDeleteOnly, true, true, nil},
 	// {"alter table t add fulltext index fts_idx(ctxt)", true, model.StateWriteOnly, true, true, nil},
 	// {"alter table t add fulltext index fts_idx_x(ctxt)", false, model.StatePublic, false, true, nil},
