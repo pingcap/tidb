@@ -166,7 +166,7 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop
 func (p *PhysicalWindow) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
-	formatWindowFuncDescs(ectx, buffer, p.WindowFuncDescs, p.Schema())
+	FormatWindowFuncDescs(ectx, buffer, p.WindowFuncDescs, p.Schema())
 	buffer.WriteString(" over(")
 	isFirst := true
 	buffer = util.ExplainPartitionBy(ectx, buffer, p.PartitionBy, false)
@@ -213,7 +213,8 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	return buffer.String()
 }
 
-func formatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
+// FormatWindowFuncDescs formats window function descriptions.
+func FormatWindowFuncDescs(ctx expression.EvalContext, buffer *bytes.Buffer, descs []*aggregation.WindowFuncDesc, schema *expression.Schema) *bytes.Buffer {
 	winFuncStartIdx := len(schema.Columns) - len(descs)
 	for i, desc := range descs {
 		if i != 0 {
