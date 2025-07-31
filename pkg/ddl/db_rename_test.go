@@ -20,10 +20,12 @@ import (
 	"testing"
 	gotime "time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -487,4 +489,25 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 		"40 39 Is it 39?",
 		"6 5 t1 second null",
 		"8 7 t1 third null"))
+}
+
+func TestShowRunningRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create database test2")
+	tk1.MustExec("create table t1 (a int, b int)")
+
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
+		if job.State == model.JobStateRunning {
+			tk2 := testkit.NewTestKit(t, store)
+			rs := tk2.MustQuery("admin show ddl jobs where state != 'synced'").Rows()
+			require.Len(t, rs, 1)
+			require.Equal(t, "test2", rs[0][1])
+			require.Equal(t, "t2", rs[0][2])
+		}
+	})
+
+	tk1.MustExec("rename table test.t1 to test2.t2")
 }

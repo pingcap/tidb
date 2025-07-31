@@ -220,6 +220,14 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
+	if job.Type == model.ActionRenameTable {
+		// The schema/table name stored in job is new schema/old table respectively.
+		// So here we show both new for running rename table job to keep consistency.
+		if arg, err := model.GetRenameTableArgs(job); err == nil && len(arg.NewTableName.L) > 0 {
+			tableName = arg.NewTableName.L
+		}
+	}
+
 	createTime := ts2Time(job.StartTS, e.TZLoc)
 	startTime := ts2Time(job.RealStartTS, e.TZLoc)
 	finishTime := ts2Time(finishTS, e.TZLoc)
