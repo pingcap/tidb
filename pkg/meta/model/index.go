@@ -17,6 +17,7 @@ package model
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -298,6 +299,21 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 		return ColumnarIndexTypeFulltext
 	}
 	return ColumnarIndexTypeNA
+}
+
+// HasCondition checks whether the index has a partial index condition.
+func (index *IndexInfo) HasCondition() bool {
+	return len(index.ConditionExprString) > 0
+}
+
+// ConditionExpr parses and returns the condition expression of the partial index.
+func (index *IndexInfo) ConditionExpr() (ast.ExprNode, error) {
+	stmtStr := "select " + index.ConditionExprString
+	stmts, _, err := parser.New().ParseSQL(stmtStr)
+	if err != nil {
+		return nil, err
+	}
+	return stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr, nil
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
