@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -119,9 +120,24 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 // CheckRecordAndIndex is exported for testing.
 func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
-	cols := make([]*table.Column, len(idx.Meta().Columns))
-	for i, col := range idx.Meta().Columns {
-		cols[i] = t.Cols()[col.Offset]
+	var cols []*table.Column
+	// For partial index, we'll need to record all columns in the table to check whether the row
+	// meets the partial condition.
+	if len(idx.Meta().PartialConditionExprString) > 0 {
+		cols = make([]*table.Column, 0, len(idx.Meta().Columns))
+		for _, col := range t.Cols() {
+			// only include writable columns
+			if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+				continue
+			}
+
+			cols = append(cols, col)
+		}
+	} else {
+		cols = make([]*table.Column, len(idx.Meta().Columns))
+		for i, col := range idx.Meta().Columns {
+			cols[i] = t.Cols()[col.Offset]
+		}
 	}
 
 	ir := func() *consistency.Reporter {
@@ -169,6 +185,15 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				vals1[i] = colDefVal
 			}
 		}
+		ok, err := idx.MeetPartialCondition(vals1)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if !ok {
+			// If the row does not meet the partial condition, we do not need to check it.
+			return true, nil
+		}
+
 		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
