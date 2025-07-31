@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -61,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -536,7 +536,6 @@ type Backend struct {
 	nextgenHTTPCli *http.Client
 
 	ticiWriteGroup *tici.DataWriterGroup // TiCI writer group
-	ticiMgr        *tici.ManagerCtx      // TiCI manager
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -808,6 +807,9 @@ func (local *Backend) Close() {
 	local.pdCli.Close()
 	if local.nextgenHTTPCli != nil {
 		local.nextgenHTTPCli.CloseIdleConnections()
+	}
+	if local.ticiWriteGroup != nil {
+		local.ticiWriteGroup.Close()
 	}
 }
 
@@ -1473,8 +1475,7 @@ func (local *Backend) doImport(
 
 	if local.ticiWriteGroup != nil {
 		// If the import is done, we can close the write group.
-		// TODO: reuse the TiCIManager to avoid creating a new one.
-		return local.ticiWriteGroup.MarkTableUploadFinished(ctx, local.ticiMgr)
+		return local.ticiWriteGroup.MarkTableUploadFinished(ctx)
 	}
 
 	return nil
@@ -1775,12 +1776,11 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 }
 
 // InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
-func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) error {
-	local.ticiWriteGroup = tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
-	ticiMgr, err := tici.NewTiCIManager(infosync.GetEtcdClient())
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, etcdClient *etcd.Client, tblInfo *model.TableInfo, schema string) error {
+	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, etcdClient, tblInfo, schema)
 	if err != nil {
 		return err
 	}
-	local.ticiMgr = ticiMgr
+	local.ticiWriteGroup = ticiWriteGroup
 	return nil
 }

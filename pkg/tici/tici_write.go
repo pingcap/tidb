@@ -25,13 +25,14 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
 const (
-	// Temp redefinition to avoid import cycle; will revert to common.IndexEngineID
+	// IndexEngineID is temp redefinition to avoid import cycle; will revert to common.IndexEngineID
 	// after moving tici-dependent code out of infosync.
 	IndexEngineID = -1
 )
@@ -205,7 +206,6 @@ func (w *DataWriter) MarkTableUploadFinished(
 	ticiMgr *ManagerCtx,
 ) error {
 	logger := w.logger
-	defer ticiMgr.Close()
 	if err := ticiMgr.MarkTableUploadFinished(ctx, w.tblInfo.ID, w.idxInfo.ID); err != nil {
 		logger.Error("failed to mark table upload finished", zap.Error(err))
 		return err
@@ -280,8 +280,10 @@ func (w *DataWriter) CloseFileWriter(ctx context.Context) error {
 
 // DataWriterGroup manages a group of TiCIDataWriter, each responsible for a fulltext index in a table.
 type DataWriterGroup struct {
-	writers  []*DataWriter
-	writable atomic.Bool
+	writers    []*DataWriter
+	writable   atomic.Bool
+	mgrCtx     *ManagerCtx
+	etcdClient *etcd.Client
 }
 
 // WriteHeader writes the header to all writers in the group.
@@ -325,7 +327,37 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, cou
 // of which engine is currently being written. Addressing this would require
 // significant changes to the import-into interface and should be considered
 // in longer-term architectural improvements.
-func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) *DataWriterGroup {
+func NewTiCIDataWriterGroup(ctx context.Context, etcdClient *etcd.Client, tblInfo *model.TableInfo, schema string) (*DataWriterGroup, error) {
+	fulltextIndexes := GetFulltextIndexes(tblInfo)
+	if len(fulltextIndexes) == 0 {
+		return nil, nil // No full-text indexes, no writers needed
+	}
+	writers := make([]*DataWriter, 0, len(fulltextIndexes))
+
+	logger := logutil.Logger(ctx)
+	logger.Info("building TiCIDataWriterGroup",
+		zap.Int64("tableID", tblInfo.ID),
+		zap.String("schema", schema),
+		zap.Int("fulltextIndexCount", len(fulltextIndexes)),
+	)
+
+	for _, idx := range fulltextIndexes {
+		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
+	}
+
+	mgrCtx, err := NewTiCIManager(ctx, etcdClient.GetClient())
+	if err != nil {
+		return nil, err
+	}
+	g := &DataWriterGroup{
+		writers: writers,
+		mgrCtx:  mgrCtx,
+	}
+	g.writable.Store(true)
+	return g, nil
+}
+
+func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblInfo *model.TableInfo, schema string) *DataWriterGroup {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
 	if len(fulltextIndexes) == 0 {
 		return nil
@@ -343,7 +375,10 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
 	}
 
-	g := &DataWriterGroup{writers: writers}
+	g := &DataWriterGroup{
+		writers: writers,
+		mgrCtx:  mgrCtx,
+	}
 	g.writable.Store(true)
 	return g
 }
@@ -398,14 +433,13 @@ func (g *DataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
 // Sets the s3Path for each writer, returns the first error encountered.
 func (g *DataWriterGroup) FetchCloudStoragePath(
 	ctx context.Context,
-	ticiMgr *ManagerCtx,
 	lowerBound, upperBound []byte,
 ) error {
 	if !g.writable.Load() {
 		return nil
 	}
 	for _, w := range g.writers {
-		_, err := w.FetchCloudStoragePath(ctx, ticiMgr, lowerBound, upperBound)
+		_, err := w.FetchCloudStoragePath(ctx, g.mgrCtx, lowerBound, upperBound)
 		if err != nil {
 			return err
 		}
@@ -417,13 +451,12 @@ func (g *DataWriterGroup) FetchCloudStoragePath(
 // Optionally, you can pass a slice of s3Paths to override the stored s3Path for each writer.
 func (g *DataWriterGroup) MarkPartitionUploadFinished(
 	ctx context.Context,
-	ticiMgr *ManagerCtx,
 ) error {
 	if !g.writable.Load() {
 		return nil
 	}
 	for _, w := range g.writers {
-		if err := w.MarkPartitionUploadFinished(ctx, ticiMgr); err != nil {
+		if err := w.MarkPartitionUploadFinished(ctx, g.mgrCtx); err != nil {
 			return err
 		}
 	}
@@ -433,10 +466,9 @@ func (g *DataWriterGroup) MarkPartitionUploadFinished(
 // MarkTableUploadFinished runs MarkTableUploadFinished for all writers.
 func (g *DataWriterGroup) MarkTableUploadFinished(
 	ctx context.Context,
-	ticiMgr *ManagerCtx,
 ) error {
 	for _, w := range g.writers {
-		if err := w.MarkTableUploadFinished(ctx, ticiMgr); err != nil {
+		if err := w.MarkTableUploadFinished(ctx, g.mgrCtx); err != nil {
 			return err
 		}
 		w.logger.Info("successfully marked table upload finished for TICIDataWriter")
@@ -461,4 +493,15 @@ func (g *DataWriterGroup) CloseFileWriters(ctx context.Context) error {
 		)
 	}
 	return nil
+}
+
+// Close closes the manager context.
+func (g *DataWriterGroup) Close() error {
+	if !g.writable.Load() {
+		return nil
+	}
+	if g.mgrCtx != nil {
+		g.mgrCtx.Close()
+	}
+	return g.etcdClient.Close()
 }

@@ -202,7 +202,14 @@ func NewTableImporter(
 		return nil, err
 	}
 
-	localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName)
+	// this etcdClient will be closed by TiCIWriterGroup, do not use it in other places.
+	etcdClient, err := getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+	if err := localBackend.InitTiCIWriterGroup(ctx, etcdClient, e.Table.Meta(), e.DBName); err != nil {
+		return nil, err
+	}
 
 	return &TableImporter{
 		LoadDataController: e,

@@ -17,7 +17,7 @@ package tici
 import (
 	"context"
 	"fmt"
-	sync "sync"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -36,6 +36,8 @@ type ManagerCtx struct {
 	conn              *grpc.ClientConn
 	metaServiceClient MetaServiceClient
 	ctx               context.Context
+	cancel            context.CancelFunc // cancel is used to cancel the context when the manager is closed
+	wg                sync.WaitGroup     // wg is used to wait for goroutines to finish
 }
 
 // MetaServiceEelectionKey is the election path used for meta service leader election.
@@ -43,50 +45,33 @@ type ManagerCtx struct {
 const MetaServiceEelectionKey = "/tici/metaserivce/election"
 
 // NewTiCIManager creates a new TiCI manager.
-func NewTiCIManager(client *clientv3.Client) (*ManagerCtx, error) {
-	ctx := context.Background()
+func NewTiCIManager(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
 	addr, err := getMetaServiceLeaderAddress(ctx, client)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get meta service leader address")
+		return nil, err
 	}
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
-	managerCtx := &ManagerCtx{
-		metaServiceClient: NewMetaServiceClient(conn),
-		ctx:               ctx,
-	}
-	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
-	go managerCtx.updateClient(ch)
-	return managerCtx, nil
-}
 
-// NewTiCIManagerWithOpts creates a new TiCI manager with additional gRPC options.
-// This is useful for testing or when you need to customize the gRPC connection.
-func NewTiCIManagerWithOpts(client *clientv3.Client, extra ...grpc.DialOption) (*ManagerCtx, error) {
-	ctx := context.Background()
-	addr, err := getMetaServiceLeaderAddress(ctx, client)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get meta service leader address")
-	}
-	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, extra...)
-	conn, err := grpc.Dial(addr, opts...)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create grpc client for meta service at %s", addr)
-	}
+	ctx, cancel := context.WithCancel(ctx)
 	managerCtx := &ManagerCtx{
 		metaServiceClient: NewMetaServiceClient(conn),
 		ctx:               ctx,
+		cancel:            cancel,
 	}
 	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
-	go managerCtx.updateClient(ch)
+	managerCtx.wg.Add(1)
+	go func() {
+		defer managerCtx.wg.Done()
+		managerCtx.updateClient(ch)
+	}()
 	return managerCtx, nil
 }
 
 func getMetaServiceLeaderAddress(ctx context.Context, client *clientv3.Client) (string, error) {
-	opt := clientv3.WithPrefix()
-	resp, err := client.Get(ctx, MetaServiceEelectionKey, opt)
+	resp, err := client.Get(ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get meta service election key")
 	}
@@ -134,6 +119,8 @@ func (t *ManagerCtx) updateClient(ch clientv3.WatchChan) {
 
 // Close closes the grpc connection and cleans up the metaServiceClient.
 func (t *ManagerCtx) Close() {
+	t.cancel()
+	t.wg.Wait()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.conn != nil {
@@ -218,7 +205,6 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 		return nil
 	}
 	logutil.BgLogger().Info("create fulltext index success", zap.String("indexID", resp.IndexId))
-
 	return nil
 }
 
