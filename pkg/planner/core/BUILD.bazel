@@ -111,6 +111,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/planner/cardinality",
         "//pkg/planner/context",
+        "//pkg/planner/core/constraint",
         "//pkg/planner/core/internal",
         "//pkg/planner/core/internal/base",
         "//pkg/planner/core/metrics",
