@@ -75,6 +75,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -197,12 +198,14 @@ type Domain struct {
 		expiredTimeStamp types.Time
 	}
 
-	brOwnerMgr               owner.Manager
-	logBackupAdvancer        *daemon.OwnerDaemon
-	historicalStatsWorker    *HistoricalStatsWorker
-	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
-	runawayManager           *runaway.Manager
-	resourceGroupsController *rmclient.ResourceGroupsController
+	brOwnerMgr            owner.Manager
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	runawayManager        *runaway.Manager
+	// resourceGroupsController can be changed via `SetResourceGroupsController`
+	// in unit test.
+	resourceGroupsController atomic.Pointer[rmclient.ResourceGroupsController]
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -390,32 +393,6 @@ func (do *Domain) topNSlowQueryLoop() {
 	}
 }
 
-func (do *Domain) infoSyncerKeeper() {
-	defer func() {
-		logutil.BgLogger().Info("infoSyncerKeeper exited.")
-	}()
-
-	defer util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
-
-	ticker := time.NewTicker(infosync.ReportInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			do.info.ReportMinStartTS(do.Store())
-		case <-do.info.Done():
-			logutil.BgLogger().Info("server info syncer need to restart")
-			if err := do.info.Restart(context.Background()); err != nil {
-				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
-			} else {
-				logutil.BgLogger().Info("server info syncer restarted")
-			}
-		case <-do.exit:
-			return
-		}
-	}
-}
-
 func (do *Domain) globalConfigSyncerKeeper() {
 	defer func() {
 		logutil.BgLogger().Info("globalConfigSyncerKeeper exited.")
@@ -437,34 +414,6 @@ func (do *Domain) globalConfigSyncerKeeper() {
 	}
 }
 
-func (do *Domain) topologySyncerKeeper() {
-	defer util.Recover(metrics.LabelDomain, "topologySyncerKeeper", nil, false)
-	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
-	defer func() {
-		ticker.Stop()
-		logutil.BgLogger().Info("topologySyncerKeeper exited.")
-	}()
-
-	for {
-		select {
-		case <-ticker.C:
-			err := do.info.StoreTopologyInfo(context.Background())
-			if err != nil {
-				logutil.BgLogger().Warn("refresh topology in loop failed", zap.Error(err))
-			}
-		case <-do.info.TopologyDone():
-			logutil.BgLogger().Info("server topology syncer need to restart")
-			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Warn("server topology syncer restart failed", zap.Error(err))
-			} else {
-				logutil.BgLogger().Info("server topology syncer restarted")
-			}
-		case <-do.exit:
-			return
-		}
-	}
-}
-
 // CheckAutoAnalyzeWindows checks the auto analyze windows and kill the auto analyze process if it is not in the window.
 func (do *Domain) CheckAutoAnalyzeWindows() {
 	se, err := do.sysSessionPool.Get()
@@ -476,8 +425,15 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
 	defer do.sysSessionPool.Put(se)
-	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
+	start, end, ok := autoanalyze.CheckAutoAnalyzeWindow(sctx)
+	if !ok {
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			statslogutil.StatsLogger().Warn("Kill auto analyze process because it exceeded the window",
+				zap.Uint64("processID", id),
+				zap.Time("now", time.Now()),
+				zap.String("start", start),
+				zap.String("end", end),
+			)
 			do.SysProcTracker().KillSysProcess(id)
 		}
 	}
@@ -539,9 +495,9 @@ func (do *Domain) Close() {
 	// in case the keeper rewrite the key after the cleaning.
 	do.wg.Wait()
 	if do.info != nil {
-		do.info.RemoveServerInfo()
+		do.info.ServerInfoSyncer().RemoveServerInfo()
 		do.info.RemoveMinStartTS()
-		do.info.RemoveTopologyInfo()
+		do.info.ServerInfoSyncer().RemoveTopologyInfo()
 	}
 	if do.unprefixedEtcdCli != nil {
 		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
@@ -754,7 +710,7 @@ func (do *Domain) Init(
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
 			} else {
-				if err := do.info.StoreServerInfo(context.Background()); err != nil {
+				if err := do.info.ServerInfoSyncer().StoreServerInfo(context.Background()); err != nil {
 					return errors.Trace(err)
 				}
 				do.isLostConnectionToPD.Store(0)
@@ -819,14 +775,18 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		do.isSyncer.MDLCheckLoop(do.ctx)
 	}, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
-	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
+	do.wg.Run(func() {
+		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)
+	}, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
 	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
-		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
+		do.wg.Run(func() {
+			do.info.ServerInfoSyncer().TopologySyncLoop(do.exit)
+		}, "topologySyncerKeeper")
 	}
 	pdCli := do.GetPDClient()
 	if pdCli != nil {
@@ -1655,12 +1615,12 @@ func (do *Domain) RunawayManager() *runaway.Manager {
 
 // ResourceGroupsController returns the resource groups controller.
 func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
-	return do.resourceGroupsController
+	return do.resourceGroupsController.Load()
 }
 
 // SetResourceGroupsController is only used in test.
 func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
-	do.resourceGroupsController = controller
+	do.resourceGroupsController.Store(controller)
 }
 
 // SetupHistoricalStatsWorker setups worker
@@ -2738,7 +2698,7 @@ func (do *Domain) serverIDKeeper() {
 		do.isLostConnectionToPD.Store(0)
 		lastSucceedTimestamp = time.Now()
 
-		if err := do.info.StoreServerInfo(context.Background()); err != nil {
+		if err := do.info.ServerInfoSyncer().StoreServerInfo(context.Background()); err != nil {
 			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
 		}
 	}
@@ -2957,10 +2917,10 @@ func (s *SysProcesses) UnTrack(id uint64) {
 }
 
 // GetSysProcessList gets list of system ProcessInfo
-func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+func (s *SysProcesses) GetSysProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for connID, proc := range s.procMap {
 		// if session is still tracked in this map, it's not returned to sysSessionPool yet
 		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {

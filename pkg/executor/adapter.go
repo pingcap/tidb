@@ -484,7 +484,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 
 // IsFastPlan exports for testing.
 func IsFastPlan(p base.Plan) bool {
-	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
+	if proj, ok := p.(*physicalop.PhysicalProjection); ok {
 		p = proj.Children()[0]
 	}
 	switch p.(type) {
@@ -927,7 +927,7 @@ func isNoResultPlan(p base.Plan) bool {
 		if raw.CalculateNoDelay {
 			return true
 		}
-	case *plannercore.PhysicalProjection:
+	case *physicalop.PhysicalProjection:
 		if raw.CalculateNoDelay {
 			return true
 		}
@@ -1740,6 +1740,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
+		StorageKV:         stmtCtx.IsTiKV.Load(),
+		StorageMPP:        stmtCtx.IsTiFlash.Load(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {

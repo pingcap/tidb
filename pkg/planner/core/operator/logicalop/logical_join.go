@@ -305,8 +305,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	if err != nil {
 		return nil, nil, err
 	}
-	addSelection(p, lCh, leftRet, 0, opt)
-	addSelection(p, rCh, rightRet, 1, opt)
+	AddSelection(p, lCh, leftRet, 0, opt)
+	AddSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self(), nil
