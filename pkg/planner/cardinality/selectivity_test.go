@@ -1705,7 +1705,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	testKit.MustExec("analyze table t with 0 topn")
+	testKit.MustExec("analyze table t with 5 buckets, 0 topn")
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
