@@ -39,6 +39,9 @@ func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.Log
 	if len(conds) != 1 {
 		return nil
 	}
+	if expression.MaybeOverOptimized4PlanCache(exprCtx, conds...) {
+		return nil
+	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	if isConstFalse(sc, conds[0]) {
 		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
