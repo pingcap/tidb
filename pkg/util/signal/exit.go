@@ -14,9 +14,17 @@
 
 package signal
 
-import "syscall"
+import (
+	"syscall"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+)
 
 // TiDBExit sends a SIGTERM signal to the current process
 func TiDBExit(sig syscall.Signal) {
-	syscall.Kill(syscall.Getpid(), sig)
+	err := syscall.Kill(syscall.Getpid(), sig)
+	if err != nil {
+		log.Error("failed to send signal", zap.Error(err), zap.String("signal", sig.String()))
+	}
 }
