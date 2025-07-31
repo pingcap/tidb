@@ -31,7 +31,6 @@ import (
 func TestMPPJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists d1_t")
 		testKit.MustExec("create table d1_t(d1_k int, value int)")
 		testKit.MustExec("insert into d1_t values(1,2),(2,3)")
@@ -78,7 +77,6 @@ func TestMPPJoin(t *testing.T) {
 
 func TestMPPLeftSemiJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-
 		// test table
 		testKit.MustExec("use test")
 		testKit.MustExec("create table test.t(a int not null, b int null);")
@@ -124,7 +122,6 @@ func TestMPPLeftSemiJoin(t *testing.T) {
 func TestMPPOuterJoinBuildSideForBroadcastJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists a")
 		testKit.MustExec("create table a(id int, value int)")
 		testKit.MustExec("insert into a values(1,2),(2,3)")
@@ -162,7 +159,6 @@ func TestMPPOuterJoinBuildSideForBroadcastJoin(t *testing.T) {
 func TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists a")
 		testKit.MustExec("create table a(id int, value int, index idx(id, value))")
 		testKit.MustExec("insert into a values(1,2),(2,3)")
@@ -199,7 +195,6 @@ func TestMPPOuterJoinBuildSideForShuffleJoinWithFixedBuildSide(t *testing.T) {
 func TestMPPOuterJoinBuildSideForShuffleJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists a")
 		testKit.MustExec("create table a(id int, value int)")
 		testKit.MustExec("insert into a values(1,2),(2,3)")
@@ -237,7 +232,6 @@ func TestMPPOuterJoinBuildSideForShuffleJoin(t *testing.T) {
 func TestMPPShuffledJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists d1_t")
 		testKit.MustExec("create table d1_t(d1_k int, value int)")
 		testKit.MustExec("insert into d1_t values(1,2),(2,3)")
@@ -435,7 +429,6 @@ func TestMPPAvgRewrite(t *testing.T) {
 func TestMppUnionAll(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("drop table if exists t1")
 		testKit.MustExec("create table t (a int not null, b int, c varchar(20))")
@@ -466,7 +459,6 @@ func TestMppUnionAll(t *testing.T) {
 func TestMppJoinDecimal(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("drop table if exists tt")
 		testKit.MustExec("create table t (c1 decimal(8, 5), c2 decimal(9, 5), c3 decimal(9, 4) NOT NULL, c4 decimal(8, 4) NOT NULL, c5 decimal(40, 20))")
@@ -538,52 +530,53 @@ func TestMppJoinExchangeColumnPrune(t *testing.T) {
 }
 
 func TestMppFineGrainedJoinAndAgg(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("drop table if exists tt")
-		testKit.MustExec("create table t (c1 int, c2 int, c3 int NOT NULL, c4 int NOT NULL, c5 int)")
-		testKit.MustExec("create table tt (b1 int)")
-		testKit.MustExec("analyze table t")
-		testKit.MustExec("analyze table tt")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table t (c1 int, c2 int, c3 int NOT NULL, c4 int NOT NULL, c5 int)")
+	tk.MustExec("create table tt (b1 int)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table tt")
 
-		instances := []string{
-			"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
-			"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
-		}
-		fpName := "github.com/pingcap/tidb/pkg/infoschema/mockStoreServerInfo"
-		fpExpr := `return("` + strings.Join(instances, ";") + `")`
-		require.NoError(t, failpoint.Enable(fpName, fpExpr))
-		defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
-		fpName2 := "github.com/pingcap/tidb/pkg/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
-		require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
-		defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
+	instances := []string{
+		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
+	}
+	fpName := "github.com/pingcap/tidb/pkg/infoschema/mockStoreServerInfo"
+	fpExpr := `return("` + strings.Join(instances, ";") + `")`
+	require.NoError(t, failpoint.Enable(fpName, fpExpr))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	fpName2 := "github.com/pingcap/tidb/pkg/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
+	require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
+	defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
 
-		// Create virtual tiflash replica info.
-		testkit.SetTiFlashReplica(t, dom, "test", "t")
-		testkit.SetTiFlashReplica(t, dom, "test", "tt")
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "tt")
 
-		testKit.MustExec("set @@tidb_allow_mpp=1;")
-		testKit.MustExec("set @@tidb_enforce_mpp=1;")
-		testKit.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
-		testKit.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
+	tk.MustExec("set @@tidb_allow_mpp=1;")
+	tk.MustExec("set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
 
-		var input []string
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		integrationSuiteData := GetIntegrationSuiteData()
-		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, tt := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-			})
-			res := testKit.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
-		}
-	})
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func TestMppAggTopNWithJoin(t *testing.T) {
@@ -626,7 +619,6 @@ func TestMppAggTopNWithJoin(t *testing.T) {
 func TestRejectSortForMPP(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 		testKit.MustExec("analyze table t")
@@ -663,7 +655,6 @@ func TestRejectSortForMPP(t *testing.T) {
 func TestPushDownSelectionForMPP(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 		testKit.MustExec("analyze table t")
@@ -701,7 +692,6 @@ func TestPushDownSelectionForMPP(t *testing.T) {
 func TestPushDownProjectionForMPP(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 		testKit.MustExec("analyze table t")
@@ -738,7 +728,6 @@ func TestPushDownProjectionForMPP(t *testing.T) {
 func TestPushDownAggForMPP(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t (id int, value decimal(6,3))")
 		testKit.MustExec("analyze table t")
@@ -903,7 +892,6 @@ func TestMPPJoinWithRemoveUselessExchange(t *testing.T) {
 func TestMPPJoinWithoutUselessExchange(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-
 		testKit.MustExec("drop table if exists t1")
 		testKit.MustExec("create table t1(id int, v1 decimal(20,2), v2 decimal(20,2))")
 		testKit.MustExec("create table t2(id int, v1 decimal(10,2), v2 decimal(10,2))")
