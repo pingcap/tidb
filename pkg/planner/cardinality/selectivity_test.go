@@ -1756,8 +1756,8 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Should be much higher due to heuristic
 	require.InDelta(t, 100.09, enhancedCount, 0.1, "Enhanced count should be approximately 100.09")
 
-	// Verify other values don't trigger heuristic
-	otherCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(1, 1), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	// Verify other end values don't trigger heuristic
+	otherCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(3, 3), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
 	require.NoError(t, err)
 	require.InDelta(t, 109.99, otherCount, 0.1, "Other value count should be approximately 109.99")
 
@@ -1768,7 +1768,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 		require.NoError(t, err)
 		require.InDelta(t, 100.09, idxEnhancedCount, 0.1, "Index enhanced count should be approximately 100.09")
 
-		idxOtherCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(1, 1))
+		idxOtherCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3))
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
 	}
