@@ -277,7 +277,7 @@ func TestDDLInsideTXNNotBlockMinStartTS(t *testing.T) {
 
 	infoSyncer := dom.InfoSyncer()
 	require.Eventually(t, func() bool {
-		infoSyncer.ReportMinStartTS(store, nil)
+		infoSyncer.ReportMinStartTS(store)
 		return infoSyncer.GetMinStartTS() == tkTs
 	}, time.Second*5, time.Millisecond*100)
 	close(ch)
