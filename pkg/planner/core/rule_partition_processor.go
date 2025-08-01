@@ -2016,10 +2016,11 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx base.PlanContext, expr e
 	var argCol0, argCol1 *expression.Column
 	var argCon0, argCon1 *expression.Constant
 	var okCol0, okCol1, okCon0, okCon1 bool
-	argCol0, okCol0 = op.GetArgs()[0].(*expression.Column)
-	argCol1, okCol1 = op.GetArgs()[1].(*expression.Column)
-	argCon0, okCon0 = op.GetArgs()[0].(*expression.Constant)
-	argCon1, okCon1 = op.GetArgs()[1].(*expression.Constant)
+	args := op.GetArgs()
+	argCol1, okCol1 = args[1].(*expression.Column)
+	argCon1, okCon1 = args[1].(*expression.Constant)
+	argCol0, okCol0 = args[0].(*expression.Column)
+	argCon0, okCon0 = args[0].(*expression.Constant)
 	if okCol0 && okCon1 {
 		col, con = argCol0, argCon1
 	} else if okCol1 && okCon0 {
