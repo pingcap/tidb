@@ -294,12 +294,15 @@ var GetCost4PhysicalMergeJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, cos
 // Attach2Task4PhysicalMergeJoin will be called by PhysicalMergeJoin in physicalOp pkg.
 var Attach2Task4PhysicalMergeJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
-// GetPlanCostVer14PhysicalMergeJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
-var GetPlanCostVer14PhysicalMergeJoin func(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+// GetPlanCostVer14PhysicalMergeJoin calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalMergeJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
 
 // GetPlanCostVer24PhysicalMergeJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = left-child-cost + right-child-cost + filter-cost + group-cost
-var GetPlanCostVer24PhysicalMergeJoin func(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+var GetPlanCostVer24PhysicalMergeJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
 
 // ****************************************** task related ***********************************************
 
