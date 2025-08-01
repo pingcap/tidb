@@ -19,7 +19,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+=======
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> bb89e7ab57b (br: add global variable to control checkpoint lag limit (#62680))
 )
 
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
@@ -46,6 +50,10 @@ func (c *CheckpointAdvancer) UpdateCheckPointLagLimit(limit time.Duration) {
 		cfg.CheckPointLagLimit = limit
 		c.UpdateConfig(cfg)
 	} else {
+<<<<<<< HEAD
 		variable.AdvancerCheckPointLagLimit.Store(limit)
+=======
+		vardef.AdvancerCheckPointLagLimit.Store(limit)
+>>>>>>> bb89e7ab57b (br: add global variable to control checkpoint lag limit (#62680))
 	}
 }

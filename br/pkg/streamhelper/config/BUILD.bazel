@@ -10,7 +10,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/streamhelper/config",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD
         "//pkg/sessionctx/variable",
+=======
+        "//pkg/sessionctx/vardef",
+>>>>>>> bb89e7ab57b (br: add global variable to control checkpoint lag limit (#62680))
         "@com_github_spf13_pflag//:pflag",
     ],
 )

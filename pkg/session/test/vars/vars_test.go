@@ -409,3 +409,10 @@ func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
 	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
 	require.Equal(t, time.Hour*100, variable.AdvancerCheckPointLagLimit.Load())
 }
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, vardef.AdvancerCheckPointLagLimit.Load())
+}

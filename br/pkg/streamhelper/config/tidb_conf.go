@@ -17,7 +17,11 @@ package config
 import (
 	"time"
 
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+=======
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> bb89e7ab57b (br: add global variable to control checkpoint lag limit (#62680))
 )
 
 type TiDBConfig struct {
@@ -32,5 +36,9 @@ func DefaultTiDBConfig() Config {
 
 // The maximum lag could be tolerated for the checkpoint lag.
 func (conf *TiDBConfig) GetCheckPointLagLimit() time.Duration {
+<<<<<<< HEAD
 	return variable.AdvancerCheckPointLagLimit.Load()
+=======
+	return vardef.AdvancerCheckPointLagLimit.Load()
+>>>>>>> bb89e7ab57b (br: add global variable to control checkpoint lag limit (#62680))
 }

@@ -80,7 +80,11 @@ go_test(
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
         "//pkg/kv",
+<<<<<<< HEAD
         "//pkg/sessionctx/variable",
+=======
+        "//pkg/sessionctx/vardef",
+>>>>>>> bb89e7ab57b (br: add global variable to control checkpoint lag limit (#62680))
         "//pkg/tablecodec",
         "//pkg/util/codec",
         "//pkg/util/redact",
