@@ -15,6 +15,7 @@
 
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
+NEXT_GEN=$NEXT_GEN
 
 build=1
 mysql_tester="./mysql_tester"
@@ -226,7 +227,7 @@ function start_tidb_server()
         start_options="$start_options -store unistore -path ''"
     fi
 
-    if [ -n "$NEXT_GEN:-" ] && [ "$NEXT_GEN:-" != "0" ] && [ "$NEXT_GEN:-" != "false" ]; then
+    if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
         start_options="$start_options -keyspace-name SYSTEM"
     fi
 
