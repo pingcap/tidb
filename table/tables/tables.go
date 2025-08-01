@@ -66,10 +66,20 @@ type TableCommon struct {
 	hiddenColumns                   []*table.Column
 	writableColumns                 []*table.Column
 	fullHiddenColsAndVisibleColumns []*table.Column
+<<<<<<< HEAD:table/tables/tables.go
 	indices                         []table.Index
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
 	sequence                        *sequenceCommon
+=======
+	writableConstraints             []*table.Constraint
+
+	indices     []table.Index
+	meta        *model.TableInfo
+	allocs      autoid.Allocators
+	sequence    *sequenceCommon
+	Constraints []*table.Constraint
+>>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549)):pkg/table/tables/tables.go
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -174,6 +184,10 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
+<<<<<<< HEAD:table/tables/tables.go
+=======
+	t.ResetColumnsCache()
+>>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549)):pkg/table/tables/tables.go
 }
 
 // initTableIndices initializes the indices of the TableCommon.
@@ -1167,8 +1181,16 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
+<<<<<<< HEAD:table/tables/tables.go
 	if sessVars.EnableMutationChecker {
 		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
+=======
+	failpoint.InjectCall("duringTableCommonRemoveRecord", t.meta)
+
+	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
+	if ctx.EnableMutationChecker() {
+		if err = checkDataConsistency(txn, tc, t, nil, r, memBuffer, sh, opt.GetIndexesLayout()); err != nil {
+>>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549)):pkg/table/tables/tables.go
 			return errors.Trace(err)
 		}
 	}
@@ -1628,6 +1650,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 	return false
 }
 
+<<<<<<< HEAD:table/tables/tables.go
 // canSkipUpdateBinlog checks whether the column can be skipped or not.
 func (t *TableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
 	if col.IsGenerated() && !col.GeneratedStored {
@@ -1636,6 +1659,8 @@ func (t *TableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) 
 	return false
 }
 
+=======
+>>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549)):pkg/table/tables/tables.go
 // FindIndexByColName returns a public table index containing only one column named `name`.
 func FindIndexByColName(t table.Table, name string) table.Index {
 	for _, idx := range t.Indices() {
