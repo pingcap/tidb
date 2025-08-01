@@ -194,7 +194,7 @@ func MergePartTopN2GlobalTopN(
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.
-					hists[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+					hists[j].BinarySearchRemoveVal(&datum, int64(count))
 				}
 			}
 		}
