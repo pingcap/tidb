@@ -236,9 +236,8 @@ func updateRecord(
 		}
 	}
 
-	// When the generated value is null and the column itself is not nullable. This value can be
-	// inserted successfully by ON DUPLICATE KEY UPDATE. But when we want to update this record
-	// later, we should return an error for null values.
+	// Null value can be inserted into not nullable generated column by ON DUPLICATE KEY UPDATE.
+	// But we don't allow to update this record later. So we return an error for null value.
 	for i, col := range t.Cols() {
 		if col.IsGenerated() && oldData[i].IsNull() &&
 			(mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) {

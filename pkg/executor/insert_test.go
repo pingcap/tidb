@@ -772,7 +772,17 @@ func TestInsertNullIntoNotNullGenerated(t *testing.T) {
 	tk.ExecToErr(`insert into t3 set id = 2, c1 = null`)
 	tk.MustExec(`insert into t3(id, c1) values(1, "aaaa")`)
 	tk.MustExec(`insert ignore into t3 set id = 1, c1 = "bbbb" on duplicate key update id = 2, c1 = null`)
+
+	// The following behavior is strange, but it is compatible with MySQL.
+	// update is failed because c2 is null
 	tk.ExecToErr(`insert into t3 set id = 2, c1 = "cccc" on duplicate key update c1 = "dddd"`)
-	tk.MustExec(`delete from t3 where id = 2`)
+
+	// But this row can't be deleted by c2 is null
+	tk.MustExec(`delete from t3 where c2 is null`)
+	rs := tk.MustQuery(`select * from t3`).Rows()
+	require.Len(t, rs, 1)
+
+	// We need to delete it by c2 = ""
+	tk.MustExec(`delete from t3 where c2 = ""`)
 	tk.MustQuery(`select * from t3`).Check(testkit.Rows())
 }
