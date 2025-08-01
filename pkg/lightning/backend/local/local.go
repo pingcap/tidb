@@ -809,7 +809,9 @@ func (local *Backend) Close() {
 		local.nextgenHTTPCli.CloseIdleConnections()
 	}
 	if local.ticiWriteGroup != nil {
-		local.ticiWriteGroup.Close()
+		if err := local.ticiWriteGroup.Close(); err != nil {
+			local.logger.Error("failed to close tici write group", zap.Error(err))
+		}
 	}
 }
 
