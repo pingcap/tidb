@@ -20,6 +20,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
+)
+
+const (
+	// commitFailAuditLogStr is the audit log string template of commit failure.
+	commitFailAuditLogStr = "[Commit failed error info: %s]"
 )
 
 type domainMap struct {
@@ -128,6 +134,7 @@ var (
 	// TODO this memory flag is meaningless, a store is always bootstrapped once,
 	// we can always get the version from the store, remove it later.
 	storeBootstrapped     = make(map[string]bool)
+	storeEEBootstrapped   = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is lease of info schema, we use this to check whether info schema
@@ -155,6 +162,7 @@ func setStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	storeBootstrapped[storeUUID] = true
+	storeEEBootstrapped[storeUUID] = true
 }
 
 // unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
@@ -163,6 +171,7 @@ func unsetStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	delete(storeBootstrapped, storeUUID)
+	delete(storeEEBootstrapped, storeUUID)
 }
 
 // SetSchemaLease changes the default schema lease time for DDL.
@@ -288,6 +297,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 
 	if !sessVars.InTxn() {
 		if err := se.CommitTxn(ctx); err != nil {
+			sessionctx.OnExtensionSecurity(se, fmt.Sprintf(commitFailAuditLogStr, err.Error()), se.GetSessionVars().StmtCtx)
 			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
 				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
 			}

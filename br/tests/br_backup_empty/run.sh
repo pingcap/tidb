@@ -18,6 +18,11 @@ set -eu
 DB="$TEST_NAME"
 DB_COUNT=10
 
+# start a new cluster
+. run_services
+echo "restart a services"
+restart_services
+
 # backup empty.
 echo "backup empty cluster start..."
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/empty_cluster"

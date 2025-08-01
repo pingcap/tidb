@@ -15,7 +15,6 @@
 package extension
 
 import (
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -29,6 +28,7 @@ type ConnEventInfo struct {
 	SessionAlias string
 	ActiveRoles  []*auth.RoleIdentity
 	Error        error
+	Info         string
 }
 
 // ConnEventTp is the type of the connection event
@@ -83,8 +83,8 @@ type StmtEventInfo interface {
 	// OriginalText will return the text of the statement.
 	// Notice that for the EXECUTE statement, the prepared statement text will be used as the return value
 	OriginalText() string
-	// SQLDigest will return the normalized and redact text of the `OriginalText()`
-	SQLDigest() (normalized string, digest *parser.Digest)
+	// RedactedText will return the normalized and redact text of the `OriginalText()`
+	RedactedText() (normalized string)
 	// AffectedRows will return the affected rows of the current statement
 	AffectedRows() uint64
 	// RelatedTables will return the related tables of the current statement
@@ -95,10 +95,55 @@ type StmtEventInfo interface {
 	GetError() error
 }
 
+// SecurityEventTp is the type of the SECURITY event
+type SecurityEventTp uint8
+
+const (
+	// SecurityEvent means the general security event
+	SecurityEvent SecurityEventTp = iota
+)
+
+// DataOpEventTp is the type of the data operation event
+type DataOpEventTp uint8
+
+const (
+	// DataOpEvent means the general data operation event
+	DataOpEvent DataOpEventTp = iota
+)
+
+// SecurityEventInfo is the information of SECURITY event
+type SecurityEventInfo interface {
+	// User returns the user name
+	User() string
+	// Host returns the user host
+	Host() string
+	// SecurityInfo returns the security reason/info
+	SecurityInfo() string
+	// OriginalText returns the original sql text (if possible)
+	OriginalText() string
+	// RedactedText returns the redacted sql text (if possible)
+	RedactedText() string
+}
+
+// DataOpEventInfo is the information of data operation event
+type DataOpEventInfo interface {
+	// dumpling or lightning
+	Component() string
+	User() string
+	Host() string
+	Result() string
+	TargetList() string
+	InputDir() string
+	OutputDir() string
+	ConnectionInfo() *variable.ConnectionInfo
+}
+
 // SessionHandler is used to listen session events
 type SessionHandler struct {
 	OnConnectionEvent func(ConnEventTp, *ConnEventInfo)
 	OnStmtEvent       func(StmtEventTp, StmtEventInfo)
+	OnSecurityEvent   func(SecurityEventTp, SecurityEventInfo)
+	OnDataOpEvent     func(DataOpEventTp, DataOpEventInfo)
 }
 
 func newSessionExtensions(es *Extensions) *SessionExtensions {
@@ -111,6 +156,12 @@ func newSessionExtensions(es *Extensions) *SessionExtensions {
 				}
 				if fn := handler.OnStmtEvent; fn != nil {
 					connExtensions.stmtEventFuncs = append(connExtensions.stmtEventFuncs, fn)
+				}
+				if fn := handler.OnSecurityEvent; fn != nil {
+					connExtensions.securityEventFuncs = append(connExtensions.securityEventFuncs, fn)
+				}
+				if fn := handler.OnDataOpEvent; fn != nil {
+					connExtensions.dataOpEventFuncs = append(connExtensions.dataOpEventFuncs, fn)
 				}
 			}
 		}
@@ -128,6 +179,8 @@ func newSessionExtensions(es *Extensions) *SessionExtensions {
 type SessionExtensions struct {
 	connectionEventFuncs []func(ConnEventTp, *ConnEventInfo)
 	stmtEventFuncs       []func(StmtEventTp, StmtEventInfo)
+	securityEventFuncs   []func(SecurityEventTp, SecurityEventInfo)
+	dataOpEventFuncs     []func(DataOpEventTp, DataOpEventInfo)
 
 	authPlugins map[string]*AuthPlugin
 }
@@ -148,6 +201,16 @@ func (es *SessionExtensions) HasStmtEventListeners() bool {
 	return es != nil && len(es.stmtEventFuncs) > 0
 }
 
+// HasSecurityEventListeners returns a bool that indicates if any HA event listener exists
+func (es *SessionExtensions) HasSecurityEventListeners() bool {
+	return es != nil && len(es.securityEventFuncs) > 0
+}
+
+// HasDataOpEventListeners returns a bool that indicates if any data operation event listener exists
+func (es *SessionExtensions) HasDataOpEventListeners() bool {
+	return es != nil && len(es.dataOpEventFuncs) > 0
+}
+
 // OnStmtEvent will be called when a stmt event happens
 func (es *SessionExtensions) OnStmtEvent(tp StmtEventTp, event StmtEventInfo) {
 	if es == nil {
@@ -156,6 +219,28 @@ func (es *SessionExtensions) OnStmtEvent(tp StmtEventTp, event StmtEventInfo) {
 
 	for _, fn := range es.stmtEventFuncs {
 		fn(tp, event)
+	}
+}
+
+// OnSecurityEvent will be called when a SECURITY event happens
+func (es *SessionExtensions) OnSecurityEvent(tp SecurityEventTp, info SecurityEventInfo) {
+	if es == nil {
+		return
+	}
+
+	for _, fn := range es.securityEventFuncs {
+		fn(tp, info)
+	}
+}
+
+// OnDataOpEvent will be called when a data operation event happens
+func (es *SessionExtensions) OnDataOpEvent(tp DataOpEventTp, info DataOpEventInfo) {
+	if es == nil {
+		return
+	}
+
+	for _, fn := range es.dataOpEventFuncs {
+		fn(tp, info)
 	}
 }
 

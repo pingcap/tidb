@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "audit_test_test",
+    timeout = "short",
+    srcs = [
+        "pkdb_filter_test.go",
+        "pkdb_function_test.go",
+        "pkdb_sysvar_test.go",
+    ],
+    flaky = True,
+    shard_count = 21,
+    deps = [
+        "//pkg/config",
+        "//pkg/errno",
+        "//pkg/extension/enterprise/audit",
+        "//pkg/kv",
+        "//pkg/parser/auth",
+        "//pkg/server",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/testkit",
+        "//pkg/util/logutil",
+        "//pkg/util/sem",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)

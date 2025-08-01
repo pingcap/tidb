@@ -55,6 +55,7 @@ import (
 	"time"
 	"unsafe"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -92,6 +93,7 @@ import (
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -163,6 +165,7 @@ type clientConn struct {
 	pkt          *internal.PacketIO      // a helper to read and write data in packet format.
 	bufReadConn  *util2.BufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn               // TLS connection, nil if not TLS.
+	tlcpConn     *tlcp.Conn              // TLCP connection, nil if not TLCP.
 	server       *Server                 // a reference of server instance.
 	capability   uint32                  // client capability affects the way server handles client request.
 	connectionID uint64                  // atomically allocated by a global variable, unique in process scope.
@@ -203,6 +206,16 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
+	// whether client ip is allowed to connect
+	ipAllowed bool
+}
+
+type userResourceLimits struct {
+	resetUtime  uint64
+	connections int
+	connPerHour int32
+	updates     int32
+	questions   int32
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -314,7 +327,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		}
 		return err
 	}
-	if err := cc.readOptionalSSLRequestAndHandshakeResponse(ctx); err != nil {
+	if err := cc.readOptionalSecureRequestAndHandshakeResponse(ctx); err != nil {
 		err1 := cc.writeError(ctx, err)
 		if err1 != nil {
 			logutil.Logger(ctx).Debug("writeError failed", zap.Error(err1))
@@ -450,8 +463,10 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
 	// length of auth-plugin-data
 	data = append(data, byte(len(cc.salt)+1))
-	// reserved 10 [00]
-	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	// server tlcp capability
+	data = append(data, 1)
+	// reserved 9 [00]
+	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
 	data = append(data, 0)
@@ -521,7 +536,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	return waitTimeout
 }
 
-func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Context) error {
+func (cc *clientConn) readOptionalSecureRequestAndHandshakeResponse(ctx context.Context) error {
 	// Read a packet. It may be a SSLRequest or HandshakeResponse.
 	data, err := cc.readPacket()
 	if err != nil {
@@ -579,6 +594,25 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 			data, err = cc.readPacket()
 			if err != nil {
 				logutil.Logger(ctx).Warn("read handshake response failure after upgrade to TLS", zap.Error(err))
+				return err
+			}
+			pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
+			if err != nil {
+				terror.Log(err)
+				return err
+			}
+		}
+	} else if resp.TLCPCapability&mysql.ClientTLCP > 0 {
+		tlcpConfig := (*tlcp.Config)(atomic.LoadPointer(&cc.server.tlcpConfig))
+		if tlcpConfig != nil {
+			// The packet is a TLCPRequest, let's switch to TLCP.
+			if err = cc.upgradeToTLCP(tlcpConfig); err != nil {
+				return err
+			}
+			// Read the following HandshakeResponse packet.
+			data, err = cc.readPacket()
+			if err != nil {
+				logutil.Logger(ctx).Warn("read handshake response failure after upgrade to TLCP", zap.Error(err))
 				return err
 			}
 			pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
@@ -770,7 +804,12 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	var tlcpStatePtr *tlcp.ConnectionState
+	if cc.tlcpConn != nil {
+		tlcpState := cc.tlcpConn.ConnectionState()
+		tlcpStatePtr = &tlcpState
+	}
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, tlcpStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -798,6 +837,11 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	host, port, err := cc.PeerHost(hasPassword, false)
+	if err != nil {
+		return err
+	}
+
+	err = cc.server.checkUserConnectionCount(cc, host)
 	if err != nil {
 		return err
 	}
@@ -1149,6 +1193,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
+			// If the resource control error occurs, print audit logs.
+			originErr := errors.Cause(err)
+			if te, ok := originErr.(*terror.Error); ok {
+				if te.Code() == errno.ErrResourceGroupThrottled {
+					cc.onExtensionSecurity(te.Error())
+				}
+			}
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
@@ -1157,6 +1208,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				server_metrics.DisconnectErrorUndetermined.Inc()
+				// If commit failed on 2PC-Commit , close  this connection and write audit log.
+				if te, ok := originErr.(*terror.Error); ok {
+					cc.onExtensionSecurity(te.Error())
+				}
 				return
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
@@ -1549,6 +1604,8 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 		switch y := e.(type) {
 		case *terror.Error:
 			m = terror.ToSQLError(y)
+		case *terror.TiDBError:
+			m = &mysql.SQLError{Code: uint16(y.MYSQLERRNO), Message: y.MESSAGETEXT, State: y.SQLSTATE}
 		default:
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
 		}
@@ -1709,6 +1766,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
 	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+	cc.ctx.SetSessionExec(&ClientConn{cc})
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
 		return err
@@ -1814,6 +1872,12 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 
 	if lastStmt != nil {
+		// If the transaction fails to commit and is not an indeterminate error, a rollback audit log is logged.
+		if err != nil && terror.ErrResultUndetermined.NotEqual(err) {
+			if _, ok := lastStmt.(*ast.CommitStmt); ok {
+				cc.onExtensionSecurity("The transaction failed to be committed and was rolled back ," + err.Error())
+			}
+		}
 		cc.onExtensionStmtEnd(lastStmt, sessVars.StmtCtx.TaskID != expiredStmtTaskID, err)
 	}
 
@@ -2479,6 +2543,17 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	return nil
 }
 
+func (cc *clientConn) upgradeToTLCP(tlcpConfig *tlcp.Config) error {
+	// Important: read from buffered reader instead of the original net.Conn because it may contain data we need.
+	tlcpConn := tlcp.Server(cc.bufReadConn, tlcpConfig)
+	if err := tlcpConn.Handshake(); err != nil {
+		return err
+	}
+	cc.setConn(tlcpConn)
+	cc.tlcpConn = tlcpConn
+	return nil
+}
+
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	user, data := util2.ParseNullTermString(data)
 	cc.user = string(hack.String(user))
@@ -2549,7 +2624,12 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	var tlcpStatePtr *tlcp.ConnectionState
+	if cc.tlcpConn != nil {
+		tlcpState := cc.tlcpConn.ConnectionState()
+		tlcpStatePtr = &tlcpState
+	}
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, tlcpStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -2601,6 +2681,60 @@ func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error 
 }
 
 var _ fmt.Stringer = getLastStmtInConn{}
+
+var _ sessionctx.SessionExec = &ClientConn{}
+
+// ClientConn procedure implementation interface
+type ClientConn struct {
+	*clientConn
+}
+
+// MultiHanldeNodeWithResult execute sql with result.
+func (cc *ClientConn) MultiHanldeNodeWithResult(ctx context.Context, stmt ast.StmtNode) (err error) {
+	sessVars := cc.ctx.GetSessionVars()
+	var retryable bool
+	// expiredTaskID is the task ID of the previous statement. When executing a stmt,
+	// the StmtCtx will be reinit and the TaskID will change. We can compare the StmtCtx.TaskID
+	// with the previous one to determine whether StmtCtx has been inited for the current stmt.
+	sc := sessVars.StmtCtx
+	prevWarns := sc.GetWarnings()
+	warns := sc.GetWarnings()
+	parserWarns := warns[len(prevWarns):]
+	retryable, err = cc.handleStmt(ctx, stmt, parserWarns, false)
+	if err != nil {
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
+		if txnErr != nil {
+			err = txnErr
+			return err
+		}
+
+		if retryable && action == sessiontxn.StmtActionRetryReady {
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			_, err = cc.handleStmt(ctx, stmt, parserWarns, false)
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+			if err != nil {
+				return err
+			}
+		}
+		if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
+			return err
+		}
+		_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+		if !allowTiFlashFallback {
+			return err
+		}
+		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// server and fallback to TiKV.
+		warns := append(parserWarns, stmtctx.SQLWarn{Level: contextutil.WarnLevelError, Err: err})
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		_, err = cc.handleStmt(ctx, stmt, warns, false)
+		cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 type getLastStmtInConn struct {
 	*clientConn
@@ -2676,6 +2810,25 @@ func (cc *clientConn) ReadPacket() ([]byte, error) {
 // Flush implements `conn.AuthConn` interface
 func (cc *clientConn) Flush(ctx context.Context) error {
 	return cc.flush(ctx)
+}
+
+// AllowIPConnection return whether the client ip is allowed to connect.
+func (cc *clientConn) AllowIPConnection() bool {
+	// always return true when disable whitelist plugin
+	if !cc.server.cfg.Security.EnableWhiteListPlugin {
+		return true
+	}
+	return cc.ipAllowed
+}
+
+// SetAllowIPConnection set whether the client ip is allowed to connect.
+func (cc *clientConn) SetAllowIPConnection(allowed bool) {
+	// always set true when disable whitelist plugin
+	if !cc.server.cfg.Security.EnableWhiteListPlugin {
+		cc.ipAllowed = true
+		return
+	}
+	cc.ipAllowed = allowed
 }
 
 type compressionStats struct{}

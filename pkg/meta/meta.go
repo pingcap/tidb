@@ -85,6 +85,7 @@ var (
 	mIncIDPrefix         = "IID"
 	mRandomIDPrefix      = "TARID"
 	mBootstrapKey        = []byte("BootstrapKey")
+	mBootstrapEEKey      = []byte("BootstrapEEKey")
 	mSchemaDiffPrefix    = "Diff"
 	mPolicies            = []byte("Policies")
 	mPolicyPrefix        = "Policy"
@@ -1870,9 +1871,22 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 	return value, errors.Trace(err)
 }
 
+// GetBootstrapEEVersion returns the version of the server which bootstrap the store.
+// If the store is not bootstraped, the version will be zero.
+func (m *Mutator) GetBootstrapEEVersion() (int64, error) {
+	value, err := m.txn.GetInt64(mBootstrapEEKey)
+	return value, errors.Trace(err)
+}
+
 // FinishBootstrap finishes bootstrap.
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
+	return errors.Trace(err)
+}
+
+// FinishBootstrapEE finishes bootstrap.
+func (m *Mutator) FinishBootstrapEE(version int64) error {
+	err := m.txn.Set(mBootstrapEEKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
 }
 

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -77,6 +78,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -87,6 +90,13 @@ const (
 	// ErrExprInOrderBy  is in order by items for the error of ErrFieldNotInGroupBy
 	ErrExprInOrderBy = "ORDER BY"
 )
+
+type tableNameWrapper struct {
+	tbName *ast.TableName
+	// AsName is the alias name of the table source.
+	AsName   pmodel.CIStr
+	hasAlias bool
+}
 
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
@@ -284,7 +294,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
-			newArg, np, err := b.rewrite(ctx, arg, p, nil, true)
+			newArg, np, err := b.rewrite(ctx, arg, p, nil, true, requireColumnPriv)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -311,7 +321,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 				if resolver.err != nil {
 					return nil, nil, errors.Trace(resolver.err)
 				}
-				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
+				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true, requireColumnPriv)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -670,7 +680,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		}
 	} else if joinNode.On != nil {
 		b.curClause = onClause
-		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, joinPlan, nil, false)
+		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, joinPlan, nil, false, requireColumnPriv)
 		if err != nil {
 			return nil, err
 		}
@@ -922,7 +932,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := logicalop.LogicalSelection{}.Init(b.ctx, b.getSelectOffset())
 	for _, cond := range conditions {
-		expr, np, err := b.rewrite(ctx, cond, p, aggMapper, false)
+		expr, np, err := b.rewrite(ctx, cond, p, aggMapper, false, requireColumnPriv)
 		if err != nil {
 			return nil, err
 		}
@@ -1166,7 +1176,7 @@ func (p *userVarTypeProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	if v.IsSystem || v.Value == nil {
 		return in, true
 	}
-	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true)
+	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true, nil)
 	return in, true
 }
 
@@ -1334,7 +1344,11 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			newNames = append(newNames, name)
 			continue
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
+		priv := *requireColumnPriv
+		if field.IsUnfoldFromWildCard {
+			priv.unfoldFromWildcard = true
+		}
+		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil, &priv)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -1941,7 +1955,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p base.LogicalPlan
 	for i, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
+		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil, requireColumnPriv)
 		if err != nil {
 			return nil, err
 		}
@@ -2076,22 +2090,57 @@ func CheckParamTypeInt64orUint64(param *driver.ParamMarkerExpr) (bool, uint64) {
 	return false, 0
 }
 
-func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (count uint64,
+func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit, sessVars *variable.SessionVars) (count uint64,
 	offset uint64, err error) {
 	var isExpectedType bool
 	if limit.Count != nil {
-		count, _, isExpectedType = getUintFromNode(ctx, limit.Count, true)
-		if !isExpectedType {
-			return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		v, ok := limit.Count.(*ast.ProcedureVar)
+		if ok {
+
+			count, err = tryGetProcedureIntVariable(sessVars, v)
+			if err != nil {
+				return 0, 0, err
+			}
+		} else {
+			count, _, isExpectedType = getUintFromNode(ctx, limit.Count, true)
+			if !isExpectedType {
+				return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+			}
 		}
 	}
 	if limit.Offset != nil {
-		offset, _, isExpectedType = getUintFromNode(ctx, limit.Offset, true)
-		if !isExpectedType {
-			return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		v, ok := limit.Offset.(*ast.ProcedureVar)
+		if ok {
+			offset, err = tryGetProcedureIntVariable(sessVars, v)
+			if err != nil {
+				return 0, 0, err
+			}
+		} else {
+			offset, _, isExpectedType = getUintFromNode(ctx, limit.Offset, true)
+			if !isExpectedType {
+				return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+			}
 		}
 	}
 	return count, offset, nil
+}
+
+func tryGetProcedureIntVariable(sessVars *variable.SessionVars, procedureVar *ast.ProcedureVar) (uint64, error) {
+	_, d, notFind := sessVars.GetProcedureVariable(procedureVar.Name.L)
+	if notFind {
+		return 0, plannererrors.ErrSpUndeclaredVar.GenWithStackByArgs(procedureVar.Name.O)
+	}
+	err := sessVars.AddUchangableName(procedureVar.Name.L)
+	if err != nil {
+		return 0, err
+	}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.AddFlag(mysql.UnsignedFlag)
+	d, err = d.ConvertTo(sessVars.StmtCtx.TypeCtx(), tp)
+	if err != nil {
+		return 0, err
+	}
+	return d.GetUint64(), nil
 }
 
 func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
@@ -2104,7 +2153,7 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 		offset, count uint64
 		err           error
 	)
-	if count, offset, err = extractLimitCountOffset(b.ctx.GetExprCtx(), limit); err != nil {
+	if count, offset, err = extractLimitCountOffset(b.ctx.GetExprCtx(), limit, b.ctx.GetSessionVars()); err != nil {
 		return nil, err
 	}
 
@@ -2128,6 +2177,7 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 	return li, nil
 }
 
+// resolveFromSelectFields returns the index of v in fields
 func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, ignoreAsName bool) (index int, err error) {
 	var matchedExpr ast.ExprNode
 	index = -1
@@ -2360,9 +2410,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		} else {
 			// We should ignore the err when resolving from schema. Because we could resolve successfully
 			// when considering select fields.
-			var err error
-			index, err = a.resolveFromPlan(v, a.p, resolveFieldsFirst)
-			_ = err
+			index, _ = a.resolveFromPlan(v, a.p, resolveFieldsFirst)
 			if index == -1 && a.curClause != fieldList &&
 				a.curClause != windowOrderByClause && a.curClause != partitionByClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
@@ -2447,7 +2495,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		for _, byItem := range sel.OrderBy.Items {
 			if _, ok := byItem.Expr.(*ast.SubqueryExpr); ok {
 				// correlated agg will be extracted completely latter.
-				_, np, err := b.rewrite(ctx, byItem.Expr, p, nil, true)
+				_, np, err := b.rewrite(ctx, byItem.Expr, p, nil, true, requireColumnPriv)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -2534,7 +2582,7 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 	aggMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range aggFuncs {
 		for _, arg := range agg.Args {
-			expr, _, err := b.rewrite(ctx, arg, p, aggMapper, true)
+			expr, _, err := b.rewrite(ctx, arg, p, aggMapper, true, requireColumnPriv)
 			if err != nil {
 				return nil, err
 			}
@@ -3506,7 +3554,7 @@ func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, g
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 
 	for _, item := range items {
-		expr, np, err := b.rewrite(ctx, item, p, nil, true)
+		expr, np, err := b.rewrite(ctx, item, p, nil, true, requireColumnPriv)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -3560,12 +3608,12 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 					Name:   name.ColName,
 				}}
 			colName.SetType(col.GetStaticType())
-			field := &ast.SelectField{Expr: colName}
+			field := &ast.SelectField{Expr: colName, IsUnfoldFromWildCard: true}
 			field.SetText(nil, name.ColName.O)
 			resultList = append(resultList, field)
 		}
 	}
-	return resultList
+	return
 }
 
 func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectStmt, p base.LogicalPlan) (resultList []*ast.SelectField, err error) {
@@ -3846,6 +3894,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// above example.
 	b.allNames = append(b.allNames, p.OutputNames())
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
+
+	err = b.buildLabelSecurityFilterOfSelect(sel)
+	if err != nil {
+		return nil, err
+	}
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
@@ -4413,12 +4466,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
 	}
 
-	var authErr error
-	if sessionVars.User != nil {
-		authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
-	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
-
 	if tbl.Type().IsVirtualTable() {
 		if tn.TableSample != nil {
 			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
@@ -4698,7 +4745,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				var err error
 				originVal := b.allowBuildCastArray
 				b.allowBuildCastArray = true
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true)
+				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true, requireColumnPriv)
 				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
@@ -4860,6 +4907,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableSlowQuery:
 			p.Extractor = &SlowQueryExtractor{}
+		case infoschema.TableAuditLog:
+			p.Extractor = &AuditLogExtractor{}
 		case infoschema.TableStorageStats:
 			p.Extractor = &TableStorageStatsExtractor{}
 		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments, infoschema.TableTiFlashIndexes:
@@ -4929,8 +4978,12 @@ func (b *PlanBuilder) checkRecursiveView(dbName pmodel.CIStr, tableName pmodel.C
 // qbNameMap4View maps the query block name to the view table lists.
 // viewHints group the view hints based on the view's query block name.
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel.CIStr, tableInfo *model.TableInfo, qbNameMap4View map[string][]ast.HintTable, viewHints map[string][]*ast.TableOptimizerHint) (base.LogicalPlan, error) {
-	viewDepth := b.ctx.GetSessionVars().StmtCtx.ViewDepth
-	b.ctx.GetSessionVars().StmtCtx.ViewDepth++
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	viewDepth := stmtCtx.ViewDepth
+	stmtCtx.ViewDepth++
+	defer func() {
+		stmtCtx.ViewDepth--
+	}()
 	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
 	if err != nil {
 		return nil, err
@@ -5011,6 +5064,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	}()
 	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
+	errViewInvalid := plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	if err != nil {
 		logutil.BgLogger().Error("build plan for view failed", zap.Error(err))
 		if terror.ErrorNotEqual(err, plannererrors.ErrViewRecursive) &&
@@ -5020,23 +5074,24 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 			terror.ErrorNotEqual(err, plannererrors.ErrMixOfGroupFuncAndFields) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrViewNoExplain) &&
 			terror.ErrorNotEqual(err, plannererrors.ErrNotSupportedYet) {
-			err = plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+			err = errViewInvalid
 		}
 		failpoint.Inject("BuildDataSourceFailed", func() {})
 		return nil, err
 	}
 	pm := privilege.GetPrivilegeManager(b.ctx)
-	if viewDepth != 0 &&
-		b.ctx.GetSessionVars().StmtCtx.InExplainStmt &&
+	if viewDepth > 0 &&
+		stmtCtx.InExplainStmt &&
 		pm != nil &&
 		!pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, dbName.L, tableInfo.Name.L, "", mysql.SelectPriv) {
 		return nil, plannererrors.ErrViewNoExplain
 	}
 	if tableInfo.View.Security == pmodel.SecurityDefiner {
 		if pm != nil {
+			// DEFINER VIEWs always use default roles
 			for _, v := range b.visitInfo {
 				if !pm.RequestVerificationWithUser(v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
-					return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+					return nil, errViewInvalid
 				}
 			}
 		}
@@ -5044,12 +5099,12 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	}
 	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
 
-	if b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+	if stmtCtx.InExplainStmt {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", plannererrors.ErrViewNoExplain)
 	}
 
 	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
-		return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		return nil, errViewInvalid
 	}
 
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
@@ -5499,19 +5554,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 
-	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
-	tableList := ExtractTableList(nodeW, false)
-	for _, t := range tableList {
-		dbName := t.Schema.L
-		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
-		// Avoid adding CTE table to the SELECT privilege list, maybe we have better way to do this?
-		if _, ok := b.nameMapCTE[t.Name.L]; !ok {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
-		}
-	}
-
 	oldSchemaLen := p.Schema().Len()
 	if update.Where != nil {
 		p, err = b.buildSelection(ctx, p, update.Where, nil)
@@ -5597,7 +5639,56 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
 	err = updt.buildOnUpdateFKTriggers(b.ctx, b.is, tblID2table)
+	if err != nil {
+		return nil, err
+	}
+	// Label security takes effect currently when updating single table.
+	// TODO: When updateing multi-tables, label security takes effect.
+	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
+	tableList := ExtractTableList(nodeW, false)
+	if len(tableList) == 1 {
+		err = b.buildLabelSecurityInfo(updt, tableList[0])
+	}
 	return updt, err
+}
+
+func (b *PlanBuilder) buildLabelSecurityInfo(targetPlan base.Plan, tn *ast.TableName) error {
+	if !variable.EnableLabelSecurity.Load() {
+		return nil
+	}
+
+	currentUser := b.ctx.GetSessionVars().User
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	// User with SuperPriv can see all rows.
+	if currentUser == nil ||
+		(checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)) {
+		return nil
+	}
+
+	policyName, userLabel, labelColumn, err := b.getUserLabelAndTablePolicy(
+		currentUser.Username,
+		tn.Schema.L,
+		tn.Name.L)
+
+	if err != nil {
+		return err
+	}
+
+	switch p := targetPlan.(type) {
+	case *Update:
+		p.PolicyName = policyName
+		p.UserLabel = userLabel
+		p.LabelColumn = labelColumn
+	case *Insert:
+		p.PolicyName = policyName
+		p.UserLabel = userLabel
+		p.LabelColumn = labelColumn
+	default:
+		return errors.New("build label security failed, it's a unsported login plan")
+	}
+
+	return nil
 }
 
 // GetUpdateColumnsInfo get the update columns info.
@@ -5723,6 +5814,11 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
 		modifyColumns[columnFullName] = IsDefaultExprSameColumn(p.OutputNames()[idx:idx+1], assign.Expr)
+
+		// Check column privilege
+		userName, hostName := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
+		authErr := plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", userName, hostName, name.OrigColName.L, name.OrigTblName.L)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, name.DBName.L, name.OrigTblName.L, name.OrigColName.L, authErr)
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -5797,7 +5893,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			if expr := extractDefaultExpr(assign.Expr); expr != nil {
 				expr.Name = assign.Column
 			}
-			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true)
+			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true, requireColumnPriv)
 			if err != nil {
 				return nil, nil, false, err
 			}
@@ -5821,7 +5917,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign))
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign), requireColumnPriv)
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err
@@ -5851,15 +5947,6 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan.UnionWith(cols)
 		}
 		newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
-		dbName := name.DBName.L
-		// To solve issue#10028, we need to get database name by the table alias name.
-		if dbNameTmp, ok := tblDbMap[name.TblName.L]; ok {
-			dbName = dbNameTmp
-		}
-		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
 	}
 	return newList, p, allAssignmentsAreConstant, nil
 }
@@ -5919,6 +6006,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
+
+	err = b.buildLabelSecurityFilterOfDelete(ds)
+	if err != nil {
+		return nil, err
+	}
 
 	// For explicit column usage, should use the all-public columns.
 	if ds.Where != nil {
@@ -6032,9 +6124,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			if dbName == "" {
 				dbName = b.ctx.GetSessionVars().CurrentDB
 			}
-			if sessionVars.User != nil {
-				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, v.Name.L)
-			}
+			userName, hostName := auth.GetUserAndHostName(sessionVars.User)
+			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", userName, hostName, v.Name.L)
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
 		}
 	}
@@ -6201,7 +6292,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 
 	newArgList := make([]expression.Expression, 0, len(args))
 	for _, arg := range args {
-		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true, requireColumnPriv)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -6233,7 +6324,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p base.LogicalPl
 	// it's okay here because we only want to return the args used in window function
 	newColIndex := 0
 	for _, arg := range args {
-		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true, requireColumnPriv)
 		if err != nil {
 			return nil, err
 		}
@@ -6265,7 +6356,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 	for _, item := range items {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
-		it, np, err := b.rewrite(ctx, item.Expr, p, aggMap, true)
+		it, np, err := b.rewrite(ctx, item.Expr, p, aggMap, true, requireColumnPriv)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -7073,6 +7164,38 @@ func (*tableListExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
+// extractCurrentBlockTableList extras the tables from join tables in current query block.
+// It doesn't extract the tables from subqueries.
+func extractCurrentBlockTableList(node ast.ResultSetNode, input []tableNameWrapper, asName bool) []tableNameWrapper {
+	if node == nil {
+		return input
+	}
+
+	switch x := node.(type) {
+	case *ast.Join:
+		input = extractCurrentBlockTableList(x.Left, input, asName)
+		input = extractCurrentBlockTableList(x.Right, input, asName)
+	case *ast.TableSource:
+		if s, ok := x.Source.(*ast.TableName); ok {
+			if x.AsName.L != "" && asName {
+				tbWrap := tableNameWrapper{
+					tbName:   s,
+					AsName:   x.AsName,
+					hasAlias: true,
+				}
+				input = append(input, tbWrap)
+			} else {
+				tbWrap := tableNameWrapper{
+					tbName: s,
+				}
+				input = append(input, tbWrap)
+			}
+		}
+	}
+
+	return input
+}
+
 func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
 	switch x := node.(type) {
 	case *ast.Join:
@@ -7477,4 +7600,226 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.CleanHashCode()
 	}
 	return res
+}
+
+func makeExprNode(p *parser.Parser, exprStr string) (ast.ExprNode, error) {
+	exprStr = "select " + exprStr
+	stmts, _, err := p.ParseSQL(exprStr)
+	if err != nil {
+		return nil, util2.SyntaxWarn(err)
+	}
+	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
+	return fields[0].Expr, nil
+}
+
+func (b *PlanBuilder) buildLabelSecurityFilterOfSelect(sel *ast.SelectStmt) error {
+	if !variable.EnableLabelSecurity.Load() ||
+		sel.From == nil {
+		return nil
+	}
+	return b.buildLabelSecurityFilter(sel, sel.From.TableRefs)
+}
+
+func (b *PlanBuilder) buildLabelSecurityFilterOfDelete(del *ast.DeleteStmt) error {
+	if !variable.EnableLabelSecurity.Load() ||
+		del.TableRefs == nil {
+		return nil
+	}
+	return b.buildLabelSecurityFilter(del, del.TableRefs.TableRefs)
+}
+
+func (b *PlanBuilder) buildLabelSecurityFilter(dmlStmtNode ast.DMLNode, joinTables *ast.Join) error {
+	// How to use Username and AuthUsername?
+	// Do we need consider the hostname?
+	currentUser := b.ctx.GetSessionVars().User
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	// User with SuperPriv can see all rows.
+	if currentUser == nil ||
+		(checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)) {
+		return nil
+	}
+
+	tableList := make([]tableNameWrapper, 0, 2)
+	if joinTables != nil {
+		tableList = extractCurrentBlockTableList(joinTables, tableList, true)
+	}
+
+	addedWhere := ""
+	for i, tbl := range tableList {
+		// todo: userLabel only need to be geted once.
+		// todo: maybe we should use only one system table to store label security info, in order to reduce rpc.
+		policyName, userLabel, labelColumn, err := b.getUserLabelAndTablePolicy(currentUser.Username, tbl.tbName.Schema.L, tbl.tbName.Name.L)
+		if err != nil {
+			return err
+		}
+		// If there is no label policy binded to this table, skip this table.
+		if len(policyName) == 0 {
+			continue
+		}
+		// The label policy is not applied.
+		if len(labelColumn) == 0 {
+			continue
+		}
+
+		if i != 0 {
+			addedWhere = addedWhere + " AND"
+		}
+		if len(userLabel) == 0 {
+			// If current user has no labels, it can access the data in this table.
+			addedWhere = addedWhere + " FALSE"
+			break
+		}
+
+		fullFieldName := ""
+		if tbl.hasAlias {
+			fullFieldName = tbl.AsName.O + "." + labelColumn
+		} else {
+			fullFieldName = tbl.tbName.Schema.L + "." + tbl.tbName.Name.L + "." + labelColumn
+		}
+
+		addedWhere = addedWhere + " label_accessible(" + fullFieldName + ", " + "'" + userLabel + "')"
+	}
+
+	if len(addedWhere) > 0 {
+		newWhere, err := makeExprNode(parser.New(), addedWhere)
+		if err != nil {
+			return err
+		}
+		switch x := dmlStmtNode.(type) {
+		case *ast.SelectStmt:
+			addExprNodeWithLogicAnd(&x.Where, newWhere)
+		case *ast.DeleteStmt:
+			addExprNodeWithLogicAnd(&x.Where, newWhere)
+		default:
+			return errors.New("build label security failed, it is a unsupported DMLNode")
+		}
+	}
+	return nil
+}
+
+func addExprNodeWithLogicAnd(origExpr *ast.ExprNode, addedExpr ast.ExprNode) {
+	if *origExpr == nil {
+		*origExpr = addedExpr
+		return
+	}
+
+	*origExpr = &ast.BinaryOperationExpr{Op: opcode.LogicAnd, L: *origExpr, R: addedExpr}
+}
+
+// getTableLabelPolicy gets the user security label and the security policy binded to table.
+// first return value: PolicyName
+// second return value: user security label
+// third return value: column name that this column stores the row label.
+func (b *PlanBuilder) getUserLabelAndTablePolicy(userName string, dbName string,
+	tableName string) (string, string, string, error) {
+	sysSession, err := b.getSysSession()
+	if err != nil {
+		return "", "", "", err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	defer b.releaseSysSession(internalCtx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+
+	// begin a pessimistic transaction.
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "BEGIN PESSIMISTIC"); err != nil {
+		return "", "", "", err
+	}
+
+	// get the policy name binded to this table
+	policyName, err := getTableLabelPolicy(internalCtx, sqlExecutor, dbName, tableName)
+	if policyName == "" || err != nil {
+		return "", "", "", err
+	}
+
+	// get the security label for this user.
+	userLabel, err := getUserSecuriyLabel(internalCtx, sqlExecutor, policyName, userName)
+	if err != nil {
+		return policyName, "", "", err
+	}
+
+	labelColumn, err := getLabelColumnName(internalCtx, sqlExecutor, policyName)
+	if err != nil {
+		return policyName, userLabel, "", err
+	}
+	if len(labelColumn) == 0 {
+		logutil.BgLogger().Warn("label security policy is not applied to table",
+			zap.String("DBName", dbName), zap.String("tableName", tableName))
+	}
+
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
+		return policyName, userLabel, labelColumn, err
+	}
+
+	return policyName, userLabel, labelColumn, nil
+}
+
+func getTableLabelPolicy(internalCtx context.Context,
+	sqlExecutor sqlexec.SQLExecutor,
+	dbName string, tableName string) (string, error) {
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "select policy_name from mysql.tidb_ls_tables where schema_name = %? and table_name = %?", dbName, tableName)
+	sqlGetPolicy := sql.String()
+	recordSet, err := sqlExecutor.ExecuteInternal(internalCtx, sqlGetPolicy)
+	if err != nil {
+		return "", err
+	}
+	req := recordSet.NewChunk(nil)
+	err = recordSet.Next(internalCtx, req)
+	if req.NumRows() == 0 || err != nil {
+		recordSet.Close()
+		return "", err
+	}
+	// todo: Do we need check the row count is 1?
+	policyName := req.GetRow(0).GetString(0)
+	err = recordSet.Close()
+
+	return policyName, err
+}
+
+func getUserSecuriyLabel(internalCtx context.Context,
+	sqlExecutor sqlexec.SQLExecutor,
+	policyName string, userName string) (string, error) {
+	// Get the security label binded to this user from mysql.tidb_ls_users.
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "select label_value from mysql.tidb_ls_users where policy_name = %?  AND user_name = %?", policyName, userName)
+	sqlGetUserLabel := sql.String()
+	recordSet, err := sqlExecutor.ExecuteInternal(internalCtx, sqlGetUserLabel)
+	if err != nil {
+		return "", err
+	}
+	req := recordSet.NewChunk(nil)
+	err = recordSet.Next(internalCtx, req)
+	if req.NumRows() == 0 || err != nil {
+		recordSet.Close()
+		return "", err
+	}
+	userLabel := req.GetRow(0).GetString(0)
+	err = recordSet.Close()
+
+	return userLabel, err
+}
+
+// getLabelColumnName gets the name of the column which stores row labels.
+func getLabelColumnName(internalCtx context.Context,
+	sqlExecutor sqlexec.SQLExecutor,
+	policyName string) (string, error) {
+	// Get the security label binded to this user from mysql.tidb_ls_users.
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "SELECT label_column FROM mysql.tidb_ls_policies WHERE policy_name = %? ", policyName)
+	sqlGetLabelColumn := sql.String()
+	recordSet, err := sqlExecutor.ExecuteInternal(internalCtx, sqlGetLabelColumn)
+	if err != nil {
+		return "", err
+	}
+	req := recordSet.NewChunk(nil)
+	err = recordSet.Next(internalCtx, req)
+	if req.NumRows() == 0 || err != nil {
+		recordSet.Close()
+		return "", err
+	}
+	labelColumn := req.GetRow(0).GetString(0)
+	err = recordSet.Close()
+
+	return labelColumn, err
 }

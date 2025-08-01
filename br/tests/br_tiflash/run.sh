@@ -15,9 +15,13 @@
 # limitations under the License.
 
 set -eu
+cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+. run_services
+
 DB="${TEST_NAME}_DATABASE"
 RECORD_COUNT=1000
 
+restart_services
 
 run_sql "CREATE DATABASE $DB"
 
