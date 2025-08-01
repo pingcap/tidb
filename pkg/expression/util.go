@@ -2074,8 +2074,7 @@ func ExecBinaryParam(typectx types.Context, binaryParams []param.BinaryParam) (p
 				args[i] = types.NewDecimalDatum(nil)
 			} else {
 				var dec types.MyDecimal
-				err = typectx.HandleTruncate(dec.FromString(binaryParams[i].Val))
-				if err != nil {
+				if err := typectx.HandleTruncate(dec.FromString(binaryParams[i].Val)); err != nil && err != types.ErrTruncated {
 					return nil, err
 				}
 				args[i] = types.NewDecimalDatum(&dec)
