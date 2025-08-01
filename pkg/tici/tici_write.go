@@ -327,7 +327,7 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, cou
 // of which engine is currently being written. Addressing this would require
 // significant changes to the import-into interface and should be considered
 // in longer-term architectural improvements.
-func NewTiCIDataWriterGroup(ctx context.Context, etcdClient *etcd.Client, tblInfo *model.TableInfo, schema string) (*DataWriterGroup, error) {
+func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) (*DataWriterGroup, error) {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
 	if len(fulltextIndexes) == 0 {
 		return nil, nil // No full-text indexes, no writers needed
@@ -345,13 +345,18 @@ func NewTiCIDataWriterGroup(ctx context.Context, etcdClient *etcd.Client, tblInf
 		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
 	}
 
+	etcdClient, err := getEtcdClient()
+	if err != nil {
+		return nil, err
+	}
 	mgrCtx, err := NewTiCIManager(ctx, etcdClient.GetClient())
 	if err != nil {
 		return nil, err
 	}
 	g := &DataWriterGroup{
-		writers: writers,
-		mgrCtx:  mgrCtx,
+		writers:    writers,
+		mgrCtx:     mgrCtx,
+		etcdClient: etcdClient,
 	}
 	g.writable.Store(true)
 	return g, nil
@@ -503,5 +508,8 @@ func (g *DataWriterGroup) Close() error {
 	if g.mgrCtx != nil {
 		g.mgrCtx.Close()
 	}
-	return g.etcdClient.Close()
+	if g.etcdClient != nil {
+		return g.etcdClient.Close()
+	}
+	return nil
 }
