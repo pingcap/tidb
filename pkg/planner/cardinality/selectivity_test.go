@@ -390,6 +390,28 @@ func TestIssue57948(t *testing.T) {
 	testKit.MustQuery("explain format='brief' select * from t where b = 5").CheckContain("idxb(b)")
 }
 
+func TestNewIndexWithColumnStats(t *testing.T) {
+	// Test two identical tables where one has no statistics at all, and the other only has column statistics but no index statistics
+	// Test that we supplement index estimation with column stats if there are no index stats available
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("create table t2(a int, index idxa(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select mod(a,250) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("insert into t2 select mod(a,250) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idxa on t(a)")
+
+	// Two row estimates should differ, even though both indexes have no statistics because t uses column statistics
+	rowCnt1 := testKit.MustQuery("explain select * from t use index(idxa) where a > 5 and a < 25").Rows()[0][1]
+	rowCnt2 := testKit.MustQuery("explain select * from t2 use index(idxa) where a > 5 and a < 25").Rows()[0][1]
+	require.NotEqual(t, rowCnt1, rowCnt2)
+}
+
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
