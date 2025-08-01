@@ -62,8 +62,7 @@ func (c *cowExprRef) Set(i int, changed bool, val Expression) {
 	if !changed {
 		return
 	}
-	c.new = make([]Expression, len(c.ref))
-	copy(c.new, c.ref)
+	c.new = slices.Clone(c.ref)
 	c.new[i] = val
 }
 

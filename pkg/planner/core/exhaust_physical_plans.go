@@ -546,7 +546,7 @@ func constructIndexHashJoinStatic(
 	indexJoins := constructIndexJoinStatic(p, prop, outerIdx, indexJoinProp, outerStats)
 	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
-		join := plan.(*PhysicalIndexJoin)
+		join := plan.(*physicalop.PhysicalIndexJoin)
 		indexHashJoin := PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
 			// Prop is empty means that the parent operator does not need the
@@ -639,7 +639,7 @@ func constructIndexJoinStatic(
 		DefaultValues: p.DefaultValues,
 	}
 
-	join := PhysicalIndexJoin{
+	join := physicalop.PhysicalIndexJoin{
 		BasePhysicalJoin: baseJoin,
 		// for static enumeration here, we don't need to fill inner plan anymore.
 		// for static enumeration here, the KeyOff2IdxOff, Ranges, CompareFilters, OuterHashKeys, InnerHashKeys are
@@ -682,7 +682,7 @@ func constructIndexJoinStatic(
 //     physic.Ranges = info.Ranges
 //     physic.IdxColLens = info.IdxColLens
 //     physic.CompareFilters = info.CompareFilters
-func completePhysicalIndexJoin(physic *PhysicalIndexJoin, rt *RootTask, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
+func completePhysicalIndexJoin(physic *physicalop.PhysicalIndexJoin, rt *RootTask, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
 	info := rt.IndexJoinInfo
 	// runtime fill back ranges
 	if info.Ranges == nil {
@@ -779,7 +779,7 @@ func constructIndexJoin(
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
-	compareFilters *ColWithCmpFuncManager,
+	compareFilters *physicalop.ColWithCmpFuncManager,
 	extractOtherEQ bool,
 ) []base.PhysicalPlan {
 	if innerTask.Invalid() {
@@ -874,9 +874,9 @@ func constructIndexJoin(
 		DefaultValues:   p.DefaultValues,
 	}
 
-	join := PhysicalIndexJoin{
+	join := physicalop.PhysicalIndexJoin{
 		BasePhysicalJoin: baseJoin,
-		innerPlan:        innerTask.Plan(),
+		InnerPlan:        innerTask.Plan(),
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
 		CompareFilters:   compareFilters,
@@ -898,7 +898,7 @@ func constructIndexMergeJoin(
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
-	compareFilters *ColWithCmpFuncManager,
+	compareFilters *physicalop.ColWithCmpFuncManager,
 ) []base.PhysicalPlan {
 	hintExists := false
 	if (outerIdx == 1 && (p.PreferJoinType&h.PreferLeftAsINLMJInner) > 0) || (outerIdx == 0 && (p.PreferJoinType&h.PreferRightAsINLMJInner) > 0) {
@@ -907,7 +907,7 @@ func constructIndexMergeJoin(
 	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, !hintExists)
 	indexMergeJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
-		join := plan.(*PhysicalIndexJoin)
+		join := plan.(*physicalop.PhysicalIndexJoin)
 		// Index merge join can't handle hash keys. So we ban it heuristically.
 		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
 			return nil
@@ -1006,12 +1006,12 @@ func constructIndexHashJoin(
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
-	compareFilters *ColWithCmpFuncManager,
+	compareFilters *physicalop.ColWithCmpFuncManager,
 ) []base.PhysicalPlan {
 	indexJoins := constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, true)
 	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
-		join := plan.(*PhysicalIndexJoin)
+		join := plan.(*physicalop.PhysicalIndexJoin)
 		indexHashJoin := PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
 			// Prop is empty means that the parent operator does not need the
@@ -1426,7 +1426,7 @@ func buildIndexJoinInner2TableScan(
 	}
 	var (
 		path       *util.AccessPath
-		lastColMng *ColWithCmpFuncManager
+		lastColMng *physicalop.ColWithCmpFuncManager
 	)
 	if indexJoinResult != nil {
 		path = indexJoinResult.chosenPath
@@ -2014,11 +2014,11 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 		copy(newGbyItems, la.GroupByItems)
 		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
 		copy(newAggFuncs, la.AggFuncs)
-		streamAgg := basePhysicalAgg{
+		baseAgg := &physicalop.BasePhysicalAgg{
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
-		}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), prop)
-		streamAgg.SetSchema(la.Schema().Clone())
+		}
+		streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), la.Schema().Clone(), prop)
 		// change to keep order for index scan and dsCopTask
 		if dsCopTask.indexPlan != nil {
 			// get the index scan from dsCopTask.indexPlan
@@ -2102,7 +2102,7 @@ const (
 func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod int, ok bool) {
 	var innerIdx int
 	switch ij := join.(type) {
-	case *PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexJoinMethod
 	case *PhysicalIndexHashJoin:
@@ -3610,12 +3610,12 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
 		copy(newAggFuncs, la.AggFuncs)
 
-		agg := basePhysicalAgg{
+		agg := physicalop.BasePhysicalAgg{
 			GroupByItems: newGbyItems,
 			AggFuncs:     newAggFuncs,
-		}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), copiedChildProperty)
-		agg.SetSchema(la.Schema().Clone())
-		enforcedAggs = append(enforcedAggs, agg)
+		}
+		streamAgg := agg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
+		enforcedAggs = append(enforcedAggs, streamAgg)
 	}
 	return enforcedAggs
 }
@@ -3680,12 +3680,12 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
 			copy(newAggFuncs, la.AggFuncs)
 
-			agg := basePhysicalAgg{
+			baseAgg := &physicalop.BasePhysicalAgg{
 				GroupByItems: newGbyItems,
 				AggFuncs:     newAggFuncs,
-			}.initForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), copiedChildProperty)
-			agg.SetSchema(la.Schema().Clone())
-			streamAggs = append(streamAggs, agg)
+			}
+			streamAgg := baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), copiedChildProperty)
+			streamAggs = append(streamAggs, streamAgg)
 		}
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
@@ -3720,7 +3720,7 @@ func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 		}
 		return false
 	}
-	return CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
+	return physicalop.CheckAggCanPushCop(la.SCtx(), la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
 
 func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.PhysicalProperty) (hashAggs []base.PhysicalPlan) {
@@ -3804,7 +3804,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
-			agg.MppRunMode = Mpp1Phase
+			agg.MppRunMode = physicalop.Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
 			if validMppAgg(agg) {
 				hashAggs = append(hashAggs, agg)
@@ -3826,7 +3826,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
-		agg.MppRunMode = Mpp2Phase
+		agg.MppRunMode = physicalop.Mpp2Phase
 		agg.MppPartitionCols = partitionCols
 		if validMppAgg(agg) {
 			hashAggs = append(hashAggs, agg)
@@ -3842,7 +3842,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
-			agg.MppRunMode = MppTiDB
+			agg.MppRunMode = physicalop.MppTiDB
 			hashAggs = append(hashAggs, agg)
 		}
 	} else if !hasFinalAgg {
@@ -3857,20 +3857,20 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		agg.SetSchema(la.Schema().Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
 			// mpp scalar mode means the data will be pass through to only one tiFlash node at last.
-			agg.MppRunMode = MppScalar
+			agg.MppRunMode = physicalop.MppScalar
 		} else {
-			agg.MppRunMode = MppTiDB
+			agg.MppRunMode = physicalop.MppTiDB
 		}
 		hashAggs = append(hashAggs, agg)
 	}
 
 	// handle MPP Agg hints
-	var preferMode AggMppRunMode
+	var preferMode physicalop.AggMppRunMode
 	var prefer bool
 	if la.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
-		preferMode, prefer = Mpp1Phase, true
+		preferMode, prefer = physicalop.Mpp1Phase, true
 	} else if la.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
-		preferMode, prefer = Mpp2Phase, true
+		preferMode, prefer = physicalop.Mpp2Phase, true
 	}
 	if prefer {
 		var preferPlans []base.PhysicalPlan

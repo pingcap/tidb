@@ -75,6 +75,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -424,8 +425,15 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
 	defer do.sysSessionPool.Put(se)
-	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
+	start, end, ok := autoanalyze.CheckAutoAnalyzeWindow(sctx)
+	if !ok {
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			statslogutil.StatsLogger().Warn("Kill auto analyze process because it exceeded the window",
+				zap.Uint64("processID", id),
+				zap.Time("now", time.Now()),
+				zap.String("start", start),
+				zap.String("end", end),
+			)
 			do.SysProcTracker().KillSysProcess(id)
 		}
 	}
@@ -2909,10 +2917,10 @@ func (s *SysProcesses) UnTrack(id uint64) {
 }
 
 // GetSysProcessList gets list of system ProcessInfo
-func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+func (s *SysProcesses) GetSysProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for connID, proc := range s.procMap {
 		// if session is still tracked in this map, it's not returned to sysSessionPool yet
 		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {

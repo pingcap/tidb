@@ -541,3 +541,15 @@ func TestParseBackend(t *testing.T) {
 		}, *retBackend3.AzureBlobStorage)
 	}
 }
+
+func TestS3DefaultForceStylePath(t *testing.T) {
+	s, err := ParseBackend(`s3://bucket3/prefix/path?endpoint=http://xxx.amazonaws.com`, nil)
+	require.NoError(t, err)
+	require.False(t, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=false`, nil)
+	require.NoError(t, err)
+	require.False(t, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=true`, nil)
+	require.NoError(t, err)
+	require.True(t, s.GetS3().ForcePathStyle)
+}

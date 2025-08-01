@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -95,7 +96,7 @@ type InfoSyncer struct {
 	minStartTSPath string
 	managerMu      struct {
 		mu sync.RWMutex
-		util2.SessionManager
+		sessmgr.Manager
 	}
 	prometheusAddr        string
 	modifyTime            time.Time
@@ -193,17 +194,17 @@ func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) er
 }
 
 // SetSessionManager set the session manager for InfoSyncer.
-func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
+func (is *InfoSyncer) SetSessionManager(manager sessmgr.Manager) {
 	is.managerMu.mu.Lock()
 	defer is.managerMu.mu.Unlock()
-	is.managerMu.SessionManager = manager
+	is.managerMu.Manager = manager
 }
 
 // GetSessionManager get the session manager.
-func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
+func (is *InfoSyncer) GetSessionManager() sessmgr.Manager {
 	is.managerMu.mu.RLock()
 	defer is.managerMu.mu.RUnlock()
-	return is.managerMu.SessionManager
+	return is.managerMu.Manager
 }
 
 func (is *InfoSyncer) initLabelRuleManager() {
@@ -609,6 +610,10 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
+		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue {
+			// Ignore DDL sessions.
+			continue
+		}
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
@@ -982,7 +987,7 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	return nil
 }
 
-// StoreInternalSession is the entry function for store an internal session to SessionManager.
+// StoreInternalSession is the entry function for store an internal session to Manager.
 // return whether the session is stored successfully.
 func StoreInternalSession(se any) bool {
 	is, err := getGlobalInfoSyncer()
@@ -997,7 +1002,7 @@ func StoreInternalSession(se any) bool {
 	return true
 }
 
-// DeleteInternalSession is the entry function for delete an internal session from SessionManager.
+// DeleteInternalSession is the entry function for delete an internal session from Manager.
 func DeleteInternalSession(se any) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1010,7 +1015,7 @@ func DeleteInternalSession(se any) {
 	sm.DeleteInternalSession(se)
 }
 
-// ContainsInternalSessionForTest is the entry function for check whether an internal session is in SessionManager.
+// ContainsInternalSessionForTest is the entry function for check whether an internal session is in Manager.
 // It is only used for test.
 func ContainsInternalSessionForTest(se any) bool {
 	is, err := getGlobalInfoSyncer()

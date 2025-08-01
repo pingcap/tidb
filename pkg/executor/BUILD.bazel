@@ -446,6 +446,7 @@ go_test(
         "//pkg/server",
         "//pkg/session",
         "//pkg/session/sessionapi",
+        "//pkg/session/sessmgr",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
