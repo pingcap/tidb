@@ -1,24 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
-
-go_library(
-    name = "staticrecordset",
-    srcs = [
-        "cursorrecordset.go",
-        "recordset.go",
-    ],
-    importpath = "github.com/pingcap/tidb/pkg/executor/staticrecordset",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/executor/internal/exec",
-        "//pkg/planner/core/resolve",
-        "//pkg/session/cursor",
-        "//pkg/util",
-        "//pkg/util/chunk",
-        "//pkg/util/logutil",
-        "//pkg/util/sqlexec",
-        "@org_uber_go_zap//:zap",
-    ],
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "staticrecordset_test",
@@ -29,7 +9,6 @@ go_test(
     deps = [
         "//pkg/ddl",
         "//pkg/parser/mysql",
-        "//pkg/session/cursor",
         "//pkg/testkit",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_failpoint//:failpoint",
