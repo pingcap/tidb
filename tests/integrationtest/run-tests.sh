@@ -101,13 +101,13 @@ function find_multiple_available_ports() {
 
 function build_tidb_server()
 {
-    tidb_server="./integrationtest_tidb-server"
+    tidb_server="$(pwd)/integrationtest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server RACE_FLAG="-race"
     fi
 }
 
