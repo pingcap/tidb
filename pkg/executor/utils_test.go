@@ -15,6 +15,8 @@
 package executor
 
 import (
+	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -176,4 +178,96 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	pwd, ok = encodePassword(u, p)
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
+}
+
+func TestGoPool(t *testing.T) {
+	var (
+		list []int
+		lock sync.Mutex
+	)
+	push := func(i int) {
+		lock.Lock()
+		list = append(list, i)
+		lock.Unlock()
+	}
+	clean := func() {
+		lock.Lock()
+		list = list[:0]
+		lock.Unlock()
+	}
+
+	t.Run("SingleWorker", func(t *testing.T) {
+		clean()
+		pool := &workerPool{
+			TolerablePendingTasks: 0,
+			MaxWorkers:            1,
+		}
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		pool.submit(func() {
+			push(1)
+			wg.Add(1)
+			pool.submit(func() {
+				push(3)
+				runtime.Gosched()
+				push(4)
+				wg.Done()
+			})
+			runtime.Gosched()
+			push(2)
+			wg.Done()
+		})
+		wg.Wait()
+		require.Equal(t, []int{1, 2, 3, 4}, list)
+	})
+
+	t.Run("TwoWorkers", func(t *testing.T) {
+		clean()
+		pool := &workerPool{
+			TolerablePendingTasks: 0,
+			MaxWorkers:            2,
+		}
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		pool.submit(func() {
+			push(1)
+			wg.Add(1)
+			pool.submit(func() {
+				push(3)
+				runtime.Gosched()
+				push(4)
+				wg.Done()
+			})
+			runtime.Gosched()
+			push(2)
+			wg.Done()
+		})
+		wg.Wait()
+		require.Equal(t, []int{1, 3, 2, 4}, list)
+	})
+
+	t.Run("TolerateOnePendingTask", func(t *testing.T) {
+		clean()
+		pool := &workerPool{
+			TolerablePendingTasks: 1,
+			MaxWorkers:            2,
+		}
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		pool.submit(func() {
+			push(1)
+			wg.Add(1)
+			pool.submit(func() {
+				push(3)
+				runtime.Gosched()
+				push(4)
+				wg.Done()
+			})
+			runtime.Gosched()
+			push(2)
+			wg.Done()
+		})
+		wg.Wait()
+		require.Equal(t, []int{1, 2, 3, 4}, list)
+	})
 }
