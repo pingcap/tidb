@@ -323,7 +323,7 @@ func TestBlocked(t *testing.T) {
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(c *config.Config) {
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
 		// ... So the tick timeout would be 100ms
 		c.TickDuration = 10 * time.Millisecond
 	})
@@ -503,10 +503,8 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	}
 	log.Info("Start Time:", zap.Uint64("StartTs", env.task.Info.StartTs))
 
-	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv := streamhelper.NewCommandCheckpointAdvancer(env)
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	adv.StartTaskListener(ctx)
@@ -542,9 +540,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	adv.OnStart(ctx1)
 	adv.OnBecomeOwner(ctx1)
@@ -553,9 +549,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 
 	// another advancer but never advance checkpoint before
 	adv2 := streamhelper.NewCheckpointAdvancer(env)
-	adv2.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv2.UpdateCheckPointLagLimit(time.Minute)
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	adv2.OnStart(ctx2)
 
@@ -621,9 +615,7 @@ func TestCheckPointLagged(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(2 * time.Minute)
 	// if global ts is not advanced, the checkpoint will not be lagged
@@ -648,9 +640,7 @@ func TestCheckPointResume(t *testing.T) {
 	defer cancel()
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	// if global ts is not advanced, the checkpoint will not be lagged
@@ -682,9 +672,7 @@ func TestUnregisterAfterPause(t *testing.T) {
 	defer cancel()
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 
 	// wait for the task to be added
@@ -756,9 +744,7 @@ func TestAddTaskWithLongRunTask0(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	c.advanceClusterTimeBy(3 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.advanceCheckpointBy(1 * time.Minute)
@@ -796,9 +782,7 @@ func TestAddTaskWithLongRunTask1(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	c.advanceClusterTimeBy(3 * time.Minute)
 	c.advanceCheckpointBy(2 * time.Minute)
 	env.advanceCheckpointBy(1 * time.Minute)
@@ -836,9 +820,7 @@ func TestAddTaskWithLongRunTask2(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(3 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
@@ -881,9 +863,7 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	// advance cluster time to 4 minutes, and checkpoint to 1 minutes
 	// if start ts equals to checkpoint, the task will not be paused
 	adv.StartTaskListener(ctx)

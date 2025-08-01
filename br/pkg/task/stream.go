@@ -142,7 +142,7 @@ type StreamConfig struct {
 	DumpStatusTo *[]stream.TaskStatus `json:"-" toml:"-"`
 
 	// Spec for the command `advancer`.
-	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
+	AdvancerCfg advancercfg.CommandConfig `json:"advancer-config" toml:"advancer-config"`
 
 	// Spec for the command `pause`.
 	Message string `json:"message" toml:"message"`
@@ -967,8 +967,8 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return err
 	}
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCLI)
-	advancer := streamhelper.NewCheckpointAdvancer(env)
-	advancer.UpdateConfig(cfg.AdvancerCfg)
+	advancer := streamhelper.NewCommandCheckpointAdvancer(env)
+	advancer.UpdateConfig(&cfg.AdvancerCfg)
 	ownerMgr := streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI)
 	defer func() {
 		ownerMgr.Close()
