@@ -352,6 +352,11 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+<<<<<<< HEAD
+=======
+		ZoneLabel:             c.Labels["zone"],
+		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
+>>>>>>> d6153b2cc87 (*: bump client-go to enable async-batch-get (#62294))
 	}
 }
 
@@ -769,6 +774,9 @@ type Performance struct {
 
 	// Deprecated: this config will not have any effect
 	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
+
+	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
+	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -1026,7 +1034,13 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
+<<<<<<< HEAD
 		ConcurrentlyInitStats:             true,
+=======
+		// Deprecated: Stats are always initialized concurrently.
+		ConcurrentlyInitStats: true,
+		EnableAsyncBatchGet:   true,
+>>>>>>> d6153b2cc87 (*: bump client-go to enable async-batch-get (#62294))
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
