@@ -570,31 +570,31 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 
 	conflictOnce := sync.Once{}
 	conflictCh := make(chan struct{})
+	tk1 := testkit.NewTestKit(t, store)
 	failpoint.EnableCall("github.com/pingcap/tidb/pkg/table/tables/duringTableCommonRemoveRecord", func(tblInfo *model.TableInfo) {
 		if tblInfo.Name.L == "t" {
 			conflictOnce.Do(func() {
-				tk2 := testkit.NewTestKit(t, store)
-				tk2.MustExec("use test")
+				tk1.MustExec("use test")
 				// inject a write conflict for the delete DML.
-				tk2.MustExec("update t set val0 = 100 where id = 1;")
+				tk1.MustExec("update t set val0 = 100 where id = 1;")
 				close(conflictCh)
 			})
 		}
 	})
 	deleteOnce := sync.Once{}
 	insertOnce := sync.Once{}
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
 		deleteOnce.Do(func() {
 			go func() {
-				tk1 := testkit.NewTestKit(t, store)
-				tk1.MustExec("use test")
-				tk1.MustExec("delete from t where id = 1;")
+				tk2.MustExec("use test")
+				tk2.MustExec("delete from t where id = 1;")
 			}()
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
 				insertOnce.Do(func() {
-					tk2 := testkit.NewTestKit(t, store)
-					tk2.MustExec("use test")
-					tk2.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
+					tk3.MustExec("use test")
+					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
 				})
 			})
 			<-conflictCh
