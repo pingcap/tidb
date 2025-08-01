@@ -30,7 +30,6 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -2312,18 +2311,6 @@ func (h *Handle) UpdateAll() error {
 	h.priv.Store(priv)
 	h.fullData.Store(true)
 	return nil
-}
-
-// UpdateAllActive loads all the active users' privilege info from kv storage.
-func (h *Handle) UpdateAllActive() error {
-	h.fullData.Store(false)
-	userList := make([]string, 0, 20)
-	h.activeUsers.Range(func(key, _ any) bool {
-		userList = append(userList, key.(string))
-		return true
-	})
-	metrics.ActiveUser.Set(float64(len(userList)))
-	return h.updateUsers(userList)
 }
 
 // Update loads the privilege info from kv storage for the list of users.

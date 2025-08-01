@@ -1912,6 +1912,9 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		return err
 	}
 	do.privHandle = privileges.NewHandle(do.SysSessionPool())
+	if err := do.privHandle.UpdateAll(); err != nil {
+		return errors.Trace(err)
+	}
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1969,15 +1972,10 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 }
 
 func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
-	switch {
-	case !variable.AccelerateUserCreationUpdate.Load():
-		err = h.UpdateAll()
-	case event.All:
-		err = h.UpdateAllActive()
-	default:
-		err = h.Update(event.UserList)
+	if !variable.AccelerateUserCreationUpdate.Load() || event.All {
+		return h.UpdateAll()
 	}
-	return
+	return h.Update(event.UserList)
 }
 
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,

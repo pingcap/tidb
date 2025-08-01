@@ -73,7 +73,6 @@ var (
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
 	MemoryLimit                     prometheus.Gauge
 	InternalSessions                prometheus.Gauge
-	ActiveUser                      prometheus.Gauge
 )
 
 // InitServerMetrics initializes server metrics.
@@ -402,14 +401,6 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "internal_sessions",
 			Help:      "The total count of internal sessions.",
-		})
-
-	ActiveUser = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "active_users",
-			Help:      "The total count of active user.",
 		})
 }
 

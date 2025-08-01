@@ -265,6 +265,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	isCommit = true
 	users := userSpecToUserList(e.Users)
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 }
