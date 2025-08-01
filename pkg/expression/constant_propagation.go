@@ -394,6 +394,7 @@ func PropagateConstantForJoin(ctx exprctx.ExprContext, keepJoinKey bool, schema1
 	if len(conditions) == 0 {
 		return conditions
 	}
+<<<<<<< HEAD
 	var joinKeys []Expression
 	if keepJoinKey {
 		joinKeys = cloneJoinKeys(conditions, schema1, schema2)
@@ -407,12 +408,27 @@ func PropagateConstantForJoin(ctx exprctx.ExprContext, keepJoinKey bool, schema1
 			// The predicates collapsed to a single constant (for example an always-false condition),
 			// so keep it alone to let the caller fold the join into a TableDual.
 			return conditions
+=======
+	solver := newPropConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	return solver.PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
+}
+
+var propSpecialJoinConstSolverPool = sync.Pool{
+	New: func() any {
+		solver := &propSpecialJoinConstSolver{
+			basePropConstSolver: newBasePropConstSolver(),
+			joinConds:           make([]Expression, 0, 4),
+			filterConds:         make([]Expression, 0, 4),
+>>>>>>> a64de14f105 (planner: constant propagation can deal with anti semi join (#62539))
 		}
 	}
 	return RemoveDupExprs(append(conditions, joinKeys...))
 }
 
-type propOuterJoinConstSolver struct {
+type propSpecialJoinConstSolver struct {
 	basePropConstSolver
 	joinConds   []Expression
 	filterConds []Expression
@@ -420,12 +436,34 @@ type propOuterJoinConstSolver struct {
 	innerSchema *Schema
 	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
 	// additional `col is not null` condition from column equal conditions. Specifically, this value
-	// is true for LeftOuterSemiJoin and AntiLeftOuterSemiJoin.
+	// is true for LeftOuterSemiJoin, AntiLeftOuterSemiJoin and AntiSemiJoin.
 	nullSensitive bool
 }
 
+<<<<<<< HEAD
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	s.joinConds = []Expression{&Constant{
+=======
+func newPropSpecialJoinConstSolver() *propSpecialJoinConstSolver {
+	solver := propSpecialJoinConstSolverPool.Get().(*propSpecialJoinConstSolver)
+	return solver
+}
+
+// clear resets the solver.
+func (s *propSpecialJoinConstSolver) Clear() {
+	s.basePropConstSolver.Clear()
+	s.joinConds = s.joinConds[:0]
+	s.filterConds = s.filterConds[:0]
+	s.outerSchema = nil
+	s.innerSchema = nil
+	s.nullSensitive = false
+	propSpecialJoinConstSolverPool.Put(s)
+}
+
+func (s *propSpecialJoinConstSolver) setConds2ConstFalse(filterConds bool) {
+	s.joinConds = s.joinConds[:0]
+	s.joinConds = append(s.joinConds, &Constant{
+>>>>>>> a64de14f105 (planner: constant propagation can deal with anti semi join (#62539))
 		Value:   types.NewDatum(false),
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}}
@@ -484,7 +522,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 }
 
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
-func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
+func (s *propSpecialJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
 	var conds []Expression
 	var condsOffset int
 	if filterConds {
@@ -540,7 +578,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 }
 
 // pickNewEQConds picks constant equal expressions from join and filter conditions.
-func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
+func (s *propSpecialJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
 	retMapper := make(map[int]*Constant)
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
 	if retMapper == nil {
@@ -553,8 +591,13 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 
 // propagateConstantEQ propagates expressions like `outerCol = const` by substituting `outerCol` in *JOIN* condition
 // with `const`, the procedure repeats multiple times.
+<<<<<<< HEAD
 func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 	s.eqList = make([]*Constant, len(s.columns))
+=======
+func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
+	clear(s.eqMapper)
+>>>>>>> a64de14f105 (planner: constant propagation can deal with anti semi join (#62539))
 	lenFilters := len(s.filterConds)
 	visited := make([]bool, lenFilters+len(s.joinConds))
 	for i := 0; i < MaxPropagateColsCnt; i++ {
@@ -576,7 +619,7 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 	}
 }
 
-func (s *propOuterJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*Column, *Column) {
+func (s *propSpecialJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*Column, *Column) {
 	if s.outerSchema.Contains(col1) && s.innerSchema.Contains(col2) {
 		return col1, col2
 	}
@@ -590,7 +633,7 @@ func (s *propOuterJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*C
 // propagation over outer join. We only use expression like `outerCol = innerCol`, for expressions like
 // `outerCol1 = outerCol2` or `innerCol1 = innerCol2`, they do not help deriving new inner table conditions
 // which can be pushed down to children plan nodes, so we do not pick them.
-func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, *Column) {
+func (s *propSpecialJoinConstSolver) validColEqualCond(cond Expression) (*Column, *Column) {
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
@@ -602,7 +645,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 }
 
 // deriveConds given `outerCol = innerCol`, derive new expression for specified conditions.
-func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schema *Schema, fCondsOffset int, visited []bool, filterConds bool) []bool {
+func (s *propSpecialJoinConstSolver) deriveConds(outerCol, innerCol *Column, schema *Schema, fCondsOffset int, visited []bool, filterConds bool) []bool {
 	var offset, condsLen int
 	var conds []Expression
 	if filterConds {
@@ -635,7 +678,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., innerCol, ...)' derived from 'expression(..., outerCol, ...)' as long as
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
-func (s *propOuterJoinConstSolver) propagateColumnEQ() {
+func (s *propSpecialJoinConstSolver) propagateColumnEQ() {
 	if s.nullSensitive {
 		return
 	}
@@ -685,6 +728,7 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	}
 }
 
+<<<<<<< HEAD
 func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterConds []Expression) ([]Expression, []Expression) {
 	var joinKeys []Expression
 	if keepJoinKey {
@@ -693,6 +737,9 @@ func (s *propOuterJoinConstSolver) solve(keepJoinKey bool, joinConds, filterCond
 		joinKeys = cloneJoinKeys(joinConds, s.outerSchema, s.innerSchema)
 	}
 	cols := make([]*Column, 0, len(joinConds)+len(filterConds))
+=======
+func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
+>>>>>>> a64de14f105 (planner: constant propagation can deal with anti semi join (#62539))
 	for _, cond := range joinConds {
 		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)
@@ -735,12 +782,13 @@ func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Express
 	return conds
 }
 
-// PropConstOverOuterJoin propagate constant equal and column equal conditions over outer join.
+// PropConstOverSpecialJoin propagate constant equal and column equal conditions over outer join or anti semi join.
 // First step is to extract `outerCol = const` from join conditions and filter conditions,
 // and substitute `outerCol` in join conditions with `const`;
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
+<<<<<<< HEAD
 func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, keepJoinKey, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
@@ -749,6 +797,17 @@ func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Ex
 		nullSensitive: nullSensitive,
 	}
 	solver.colMapper = make(map[int64]int)
+=======
+func PropConstOverSpecialJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
+	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
+	solver := newPropSpecialJoinConstSolver()
+	defer func() {
+		solver.Clear()
+	}()
+	solver.outerSchema = outerSchema
+	solver.innerSchema = innerSchema
+	solver.nullSensitive = nullSensitive
+>>>>>>> a64de14f105 (planner: constant propagation can deal with anti semi join (#62539))
 	solver.ctx = ctx
 	return solver.solve(keepJoinKey, joinConds, filterConds)
 }
