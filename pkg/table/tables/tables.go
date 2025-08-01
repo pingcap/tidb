@@ -72,12 +72,11 @@ type TableCommon struct {
 	fullHiddenColsAndVisibleColumns []*table.Column
 	writableConstraints             []*table.Constraint
 
-	indices                 []table.Index
-	meta                    *model.TableInfo
-	allocs                  autoid.Allocators
-	sequence                *sequenceCommon
-	dependencyColumnOffsets []int
-	Constraints             []*table.Constraint
+	indices     []table.Index
+	meta        *model.TableInfo
+	allocs      autoid.Allocators
+	sequence    *sequenceCommon
+	Constraints []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -252,11 +251,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
-	}
-	for _, col := range cols {
-		if col.ChangeStateInfo != nil {
-			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
-		}
 	}
 	t.ResetColumnsCache()
 }
@@ -1151,6 +1145,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
+	failpoint.InjectCall("duringTableCommonRemoveRecord", t.meta)
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
 	if ctx.EnableMutationChecker() {
@@ -1463,11 +1458,6 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	return false
-}
-
-// canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
-	return col.IsVirtualGenerated()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.
