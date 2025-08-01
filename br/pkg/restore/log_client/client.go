@@ -553,13 +553,30 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	return gcRatio, nil
 }
 
-func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
-	ext := stream.MigerationExtension(rc.storage)
+type LockedMigrations struct {
+	Migs     []*backuppb.Migration
+	ReadLock storage.RemoteLock
+}
+
+func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
+	ext := stream.MigrationExtension(rc.storage)
+	readLock, err := ext.GetReadLock(ctx, "restore stream")
+	if err != nil {
+		return nil, err
+	}
+
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return migs.ListAll(), nil
+
+	ms := migs.ListAll()
+
+	lms := &LockedMigrations{
+		Migs:     ms,
+		ReadLock: readLock,
+	}
+	return lms, nil
 }
 
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,

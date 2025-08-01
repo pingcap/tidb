@@ -18,6 +18,12 @@ import (
 // Permission represents the permission we need to check in create storage.
 type Permission string
 
+// StrongConsistency is a marker interface that indicates the storage is strong consistent
+// over its `Read`, `Write` and `WalkDir` APIs.
+type StrongConsistency interface {
+	MarkStrongConsistency()
+}
+
 const (
 	// AccessBuckets represents bucket access permission
 	// it replace the origin skip-check-path.
