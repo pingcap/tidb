@@ -32,16 +32,9 @@ type ForeignKeyRecordKey struct {
 }
 
 type ForeignKeyRecord struct {
-	ID                int64
-	ChildSchemaNameO  string
-	ChildTableNameO   string
-	ParentSchemaNameO string
-	ParentTableNameO  string
-	FKNameO           string
-	ChildCols         []ast.CIStr
-	ParentCols        []ast.CIStr
-	OnDelete          int
-	OnUpdate          int
+	model.FKInfo
+	ChildSchemaNameO string
+	ChildTableNameO  string
 }
 
 func newForeignKeyRecordKey(
@@ -54,16 +47,9 @@ func newForeignKeyRecordKey(
 			ChildTableNameO:  childTableNameO,
 			FKNameO:          fk.Name.O,
 		}, &ForeignKeyRecord{
-			ID:                fk.ID,
-			ChildSchemaNameO:  childSchemaNameO,
-			ChildTableNameO:   childTableNameO,
-			ParentSchemaNameO: fk.RefSchema.O,
-			ParentTableNameO:  fk.RefTable.O,
-			FKNameO:           fk.Name.O,
-			ChildCols:         fk.Cols,
-			ParentCols:        fk.RefCols,
-			OnDelete:          fk.OnDelete,
-			OnUpdate:          fk.OnUpdate,
+			FKInfo:           *fk,
+			ChildSchemaNameO: childSchemaNameO,
+			ChildTableNameO:  childTableNameO,
 		}
 }
 
@@ -133,12 +119,12 @@ func NewForeignKeyRecordManagerForTables(
 
 func (tm *TableForeignKeyRecordManager) RemoveForeignKeys(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	for key, fkRecord := range tm.fkRecordMap {
-		if model.IsIndexPrefixCovered(tableInfo, indexInfo, fkRecord.ChildCols...) {
+		if model.IsIndexPrefixCovered(tableInfo, indexInfo, fkRecord.Cols...) {
 			delete(tm.fkRecordMap, key)
 		}
 	}
 	for key, fkRecord := range tm.referredFKRecordMap {
-		if model.IsIndexPrefixCovered(tableInfo, indexInfo, fkRecord.ParentCols...) {
+		if model.IsIndexPrefixCovered(tableInfo, indexInfo, fkRecord.RefCols...) {
 			delete(tm.referredFKRecordMap, key)
 		}
 	}

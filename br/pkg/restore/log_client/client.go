@@ -1553,13 +1553,13 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	if err := ingestRecorder.IterateForeignKeys(func(fkRecord *ingestrec.ForeignKeyRecord) error {
 		var (
 			addSQL  strings.Builder
-			addArgs []any = make([]any, 0, 7+len(fkRecord.ChildCols)+len(fkRecord.ParentCols))
+			addArgs []any = make([]any, 0, 7+len(fkRecord.Cols)+len(fkRecord.RefCols))
 		)
-		childCols := colsToStr(fkRecord.ChildCols)
-		parentCols := colsToStr(fkRecord.ParentCols)
+		childCols := colsToStr(fkRecord.Cols)
+		parentCols := colsToStr(fkRecord.RefCols)
 		addSQL.WriteString(fmt.Sprintf(alterTableAddForeignKeyFormat, childCols, parentCols))
 		addArgs = append(addArgs,
-			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.FKNameO, fkRecord.ParentSchemaNameO, fkRecord.ParentTableNameO,
+			fkRecord.ChildSchemaNameO, fkRecord.ChildTableNameO, fkRecord.Name.O, fkRecord.RefSchema.O, fkRecord.RefTable.O,
 		)
 		if onDelete := ast.ReferOptionType(fkRecord.OnDelete); onDelete != ast.ReferOptionNoOption {
 			addSQL.WriteString(fmt.Sprintf(" ON DELETE %s", onDelete.String()))
@@ -1571,7 +1571,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 			FKID:       fkRecord.ID,
 			SchemaName: fkRecord.ChildSchemaNameO,
 			TableName:  fkRecord.ChildTableNameO,
-			FKName:     fkRecord.FKNameO,
+			FKName:     fkRecord.Name.O,
 			AddSQL:     addSQL.String(),
 			AddArgs:    addArgs,
 		})
