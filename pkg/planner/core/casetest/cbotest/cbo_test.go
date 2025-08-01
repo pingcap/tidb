@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+<<<<<<< HEAD
 func loadTableStats(fileName string, dom *domain.Domain) error {
 	statsPath := filepath.Join("testdata", fileName)
 	bytes, err := os.ReadFile(statsPath)
@@ -53,6 +54,29 @@ func loadTableStats(fileName string, dom *domain.Domain) error {
 		return err
 	}
 	return nil
+=======
+func TestIssue62438(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("CREATE TABLE `objects` (\n  `id` bigint NOT NULL AUTO_INCREMENT,\n  `path` varchar(1024) NOT NULL,\n  `updated_ms` bigint DEFAULT NULL,\n  `size` bigint DEFAULT NULL,\n  `etag` varchar(128) DEFAULT NULL,\n  `seq` bigint DEFAULT NULL,\n  `last_seen_ms` bigint DEFAULT NULL,\n  `metastore_uuid` binary(16) NOT NULL,\n  `securable_id` bigint NOT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `idx_metastore_securable_seq` (`metastore_uuid`,`securable_id`,`seq`)\n)")
+		require.NoError(t, testkit.LoadTableStats("issue62438.json", dom))
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		analyzeSuiteData := GetAnalyzeSuiteData()
+		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			plan := testKit.MustQuery(sql)
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(output[i].Plan...))
+		}
+	})
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 }
 
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
