@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,6 +48,7 @@ var (
 	_ functionClass = &valuesFunctionClass{}
 	_ functionClass = &bitCountFunctionClass{}
 	_ functionClass = &getParamFunctionClass{}
+	_ functionClass = &getQueryAttrFunctionClass{}
 )
 
 var (
@@ -1947,4 +1949,62 @@ func (b *builtinGetParamStringSig) evalString(ctx EvalContext, row chunk.Row) (s
 		return "", true, nil
 	}
 	return str, false, nil
+}
+
+// getQueryAttrFunctionClass for plan cache of prepared statements
+type getQueryAttrFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *getQueryAttrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(mysql.MaxFieldVarCharLength)
+	sig := &builtinGetQueryAttrStringSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinGetQueryAttrStringSig struct {
+	baseBuiltinFunc
+	expropt.SessionVarsPropReader
+}
+
+func (b *builtinGetQueryAttrStringSig) Clone() builtinFunc {
+	newSig := &builtinGetQueryAttrStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetQueryAttrStringSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+// This implements `mysql_query_attribute_string(str)`
+func (b *builtinGetQueryAttrStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
+	varName, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	attrs := sessionVars.QueryAttributes
+	if attrs == nil {
+		return "", true, nil
+	}
+	if v, ok := attrs[varName]; ok {
+		paramData, err := ExecBinaryParam(sessionVars.StmtCtx.TypeCtx(), []param.BinaryParam{v})
+		if err != nil {
+			return "", true, err
+		}
+		return paramData[0].EvalString(ctx, row)
+	}
+	return "", true, nil
 }
