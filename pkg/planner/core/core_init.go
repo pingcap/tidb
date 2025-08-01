@@ -96,6 +96,9 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalIndexJoin = getPlanCostVer14PhysicalIndexJoin
 	utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin = getIndexJoinCostVer24PhysicalIndexJoin
 	utilfuncp.Attach2Task4PhysicalIndexJoin = attach2Task4PhysicalIndexJoin
+	// for physical aggregation.
+	utilfuncp.InitForHash = initForHash
+	utilfuncp.InitForStream = initForStream
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost

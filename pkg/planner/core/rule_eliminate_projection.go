@@ -62,14 +62,14 @@ func canProjectionBeEliminatedStrict(p *physicalop.PhysicalProjection) bool {
 	// the align the output schema. In the future, we can solve this in-compatibility by
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
+		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
 			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
+		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
 			if physicalAgg.IsFinalAgg() {
 				return false
 			}

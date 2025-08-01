@@ -32,5 +32,6 @@ go_test(
         "//pkg/sessionctx/stmtctx",
         "//pkg/util/memory",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
     ],
 )

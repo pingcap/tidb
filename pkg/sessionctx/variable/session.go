@@ -1732,6 +1732,9 @@ type SessionVars struct {
 
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
+
+	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	InternalSQLScanUserTable bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.

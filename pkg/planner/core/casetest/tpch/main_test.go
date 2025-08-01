@@ -32,7 +32,7 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "tpch_suite")
+	testDataMap.LoadTestSuiteData("testdata", "tpch_suite", true)
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
