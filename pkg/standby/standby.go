@@ -307,7 +307,7 @@ var httpServer *http.Server
 func (c *LoadKeyspaceController) WaitForActivate() {
 	host := config.GetGlobalConfig().Status.StatusHost
 	port := config.GetGlobalConfig().Status.StatusPort
-	timeout := config.GetGlobalConfig().ActivationTimeout
+	timeout := config.GetGlobalConfig().Standby.ActivationTimeout
 
 	_, mux := c.Handler(nil)
 	// handle liveness probe.
@@ -354,7 +354,7 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 	config.UpdateGlobal(func(c *config.Config) {
 		c.KeyspaceName = activateRequest.KeyspaceName
 		if activateRequest.MaxIdleSeconds > 0 {
-			c.MaxIdleSeconds = activateRequest.MaxIdleSeconds
+			c.Standby.MaxIdleSeconds = activateRequest.MaxIdleSeconds
 		}
 
 		// DDL config

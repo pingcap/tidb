@@ -43,7 +43,7 @@ func (c *LoadKeyspaceController) OnConnActive() {
 
 // OnServerCreated watches `lastActive` and exits the process if it is not updated for a long time.
 func (c *LoadKeyspaceController) OnServerCreated(svr *server.Server) {
-	maxIdleSecs := int(config.GetGlobalConfig().MaxIdleSeconds)
+	maxIdleSecs := int(config.GetGlobalConfig().Standby.MaxIdleSeconds)
 	if maxIdleSecs <= 0 {
 		return
 	}
@@ -80,7 +80,7 @@ func (c *LoadKeyspaceController) OnServerCreated(svr *server.Server) {
 
 				// if zero backend enabled. We shouldn't skip graceful shutdown to wait for session migration.
 				// And clientInteractiveCount don't need to be considered because session can be restored by gateway.
-				if config.GetGlobalConfig().EnableZeroBackend && (connCount == 0 || processCount == 0) && inTransCount == 0 {
+				if config.GetGlobalConfig().Standby.EnableZeroBackend && (connCount == 0 || processCount == 0) && inTransCount == 0 {
 					SaveTidbNormalRestartInfo("connection idle for too long")
 					signal.TiDBExit(syscall.SIGTERM)
 				} else if (connCount == 0 || processCount == 0) && inTransCount == 0 && clientInteractiveCount == 0 {

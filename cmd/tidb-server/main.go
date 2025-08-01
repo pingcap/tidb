@@ -296,16 +296,16 @@ func main() {
 	}
 	// we cannot add this check inside config.Valid(), as previous '-V' also relies
 	// on initialized global config.
-	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().StandByMode {
+	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().Standby.StandByMode {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is required for nextgen TiDB")
 		os.Exit(0)
-	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().StandByMode) {
+	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode) {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is not supported for classic TiDB")
 		os.Exit(0)
 	}
 
 	var standbyController server.StandbyController
-	if config.GetGlobalConfig().StandByMode {
+	if config.GetGlobalConfig().Standby.StandByMode {
 		standbyController = standby.NewLoadKeyspaceController()
 	}
 
@@ -726,15 +726,15 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 
 	if actualFlags[nmStandby] {
-		cfg.StandByMode = *standbyMode
+		cfg.Standby.StandByMode = *standbyMode
 	}
 
 	if actualFlags[nmActivationTimeout] {
-		cfg.ActivationTimeout = *activationTimeout
+		cfg.Standby.ActivationTimeout = *activationTimeout
 	}
 
 	if actualFlags[nmMaxIdleSeconds] {
-		cfg.MaxIdleSeconds = *maxIdleSeconds
+		cfg.Standby.MaxIdleSeconds = *maxIdleSeconds
 	}
 }
 
