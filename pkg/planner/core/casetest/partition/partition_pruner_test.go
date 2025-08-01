@@ -49,6 +49,7 @@ func TestHashPartitionPruner(t *testing.T) {
 	tk.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
 	tk.MustExec("create table t9(a bit(1) default null, b int(11) default null) partition by hash(a) partitions 3;") //issue #22619
 	tk.MustExec("create table t10(a bigint unsigned) partition BY hash (a);")
+	tk.MustExec("create table t11(a int, b int) partition by hash(a + a + a + b) partitions 5")
 
 	var input []string
 	var output []struct {
