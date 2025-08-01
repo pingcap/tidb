@@ -23,8 +23,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // PredicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -61,6 +64,9 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 	}
 	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), con) {
 		return otherPredicate
+	}
+	if con.Value.IsNull() {
+		return falsePredicate
 	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
 	if err == nil {
@@ -138,11 +144,11 @@ func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
 func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
-	_, inPredicateType := FindPredicateType(ctx, inPredicate)
-	_, notEQPredicateType := FindPredicateType(ctx, notEQPredicate)
-	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
-		return inPredicate, true
-	}
+	intest.AssertFunc(func() bool {
+		_, inPredicateType := FindPredicateType(ctx, inPredicate)
+		_, notEQPredicateType := FindPredicateType(ctx, notEQPredicate)
+		return inPredicateType == inListPredicate && notEQPredicateType == notEqualPredicate
+	}, "Input's paredicate types are not as expected.")
 	v := inPredicate.(*expression.ScalarFunction)
 	notEQValue := notEQPredicate.(*expression.ScalarFunction).GetArgs()[1].(*expression.Constant)
 	// do not simplify != NULL since it is always false.
@@ -150,10 +156,11 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 		return inPredicate, true
 	}
 	newValues := make([]expression.Expression, 0, len(v.GetArgs()))
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	var lastValue *expression.Constant
 	for _, element := range v.GetArgs() {
 		value, valueOK := element.(*expression.Constant)
-		redundantValue := valueOK && value.Equal(ctx.GetExprCtx().GetEvalCtx(), notEQValue)
+		redundantValue := valueOK && value.Equal(evalCtx, notEQValue)
 		if !redundantValue {
 			newValues = append(newValues, element)
 		}
@@ -173,13 +180,29 @@ func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, 
 	return newPred, specialCase
 }
 
-func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
-	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
+func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression, propagateConstant bool) []expression.Expression {
+	if len(predicates) == 0 {
+		return predicates
+	}
+	simplifiedPredicate := predicates
+	exprCtx := sctx.GetExprCtx()
+	// In some scenarios, we need to perform constant propagation,
+	// while in others, we merely aim to achieve simplification.
+	// Thus, we utilize a switch to govern this particular logic.
+	if propagateConstant {
+		simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+	} else {
+		exprs := expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+		if len(exprs) == 1 {
+			if _, ok := exprs[0].(*expression.Constant); ok {
+				simplifiedPredicate = exprs
+			}
+		}
+	}
+	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
-	pruneEmptyORBranches(sctx, simplifiedPredicate)
-	exprCtx := sctx.GetExprCtx()
-	simplifiedPredicate = expression.PropagateConstant(exprCtx, simplifiedPredicate...)
+	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -232,12 +255,8 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 
 // Check for constant false condition.
 func unsatisfiableExpression(ctx base.PlanContext, p expression.Expression) bool {
-	if constExpr, ok := p.(*expression.Constant); ok {
-		if b, err := constExpr.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx()); err == nil && b == 0 {
-			return true
-		}
-	}
-	return false
+	sc := ctx.GetSessionVars().StmtCtx
+	return logicalop.IsConstFalse(sc, p)
 }
 
 func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
@@ -261,14 +280,31 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	// Copy constant from equal predicate into other predicate.
 	equalValue := equalPred.(*expression.ScalarFunction)
 	otherValue := otherPred.(*expression.ScalarFunction)
-	newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
-	if err != nil {
-		return false
+	equalValueConst, ok1 := equalValue.GetArgs()[1].(*expression.Constant)
+	otherValueConst, ok2 := otherValue.GetArgs()[1].(*expression.Constant)
+	if ok1 && ok2 {
+		evalCtx := ctx.GetExprCtx().GetEvalCtx()
+		// We have checked the equivalence between col1 and col2, so we can safely use col1's collation.
+		colCollate := col1.GetType(evalCtx).GetCollate()
+		// Different connection collations can affect the results here, leading to different simplified results and ultimately impacting the execution outcomes.
+		// Observing MySQL v8.0.31, this area does not perform string simplification, so we can directly skip it.
+		// If the collation is not compatible, we cannot simplify the expression.
+		if equalValueType := equalValueConst.GetType(evalCtx); equalValueType.EvalType() == types.ETString &&
+			!collate.CompatibleCollate(equalValueType.GetCollate(), colCollate) {
+			return false
+		}
+		if otherValueType := otherValueConst.GetType(evalCtx); otherValueType.EvalType() == types.ETString &&
+			!collate.CompatibleCollate(otherValueType.GetCollate(), colCollate) {
+			return false
+		}
+		newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValueConst, otherValueConst)
+		if err != nil {
+			return false
+		}
+		newPredList := expression.PropagateConstant(ctx.GetExprCtx(), newPred)
+		return unsatisfiableExpression(ctx, newPredList[0])
 	}
-	newPredList := make([]expression.Expression, 0, 1)
-	newPredList = append(newPredList, newPred)
-	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList...)
-	return unsatisfiableExpression(ctx, newPredList[0])
+	return false
 }
 
 func comparisonPred(predType predicateType) predicateType {
@@ -325,9 +361,9 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
 // and another scalar predicate.
-func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
+func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
-		return
+		return predicates
 	}
 	for i := range predicates {
 		for j := i + 1; j < len(predicates); j++ {
@@ -346,14 +382,21 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
+				if unsatisfiableExpression(sctx, predicates[j]) {
+					return []expression.Expression{predicates[j]}
+				}
 			} else if iType == orPredicate && jType == scalarPredicate {
 				predicates[i] = updateOrPredicate(sctx, ithPredicate, jthPredicate)
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
+				if unsatisfiableExpression(sctx, predicates[i]) {
+					return []expression.Expression{predicates[i]}
+				}
 			}
 		}
 	}
+	return predicates
 }
 
 // shortCircuitANDORLogicalConstants simplifies logical expressions by performing short-circuit evaluation

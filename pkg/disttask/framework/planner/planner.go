@@ -28,12 +28,7 @@ func NewPlanner() *Planner {
 }
 
 // Run runs the distribute plan.
-func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return 0, err
-	}
-
+func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan, taskMgr *storage.TaskManager) (int64, error) {
 	taskMeta, err := plan.ToTaskMeta()
 	if err != nil {
 		return 0, err
@@ -41,7 +36,7 @@ func (*Planner) Run(planCtx PlanCtx, plan LogicalPlan) (int64, error) {
 
 	targetScope := handle.GetTargetScope()
 
-	return taskManager.CreateTaskWithSession(
+	return taskMgr.CreateTaskWithSession(
 		planCtx.Ctx,
 		planCtx.SessionCtx,
 		planCtx.TaskKey,

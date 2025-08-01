@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -52,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -196,7 +197,7 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 	return accessObject + ", " + operatorInfo
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	if p.Handle == nil && !p.Lock {
 		return ""
@@ -543,7 +544,7 @@ func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
 	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
 	if p.IndexInfo == nil {
@@ -674,6 +675,10 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr) bool {
 	if len(names) == 0 {
 		return true
+	}
+	// partIdx can be -1 more to check issue #62458
+	if pi == nil || idx < 0 || idx >= len(pi.Definitions) {
+		return false
 	}
 	s := pi.Definitions[idx].Name.L
 	for _, name := range names {
@@ -939,7 +944,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
-			if tidbutil.IsMemDB(fp.dbName) {
+			if metadef.IsMemDB(fp.dbName) {
 				return nil
 			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
@@ -950,12 +955,12 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
-			if tidbutil.IsMemDB(fp.dbName) {
+			if metadef.IsMemDB(fp.dbName) {
 				return nil
 			}
 			if fp.IsTableDual {
-				tableDual := PhysicalTableDual{}
-				tableDual.names = fp.outputNames
+				tableDual := physicalop.PhysicalTableDual{}
+				tableDual.SetOutputNames(fp.outputNames)
 				tableDual.SetSchema(fp.Schema())
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
@@ -1012,7 +1017,7 @@ func newBatchPointGetPlan(
 			return nil
 		}
 
-		partTable, ok := table.(partitionTable)
+		partTable, ok := table.(base.PartitionTable)
 		if !ok {
 			return nil
 		}
@@ -2022,9 +2027,9 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 	pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.outputNames)
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
@@ -2153,9 +2158,9 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	}
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.outputNames)
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
@@ -2274,7 +2279,7 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(partitionTable).PartitionExpr()
+	partitionExpr := table.(base.PartitionTable).PartitionExpr()
 	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {

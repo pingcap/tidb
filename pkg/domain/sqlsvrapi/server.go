@@ -14,10 +14,14 @@
 
 package sqlsvrapi
 
-import "github.com/pingcap/tidb/pkg/util"
+import (
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util"
+)
 
 // Server defines the interface for a SQL server.
 // The SQL server manages nearly everything related to SQL execution.
 type Server interface {
 	GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error)
+	GetKSStore(targetKS string) (store kv.Storage, err error)
 }

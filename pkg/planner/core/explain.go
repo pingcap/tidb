@@ -27,18 +27,16 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // ExplainInfo implements Plan interface.
@@ -78,7 +76,7 @@ func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
@@ -188,7 +186,7 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
-// OperatorInfo implements dataAccesser interface.
+// OperatorInfo implements DataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if infoschema.IsClusterTableByName(p.DBName.L, p.Table.Name.L) {
 		return ""
@@ -413,39 +411,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return str.String()
 }
 
-// ExplainInfo implements Plan interface.
-func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainInfo() string {
-	exprStr := string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return exprStr
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainNormalizedInfo() string {
-	if vardef.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Conditions))
-	}
-	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainInfo() string {
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
-	exprStr := expression.ExplainExpressionList(evalCtx, p.Exprs, p.Schema(), enableRedactLog)
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return exprStr
-}
-
 func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
@@ -472,41 +437,6 @@ func (p *PhysicalExpand) explainInfoV2() string {
 	return sb.String()
 }
 
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainNormalizedInfo() string {
-	if vardef.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
-	}
-	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalTableDual) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString("rows:")
-	str.WriteString(strconv.Itoa(p.RowCount))
-	return str.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalLimit) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
-		fmt.Fprintf(buffer, ", ")
-	}
-	if redact == perrors.RedactLogDisable {
-		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-	} else if redact == perrors.RedactLogMarker {
-		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
-	} else if redact == perrors.RedactLogEnable {
-		fmt.Fprintf(buffer, "offset:?, count:?")
-	}
-	return buffer.String()
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalExpand) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
@@ -516,131 +446,23 @@ func (p *PhysicalExpand) ExplainInfo() string {
 	var str strings.Builder
 	str.WriteString("group set num:")
 	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
-	str.WriteString(", groupingID:")
-	str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
-	str.WriteString(", ")
+	if p.GroupingIDCol != nil {
+		str.WriteString(", groupingID:")
+		str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
+		str.WriteString(", ")
+	}
 	str.WriteString(p.GroupingSets.StringWithCtx(ectx, perrors.RedactLogDisable))
 	return str.String()
 }
 
 // ExplainInfo implements Plan interface.
-func (p *basePhysicalAgg) ExplainInfo() string {
-	return p.explainInfo(false)
-}
-
-func (p *basePhysicalAgg) explainInfo(normalized bool) string {
-	sortedExplainExpressionList := expression.SortedExplainExpressionList
-	if normalized {
-		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
-			return expression.SortedExplainNormalizedExpressionList(exprs)
-		}
-	}
-
-	builder := &strings.Builder{}
-	if len(p.GroupByItems) > 0 {
-		builder.WriteString("group by:")
-		builder.Write(sortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
-		builder.WriteString(", ")
-	}
-	for i := range p.AggFuncs {
-		builder.WriteString("funcs:")
-		var colName string
-		if normalized {
-			colName = p.Schema().Columns[i].ExplainNormalizedInfo()
-		} else {
-			colName = p.Schema().Columns[i].ExplainInfo(p.SCtx().GetExprCtx().GetEvalCtx())
-		}
-		builder.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), p.AggFuncs[i], normalized))
-		builder.WriteString("->")
-		builder.WriteString(colName)
-		if i+1 < len(p.AggFuncs) {
-			builder.WriteString(", ")
-		}
-	}
-	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
-		fmt.Fprintf(builder, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	return builder.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalIndexJoin) ExplainInfo() string {
-	return p.explainInfo(false, false)
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
-	return p.explainInfo(false, true)
-}
-
-func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
-	sortedExplainExpressionList := expression.SortedExplainExpressionList
-	if normalized {
-		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
-			return expression.SortedExplainNormalizedExpressionList(exprs)
-		}
-	}
-
-	exprCtx := p.SCtx().GetExprCtx()
-	evalCtx := exprCtx.GetEvalCtx()
-	buffer := new(strings.Builder)
-	buffer.WriteString(p.JoinType.String())
-	buffer.WriteString(", inner:")
-	if normalized {
-		buffer.WriteString(p.Children()[p.InnerChildIdx].TP())
-	} else {
-		buffer.WriteString(p.Children()[p.InnerChildIdx].ExplainID().String())
-	}
-	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
-	if len(p.OuterJoinKeys) > 0 {
-		buffer.WriteString(", outer key:")
-		buffer.Write(expression.ExplainColumnList(evalCtx, p.OuterJoinKeys))
-	}
-	if len(p.InnerJoinKeys) > 0 {
-		buffer.WriteString(", inner key:")
-		buffer.Write(expression.ExplainColumnList(evalCtx, p.InnerJoinKeys))
-	}
-
-	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
-		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
-		for i := range p.OuterHashKeys {
-			expr, err := expression.NewFunctionBase(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
-			if err != nil {
-				logutil.BgLogger().Warn("fail to NewFunctionBase", zap.Error(err))
-			}
-			exprs = append(exprs, expr)
-		}
-		buffer.WriteString(", equal cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, exprs))
-	}
-	if len(p.LeftConditions) > 0 {
-		buffer.WriteString(", left cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		buffer.WriteString(", right cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		buffer.WriteString(", other cond:")
-		buffer.Write(sortedExplainExpressionList(evalCtx, p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true, false)
+	return p.PhysicalIndexJoin.ExplainInfoInternal(false, true)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true, true)
+	return p.PhysicalIndexJoin.ExplainInfoInternal(true, true)
 }
 
 // ExplainInfo implements Plan interface.
@@ -672,7 +494,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
+	physicalop.ExplainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.EqualConditions) > 0 {
 		if normalized {
@@ -744,17 +566,6 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
-func explainJoinLeftSide(buffer *strings.Builder, isInnerJoin bool, normalized bool, leftSide base.PhysicalPlan) {
-	if !isInnerJoin {
-		buffer.WriteString(", left side:")
-		if normalized {
-			buffer.WriteString(leftSide.TP())
-		} else {
-			buffer.WriteString(leftSide.ExplainID().String())
-		}
-	}
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainInfo() string {
 	return p.explainInfo(false)
@@ -771,7 +582,7 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := new(strings.Builder)
 	buffer.WriteString(p.JoinType.String())
-	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
+	physicalop.ExplainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
 			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))
@@ -798,52 +609,6 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalTopN) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
-		buffer.WriteString(" ")
-	}
-	if len(p.ByItems) > 0 {
-		// Add order by text to separate partition by. Otherwise, do not add order by to
-		// avoid breaking existing TopN tests.
-		if len(p.GetPartitionBy()) > 0 {
-			buffer.WriteString("order by ")
-		}
-		buffer = util.ExplainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
-	}
-	switch p.SCtx().GetSessionVars().EnableRedactLog {
-	case perrors.RedactLogDisable:
-		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
-	case perrors.RedactLogMarker:
-		fmt.Fprintf(buffer, ", offset:‹%v›, count:‹%v›", p.Offset, p.Count)
-	case perrors.RedactLogEnable:
-		fmt.Fprintf(buffer, ", offset:?, count:?")
-	}
-	return buffer.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalTopN) ExplainNormalizedInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString("")
-	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), true)
-		buffer.WriteString(" ")
-	}
-	if len(p.ByItems) > 0 {
-		// Add order by text to separate partition by. Otherwise, do not add order by to
-		// avoid breaking existing TopN tests.
-		if len(p.GetPartitionBy()) > 0 {
-			buffer.WriteString("order by ")
-		}
-		buffer = explainNormalizedByItems(buffer, p.ByItems)
-	}
-	return buffer.String()
 }
 
 func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop.FrameBound) {
@@ -994,36 +759,4 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
 	return res
-}
-
-func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
-	for i, item := range byItems {
-		if item.Desc {
-			fmt.Fprintf(buffer, "%s:desc", item.Expr.ExplainNormalizedInfo())
-		} else {
-			fmt.Fprintf(buffer, "%s", item.Expr.ExplainNormalizedInfo())
-		}
-
-		if i+1 < len(byItems) {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
-	if len(operatorInfo) == 0 {
-		return accessObject
-	}
-	return accessObject + ", " + operatorInfo
-}
-
-// OperatorInfo implements dataAccesser interface.
-func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
-	if p.Extractor != nil {
-		return p.Extractor.ExplainInfo(p)
-	}
-	return ""
 }
