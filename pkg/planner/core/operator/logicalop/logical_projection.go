@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -333,19 +334,21 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*property.PossibleProp) *property.PossibleProp {
+	intest.Assert(len(childrenProperties) > 0 && childrenProperties[0] != nil)
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.Schema().Len())
 	newCols := make([]*expression.Column, 0, p.Schema().Len())
 	for i, expr := range p.Exprs {
+		// only consider the column expression, since we need to see original column orders.
 		if col, ok := expr.(*expression.Column); ok {
 			newCols = append(newCols, p.Schema().Columns[i])
 			oldCols = append(oldCols, col)
 		}
 	}
 	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties))
-	for _, childProperty := range childProperties {
+	newProperties := make([][]*expression.Column, 0, len(childProperties.OrderCols))
+	for _, childProperty := range childProperties.OrderCols {
 		newChildProperty := make([]*expression.Column, 0, len(childProperty))
 		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
@@ -358,7 +361,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			newProperties = append(newProperties, newChildProperty)
 		}
 	}
-	return newProperties
+	return &property.PossibleProp{
+		OrderCols:   newProperties,
+		TiFlashable: childProperties.TiFlashable,
+	}
 }
 
 // ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.

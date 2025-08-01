@@ -74,4 +74,10 @@ func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalP
 	return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(p, prop)
 }
 
+// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+func (p *LogicalPartitionUnionAll) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	// LogicalLock table can not be pushed down to TiFlash.
+	return &property.PossibleProp{}
+}
+
 // *************************** end implementation of LogicalPlan interface ***************************

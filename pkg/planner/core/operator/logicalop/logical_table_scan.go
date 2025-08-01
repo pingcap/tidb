@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -94,15 +95,28 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
 	if ts.HandleCols != nil {
 		cols := make([]*expression.Column, ts.HandleCols.NumCols())
 		for i, c := range ts.HandleCols.IterColumns2() {
 			cols[i] = c
 		}
-		return [][]*expression.Column{cols}
+		// fetch the ds tiFlash path info.
+		hasTiFlash := false
+		if ts.Source != nil {
+			for _, path := range ts.Source.AllPossibleAccessPaths {
+				if path.StoreType == kv.TiFlash {
+					hasTiFlash = true
+					break
+				}
+			}
+		}
+		return &property.PossibleProp{
+			OrderCols:   [][]*expression.Column{cols},
+			TiFlashable: hasTiFlash,
+		}
 	}
-	return nil
+	return &property.PossibleProp{}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.<14th> implementation.

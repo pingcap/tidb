@@ -136,7 +136,11 @@ func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
-// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+// PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalTableDual) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	// LogicalTableDual can not be pushed down to TiFlash.
+	return &property.PossibleProp{}
+}
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
 

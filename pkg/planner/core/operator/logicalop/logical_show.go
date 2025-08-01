@@ -122,6 +122,12 @@ func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expressio
 	return p.StatsInfo(), true, nil
 }
 
+// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+func (p *LogicalShow) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
+	// apply can not be pushed down to TiFlash.
+	return &property.PossibleProp{}
+}
+
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 
 // MaxOneRow inherits BaseLogicalPlan.LogicalPlan.<16th> implementation.

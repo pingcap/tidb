@@ -311,9 +311,15 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*property.PossibleProp) *property.PossibleProp {
 	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
+	tiFlashable := false
 	for _, path := range ds.AllPossibleAccessPaths {
+		// collect the tiFlashable.
+		if path.StoreType == kv.TiFlash {
+			tiFlashable = true
+		}
+		// collect all the order cols from possible access paths.
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {
@@ -332,7 +338,10 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
-	return result
+	return &property.PossibleProp{
+		OrderCols:   result,
+		TiFlashable: tiFlashable,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.

@@ -120,20 +120,6 @@ func (op *LogicalAggregation) GroupByItemsShallowRef() []expression.Expression {
 	return op.GroupByItems
 }
 
-// PossiblePropertiesShallowRef implements the copy-on-write usage.
-func (op *LogicalAggregation) PossiblePropertiesShallowRef() [][]*expression.Column {
-	PossiblePropertiesCP := make([][]*expression.Column, 0, len(op.PossibleProperties))
-	for _, one := range op.PossibleProperties {
-		oneCP := make([]*expression.Column, 0, len(one))
-		for _, onee := range one {
-			oneCP = append(oneCP, onee)
-		}
-		PossiblePropertiesCP = append(PossiblePropertiesCP, one)
-	}
-	op.PossibleProperties = PossiblePropertiesCP
-	return op.PossibleProperties
-}
-
 // LogicalSortShallowRef implements the copy-on-write usage.
 func (op *LogicalSort) LogicalSortShallowRef() *LogicalSort {
 	shallow := *op
