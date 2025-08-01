@@ -117,13 +117,6 @@ func (p PhysicalHashJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, 
 	return &p
 }
 
-// Init initializes PhysicalMergeJoin.
-func (p PhysicalMergeJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalMergeJoin {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMergeJoin, &p, offset)
-	p.SetStats(stats)
-	return &p
-}
-
 func initForHash(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
 	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
 	baseAgg := pp.(*physicalop.BasePhysicalAgg)
