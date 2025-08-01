@@ -2397,6 +2397,7 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, state *enumerateState, pp
 		if _, ok := childTasks[0].(*CopTask); ok {
 			return true
 		}
+		return false
 	}
 	if meetThreshold {
 		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
