@@ -70,9 +70,9 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth, salt []byte, authConn conn.AuthConn) error
-	AuthWithoutVerification(user *auth.UserIdentity) bool
-	AuthPluginForUser(user *auth.UserIdentity) (string, error)
-	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
+	AuthWithoutVerification(ctx context.Context, user *auth.UserIdentity) bool
+	AuthPluginForUser(ctx context.Context, user *auth.UserIdentity) (string, error)
+	MatchIdentity(ctx context.Context, username, remoteHost string) (*auth.UserIdentity, error)
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
 	// PrepareTxnCtx is exported for test.

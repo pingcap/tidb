@@ -126,7 +126,8 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege()
+	users := userSpecToUserList(e.Users)
+	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 }
 
 // Checks that dynamic privileges are only of global scope.

@@ -200,7 +200,7 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 	var err error
 	for _, table := range tables {
 		if table == "user" {
-			if serr := rc.dom.NotifyUpdatePrivilege(); serr != nil {
+			if serr := rc.dom.NotifyUpdateAllUsersPrivilege(); serr != nil {
 				log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
 				err = multierr.Append(err, berrors.ErrUnknown.Wrap(serr).GenWithStack("failed to flush privileges"))
 			} else {

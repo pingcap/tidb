@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1090,15 +1091,15 @@ func TestDefaultRoles(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	pc := privilege.GetPrivilegeManager(tk.Session())
 
-	ret := pc.GetDefaultRoles("testdefault", "localhost")
+	ret := pc.GetDefaultRoles(context.Background(), "testdefault", "localhost")
 	require.Len(t, ret, 0)
 
 	rootTk.MustExec(`SET DEFAULT ROLE ALL TO 'testdefault'@'localhost';`)
-	ret = pc.GetDefaultRoles("testdefault", "localhost")
+	ret = pc.GetDefaultRoles(context.Background(), "testdefault", "localhost")
 	require.Len(t, ret, 2)
 
 	rootTk.MustExec(`SET DEFAULT ROLE NONE TO 'testdefault'@'localhost';`)
-	ret = pc.GetDefaultRoles("testdefault", "localhost")
+	ret = pc.GetDefaultRoles(context.Background(), "testdefault", "localhost")
 	require.Len(t, ret, 0)
 }
 
@@ -2138,7 +2139,8 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
 	pc := privilege.GetPrivilegeManager(tk.Session())
-	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
+	pc.MatchIdentity(context.Background(), "show_sql_mode", "localhost", false)
+	gs, err := pc.ShowGrants(context.Background(), tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
 	require.NoError(t, err)
 	require.Len(t, gs, 2)
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
@@ -2162,6 +2164,80 @@ func TestShowGrantsSQLMode(t *testing.T) {
 		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
 		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
 	})
+}
+
+func TestEnsureActiveUserCoverage(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user 'test'")
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
+
+	cases := []struct {
+		sql     string
+		visited bool
+	}{
+		{"drop user if exists 'test1'", false},
+		{"alter user test identified by 'test1'", false},
+		{"set password for test = 'test2'", false},
+		{"show create user test", false},
+		{"create user test1", false},
+		{"grant select on test.* to test1", false},
+		{"show grants", true},
+		{"show grants for 'test'@'%'", true},
+	}
+
+	for ith, c := range cases {
+		var visited bool
+		ctx := context.WithValue(context.Background(), "mock", &visited)
+		rs, err := tk.ExecWithContext(ctx, c.sql)
+		require.NoError(t, err)
+
+		comment := fmt.Sprintf("testcase %d failed", ith)
+		if rs != nil {
+			tk.ResultSetToResultWithCtx(ctx, rs, comment)
+		}
+		require.Equal(t, c.visited, visited, comment)
+	}
+}
+
+func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	// 1. check the default variable value
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))
+	// trigger priv reload
+	tk.MustExec("create user aaa")
+	handle := dom.PrivilegeHandle()
+	handle.CheckFullData(t, true)
+	priv := handle.Get()
+	require.False(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+
+	// 2. change the variable and check
+	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = on")
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("1"))
+	require.True(t, variable.AccelerateUserCreationUpdate.Load())
+	tk.MustExec("create user bbb")
+	handle.CheckFullData(t, false)
+	// trigger priv reload, but data for bbb is not really loaded
+	tk.MustExec("grant select on test.* to bbb")
+	priv = handle.Get()
+	// data for bbb is not loaded, because that user is not active
+	// So this is **counterintuitive**, but it's still the expected behavior.
+	require.False(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+	tk1 := testkit.NewTestKit(t, store)
+	// if user bbb login, everything works as expected
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "bbb", Hostname: "localhost"}, nil, nil, nil))
+	priv = handle.Get()
+	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+
+	// 3. change the variable and check again
+	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = off")
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))
+	tk.MustExec("drop user aaa")
+	handle.CheckFullData(t, true)
+	priv = handle.Get()
+	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
 }
 
 func TestSelectColumnPrivilege(t *testing.T) {
