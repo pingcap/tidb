@@ -175,6 +175,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
 	p1, d1 := getNormalizedPlan()
 	require.Equal(t, []string{
+<<<<<<< HEAD
 		" Projection                    root         test.t.vec",
 		" └─TopN                        root         ?",
 		"   └─Projection                root         test.t.vec, vec_cosine_distance(test.t.vec, ?)",
@@ -184,6 +185,13 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 		"           └─TopN              cop[tiflash] ?",
 		"             └─Projection      cop[tiflash] test.t.vec, vec_cosine_distance(test.t.vec, ?)",
 		"               └─TableFullScan cop[tiflash] table:t, index:vector_index(vec), range:[?,?], keep order:false, annIndex:COSINE(vec..[?], limit:?)",
+=======
+		" TopN                  root ?",
+		" └─TableReader         root ",
+		"   └─TopN              cop  ?",
+		"     └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"       └─TableFullScan cop  table:t, range:[?,?], keep order:false",
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 	}, p1)
 
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
