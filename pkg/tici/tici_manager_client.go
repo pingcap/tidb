@@ -98,6 +98,7 @@ func (t *ManagerCtx) updateClient(ch clientv3.WatchChan) {
 					if t.conn != nil {
 						t.conn.Close()
 					}
+					// TODO: Support retrying connection if it fails
 					conn, err := grpc.NewClient(string(event.Kv.Value), grpc.WithTransportCredentials(insecure.NewCredentials()))
 					if err != nil {
 						t.conn = nil
