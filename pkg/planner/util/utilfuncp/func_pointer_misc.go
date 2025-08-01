@@ -285,6 +285,9 @@ var InitForHash func(base base.PhysicalPlan, ctx base.PlanContext, stats *proper
 var InitForStream func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
 	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
 
+// Attach2Task4PhysicalWindow will be called by PhysicalWindow in physicalOp pkg.
+var Attach2Task4PhysicalWindow func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.

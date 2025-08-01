@@ -80,7 +80,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
-	_ base.PhysicalPlan = &PhysicalWindow{}
+	_ base.PhysicalPlan = &physicalop.PhysicalWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
@@ -1768,92 +1768,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
 		p.Ranges[0].IsPointNonNullable(tc)
-}
-
-// PhysicalWindow is the physical operator of window function.
-type PhysicalWindow struct {
-	physicalop.PhysicalSchemaProducer
-
-	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.SortItem
-	OrderBy         []property.SortItem
-	Frame           *logicalop.WindowFrame
-
-	// on which store the window function executes.
-	storeTp kv.StoreType
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
-	for _, windowFunc := range p.WindowFuncDescs {
-		for _, arg := range windowFunc.Args {
-			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
-		}
-	}
-	if p.Frame != nil {
-		if p.Frame.Start != nil {
-			for _, expr := range p.Frame.Start.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-		if p.Frame.End != nil {
-			for _, expr := range p.Frame.End.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-	}
-	return corCols
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalWindow)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
-	for _, it := range p.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
-	for _, it := range p.OrderBy {
-		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
-	}
-	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
-	for _, it := range p.WindowFuncDescs {
-		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
-	}
-	if p.Frame != nil {
-		cloned.Frame = p.Frame.Clone()
-	}
-
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalWindow
-func (p *PhysicalWindow) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.WindowFuncDescs))*size.SizeOfPointer +
-		size.SizeOfUint8
-
-	for _, windowFunc := range p.WindowFuncDescs {
-		sum += windowFunc.MemoryUsage()
-	}
-	for _, item := range p.PartitionBy {
-		sum += item.MemoryUsage()
-	}
-	for _, item := range p.OrderBy {
-		sum += item.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalShuffle represents a shuffle plan.

@@ -341,9 +341,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *logicalop.LogicalWindow:
 		buffer := bytes.NewBufferString("")
-		formatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
+		physicalop.FormatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
 		str = fmt.Sprintf("Window(%s)", buffer.String())
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	case *PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())

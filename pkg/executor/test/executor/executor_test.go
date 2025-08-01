@@ -809,7 +809,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&physicalop.PhysicalProjection{},
 		&physicalop.PhysicalSelection{},
 		&physicalop.PhysicalTableDual{},
-		&plannercore.PhysicalWindow{},
+		&physicalop.PhysicalWindow{},
 		&plannercore.PhysicalShuffle{},
 		&physicalop.PhysicalUnionAll{},
 	}

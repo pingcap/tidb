@@ -21,6 +21,7 @@ go_library(
         "physical_topn.go",
         "physical_union_all.go",
         "physical_union_scan.go",
+        "physical_window.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop",
     visibility = ["//visibility:public"],

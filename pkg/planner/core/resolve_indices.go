@@ -501,59 +501,6 @@ func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalWindow) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for i := range len(p.Schema().Columns) - len(p.WindowFuncDescs) {
-		col := p.Schema().Columns[i]
-		newCol, err := col.ResolveIndices(p.Children()[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.Schema().Columns[i] = newCol.(*expression.Column)
-	}
-	for i, item := range p.PartitionBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.PartitionBy[i].Col = newCol.(*expression.Column)
-	}
-	for i, item := range p.OrderBy {
-		newCol, err := item.Col.ResolveIndices(p.Children()[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.OrderBy[i].Col = newCol.(*expression.Column)
-	}
-	for _, desc := range p.WindowFuncDescs {
-		for i, arg := range desc.Args {
-			desc.Args[i], err = arg.ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	if p.Frame != nil {
-		for i := range p.Frame.Start.CalcFuncs {
-			p.Frame.Start.CalcFuncs[i], err = p.Frame.Start.CalcFuncs[i].ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-		}
-		for i := range p.Frame.End.CalcFuncs {
-			p.Frame.End.CalcFuncs[i], err = p.Frame.End.CalcFuncs[i].ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// ResolveIndices implements Plan interface.
 func (p *PhysicalShuffle) ResolveIndices() (err error) {
 	err = p.BasePhysicalPlan.ResolveIndices()
 	if err != nil {
