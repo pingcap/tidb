@@ -5,14 +5,10 @@ go_test(
     timeout = "short",
     srcs = ["integration_test.go"],
     flaky = True,
-    shard_count = 8,
     deps = [
         "//pkg/ddl",
-        "//pkg/parser/mysql",
         "//pkg/testkit",
-        "//pkg/util/sqlexec",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
     ],
 )
