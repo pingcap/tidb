@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -409,7 +409,7 @@ func TestInstancePlanCachePlan(t *testing.T) {
 	tk.MustExec(`create table t1 (a int, b int, c int, d int, primary key(a), key(b), unique key(c))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, d int, primary key(a), key(b), unique key(c))`)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	sessionID := tkProcess.ID
 	tk2 := testkit.NewTestKit(t, store)

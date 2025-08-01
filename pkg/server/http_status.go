@@ -245,6 +245,9 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
+	// HTTP path for transaction GC states.
+	router.Handle("/txn-gc-states", tikvhandler.NewTxnGCStatesHandler(tikvHandlerTool.Store))
+
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
@@ -299,6 +302,11 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("new failed", zap.Error(err))
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
+	}
+
+	if s.StandbyController != nil {
+		path, handler := s.StandbyController.Handler(s)
+		router.PathPrefix(path).Handler(handler)
 	}
 
 	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

@@ -212,10 +212,13 @@ func RefreshMeta(
 	t *testing.T,
 	de ddl.Executor,
 	dbID, tableID int64,
+	dbName, tableName string,
 ) {
 	args := &model.RefreshMetaArgs{
-		SchemaID: dbID,
-		TableID:  tableID,
+		SchemaID:      dbID,
+		TableID:       tableID,
+		InvolvedDB:    dbName,
+		InvolvedTable: tableName,
 	}
 	err := de.RefreshMeta(ctx, args)
 	require.NoError(t, err)

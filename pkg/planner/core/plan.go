@@ -76,7 +76,7 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 	}
 
 	switch p := tsk.Plan().(type) {
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
@@ -92,7 +92,7 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 	return tsk
 }
 
-func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -211,7 +211,7 @@ func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) floa
 	res := float64(1)
 	for _, pp := range probeParents {
 		switch pp.(type) {
-		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outer := pp.Children()[1-join.GetInnerChildIdx()]
 				res *= outer.StatsInfo().RowCount
@@ -225,7 +225,7 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 	res := int64(1)
 	for _, pp := range pps {
 		switch pp.(type) {
-		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalIndexJoin:
+		case *PhysicalApply, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outerChildID := pp.Children()[1-join.GetInnerChildIdx()].ID()
 				actRows := int64(1)

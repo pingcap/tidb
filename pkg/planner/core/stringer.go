@@ -277,7 +277,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str += "], TablePlan->" + ToString(x.tablePlan) + ")"
 	case *physicalop.PhysicalUnionScan:
 		str = fmt.Sprintf("UnionScan(%s)", expression.StringifyExpressionsWithCtx(ectx, x.Conditions))
-	case *PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -341,9 +341,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *logicalop.LogicalWindow:
 		buffer := bytes.NewBufferString("")
-		formatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
+		physicalop.FormatWindowFuncDescs(ectx, buffer, x.WindowFuncDescs, x.Schema())
 		str = fmt.Sprintf("Window(%s)", buffer.String())
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	case *PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())

@@ -282,7 +282,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 
 func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
-	win := new(core.PhysicalWindow)
+	win := new(physicalop.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
 	winSchema := schema.Clone()
 	for i := range funcs {

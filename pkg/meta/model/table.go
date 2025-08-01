@@ -823,8 +823,7 @@ type PartitionInfo struct {
 // Clone clones itself.
 func (pi *PartitionInfo) Clone() *PartitionInfo {
 	newPi := *pi
-	newPi.Columns = make([]ast.CIStr, len(pi.Columns))
-	copy(newPi.Columns, pi.Columns)
+	newPi.Columns = slices.Clone(pi.Columns)
 
 	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
 	for i := range pi.Definitions {
@@ -1143,8 +1142,7 @@ type PartitionDefinition struct {
 // Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
-	nci.LessThan = make([]string, len(ci.LessThan))
-	copy(nci.LessThan, ci.LessThan)
+	nci.LessThan = slices.Clone(ci.LessThan)
 	return nci
 }
 
@@ -1188,8 +1186,7 @@ type ConstraintInfo struct {
 func (ci *ConstraintInfo) Clone() *ConstraintInfo {
 	nci := *ci
 
-	nci.ConstraintCols = make([]ast.CIStr, len(ci.ConstraintCols))
-	copy(nci.ConstraintCols, ci.ConstraintCols)
+	nci.ConstraintCols = slices.Clone(ci.ConstraintCols)
 	return &nci
 }
 
@@ -1248,10 +1245,8 @@ func (fk *FKInfo) String(db, tb string) string {
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
 
-	nfk.RefCols = make([]ast.CIStr, len(fk.RefCols))
-	nfk.Cols = make([]ast.CIStr, len(fk.Cols))
-	copy(nfk.RefCols, fk.RefCols)
-	copy(nfk.Cols, fk.Cols)
+	nfk.RefCols = slices.Clone(fk.RefCols)
+	nfk.Cols = slices.Clone(fk.Cols)
 
 	return &nfk
 }

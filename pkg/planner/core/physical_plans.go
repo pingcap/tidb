@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -77,11 +76,11 @@ var (
 	_ base.PhysicalPlan = &PhysicalHashAgg{}
 	_ base.PhysicalPlan = &PhysicalStreamAgg{}
 	_ base.PhysicalPlan = &PhysicalApply{}
-	_ base.PhysicalPlan = &PhysicalIndexJoin{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
-	_ base.PhysicalPlan = &PhysicalWindow{}
+	_ base.PhysicalPlan = &physicalop.PhysicalWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
@@ -89,7 +88,7 @@ var (
 
 	_ PhysicalJoin = &PhysicalHashJoin{}
 	_ PhysicalJoin = &PhysicalMergeJoin{}
-	_ PhysicalJoin = &PhysicalIndexJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &PhysicalIndexHashJoin{}
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
@@ -1352,88 +1351,9 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 	return hashJoin
 }
 
-// PhysicalIndexJoin represents the plan of index look up join.
-// NOTICE: When adding any member variables, remember to modify the Clone method.
-type PhysicalIndexJoin struct {
-	physicalop.BasePhysicalJoin
-
-	innerPlan base.PhysicalPlan
-
-	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges ranger.MutableRanges
-	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
-	KeyOff2IdxOff []int
-	// IdxColLens stores the length of each index column.
-	IdxColLens []int
-	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
-	// e.g. select * from t, t1 where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
-	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b+10
-	//      need to be evaluated after we fetch the data of t1.
-	// This struct stores them and evaluate them to ranges.
-	CompareFilters *ColWithCmpFuncManager
-	// OuterHashKeys indicates the outer keys used to build hash table during
-	// execution. OuterJoinKeys is the prefix of OuterHashKeys.
-	OuterHashKeys []*expression.Column
-	// InnerHashKeys indicates the inner keys used to build hash table during
-	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
-	InnerHashKeys []*expression.Column
-	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
-	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexJoin)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalJoin = *base
-	if p.innerPlan != nil {
-		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
-	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
-	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexJoin
-func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfSlice*4 +
-		int64(cap(p.KeyOff2IdxOff)+cap(p.IdxColLens))*size.SizeOfInt + size.SizeOfPointer
-	if p.innerPlan != nil {
-		sum += p.innerPlan.MemoryUsage()
-	}
-	if p.CompareFilters != nil {
-		sum += p.CompareFilters.MemoryUsage()
-	}
-
-	for _, col := range p.OuterHashKeys {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.InnerHashKeys {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalIndexMergeJoin represents the plan of index look up merge join.
 type PhysicalIndexMergeJoin struct {
-	PhysicalIndexJoin
+	physicalop.PhysicalIndexJoin
 
 	// KeyOff2KeyOffOrderByIdx maps the offsets in join keys to the offsets in join keys order by index.
 	KeyOff2KeyOffOrderByIdx []int
@@ -1461,7 +1381,7 @@ func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
 
 // PhysicalIndexHashJoin represents the plan of index look up hash join.
 type PhysicalIndexHashJoin struct {
-	PhysicalIndexJoin
+	physicalop.PhysicalIndexJoin
 	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
 	KeepOuterOrder bool
@@ -1480,7 +1400,7 @@ func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPla
 	if err != nil {
 		return nil, err
 	}
-	indexJoin, ok := physicalIndexJoin.(*PhysicalIndexJoin)
+	indexJoin, ok := physicalIndexJoin.(*physicalop.PhysicalIndexJoin)
 	intest.Assert(ok)
 	cloned.PhysicalIndexJoin = *indexJoin
 	cloned.KeepOuterOrder = p.KeepOuterOrder
@@ -1755,157 +1675,25 @@ func (pl *PhysicalLock) MemoryUsage() (sum int64) {
 	return
 }
 
-// AggMppRunMode defines the running mode of aggregation in MPP
-type AggMppRunMode int
-
-const (
-	// NoMpp means the default value which does not run in MPP
-	NoMpp AggMppRunMode = iota
-	// Mpp1Phase runs only 1 phase but requires its child's partition property
-	Mpp1Phase
-	// Mpp2Phase runs partial agg + final agg with hash partition
-	Mpp2Phase
-	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
-	MppTiDB
-	// MppScalar also has 2 phases. The second phase runs in a single task.
-	MppScalar
-)
-
-type basePhysicalAgg struct {
-	physicalop.PhysicalSchemaProducer
-
-	AggFuncs         []*aggregation.AggFuncDesc
-	GroupByItems     []expression.Expression
-	MppRunMode       AggMppRunMode
-	MppPartitionCols []*property.MPPPartitionColumn
-}
-
-func (p *basePhysicalAgg) IsFinalAgg() bool {
-	if len(p.AggFuncs) > 0 {
-		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
-			return true
-		}
-	}
-	return false
-}
-
-func (p *basePhysicalAgg) cloneForPlanCacheWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, bool) {
-	cloned := new(basePhysicalAgg)
-	base, ok := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, newSelf)
-	if !ok {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *base
-	for _, aggDesc := range p.AggFuncs {
-		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
-	}
-	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
-	cloned.MppRunMode = p.MppRunMode
-	for _, p := range p.MppPartitionCols {
-		cloned.MppPartitionCols = append(cloned.MppPartitionCols, p.Clone())
-	}
-	return cloned, true
-}
-
-func (p *basePhysicalAgg) cloneWithSelf(newCtx base.PlanContext, newSelf base.PhysicalPlan) (*basePhysicalAgg, error) {
-	cloned := new(basePhysicalAgg)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, newSelf)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	for _, aggDesc := range p.AggFuncs {
-		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
-	}
-	cloned.GroupByItems = util.CloneExprs(p.GroupByItems)
-	return cloned, nil
-}
-
-func (p *basePhysicalAgg) numDistinctFunc() (num int) {
-	for _, fun := range p.AggFuncs {
-		if fun.HasDistinct {
-			num++
-		}
-	}
-	return
-}
-
-func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
-	factor = 0.0
-	for _, agg := range p.AggFuncs {
-		if fac, ok := cost.AggFuncFactor[agg.Name]; ok {
-			factor += fac
-		} else {
-			factor += cost.AggFuncFactor["default"]
-		}
-	}
-	if factor == 0 {
-		if isMPP {
-			// The default factor 1.0 will lead to 1-phase agg in pseudo stats settings.
-			// But in mpp cases, 2-phase is more usual. So we change this factor.
-			// TODO: This is still a little tricky and might cause regression. We should
-			// calibrate these factors and polish our cost model in the future.
-			factor = cost.AggFuncFactor[ast.AggFuncFirstRow]
-		} else {
-			factor = 1.0
-		}
-	}
-	return
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.GroupByItems)+len(p.AggFuncs))
-	for _, expr := range p.GroupByItems {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
-	for _, fun := range p.AggFuncs {
-		for _, arg := range fun.Args {
-			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
-		}
-	}
-	return corCols
-}
-
-// MemoryUsage return the memory usage of basePhysicalAgg
-func (p *basePhysicalAgg) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt
-
-	for _, agg := range p.AggFuncs {
-		sum += agg.MemoryUsage()
-	}
-	for _, expr := range p.GroupByItems {
-		sum += expr.MemoryUsage()
-	}
-	for _, mppCol := range p.MppPartitionCols {
-		sum += mppCol.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
-	basePhysicalAgg
+	physicalop.BasePhysicalAgg
 	tiflashPreAggMode string
 }
 
-func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
-	return &p.basePhysicalAgg
+func (p *PhysicalHashAgg) getPointer() *physicalop.BasePhysicalAgg {
+	return &p.BasePhysicalAgg
 }
 
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalAgg.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalAgg.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalAgg = *base
+	cloned.BasePhysicalAgg = *base
 	cloned.tiflashPreAggMode = p.tiflashPreAggMode
 	return cloned, nil
 }
@@ -1916,7 +1704,7 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return p.basePhysicalAgg.MemoryUsage()
+	return p.BasePhysicalAgg.MemoryUsage()
 }
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
@@ -1931,31 +1719,32 @@ func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.Sta
 	for i, aggFunc := range la.AggFuncs {
 		newAggFuncs[i] = aggFunc.Clone()
 	}
-	agg := basePhysicalAgg{
+	agg := &physicalop.BasePhysicalAgg{
 		GroupByItems: newGbyItems,
 		AggFuncs:     newAggFuncs,
-	}.initForHash(la.SCtx(), newStats, la.QueryBlockOffset(), prop)
-	return agg
+	}
+	hashAgg := agg.InitForHash(la.SCtx(), newStats, la.QueryBlockOffset(), nil, prop)
+	return hashAgg.(*PhysicalHashAgg)
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
 type PhysicalStreamAgg struct {
-	basePhysicalAgg
+	physicalop.BasePhysicalAgg
 }
 
-func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
-	return &p.basePhysicalAgg
+func (p *PhysicalStreamAgg) getPointer() *physicalop.BasePhysicalAgg {
+	return &p.BasePhysicalAgg
 }
 
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalStreamAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalStreamAgg)
 	cloned.SetSCtx(newCtx)
-	base, err := p.basePhysicalAgg.cloneWithSelf(newCtx, cloned)
+	base, err := p.BasePhysicalAgg.CloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalAgg = *base
+	cloned.BasePhysicalAgg = *base
 	return cloned, nil
 }
 
@@ -1965,7 +1754,7 @@ func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
 		return
 	}
 
-	return p.basePhysicalAgg.MemoryUsage()
+	return p.BasePhysicalAgg.MemoryUsage()
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
@@ -1979,92 +1768,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
 		p.Ranges[0].IsPointNonNullable(tc)
-}
-
-// PhysicalWindow is the physical operator of window function.
-type PhysicalWindow struct {
-	physicalop.PhysicalSchemaProducer
-
-	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.SortItem
-	OrderBy         []property.SortItem
-	Frame           *logicalop.WindowFrame
-
-	// on which store the window function executes.
-	storeTp kv.StoreType
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
-	for _, windowFunc := range p.WindowFuncDescs {
-		for _, arg := range windowFunc.Args {
-			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
-		}
-	}
-	if p.Frame != nil {
-		if p.Frame.Start != nil {
-			for _, expr := range p.Frame.Start.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-		if p.Frame.End != nil {
-			for _, expr := range p.Frame.End.CalcFuncs {
-				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			}
-		}
-	}
-	return corCols
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalWindow)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
-	for _, it := range p.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
-	for _, it := range p.OrderBy {
-		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
-	}
-	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
-	for _, it := range p.WindowFuncDescs {
-		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
-	}
-	if p.Frame != nil {
-		cloned.Frame = p.Frame.Clone()
-	}
-
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalWindow
-func (p *PhysicalWindow) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.WindowFuncDescs))*size.SizeOfPointer +
-		size.SizeOfUint8
-
-	for _, windowFunc := range p.WindowFuncDescs {
-		sum += windowFunc.MemoryUsage()
-	}
-	for _, item := range p.PartitionBy {
-		sum += item.MemoryUsage()
-	}
-	for _, item := range p.OrderBy {
-		sum += item.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalShuffle represents a shuffle plan.

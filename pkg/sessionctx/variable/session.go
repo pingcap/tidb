@@ -1016,7 +1016,7 @@ type SessionVars struct {
 	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
 	RiskEqSkewRatio float64
 
-	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket.
+	// RiskRangeSkewRatio is used to control the ratio of skew that is applied to range predicates that fall within a single bucket or outside the histogram bucket range.
 	RiskRangeSkewRatio float64
 
 	// cpuFactor is the CPU cost of processing one expression for one row.
@@ -1732,6 +1732,9 @@ type SessionVars struct {
 
 	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
 	BulkDMLEnabled bool
+
+	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
+	InternalSQLScanUserTable bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
