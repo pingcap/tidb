@@ -1710,6 +1710,7 @@ TiDB_JSON
 
 explain format = 'verbose' select * from t limit 1;
 id	estRows	estCost	task	access object	operator info
+<<<<<<< HEAD
 Limit_7	1.00	12.97	root		offset:0, count:1
 └─IndexReader_12	1.00	12.97	root		index:Limit_11
   └─Limit_11	1.00	162.80	cop[tikv]		offset:0, count:1
@@ -1720,6 +1721,18 @@ Limit_7	1.00	12.97	((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))) + (net(1*
 └─IndexReader_12	1.00	12.97	(((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))) + (net(1*rowsize(8)*tidb_kv_net_factor(3.96))))/15.00	root		index:Limit_11
   └─Limit_11	1.00	162.80	(scan(1*logrowsize(16)*tikv_scan_factor(40.7)))	cop[tikv]		offset:0, count:1
     └─IndexFullScan_10	1.00	162.80	scan(1*logrowsize(16)*tikv_scan_factor(40.7))	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+=======
+Limit_8	1.00	15.08	root		offset:0, count:1
+└─IndexReader_15	1.00	15.08	root		index:Limit_14
+  └─Limit_14	1.00	162.80	cop[tikv]		offset:0, count:1
+    └─IndexFullScan_13	1.00	162.80	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+explain format = 'cost_trace' select * from t limit 1;
+id	estRows	estCost	costFormula	task	access object	operator info
+Limit_8	1.00	15.08	((((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00)	root		offset:0, count:1
+└─IndexReader_15	1.00	15.08	(((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		index:Limit_14
+  └─Limit_14	1.00	162.80	((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)	cop[tikv]		offset:0, count:1
+    └─IndexFullScan_13	1.00	162.80	(scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 drop table if exists t, t1, t2;
 CREATE TABLE `t1` (`c_int` int(11) NOT NULL,  `c_str` varchar(40) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,  `c_datetime` datetime DEFAULT NULL,  `c_timestamp` timestamp NULL DEFAULT NULL,  `c_double` double DEFAULT NULL,  `c_decimal` decimal(12,6) DEFAULT NULL,  `c_enum` enum('blue','green','red','yellow','white','orange','purple') NOT NULL,  PRIMARY KEY (`c_int`,`c_enum`) /*T![clustered_index] CLUSTERED */,  KEY `c_decimal` (`c_decimal`),  UNIQUE KEY `c_datetime` (`c_datetime`),  UNIQUE KEY `c_timestamp` (`c_timestamp`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
