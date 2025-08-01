@@ -166,9 +166,6 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		}
 		return nil, err
 	}
-	if err = checkUnsupportedCharsetForTiFlash(t.Meta(), specNewColumn.Name.Name, *specNewColumn.Tp); err != nil {
-		return nil, errors.Trace(err)
-	}
 	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -176,19 +173,21 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
-	return CreateNewColumn(ctx, schema, spec, t, specNewColumn)
+	newCol, err := CreateNewColumn(ctx, schema, spec, t, specNewColumn)
+	if err == nil {
+		err = checkUnsupportedCharsetForTiFlash(t.Meta(), newCol.Name, newCol.FieldType)
+	}
+	return newCol, errors.Trace(err)
 }
 
 func checkUnsupportedCharsetForTiFlash(tbl *model.TableInfo, colName ast.CIStr, colTp types.FieldType) error {
-	colCharset := colTp.GetCharset()
-	if tbl.Charset == charset.CharsetGBK || tbl.Charset == charset.CharsetGB18030 {
-		colCharset = tbl.Charset
+	if tbl.TiFlashReplica == nil {
+		return nil
 	}
 
-	if tbl.TiFlashReplica != nil && (colCharset == charset.CharsetGBK || colCharset == charset.CharsetGB18030) {
-		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and %s encoding", colName, tbl.Name, colCharset)
+	if _, isSupported := charset.TiFlashSupportedCharsets[colTp.GetCharset()]; !isSupported {
+		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and %s encoding", colName, tbl.Name, colTp.GetCharset())
 	}
-
 	return nil
 }
 

@@ -250,6 +250,7 @@ func TestSetTiFlashReplicaForAddGBKColumn(t *testing.T) {
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
 	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10);", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table tgbk add column c1 varchar(10), add column c2 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table tgbk add column c1 varchar(10) character set utf8;")
 
 	// GB18030
 	tk.MustExec("create table t1 (id int);")
@@ -267,6 +268,7 @@ func TestSetTiFlashReplicaForAddGBKColumn(t *testing.T) {
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
 	tk.MustGetErrCode("alter table tgb18030 add column c1 varchar(10);", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table tgb18030 add column c1 varchar(10), add column c2 varchar(10);", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table tgb18030 add column c1 varchar(10) character set utf8;")
 }
 
 func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
