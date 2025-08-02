@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/tici"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -935,6 +936,26 @@ func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 		return nil, errors.Trace(err)
 	}
 	return is.tiflashReplicaManager.GetStoresStat(ctx)
+}
+
+// CreateFulltextIndex create fulltext index on TiCI.
+func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+	ticiManager, err := tici.NewTiCIManager(ctx, GetEtcdClient())
+	if err != nil {
+		return err
+	}
+	defer ticiManager.Close()
+	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
+}
+
+// DropFullTextIndex drop fulltext index on TiCI.
+func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
+	ticiManager, err := tici.NewTiCIManager(ctx, GetEtcdClient())
+	if err != nil {
+		return err
+	}
+	defer ticiManager.Close()
+	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }
 
 // CloseTiFlashManager closes TiFlash manager.
