@@ -241,121 +241,118 @@ func TestUnmatchedTableInHint(t *testing.T) {
 }
 
 func TestIssue37520(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1, t2")
+		testKit.MustExec("create table t1(a int primary key, b int);")
+		testKit.MustExec("create table t2(a int, b int, index ia(a));")
 
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int primary key, b int);")
-	tk.MustExec("create table t2(a int, b int, index ia(a));")
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
 
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
 }
 
 func TestMPPHints(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
+		testKit.MustExec("alter table t set tiflash replica 1")
+		testKit.MustExec("set @@session.tidb_allow_mpp=ON")
+		testKit.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
+		testKit.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
+		tb := external.GetTableByName(t, testKit, "test", "t")
+		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
 
-	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
-	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustExec("set @@session.tidb_allow_mpp=ON")
-	tk.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
-	tk.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
-	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-		})
-		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
-			tk.MustExec(tt)
-			continue
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
 		}
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+				testKit.MustExec(tt)
+				continue
+			}
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	}, mockstore.WithMockTiFlash(2))
 }
 
 func TestMPPHintsScope(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
+		testKit.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
+		testKit.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
+		testKit.MustQuery("show warnings").Check(testkit.Rows())
+		testKit.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
+		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
+		testKit.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
+		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
+		testKit.MustExec("alter table t set tiflash replica 1")
+		tb := external.GetTableByName(t, testKit, "test", "t")
+		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
+		require.NoError(t, err)
 
-	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
-	tk.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
-	tk.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
-	tk.MustExec("alter table t set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-		})
-		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
-			tk.MustExec(tt)
-			continue
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
 		}
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+				testKit.MustExec(tt)
+				continue
+			}
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := testKit.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	}, mockstore.WithMockTiFlash(2))
 }
 
 func TestMPPBCJModel(t *testing.T) {
@@ -672,60 +669,59 @@ func TestHintScope(t *testing.T) {
 }
 
 func TestJoinHints(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
 
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	var input []string
-	var output []struct {
-		SQL     string
-		Best    string
-		Warning string
-		Hints   string
-	}
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	ctx := context.Background()
-	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-
-	for i, test := range input {
-		comment := fmt.Sprintf("case:%v sql:%s", i, test)
-		stmt, err := p.ParseOneStmt(test, "", "")
-		require.NoError(t, err, comment)
-
-		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
-		nodeW := resolve.NewNodeW(stmt)
-		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
-		require.NoError(t, err)
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-
-		testdata.OnRecord(func() {
-			output[i].SQL = test
-			output[i].Best = core.ToString(p)
-			if len(warnings) > 0 {
-				output[i].Warning = warnings[0].Err.Error()
-			}
-			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
-		})
-		require.Equal(t, output[i].Best, core.ToString(p))
-		if output[i].Warning == "" {
-			require.Len(t, warnings, 0)
-		} else {
-			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
-			require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
-			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
+		var input []string
+		var output []struct {
+			SQL     string
+			Best    string
+			Warning string
+			Hints   string
 		}
-		hints := core.GenHintsFromPhysicalPlan(p)
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		ctx := context.Background()
+		p := parser.New()
+		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 
-		// test the new genHints code
-		flat := core.FlattenPhysicalPlan(p, false)
-		newHints := core.GenHintsFromFlatPlan(flat)
-		assertSameHints(t, hints, newHints)
+		for i, test := range input {
+			comment := fmt.Sprintf("case:%v sql:%s", i, test)
+			stmt, err := p.ParseOneStmt(test, "", "")
+			require.NoError(t, err, comment)
 
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
-	}
+			testKit.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
+			nodeW := resolve.NewNodeW(stmt)
+			p, _, err := planner.Optimize(ctx, testKit.Session(), nodeW, is)
+			require.NoError(t, err)
+			warnings := testKit.Session().GetSessionVars().StmtCtx.GetWarnings()
+
+			testdata.OnRecord(func() {
+				output[i].SQL = test
+				output[i].Best = core.ToString(p)
+				if len(warnings) > 0 {
+					output[i].Warning = warnings[0].Err.Error()
+				}
+				output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
+			})
+			require.Equal(t, output[i].Best, core.ToString(p))
+			if output[i].Warning == "" {
+				require.Len(t, warnings, 0)
+			} else {
+				require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
+				require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+				require.Equal(t, output[i].Warning, warnings[0].Err.Error())
+			}
+			hints := core.GenHintsFromPhysicalPlan(p)
+
+			// test the new genHints code
+			flat := core.FlattenPhysicalPlan(p, false)
+			newHints := core.GenHintsFromFlatPlan(flat)
+			assertSameHints(t, hints, newHints)
+
+			require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
+		}
+	})
 }
 
 func TestAggregationHints(t *testing.T) {
@@ -833,61 +829,61 @@ func TestSemiJoinRewriteHints(t *testing.T) {
 }
 
 func TestAggToCopHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ta")
-	tk.MustExec("create table ta(a int, b int, index(a))")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists ta")
+		testKit.MustExec("create table ta(a int, b int, index(a))")
 
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Best    string
-			Warning string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-
-	ctx := context.Background()
-	is := domain.GetDomain(tk.Session()).InfoSchema()
-	p := parser.New()
-	for i, test := range input {
-		comment := fmt.Sprintf("case:%v sql:%s", i, test)
-		testdata.OnRecord(func() {
-			output[i].SQL = test
-		})
-		require.Equal(t, output[i].SQL, test, comment)
-
-		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
-
-		stmt, err := p.ParseOneStmt(test, "", "")
-		require.NoError(t, err, comment)
-
-		nodeW := resolve.NewNodeW(stmt)
-		p, _, err := planner.Optimize(ctx, tk.Session(), nodeW, is)
-		require.NoError(t, err, comment)
-		planString := core.ToString(p)
-		testdata.OnRecord(func() {
-			output[i].Best = planString
-		})
-		require.Equal(t, output[i].Best, planString, comment)
-
-		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		testdata.OnRecord(func() {
-			if len(warnings) > 0 {
-				output[i].Warning = warnings[0].Err.Error()
+		var (
+			input  []string
+			output []struct {
+				SQL     string
+				Best    string
+				Warning string
 			}
-		})
-		if output[i].Warning == "" {
-			require.Len(t, warnings, 0)
-		} else {
-			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
-			require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
-			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
+		)
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+
+		ctx := context.Background()
+		is := domain.GetDomain(testKit.Session()).InfoSchema()
+		p := parser.New()
+		for i, test := range input {
+			comment := fmt.Sprintf("case:%v sql:%s", i, test)
+			testdata.OnRecord(func() {
+				output[i].SQL = test
+			})
+			require.Equal(t, output[i].SQL, test, comment)
+
+			testKit.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
+
+			stmt, err := p.ParseOneStmt(test, "", "")
+			require.NoError(t, err, comment)
+
+			nodeW := resolve.NewNodeW(stmt)
+			p, _, err := planner.Optimize(ctx, testKit.Session(), nodeW, is)
+			require.NoError(t, err, comment)
+			planString := core.ToString(p)
+			testdata.OnRecord(func() {
+				output[i].Best = planString
+			})
+			require.Equal(t, output[i].Best, planString, comment)
+
+			warnings := testKit.Session().GetSessionVars().StmtCtx.GetWarnings()
+			testdata.OnRecord(func() {
+				if len(warnings) > 0 {
+					output[i].Warning = warnings[0].Err.Error()
+				}
+			})
+			if output[i].Warning == "" {
+				require.Len(t, warnings, 0)
+			} else {
+				require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
+				require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+				require.Equal(t, output[i].Warning, warnings[0].Err.Error())
+			}
 		}
-	}
+	})
 }
 
 func TestGroupConcatOrderby(t *testing.T) {
