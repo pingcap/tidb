@@ -181,7 +181,7 @@ func InitMemoryHook() error {
 	}
 	cgroupValue, err := cgroup.GetMemoryLimit()
 	if err != nil {
-		return err
+		return nil
 	}
 	physicalValue, err := memTotalNormal()
 	if err != nil {
