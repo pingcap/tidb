@@ -421,11 +421,14 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
 	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
-	if matched {
+	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
+	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+	// also check if this last bucket end value is underrepresented
+	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
