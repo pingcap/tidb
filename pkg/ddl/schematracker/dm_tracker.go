@@ -420,6 +420,13 @@ func (d *SchemaTracker) createIndex(
 		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
 	}
 
+	var partialConditionString string
+	if indexOption != nil {
+		partialConditionString, err = ddl.CheckAndBuildIndexPartialConditionString(tblInfo, indexOption.PartialCondition, keyType)
+		if err != nil {
+			return err
+		}
+	}
 	indexInfo, err := ddl.BuildIndexInfo(
 		ddl.NewMetaBuildContextWithSctx(ctx),
 		tblInfo,
@@ -429,6 +436,7 @@ func (d *SchemaTracker) createIndex(
 		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
 		indexOption,
+		partialConditionString,
 		model.StatePublic,
 	)
 	if err != nil {
@@ -860,6 +868,7 @@ func (d *SchemaTracker) createPrimaryKey(
 		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
 		indexOption,
+		"",
 		model.StatePublic,
 	)
 	if err != nil {

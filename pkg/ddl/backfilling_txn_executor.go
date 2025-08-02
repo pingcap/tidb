@@ -285,7 +285,10 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			if err != nil {
 				return err
 			}
-			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
+			tmpIdxWorker, err := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
+			if err != nil {
+				return err
+			}
 			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
