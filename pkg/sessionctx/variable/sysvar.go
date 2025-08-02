@@ -1101,7 +1101,10 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableAutoAnalyzePriorityQueue, Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue), Type: vardef.TypeBool,
+		Scope: vardef.ScopeGlobal,
+		Name:  vardef.TiDBEnableAutoAnalyzePriorityQueue,
+		Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue),
+		Type:  vardef.TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(vardef.EnableAutoAnalyzePriorityQueue.Load()), nil
 		},
@@ -1110,7 +1113,9 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_auto_analyze_priority_queue will be removed in the future and TiDB will always use priority queue to execute auto analyze."))
+			if !TiDBOptOn(normalizedValue) {
+				return "", errors.New("tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze")
+			}
 			return normalizedValue, nil
 		},
 	},
