@@ -50,6 +50,8 @@ type AccessPath struct {
 	CorrCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
+	// CountFromRisk is the row count attributed to higher risk estimation
+	CountFromRisk   float64
 	AccessConds     []expression.Expression
 	EqCondCount     int
 	EqOrInCondCount int
