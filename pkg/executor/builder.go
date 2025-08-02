@@ -300,9 +300,9 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpReader(v)
 	case *physicalop.PhysicalWindow:
 		return b.buildWindow(v)
-	case *plannercore.PhysicalShuffle:
+	case *physicalop.PhysicalShuffle:
 		return b.buildShuffle(v)
-	case *plannercore.PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		return b.buildShuffleReceiverStub(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
@@ -5357,7 +5357,7 @@ func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executo
 	}
 }
 
-func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
+func (b *executorBuilder) buildShuffle(v *physicalop.PhysicalShuffle) *ShuffleExec {
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
 	shuffle := &ShuffleExec{
 		BaseExecutor: base,
@@ -5367,11 +5367,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	// 1. initialize the splitters
 	splitters := make([]partitionSplitter, len(v.ByItemArrays))
 	switch v.SplitterType {
-	case plannercore.PartitionHashSplitterType:
+	case physicalop.PartitionHashSplitterType:
 		for i, byItems := range v.ByItemArrays {
 			splitters[i] = buildPartitionHashSplitter(shuffle.concurrency, byItems)
 		}
-	case plannercore.PartitionRangeSplitterType:
+	case physicalop.PartitionRangeSplitterType:
 		for i, byItems := range v.ByItemArrays {
 			splitters[i] = buildPartitionRangeSplitter(b.ctx, shuffle.concurrency, byItems)
 		}
@@ -5393,9 +5393,9 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	head := v.Children()[0]
 	// A `PhysicalShuffleReceiverStub` for every worker have the same `DataSource` but different `Receiver`.
 	// We preallocate `PhysicalShuffleReceiverStub`s here and reuse them below.
-	stubs := make([]*plannercore.PhysicalShuffleReceiverStub, 0, len(v.DataSources))
+	stubs := make([]*physicalop.PhysicalShuffleReceiverStub, 0, len(v.DataSources))
 	for _, dataSource := range v.DataSources {
-		stub := plannercore.PhysicalShuffleReceiverStub{
+		stub := physicalop.PhysicalShuffleReceiverStub{
 			DataSource: dataSource,
 		}.Init(b.ctx.GetPlanCtx(), dataSource.StatsInfo(), dataSource.QueryBlockOffset(), nil)
 		stub.SetSchema(dataSource.Schema())

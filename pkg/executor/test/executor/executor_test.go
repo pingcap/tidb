@@ -810,7 +810,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&physicalop.PhysicalSelection{},
 		&physicalop.PhysicalTableDual{},
 		&physicalop.PhysicalWindow{},
-		&plannercore.PhysicalShuffle{},
+		&physicalop.PhysicalShuffle{},
 		&physicalop.PhysicalUnionAll{},
 	}
 
@@ -875,7 +875,7 @@ func TestUnreasonablyClose(t *testing.T) {
 					newChild = append(newChild, x.SeedPlan)
 					hasCTE = true
 					continue
-				case *plannercore.PhysicalShuffle:
+				case *physicalop.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
 					newChild = append(newChild, x.Tails...)
 					continue
