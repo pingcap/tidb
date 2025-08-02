@@ -509,12 +509,11 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 999900 order by b limit 1",
         "Plan": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─Projection 1.00 root  test.t.a, test.t.b",
-          "  └─IndexLookUp 1.00 root  ",
-          "    ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:idx_b(b) keep order:true",
-          "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.a, 999900)",
-          "      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false"
+          "TopN 1.00 root  test.t.b, offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 102.00 cop[tikv] table:t, index:idx_a(a) range:[999900,+inf], keep order:false",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableRowIDScan 102.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]
