@@ -464,6 +464,9 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 }
 
 func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	plan = eliminatePhysicalProjection(plan)
@@ -1096,7 +1099,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
@@ -1125,7 +1130,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 
 	preparePossibleProperties(logic)
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	prop := &property.PhysicalProperty{
 		TaskTp:      property.RootTaskType,
 		ExpectedCnt: math.MaxFloat64,
