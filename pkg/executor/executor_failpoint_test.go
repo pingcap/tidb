@@ -41,10 +41,9 @@ import (
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
-	})
+	})()
 
 	store := testkit.CreateMockStore(t)
 

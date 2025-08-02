@@ -29,10 +29,9 @@ import (
 
 func TestPagingActRowsAndProcessKeys(t *testing.T) {
 	// Close copr-cache
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.CoprCache.CapacityMB = 0
-	})
+	})()
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	session := testkit.NewTestKit(t, store)
@@ -104,10 +103,9 @@ func TestPagingActRowsAndProcessKeys(t *testing.T) {
 }
 
 func TestIndexReaderWithPaging(t *testing.T) {
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.CoprCache.CapacityMB = 0
-	})
+	})()
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

@@ -38,12 +38,10 @@ func TestSortInDisk(t *testing.T) {
 
 // TODO remove failpoint
 func testSortInDisk(t *testing.T, removeDir bool) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
 		conf.Performance.EnableStatsCacheMemQuota = true
-	})
+	})()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
@@ -98,11 +96,10 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 }
 
 func TestIssue16696(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
 		conf.Performance.EnableStatsCacheMemQuota = true
-	})
+	})()
 	alarmRatio := vardef.MemoryUsageAlarmRatio.Load()
 	vardef.MemoryUsageAlarmRatio.Store(0.0)
 	defer vardef.MemoryUsageAlarmRatio.Store(alarmRatio)

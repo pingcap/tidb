@@ -337,10 +337,9 @@ func TestSlowLogFormat(t *testing.T) {
 }
 
 func TestIsolationRead(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
-	})
+	})()
 	sessVars := variable.NewSessionVars(nil)
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	require.True(t, ok)

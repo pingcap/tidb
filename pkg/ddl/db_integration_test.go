@@ -1412,8 +1412,9 @@ func TestAlterAlgorithm(t *testing.T) {
 }
 
 func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
-	restoreFunc := config.RestoreFunc()
-	defer restoreFunc()
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4
+	})()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

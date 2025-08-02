@@ -396,12 +396,10 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			},
 		},
 	}
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		// if true, test will too slow to run.
 		conf.Performance.EnableStatsCacheMemQuota = false
-	})
+	})()
 	s := createPlannerSuite()
 	defer s.Close()
 	for i, tc := range tt {

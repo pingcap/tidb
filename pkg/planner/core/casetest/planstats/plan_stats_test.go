@@ -340,10 +340,9 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 }
 
 func TestPlanStatsStatusRecord(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
-	})
+	})()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

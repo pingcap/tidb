@@ -1430,11 +1430,14 @@ func (c *Config) Valid() error {
 }
 
 // UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
-func UpdateGlobal(f func(conf *Config)) {
+func UpdateGlobal(f func(conf *Config)) (restore func()) {
 	g := GetGlobalConfig()
 	newConf := *g
 	f(&newConf)
 	StoreGlobalConfig(&newConf)
+	return func() {
+		StoreGlobalConfig(g)
+	}
 }
 
 // RestoreFunc gets a function that restore the config to the current value.

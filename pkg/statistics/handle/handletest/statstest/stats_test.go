@@ -233,26 +233,30 @@ func testInitStatsMemTrace(t *testing.T) {
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		// Restore to original config
+	})()
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutLite(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		// Restore to original config
+	})()
 	testInitStatsMemTraceFunc(t, false)
 }
 
 func TestInitStatsMemTraceWithConcurrentLite(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		// Restore to original config
+	})()
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutConcurrentLite(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		// Restore to original config
+	})()
 	testInitStatsMemTraceFunc(t, false)
 }
 

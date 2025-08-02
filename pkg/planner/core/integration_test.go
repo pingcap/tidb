@@ -64,10 +64,9 @@ func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash"}
-	})
+	})()
 	// Change instance config doesn't affect isolation read.
 	tk.MustExec("select * from t")
 }
@@ -921,10 +920,9 @@ func TestHypoIndexHint(t *testing.T) {
 func TestIssue29503(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.RecordQPSbyDB = true
-	})
+	})()
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")

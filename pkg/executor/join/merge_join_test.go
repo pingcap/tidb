@@ -80,10 +80,9 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
-	})
+	})()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testMergeJoinRowContainerSpill", "return(true)"))
 	defer func() {

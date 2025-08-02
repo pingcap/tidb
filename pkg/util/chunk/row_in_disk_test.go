@@ -287,82 +287,72 @@ func BenchmarkDataInDiskByRows_GetChunk(b *testing.B) {
 }
 
 func TestDataInDiskByRowsWithChecksum1(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
-	})
+	})()
 	testDataInDiskByRows(t, 1)
 }
 
 func TestDataInDiskByRowsWithChecksum2(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
-	})
+	})()
 	testDataInDiskByRows(t, 2)
 }
 
 func TestDataInDiskByRowsWithChecksum8(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
-	})
+	})()
 	testDataInDiskByRows(t, 8)
 }
 
 func TestDataInDiskByRowsWithChecksumReaderWithCache(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
-	})
+	})()
 	testReaderWithCache(t)
 }
 
 func TestDataInDiskByRowsWithChecksumReaderWithCacheNoFlush(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
-	})
+	})()
 	testReaderWithCacheNoFlush(t)
 }
 
 func TestDataInDiskByRowsWithChecksumAndEncrypt1(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
-	})
+	})()
 	testDataInDiskByRows(t, 1)
 }
 
 func TestDataInDiskByRowsWithChecksumAndEncrypt2(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
-	})
+	})()
 	testDataInDiskByRows(t, 2)
 }
 
 func TestDataInDiskByRowsWithChecksumAndEncrypt8(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
-	})
+	})()
 	testDataInDiskByRows(t, 8)
 }
 
 func TestDataInDiskByRowsWithChecksumAndEncryptReaderWithCache(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
-	})
+	})()
 	testReaderWithCache(t)
 }
 
 func TestDataInDiskByRowsWithChecksumAndEncryptReaderWithCacheNoFlush(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
-	})
+	})()
 	testReaderWithCacheNoFlush(t)
 }
 

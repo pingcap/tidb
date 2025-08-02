@@ -102,10 +102,9 @@ func mustExecDDL(tk *testkit.TestKit, t *testing.T, sql string, dom *domain.Doma
 }
 
 func TestMemCacheReadLock(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
-	})
+	})()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -187,10 +186,9 @@ func TestMemCacheReadLock(t *testing.T) {
 }
 
 func TestPartitionMemCacheReadLock(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
-	})
+	})()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

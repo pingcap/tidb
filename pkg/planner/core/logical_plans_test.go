@@ -1525,12 +1525,10 @@ func TestVisitInfo(t *testing.T) {
 			},
 		},
 	}
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		// if true, test will too slow to run.
 		conf.Performance.EnableStatsCacheMemQuota = false
-	})
+	})()
 	s := createPlannerSuite()
 	defer s.Close()
 	for _, tt := range tests {
@@ -1651,12 +1649,10 @@ func TestUnion(t *testing.T) {
 }
 
 func TestTopNPushDown(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		// if true, test will too slow to run.
 		conf.Performance.EnableStatsCacheMemQuota = false
-	})
+	})()
 	var input, output []string
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 	s := createPlannerSuite()
@@ -1739,12 +1735,10 @@ func TestNameResolver(t *testing.T) {
 }
 
 func TestOuterJoinEliminator(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		// if true, test will too slow to run.
 		conf.Performance.EnableStatsCacheMemQuota = false
-	})
+	})()
 	var input, output []string
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
 
@@ -1816,12 +1810,10 @@ type plannerSuiteWithOptimizeVars struct {
 }
 
 func TestWindowFunction(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		// if true, test will too slow to run.
 		conf.Performance.EnableStatsCacheMemQuota = false
-	})
+	})()
 	s := new(plannerSuiteWithOptimizeVars)
 	s.plannerSuite = createPlannerSuite()
 	defer s.plannerSuite.Close()
@@ -1839,12 +1831,10 @@ func TestWindowFunction(t *testing.T) {
 }
 
 func TestWindowParallelFunction(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		// if true, test will too slow to run.
 		conf.Performance.EnableStatsCacheMemQuota = false
-	})
+	})()
 	s := new(plannerSuiteWithOptimizeVars)
 	s.plannerSuite = createPlannerSuite()
 	defer s.plannerSuite.Close()

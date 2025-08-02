@@ -1036,6 +1036,14 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 }
 
 func TestConflictInstanceConfig(t *testing.T) {
+	// Save original global state
+	originalConflictOptions := ConflictOptions
+	originalDeprecatedOptions := DeprecatedOptions
+	defer func() {
+		ConflictOptions = originalConflictOptions
+		DeprecatedOptions = originalDeprecatedOptions
+	}()
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1094,6 +1102,14 @@ func TestConflictInstanceConfig(t *testing.T) {
 }
 
 func TestDeprecatedConfig(t *testing.T) {
+	// Save original global state
+	originalConflictOptions := ConflictOptions
+	originalDeprecatedOptions := DeprecatedOptions
+	defer func() {
+		ConflictOptions = originalConflictOptions
+		DeprecatedOptions = originalDeprecatedOptions
+	}()
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1431,4 +1447,28 @@ func TestKeyspaceName(t *testing.T) {
 	require.ErrorContains(t, conf.Valid(), "is invalid")
 	conf.KeyspaceName = "abc"
 	require.NoError(t, conf.Valid())
+}
+
+func TestUpdateGlobal(t *testing.T) {
+	originalConfig := GetGlobalConfig()
+	originalConflictOptions := ConflictOptions
+	originalDeprecatedOptions := DeprecatedOptions
+
+	defer func() {
+		StoreGlobalConfig(originalConfig)
+		ConflictOptions = originalConflictOptions
+		DeprecatedOptions = originalDeprecatedOptions
+	}()
+
+	originalPort := originalConfig.Port
+
+	restore := UpdateGlobal(func(conf *Config) {
+		conf.Port = 9999
+	})
+
+	require.Equal(t, uint(9999), GetGlobalConfig().Port)
+
+	restore()
+
+	require.Equal(t, originalPort, GetGlobalConfig().Port)
 }

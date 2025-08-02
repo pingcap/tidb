@@ -396,10 +396,9 @@ select 7;`
 	fileName1 := "tidb-slow-retriever-2020-02-15T19-04-05.01.log"
 	fileName2 := "tidb-slow-retriever-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow-retriever.log"
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName3
-	})
+	})()
 	for k := range 2 {
 		// k = 0 for normal files
 		// k = 1 for compressed files
@@ -665,10 +664,9 @@ select 9;`
 	fileName2 := "tidb-slow-reverse-scan-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow-reverse-scan-2020-02-17T19-04-05.01.log"
 	fileName4 := "tidb-slow-reverse-scan.log"
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName4
-	})
+	})()
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
 	prepareLogs(t, logData, fileNames)
 	defer func() {

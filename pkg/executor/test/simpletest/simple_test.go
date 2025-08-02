@@ -554,10 +554,9 @@ func TestFlushPrivilegesPanic(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SkipGrantTable = true
-	})
+	})()
 
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)

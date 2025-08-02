@@ -36,10 +36,9 @@ import (
 // See issue: https://github.com/pingcap/tidb/issues/29752
 // Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
 func TestRenameTableWithLocked(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
+	defer config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
-	})
+	})()
 
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
