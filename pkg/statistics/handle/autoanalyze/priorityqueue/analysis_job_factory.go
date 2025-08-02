@@ -339,7 +339,6 @@ func NewPartitionIDAndName(name string, id int64) PartitionIDAndName {
 // GetPartitionStats gets the partition stats.
 func GetPartitionStats(
 	statsHandle statstypes.StatsHandle,
-	tblInfo *model.TableInfo,
 	defs []model.PartitionDefinition,
 ) map[PartitionIDAndName]*statistics.Table {
 	partitionStats := make(map[PartitionIDAndName]*statistics.Table, len(defs))
