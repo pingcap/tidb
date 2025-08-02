@@ -281,7 +281,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			if pi == nil {
 				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetPhysicalNonPseudoTableStats(tblInfo.ID),
+					pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID),
 				)
 				err := pq.pushWithoutLock(job)
 				if err != nil {
@@ -314,7 +314,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			} else {
 				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetPhysicalNonPseudoTableStats(tblInfo.ID),
+					pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID),
 					partitionStats,
 				)
 				err := pq.pushWithoutLock(job)
@@ -555,7 +555,7 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 				tableMeta,
 				// Get global stats for dynamic partitioned table.
-				pq.statsHandle.GetPhysicalNonPseudoTableStats(tableMeta.ID),
+				pq.statsHandle.GetNonPseudoPhysicalTableStats(tableMeta.ID),
 				partitionStats,
 			)
 		}
