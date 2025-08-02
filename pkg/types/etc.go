@@ -46,6 +46,16 @@ func IsTypeVarchar(tp byte) bool {
 	return tp == mysql.TypeVarString || tp == mysql.TypeVarchar
 }
 
+// IsTypeString returns a boolean indicating whether the tp is a string type.
+func IsTypeString(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		return true
+	}
+	return false
+}
+
 // IsTypeUnspecified returns a boolean indicating whether the tp is the Unspecified type.
 func IsTypeUnspecified(tp byte) bool {
 	return tp == mysql.TypeUnspecified
