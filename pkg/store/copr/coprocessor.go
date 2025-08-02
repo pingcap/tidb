@@ -1945,6 +1945,7 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 	})
 	if resp.detail == nil {
 		resp.detail = new(CopRuntimeStats)
+		resp.detail.ScanDetail = &util.ScanDetail{}
 	}
 	return worker.collectCopRuntimeStats(resp.detail, bo, rpcCtx, resp)
 }

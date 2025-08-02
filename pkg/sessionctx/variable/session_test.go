@@ -158,13 +158,13 @@ func TestSlowLogFormat(t *testing.T) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		ScanDetail: &util.ScanDetail{
-			ProcessedKeys: 20001,
-			TotalKeys:     10000,
-		},
-		DetailsNeedP90: execdetails.DetailsNeedP90{
+		CopExecDetails: execdetails.CopExecDetails{
+			BackoffTime: time.Millisecond,
+			ScanDetail: &util.ScanDetail{
+				ProcessedKeys: 20001,
+				TotalKeys:     10000,
+			},
 			TimeDetail: util.TimeDetail{
 				ProcessTime: time.Second * time.Duration(2),
 				WaitTime:    time.Minute,
