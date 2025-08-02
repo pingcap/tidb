@@ -610,6 +610,12 @@ func (hg *Histogram) TotalRowCount() float64 {
 	return hg.NotNullCount() + float64(hg.NullCount)
 }
 
+// AbsRowCountDifference returns the absolute difference between the realtime row count
+// and the histogram's total row count, representing data changes since the last ANALYZE.
+func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64) float64 {
+	return math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+}
+
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
 // for multi-column index histogram, since we cannot define null for the row, we treat all rows as non-null, that means,
 // notNullCount would return same value as TotalRowCount for multi-column index histograms.
@@ -1094,7 +1100,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows := math.Abs(float64(realtimeRowCount) - hg.TotalRowCount())
+	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.

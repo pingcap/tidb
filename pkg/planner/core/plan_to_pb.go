@@ -584,59 +584,6 @@ func (p *PhysicalHashJoin) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType
 	}, nil
 }
 
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalWindow) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-
-	windowExec := &tipb.Window{}
-
-	windowExec.FuncDesc = make([]*tipb.Expr, 0, len(p.WindowFuncDescs))
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	for _, desc := range p.WindowFuncDescs {
-		windowExec.FuncDesc = append(windowExec.FuncDesc, aggregation.WindowFuncToPBExpr(evalCtx, client, desc))
-	}
-	for _, item := range p.PartitionBy {
-		windowExec.PartitionBy = append(windowExec.PartitionBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(), item.Desc))
-	}
-	for _, item := range p.OrderBy {
-		windowExec.OrderBy = append(windowExec.OrderBy, expression.SortByItemToPB(evalCtx, client, item.Col.Clone(), item.Desc))
-	}
-
-	if p.Frame != nil {
-		windowExec.Frame = &tipb.WindowFrame{
-			Type: tipb.WindowFrameType(p.Frame.Type),
-		}
-		if p.Frame.Start != nil {
-			start, err := p.Frame.Start.ToPB(ctx)
-			if err != nil {
-				return nil, err
-			}
-			windowExec.Frame.Start = start
-		}
-		if p.Frame.End != nil {
-			end, err := p.Frame.End.ToPB(ctx)
-			if err != nil {
-				return nil, err
-			}
-			windowExec.Frame.End = end
-		}
-	}
-
-	var err error
-	windowExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	executorID := p.ExplainID().String()
-	return &tipb.Executor{
-		Tp:                            tipb.ExecType_TypeWindow,
-		Window:                        windowExec,
-		ExecutorId:                    &executorID,
-		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
-		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
-	}, nil
-}
-
 // toPB4PhysicalSort implements PhysicalPlan ToPB interface.
 func toPB4PhysicalSort(pp base.PhysicalPlan, ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	p := pp.(*physicalop.PhysicalSort)

@@ -747,13 +747,13 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	switch join := pp.(type) {
 	case *PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
-		plan = join.innerPlan
+		plan = join.InnerPlan
 	case *PhysicalIndexHashJoin:
 		index = join.InnerChildIdx
-		plan = join.innerPlan
-	case *PhysicalIndexJoin:
+		plan = join.InnerPlan
+	case *physicalop.PhysicalIndexJoin:
 		index = join.InnerChildIdx
-		plan = join.innerPlan
+		plan = join.InnerPlan
 	}
 	if index != -1 && plan != nil {
 		child := lp.(*logicalop.BaseLogicalPlan).Children()[index]

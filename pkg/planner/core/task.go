@@ -18,7 +18,6 @@ import (
 	"math"
 	"slices"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -184,9 +182,9 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -196,9 +194,9 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 func indexHashJoinAttach2TaskV1(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
@@ -229,19 +227,19 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return indexHashJoinAttach2TaskV1(p, tasks...)
 }
 
-func indexJoinAttach2TaskV1(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+func indexJoinAttach2TaskV1(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
-		p.SetChildren(outerTask.Plan(), p.innerPlan)
+		p.SetChildren(outerTask.Plan(), p.InnerPlan)
 	} else {
-		p.SetChildren(p.innerPlan, outerTask.Plan())
+		p.SetChildren(p.InnerPlan, outerTask.Plan())
 	}
 	t := &RootTask{}
 	t.SetPlan(p)
 	return t
 }
 
-func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+func indexJoinAttach2TaskV2(p *physicalop.PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	completePhysicalIndexJoin(p, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
@@ -256,8 +254,8 @@ func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task 
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+func attach2Task4PhysicalIndexJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexJoin)
 	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
 		return indexJoinAttach2TaskV2(p, tasks...)
 	}
@@ -615,8 +613,9 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
 	return task
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalMergeJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalMergeJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalMergeJoin)
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
@@ -1507,7 +1506,7 @@ func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) bas
 func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *IndexJoinInfo, stats *property.StatsInfo) {
 	var isIndexJoin bool
 	switch p.(type) {
-	case *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
 		isIndexJoin = true
 	default:
 	}
@@ -1547,659 +1546,6 @@ func inheritStatsFromBottomTaskForIndexJoinInner(p base.PhysicalPlan, t base.Tas
 	inheritStatsFromBottomElemForIndexJoinInner(p, indexJoinInfo, t.Plan().StatsInfo())
 }
 
-// CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
-// be pushed down to coprocessor.
-func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
-	sc := sctx.GetSessionVars().StmtCtx
-	ret := true
-	reason := ""
-	pushDownCtx := util.GetPushDownCtx(sctx)
-	for _, aggFunc := range aggFuncs {
-		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
-		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
-			ret = false
-			break
-		}
-		if !aggregation.CheckAggPushDown(sctx.GetExprCtx().GetEvalCtx(), aggFunc, storeType) {
-			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
-			ret = false
-			break
-		}
-		if !expression.CanExprsPushDownWithExtraInfo(util.GetPushDownCtx(sctx), aggFunc.Args, storeType, aggFunc.Name == ast.AggFuncSum) {
-			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
-			ret = false
-			break
-		}
-		orderBySize := len(aggFunc.OrderByItems)
-		if orderBySize > 0 {
-			exprs := make([]expression.Expression, 0, orderBySize)
-			for _, item := range aggFunc.OrderByItems {
-				exprs = append(exprs, item.Expr)
-			}
-			if !expression.CanExprsPushDownWithExtraInfo(util.GetPushDownCtx(sctx), exprs, storeType, false) {
-				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
-				ret = false
-				break
-			}
-		}
-		pb, _ := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
-		if pb == nil {
-			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
-			ret = false
-			break
-		}
-	}
-	if ret && expression.ContainVirtualColumn(groupByItems) {
-		reason = "groupByItems contain virtual columns, which is not supported now"
-		ret = false
-	}
-	if ret && !expression.CanExprsPushDown(util.GetPushDownCtx(sctx), groupByItems, storeType) {
-		reason = "groupByItems contain unsupported exprs"
-		ret = false
-	}
-
-	if !ret {
-		storageName := storeType.Name()
-		if storeType == kv.UnSpecified {
-			storageName = "storage layer"
-		}
-		warnErr := errors.NewNoStackError("Aggregation can not be pushed to " + storageName + " because " + reason)
-		if sc.InExplainStmt {
-			sc.AppendWarning(warnErr)
-		} else {
-			sc.AppendExtraWarning(warnErr)
-		}
-	}
-	return ret
-}
-
-// AggInfo stores the information of an Aggregation.
-type AggInfo struct {
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
-	Schema       *expression.Schema
-}
-
-// BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
-// returns the information of partial and final agg.
-// partialIsCop means whether partial agg is a cop task. When partialIsCop is false,
-// we do not set the AggMode for partialAgg cause it may be split further when
-// building the aggregate executor(e.g. buildHashAgg will split the AggDesc further for parallel executing).
-// firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
-func BuildFinalModeAggregation(
-	sctx base.PlanContext, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
-	ectx := sctx.GetExprCtx().GetEvalCtx()
-
-	firstRowFuncMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
-	partial = &AggInfo{
-		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
-		GroupByItems: original.GroupByItems,
-		Schema:       expression.NewSchema(),
-	}
-	partialCursor := 0
-	final = &AggInfo{
-		AggFuncs:     make([]*aggregation.AggFuncDesc, len(original.AggFuncs)),
-		GroupByItems: make([]expression.Expression, 0, len(original.GroupByItems)),
-		Schema:       original.Schema,
-	}
-
-	partialGbySchema := expression.NewSchema()
-	// add group by columns
-	for _, gbyExpr := range partial.GroupByItems {
-		var gbyCol *expression.Column
-		if col, ok := gbyExpr.(*expression.Column); ok {
-			gbyCol = col
-		} else {
-			gbyCol = &expression.Column{
-				UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-				RetType:  gbyExpr.GetType(ectx),
-			}
-		}
-		partialGbySchema.Append(gbyCol)
-		final.GroupByItems = append(final.GroupByItems, gbyCol)
-	}
-
-	// TODO: Refactor the way of constructing aggregation functions.
-	// This for loop is ugly, but I do not find a proper way to reconstruct
-	// it right away.
-
-	// group_concat is special when pushing down, it cannot take the two phase execution if no distinct but with orderBy, and other cases are also different:
-	// for example: group_concat([distinct] expr0, expr1[, order by expr2] separator ‘,’)
-	// no distinct, no orderBy: can two phase
-	// 		[final agg] group_concat(col#1,’,’)
-	// 		[part  agg] group_concat(expr0, expr1,’,’) -> col#1
-	// no distinct,  orderBy: only one phase
-	// distinct, no orderBy: can two phase
-	// 		[final agg] group_concat(distinct col#0, col#1,’,’)
-	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1
-	// distinct,  orderBy: can two phase
-	// 		[final agg] group_concat(distinct col#0, col#1, order by col#2,’,’)
-	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1; agg function: firstrow(expr2)-> col#2
-
-	for i, aggFunc := range original.AggFuncs {
-		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
-		finalAggFunc.Name = aggFunc.Name
-		finalAggFunc.OrderByItems = aggFunc.OrderByItems
-		args := make([]expression.Expression, 0, len(aggFunc.Args))
-		if aggFunc.HasDistinct {
-			/*
-				eg: SELECT COUNT(DISTINCT a), SUM(b) FROM t GROUP BY c
-
-				change from
-					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
-				to
-					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
-						[cop]: group by: c, a
-			*/
-			// onlyAddFirstRow means if the distinctArg does not occur in group by items,
-			// it should be replaced with a firstrow() agg function, needed for the order by items of group_concat()
-			getDistinctExpr := func(distinctArg expression.Expression, onlyAddFirstRow bool) (ret expression.Expression) {
-				// 1. add all args to partial.GroupByItems
-				foundInGroupBy := false
-				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(ectx, distinctArg) && gbyExpr.GetType(ectx).Equal(distinctArg.GetType(ectx)) {
-						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
-						foundInGroupBy = true
-						ret = partialGbySchema.Columns[j]
-						break
-					}
-				}
-				if !foundInGroupBy {
-					var gbyCol *expression.Column
-					if col, ok := distinctArg.(*expression.Column); ok {
-						gbyCol = col
-					} else {
-						gbyCol = &expression.Column{
-							UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-							RetType:  distinctArg.GetType(ectx),
-						}
-					}
-					// 2. add group by items if needed
-					if !onlyAddFirstRow {
-						partial.GroupByItems = append(partial.GroupByItems, distinctArg)
-						partialGbySchema.Append(gbyCol)
-						ret = gbyCol
-					}
-					// 3. add firstrow() if needed
-					if !partialIsCop || onlyAddFirstRow {
-						// if partial is a cop task, firstrow function is redundant since group by items are outputted
-						// by group by schema, and final functions use group by schema as their arguments.
-						// if partial agg is not cop, we must append firstrow function & schema, to output the group by
-						// items.
-						// maybe we can unify them sometime.
-						// only add firstrow for order by items of group_concat()
-						firstRow, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
-						if err != nil {
-							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
-						}
-						partial.AggFuncs = append(partial.AggFuncs, firstRow)
-						newCol, _ := gbyCol.Clone().(*expression.Column)
-						newCol.RetType = firstRow.RetTp
-						partial.Schema.Append(newCol)
-						if onlyAddFirstRow {
-							ret = newCol
-						}
-						partialCursor++
-					}
-				}
-				return ret
-			}
-
-			for j, distinctArg := range aggFunc.Args {
-				// the last arg of ast.AggFuncGroupConcat is the separator, so just put it into the final agg
-				if aggFunc.Name == ast.AggFuncGroupConcat && j+1 == len(aggFunc.Args) {
-					args = append(args, distinctArg)
-					continue
-				}
-				args = append(args, getDistinctExpr(distinctArg, false))
-			}
-
-			byItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
-			for _, byItem := range aggFunc.OrderByItems {
-				byItems = append(byItems, &util.ByItems{Expr: getDistinctExpr(byItem.Expr, true), Desc: byItem.Desc})
-			}
-
-			if aggFunc.HasDistinct && isMPPTask && aggFunc.GroupingID > 0 {
-				// keep the groupingID as it was, otherwise the new split final aggregate's ganna lost its groupingID info.
-				finalAggFunc.GroupingID = aggFunc.GroupingID
-			}
-
-			finalAggFunc.OrderByItems = byItems
-			finalAggFunc.HasDistinct = aggFunc.HasDistinct
-			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
-			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
-			// So in the push down here, we need to add a new if-condition check:
-			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
-			if aggFunc.Mode == aggregation.CompleteMode {
-				finalAggFunc.Mode = aggregation.CompleteMode
-			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
-				finalAggFunc.Mode = aggregation.Partial2Mode
-			}
-		} else {
-			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
-				// group_concat can only run in one phase if it has order by items but without distinct property
-				partial = nil
-				final = original
-				return
-			}
-			if aggregation.NeedCount(finalAggFunc.Name) {
-				// only Avg and Count need count
-				if isMPPTask && finalAggFunc.Name == ast.AggFuncCount {
-					// For MPP base.Task, the final count() is changed to sum().
-					// Note: MPP mode does not run avg() directly, instead, avg() -> sum()/(case when count() = 0 then 1 else count() end),
-					// so we do not process it here.
-					finalAggFunc.Name = ast.AggFuncSum
-				} else {
-					// avg branch
-					ft := types.NewFieldType(mysql.TypeLonglong)
-					ft.SetFlen(21)
-					ft.SetCharset(charset.CharsetBin)
-					ft.SetCollate(charset.CollationBin)
-					partial.Schema.Append(&expression.Column{
-						UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-						RetType:  ft,
-					})
-					args = append(args, partial.Schema.Columns[partialCursor])
-					partialCursor++
-				}
-			}
-			if finalAggFunc.Name == ast.AggFuncApproxCountDistinct {
-				ft := types.NewFieldType(mysql.TypeString)
-				ft.SetCharset(charset.CharsetBin)
-				ft.SetCollate(charset.CollationBin)
-				ft.AddFlag(mysql.NotNullFlag)
-				partial.Schema.Append(&expression.Column{
-					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  ft,
-				})
-				args = append(args, partial.Schema.Columns[partialCursor])
-				partialCursor++
-			}
-			if aggregation.NeedValue(finalAggFunc.Name) {
-				partial.Schema.Append(&expression.Column{
-					UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  original.Schema.Columns[i].GetType(ectx),
-				})
-				args = append(args, partial.Schema.Columns[partialCursor])
-				partialCursor++
-			}
-			if aggFunc.Name == ast.AggFuncAvg {
-				cntAgg := aggFunc.Clone()
-				cntAgg.Name = ast.AggFuncCount
-				exprCtx := sctx.GetExprCtx()
-				err := cntAgg.TypeInfer(exprCtx)
-				if err != nil { // must not happen
-					partial = nil
-					final = original
-					return
-				}
-				partial.Schema.Columns[partialCursor-2].RetType = cntAgg.RetTp
-				// we must call deep clone in this case, to avoid sharing the arguments.
-				sumAgg := aggFunc.Clone()
-				sumAgg.Name = ast.AggFuncSum
-				if err = sumAgg.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
-					partial = nil
-					final = original
-					return
-				}
-				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
-				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
-			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
-				newAggFunc := aggFunc.Clone()
-				newAggFunc.Name = aggFunc.Name
-				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType(ectx)
-				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
-				if aggFunc.Name == ast.AggFuncGroupConcat {
-					// append the last separator arg
-					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
-				}
-			} else {
-				// other agg desc just split into two parts
-				partialFuncDesc := aggFunc.Clone()
-				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
-				if aggFunc.Name == ast.AggFuncFirstRow {
-					firstRowFuncMap[partialFuncDesc] = finalAggFunc
-				}
-			}
-
-			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
-			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
-			// So in the push down here, we need to add a new if-condition check:
-			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
-			if aggFunc.Mode == aggregation.CompleteMode {
-				finalAggFunc.Mode = aggregation.FinalMode
-			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
-				finalAggFunc.Mode = aggregation.Partial2Mode
-			}
-		}
-
-		finalAggFunc.Args = args
-		finalAggFunc.RetTp = aggFunc.RetTp
-		final.AggFuncs[i] = finalAggFunc
-	}
-	partial.Schema.Append(partialGbySchema.Columns...)
-	if partialIsCop {
-		for _, f := range partial.AggFuncs {
-			f.Mode = aggregation.Partial1Mode
-		}
-	}
-	return
-}
-
-// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg) end), in detail:
-// 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
-// 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg) end) and reuse the original schema of the final aggregation.
-// If there is no avg, nothing is changed and return nil.
-func (p *basePhysicalAgg) convertAvgForMPP() *physicalop.PhysicalProjection {
-	newSchema := expression.NewSchema()
-	newSchema.PKOrUK = p.Schema().PKOrUK
-	newSchema.NullableUK = p.Schema().NullableUK
-	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
-	exprs := make([]expression.Expression, 0, 2*len(p.Schema().Columns))
-	exprCtx := p.SCtx().GetExprCtx()
-	// add agg functions schema
-	for i, aggFunc := range p.AggFuncs {
-		if aggFunc.Name == ast.AggFuncAvg {
-			// inset a count(column)
-			avgCount := aggFunc.Clone()
-			avgCount.Name = ast.AggFuncCount
-			err := avgCount.TypeInfer(exprCtx)
-			if err != nil { // must not happen
-				return nil
-			}
-			newAggFuncs = append(newAggFuncs, avgCount)
-			avgCountCol := &expression.Column{
-				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  avgCount.RetTp,
-			}
-			newSchema.Append(avgCountCol)
-			// insert a sum(column)
-			avgSum := aggFunc.Clone()
-			avgSum.Name = ast.AggFuncSum
-			if err = avgSum.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
-				return nil
-			}
-			newAggFuncs = append(newAggFuncs, avgSum)
-			avgSumCol := &expression.Column{
-				UniqueID: p.Schema().Columns[i].UniqueID,
-				RetType:  avgSum.RetTp,
-			}
-			newSchema.Append(avgSumCol)
-			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
-			eq := expression.NewFunctionInternal(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
-			caseWhen := expression.NewFunctionInternal(exprCtx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
-			divide := expression.NewFunctionInternal(exprCtx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
-			divide.(*expression.ScalarFunction).RetType = p.Schema().Columns[i].RetType
-			exprs = append(exprs, divide)
-		} else {
-			// other non-avg agg use the old schema as it did.
-			newAggFuncs = append(newAggFuncs, aggFunc)
-			newSchema.Append(p.Schema().Columns[i])
-			exprs = append(exprs, p.Schema().Columns[i])
-		}
-	}
-	// no avgs
-	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
-	if len(p.Schema().Columns) == len(newSchema.Columns) && !p.IsFinalAgg() {
-		return nil
-	}
-	// add remaining columns to exprs
-	for i := len(p.AggFuncs); i < len(p.Schema().Columns); i++ {
-		exprs = append(exprs, p.Schema().Columns[i])
-	}
-	proj := physicalop.PhysicalProjection{
-		Exprs:            exprs,
-		CalculateNoDelay: false,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
-	proj.SetSchema(p.Schema())
-
-	p.AggFuncs = newAggFuncs
-	p.SetSchema(newSchema)
-
-	return proj
-}
-
-func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final base.PhysicalPlan) {
-	// Check if this aggregation can push down.
-	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
-		return nil, p.Self
-	}
-	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
-		AggFuncs:     p.AggFuncs,
-		GroupByItems: p.GroupByItems,
-		Schema:       p.Schema().Clone(),
-	}, true, isMPPTask)
-	if partialPref == nil {
-		return nil, p.Self
-	}
-	if p.TP() == plancodec.TypeStreamAgg && len(partialPref.GroupByItems) != len(finalPref.GroupByItems) {
-		return nil, p.Self
-	}
-	// Remove unnecessary FirstRow.
-	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.SCtx(),
-		finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
-	if copTaskType == kv.TiDB {
-		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
-		// and TiDB aggregation executor won't output the group by value,
-		// so we need add `firstrow` aggregation function to output the group by value.
-		aggFuncs, err := genFirstRowAggForGroupBy(p.SCtx(), partialPref.GroupByItems)
-		if err != nil {
-			return nil, p.Self
-		}
-		partialPref.AggFuncs = append(partialPref.AggFuncs, aggFuncs...)
-	}
-	p.AggFuncs = partialPref.AggFuncs
-	p.GroupByItems = partialPref.GroupByItems
-	p.SetSchema(partialPref.Schema)
-	partialAgg := p.Self
-	// Create physical "final" aggregation.
-	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	if p.TP() == plancodec.TypeStreamAgg {
-		finalAgg := basePhysicalAgg{
-			AggFuncs:     finalPref.AggFuncs,
-			GroupByItems: finalPref.GroupByItems,
-			MppRunMode:   p.MppRunMode,
-		}.initForStream(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
-		finalAgg.SetSchema(finalPref.Schema)
-		return partialAgg, finalAgg
-	}
-
-	finalAgg := basePhysicalAgg{
-		AggFuncs:     finalPref.AggFuncs,
-		GroupByItems: finalPref.GroupByItems,
-		MppRunMode:   p.MppRunMode,
-	}.initForHash(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
-	finalAgg.SetSchema(finalPref.Schema)
-	// partialAgg and finalAgg use the same ref of stats
-	return partialAgg, finalAgg
-}
-
-func (p *basePhysicalAgg) scale3StageForDistinctAgg() (bool, expression.GroupingSets) {
-	if p.canUse3Stage4SingleDistinctAgg() {
-		return true, nil
-	}
-	return p.canUse3Stage4MultiDistinctAgg()
-}
-
-// canUse3Stage4MultiDistinctAgg returns true if this agg can use 3 stage for multi distinct aggregation
-func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss expression.GroupingSets) {
-	if !p.SCtx().GetSessionVars().Enable3StageDistinctAgg || !p.SCtx().GetSessionVars().Enable3StageMultiDistinctAgg || len(p.GroupByItems) > 0 {
-		return false, nil
-	}
-	defer func() {
-		// some clean work.
-		if !can {
-			for _, fun := range p.AggFuncs {
-				fun.GroupingID = 0
-			}
-		}
-	}()
-	// groupingSets is alias of []GroupingSet, the below equal to = make([]GroupingSet, 0, 2)
-	groupingSets := make(expression.GroupingSets, 0, 2)
-	for _, fun := range p.AggFuncs {
-		if fun.HasDistinct {
-			if fun.Name != ast.AggFuncCount {
-				// now only for multi count(distinct x)
-				return false, nil
-			}
-			for _, arg := range fun.Args {
-				// bail out when args are not simple column, see GitHub issue #35417
-				if _, ok := arg.(*expression.Column); !ok {
-					return false, nil
-				}
-			}
-			// here it's a valid count distinct agg with normal column args, collecting its distinct expr.
-			groupingSets = append(groupingSets, expression.GroupingSet{fun.Args})
-			// groupingID now is the offset of target grouping in GroupingSets.
-			// todo: it may be changed after grouping set merge in the future.
-			fun.GroupingID = len(groupingSets)
-		} else if len(fun.Args) > 1 {
-			return false, nil
-		}
-		// banned group_concat(x order by y)
-		if len(fun.OrderByItems) > 0 || fun.Mode != aggregation.CompleteMode {
-			return false, nil
-		}
-	}
-	compressed := groupingSets.Merge()
-	if len(compressed) != len(groupingSets) {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some grouping sets should be merged"))
-		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
-		return false, nil
-	}
-	if groupingSets.NeedCloneColumn() {
-		// todo: column clone haven't implemented.
-		return false, nil
-	}
-	if len(groupingSets) > 1 {
-		// fill the grouping ID for normal agg.
-		for _, fun := range p.AggFuncs {
-			if fun.GroupingID == 0 {
-				// the grouping ID hasn't set. find the targeting grouping set.
-				groupingSetOffset := groupingSets.TargetOne(fun.Args)
-				if groupingSetOffset == -1 {
-					// todo: if we couldn't find a existed current valid group layout, we need to copy the column out from being filled with null value.
-					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("couldn't find a proper group set for normal agg"))
-					return false, nil
-				}
-				// starting with 1
-				fun.GroupingID = groupingSetOffset + 1
-			}
-		}
-		return true, groupingSets
-	}
-	return false, nil
-}
-
-// canUse3Stage4SingleDistinctAgg returns true if this agg can use 3 stage for distinct aggregation
-func (p *basePhysicalAgg) canUse3Stage4SingleDistinctAgg() bool {
-	num := 0
-	if !p.SCtx().GetSessionVars().Enable3StageDistinctAgg || len(p.GroupByItems) > 0 {
-		return false
-	}
-	for _, fun := range p.AggFuncs {
-		if fun.HasDistinct {
-			num++
-			if num > 1 || fun.Name != ast.AggFuncCount {
-				return false
-			}
-			for _, arg := range fun.Args {
-				// bail out when args are not simple column, see GitHub issue #35417
-				if _, ok := arg.(*expression.Column); !ok {
-					return false
-				}
-			}
-		} else if len(fun.Args) > 1 {
-			return false
-		}
-
-		if len(fun.OrderByItems) > 0 || fun.Mode != aggregation.CompleteMode {
-			return false
-		}
-	}
-	return num == 1
-}
-
-func genFirstRowAggForGroupBy(ctx base.PlanContext, groupByItems []expression.Expression) ([]*aggregation.AggFuncDesc, error) {
-	aggFuncs := make([]*aggregation.AggFuncDesc, 0, len(groupByItems))
-	for _, groupBy := range groupByItems {
-		agg, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{groupBy}, false)
-		if err != nil {
-			return nil, err
-		}
-		aggFuncs = append(aggFuncs, agg)
-	}
-	return aggFuncs, nil
-}
-
-// RemoveUnnecessaryFirstRow removes unnecessary FirstRow of the aggregation. This function can be
-// used for both LogicalAggregation and PhysicalAggregation.
-// When the select column is same with the group by key, the column can be removed and gets value from the group by key.
-// e.g
-// select a, count(b) from t group by a;
-// The schema is [firstrow(a), count(b), a]. The column firstrow(a) is unnecessary.
-// Can optimize the schema to [count(b), a] , and change the index to get value.
-func RemoveUnnecessaryFirstRow(
-	sctx base.PlanContext,
-	finalGbyItems []expression.Expression,
-	partialAggFuncs []*aggregation.AggFuncDesc,
-	partialGbyItems []expression.Expression,
-	partialSchema *expression.Schema,
-	firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
-	partialCursor := 0
-	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
-	for _, aggFunc := range partialAggFuncs {
-		if aggFunc.Name == ast.AggFuncFirstRow {
-			canOptimize := false
-			for j, gbyExpr := range partialGbyItems {
-				if j >= len(finalGbyItems) {
-					// after distinct push, len(partialGbyItems) may larger than len(finalGbyItems)
-					// for example,
-					// select /*+ HASH_AGG() */ a, count(distinct a) from t;
-					// will generate to,
-					//   HashAgg root  funcs:count(distinct a), funcs:firstrow(a)"
-					//     HashAgg cop  group by:a, funcs:firstrow(a)->Column#6"
-					// the firstrow in root task can not be removed.
-					break
-				}
-				// Skip if it's a constant.
-				// For SELECT DISTINCT SQRT(1) FROM t.
-				// We shouldn't remove the firstrow(SQRT(1)).
-				if _, ok := gbyExpr.(*expression.Constant); ok {
-					continue
-				}
-				if gbyExpr.Equal(sctx.GetExprCtx().GetEvalCtx(), aggFunc.Args[0]) {
-					canOptimize = true
-					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]
-					break
-				}
-			}
-			if canOptimize {
-				partialSchema.Columns = slices.Delete(partialSchema.Columns, partialCursor, partialCursor+1)
-				continue
-			}
-		}
-		partialCursor += computePartialCursorOffset(aggFunc.Name)
-		newAggFuncs = append(newAggFuncs, aggFunc)
-	}
-	return newAggFuncs
-}
-
-func computePartialCursorOffset(name string) int {
-	offset := 0
-	if aggregation.NeedCount(name) {
-		offset++
-	}
-	if aggregation.NeedValue(name) {
-		offset++
-	}
-	if name == ast.AggFuncApproxCountDistinct {
-		offset++
-	}
-	return offset
-}
-
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
@@ -2219,7 +1565,7 @@ func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
 			if storeType == kv.TiFlash && len(p.GroupByItems) > 0 {
 				return base.InvalidTask
 			}
-			partialAgg, finalAgg := p.newPartialAggregate(storeType, false)
+			partialAgg, finalAgg := p.NewPartialAggregate(storeType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2279,7 +1625,7 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (divisor, con float64
 func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *MppTask) base.Task {
 	// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 	// only push down the original agg
-	proj := p.convertAvgForMPP()
+	proj := p.ConvertAvgForMPP()
 	attachPlan2Task(p.Self, mpp)
 	if proj != nil {
 		attachPlan2Task(proj, mpp)
@@ -2597,19 +1943,19 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		return base.InvalidTask
 	}
 	switch p.MppRunMode {
-	case Mpp1Phase:
+	case physicalop.Mpp1Phase:
 		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 		// only push down the original agg
-		proj := p.convertAvgForMPP()
+		proj := p.ConvertAvgForMPP()
 		attachPlan2Task(p, mpp)
 		if proj != nil {
 			attachPlan2Task(proj, mpp)
 		}
 		return mpp
-	case Mpp2Phase:
+	case physicalop.Mpp2Phase:
 		// TODO: when partition property is matched by sub-plan, we actually needn't do extra an exchange and final agg.
-		proj := p.convertAvgForMPP()
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		proj := p.ConvertAvgForMPP()
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
 			return base.InvalidTask
 		}
@@ -2643,15 +1989,15 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			attachPlan2Task(proj, newMpp)
 		}
 		return newMpp
-	case MppTiDB:
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
+	case physicalop.MppTiDB:
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
 		t = mpp.ConvertToRootTask(p.SCtx())
 		attachPlan2Task(finalAgg, t)
 		return t
-	case MppScalar:
+	case physicalop.MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 		if !mpp.needEnforceExchanger(prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
@@ -2659,9 +2005,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 		// On the other hand: try to split the mppScalar agg into multi phases agg **down** to multi nodes since data already distributed across nodes.
 		// we have to check it before the content of p has been modified
-		canUse3StageAgg, groupingSets := p.scale3StageForDistinctAgg()
-		proj := p.convertAvgForMPP()
-		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		canUse3StageAgg, groupingSets := p.Scale3StageForDistinctAgg()
+		proj := p.ConvertAvgForMPP()
+		partialAgg, finalAgg := p.NewPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
 			return base.InvalidTask
 		}
@@ -2729,7 +2075,7 @@ func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
 	if cop, ok := t.(*CopTask); ok {
 		if len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0 {
 			copTaskType := cop.getStoreType()
-			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			partialAgg, finalAgg := p.NewPartialAggregate(copTaskType, false)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2775,7 +2121,7 @@ func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
+func attach2TaskForMPP4PhysicalWindow(p *physicalop.PhysicalWindow, mpp *MppTask) base.Task {
 	// FIXME: currently, tiflash's join has different schema with TiDB,
 	// so we have to rebuild the schema of join and operators which may inherit schema from join.
 	// for window, we take the sub-plan's schema, and the schema generated by windowDescs.
@@ -2791,10 +2137,10 @@ func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
 	return attachPlan2Task(p, mpp)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalWindow) Attach2Task(tasks ...base.Task) base.Task {
-	if mpp, ok := tasks[0].Copy().(*MppTask); ok && p.storeTp == kv.TiFlash {
-		return p.attach2TaskForMPP(mpp)
+func attach2Task4PhysicalWindow(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalWindow)
+	if mpp, ok := tasks[0].Copy().(*MppTask); ok && p.StoreTp == kv.TiFlash {
+		return attach2TaskForMPP4PhysicalWindow(p, mpp)
 	}
 	t := tasks[0].ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p.Self, t)
@@ -2982,5 +2328,5 @@ type IndexJoinInfo struct {
 	IdxColLens     []int
 	KeyOff2IdxOff  []int
 	Ranges         ranger.MutableRanges
-	CompareFilters *ColWithCmpFuncManager
+	CompareFilters *physicalop.ColWithCmpFuncManager
 }

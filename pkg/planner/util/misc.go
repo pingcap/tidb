@@ -329,6 +329,8 @@ func DeriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 	stats := &property.StatsInfo{
 		RowCount: math.Min(limitCount, childProfile.RowCount),
 		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
+		// limit operation does not change the histogram (kind of sample).
+		HistColl: childProfile.HistColl,
 	}
 	for id, c := range childProfile.ColNDVs {
 		stats.ColNDVs[id] = math.Min(c, stats.RowCount)

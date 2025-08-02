@@ -160,6 +160,9 @@ type StmtRecord struct {
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 
 	stmtsummary.StmtNetworkTrafficSummary
+
+	StorageKV  bool `json:"storage_kv"`  // query read from TiKV
+	StorageMPP bool `json:"storage_mpp"` // query read from TiFlash
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -432,6 +435,9 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.StmtNetworkTrafficSummary.Add(info.TiKVExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
+
+	r.StorageKV = info.StmtCtx.IsTiKV.Load()
+	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
 }
 
 // Merge merges the statistics of another StmtRecord to this StmtRecord.

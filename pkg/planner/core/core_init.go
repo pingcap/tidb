@@ -91,6 +91,21 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalProjection = getPlanCostVer14PhysicalProjection
 	utilfuncp.GetPlanCostVer24PhysicalProjection = getPlanCostVer24PhysicalProjection
 	utilfuncp.ResolveIndices4PhysicalProjection = resolveIndices4PhysicalProjection
+	// for physical index join
+	utilfuncp.GetCost4PhysicalIndexJoin = getCost4PhysicalIndexJoin
+	utilfuncp.GetPlanCostVer14PhysicalIndexJoin = getPlanCostVer14PhysicalIndexJoin
+	utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin = getIndexJoinCostVer24PhysicalIndexJoin
+	utilfuncp.Attach2Task4PhysicalIndexJoin = attach2Task4PhysicalIndexJoin
+	// for physical merge join
+	utilfuncp.GetCost4PhysicalMergeJoin = getCost4PhysicalMergeJoin
+	utilfuncp.Attach2Task4PhysicalMergeJoin = attach2Task4PhysicalMergeJoin
+	utilfuncp.GetPlanCostVer14PhysicalMergeJoin = getPlanCostVer14PhysicalMergeJoin
+	utilfuncp.GetPlanCostVer24PhysicalMergeJoin = getPlanCostVer24PhysicalMergeJoin
+	// for physical aggregation.
+	utilfuncp.InitForHash = initForHash
+	utilfuncp.InitForStream = initForStream
+	// for physical window
+	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
@@ -107,6 +122,7 @@ func init() {
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
 	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
 	utilfuncp.CloneColumnsForPlanCache = cloneColumnsForPlanCache
+	utilfuncp.CloneConstantsForPlanCache = cloneConstantsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
