@@ -171,14 +171,14 @@ func NewHandle(
 	return handle, nil
 }
 
-// GetPhysicalTableStats retrieves the statistics table from cache or creates a pseudo statistics table.
+// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
 func (h *Handle) GetPhysicalTableStats(tableID int64, tblInfo *model.TableInfo) *statistics.Table {
 	return h.getStatsByPhysicalID(tableID, tblInfo)
 }
 
-// GetPhysicalNonPseudoTableStats retrieves the statistics table from cache, but it will not return pseudo.
+// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
 // Note: this function may return nil if the table is not found in the cache.
-func (h *Handle) GetPhysicalNonPseudoTableStats(tableID int64) *statistics.Table {
+func (h *Handle) GetNonPseudoPhysicalTableStats(tableID int64) *statistics.Table {
 	return h.getStatsByPhysicalID(tableID, nil)
 }
 
