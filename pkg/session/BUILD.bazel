@@ -46,8 +46,6 @@ go_library(
         "//pkg/extension/extensionimpl",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
-        "//pkg/infoschema/issyncer/mdldef",
-        "//pkg/infoschema/isvalidator",
         "//pkg/infoschema/validatorapi",
         "//pkg/keyspace",
         "//pkg/kv",

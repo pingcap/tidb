@@ -44,6 +44,7 @@ go_library(
         "//pkg/errno",
         "//pkg/infoschema",
         "//pkg/infoschema/issyncer",
+        "//pkg/infoschema/isvalidator",
         "//pkg/infoschema/metrics",
         "//pkg/infoschema/perfschema",
         "//pkg/infoschema/validatorapi",

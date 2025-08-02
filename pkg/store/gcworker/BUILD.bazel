@@ -64,6 +64,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
