@@ -17,12 +17,13 @@ package physicalop
 import (
 	"bytes"
 	"fmt"
+	"unsafe"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"unsafe"
 )
 
 // PhysicalShuffle represents a shuffle plan.
