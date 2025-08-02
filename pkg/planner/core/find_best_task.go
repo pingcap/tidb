@@ -1999,6 +1999,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if err != nil {
 				return nil, 0, err
 			}
+			// XXXX get tablescan row count here
 			if !tblTask.Invalid() {
 				cntPlan++
 				planCounter.Dec(1)
@@ -2028,6 +2029,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		if err != nil {
 			return nil, 0, err
 		}
+		// XXXX get index final row count here
 		if !idxTask.Invalid() {
 			cntPlan++
 			planCounter.Dec(1)
