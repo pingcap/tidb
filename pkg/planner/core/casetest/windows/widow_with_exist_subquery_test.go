@@ -21,19 +21,17 @@ import (
 )
 
 func TestWindowWithCorrelatedSubQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("CREATE TABLE temperature_data (temperature double);")
+		testKit.MustExec("CREATE TABLE humidity_data (humidity double);")
+		testKit.MustExec("CREATE TABLE weather_report (report_id double, report_date varchar(100));")
 
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE temperature_data (temperature double);")
-	tk.MustExec("CREATE TABLE humidity_data (humidity double);")
-	tk.MustExec("CREATE TABLE weather_report (report_id double, report_date varchar(100));")
+		testKit.MustExec("INSERT INTO temperature_data VALUES (1.0);")
+		testKit.MustExec("INSERT INTO humidity_data VALUES (0.5);")
+		testKit.MustExec("INSERT INTO weather_report VALUES (2.0, 'test');")
 
-	tk.MustExec("INSERT INTO temperature_data VALUES (1.0);")
-	tk.MustExec("INSERT INTO humidity_data VALUES (0.5);")
-	tk.MustExec("INSERT INTO weather_report VALUES (2.0, 'test');")
-
-	result := tk.MustQuery(`
+		result := testKit.MustQuery(`
    SELECT
      EXISTS (
        SELECT
@@ -55,9 +53,9 @@ func TestWindowWithCorrelatedSubQuery(t *testing.T) {
      weather_report AS report_data;
  `)
 
-	result.Check(testkit.Rows("1"))
+		result.Check(testkit.Rows("1"))
 
-	result = tk.MustQuery(`
+		result = testKit.MustQuery(`
    SELECT
      EXISTS (
        SELECT
@@ -73,5 +71,6 @@ func TestWindowWithCorrelatedSubQuery(t *testing.T) {
      weather_report AS report_data;
  `)
 
-	result.Check(testkit.Rows("1"))
+		result.Check(testkit.Rows("1"))
+	})
 }
