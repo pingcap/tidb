@@ -55,8 +55,6 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 		tk.MustExec(createTables[i])
 		tk.MustExec("insert into t values (1,1,1)")
 
-		tk1 := testkit.NewTestKit(t, store)
-		tk1.MustExec("use test;")
 		runDMLBeforeScan := false
 		runDMLBeforeMerge := false
 
@@ -67,17 +65,19 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 			}
 			runDMLBeforeScan = true
 
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test;")
 			rows := tk1.MustQuery("select tidb_encode_index_key('test', 't', 'b', 1, null);").Rows()
 			hexKey = rows[0][0].(string)
 			_, err := tk1.Exec("delete from t where id = 1;")
 			assert.NoError(t, err)
 			_, err = tk1.Exec("insert into t values (2,1,1);")
 			assert.NoError(t, err)
-			rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
+			rs := tk1.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
 			t.Log("after first insertion", rs[0][0].(string))
 			_, err = tk1.Exec("delete from t where id = 2;")
 			assert.NoError(t, err)
-			rs = tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
+			rs = tk1.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
 			t.Log("after second insertion", rs[0][0].(string))
 		})
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
@@ -85,9 +85,11 @@ func TestMultiSchemaChangeTwoIndexes(t *testing.T) {
 				return
 			}
 			runDMLBeforeMerge = true
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test;")
 			_, err := tk1.Exec("insert into t values (3, 1, 1);")
 			assert.NoError(t, err)
-			rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
+			rs := tk1.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s')", hexKey)).Rows()
 			t.Log("after third insertion", rs[0][0].(string))
 		})
 
