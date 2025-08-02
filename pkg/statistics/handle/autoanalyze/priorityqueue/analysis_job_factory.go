@@ -345,7 +345,7 @@ func GetPartitionStats(
 	partitionStats := make(map[PartitionIDAndName]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		stats := statsHandle.GetPhysicalNonPseudoTableStats(def.ID)
+		stats := statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
 		// Ignore the partition if it's not ready to analyze.
 		if !stats.IsEligibleForAnalysis() {
 			continue

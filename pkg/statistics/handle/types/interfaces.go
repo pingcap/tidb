@@ -510,9 +510,9 @@ type StatsHandle interface {
 	// GetPhysicalTableStats retrieves the statistics table from cache or creates a pseudo statistics table.
 	GetPhysicalTableStats(tableID int64, tblInfo *model.TableInfo) *statistics.Table
 
-	//  GetPhysicalNonPseudoTableStats retrieves the statistics table from cache, but it will not return pseudo.
+	//  GetNonPseudoPhysicalTableStats retrieves the statistics table from cache, but it will not return pseudo.
 	//  Note: this function may return nil if the table is not found in the cache.
-	GetPhysicalNonPseudoTableStats(tableID int64) *statistics.Table
+	GetNonPseudoPhysicalTableStats(tableID int64) *statistics.Table
 
 	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
 	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
