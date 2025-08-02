@@ -1545,9 +1545,9 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.table = x.table
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	case *PointGetExecutor, *BatchPointGetExec,
-		// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
-		// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
-		// TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
+	// PointGet and BatchPoint can handle virtual columns and dirty txn data themselves.
+	// If TableDual, the result must be empty, so we can skip UnionScan and use TableDual directly here.
+	// TableSample only supports sampling from disk, don't need to consider in-memory txn data for simplicity.
 		*TableDualExec,
 		*TableSampleExecutor:
 		return originReader
@@ -1585,7 +1585,7 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
-func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.Executor {
+func (b *executorBuilder) buildMergeJoin(v *physicalop.PhysicalMergeJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
