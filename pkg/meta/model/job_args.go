@@ -1367,6 +1367,9 @@ type IndexArg struct {
 
 	// Only used for job args v2.
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+
+	// PartialConditionString is used to store the partial condition string for the index.
+	PartialConditionString string `json:"partial_condition_str,omitempty"`
 }
 
 // GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
