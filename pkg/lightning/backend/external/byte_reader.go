@@ -284,9 +284,17 @@ func (r *byteReader) reload() error {
 		defer func() {
 			readSecond := time.Since(startTime).Seconds()
 			size := 0
+			usedBuffer := 0
 			for _, b := range r.curBuf {
 				size += len(b)
+				if len(b) > 0 {
+					usedBuffer++
+				}
 			}
+			r.logger.Info("reader used buffer",
+				zap.Bool("concurrent mode", r.concurrentReader.now),
+				zap.Int("used buffer num", usedBuffer),
+				zap.Int("total size", size))
 			r.readDurHist.Observe(readSecond)
 			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 		}()

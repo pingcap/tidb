@@ -19,7 +19,9 @@ import (
 	"context"
 	"encoding/hex"
 	goerrors "errors"
+	"github.com/docker/go-units"
 	"io"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -80,6 +82,7 @@ func readAllData(
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
+	var currentConcurrency atomic.Int64
 	for readIdx := range readConn {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
@@ -95,6 +98,11 @@ func readAllData(
 					if !ok {
 						return nil
 					}
+					currentConcurrency.Add(int64(concurrences[fileIdx]))
+					task.Info("current memory occupied by reader",
+						zap.Int64("current concurrency", currentConcurrency.Load()),
+						zap.String("total mem applied", units.BytesSize(float64(currentConcurrency.Load())*8*1024*1024)),
+					)
 					err2 := readOneFile(
 						egCtx,
 						store,
@@ -107,6 +115,7 @@ func readAllData(
 						largeBlockBuf,
 						output,
 					)
+					currentConcurrency.And(-int64(concurrences[fileIdx]))
 					if err2 != nil {
 						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
 					}
