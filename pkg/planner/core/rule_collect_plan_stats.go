@@ -120,7 +120,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if tblInfo == nil {
 			continue
 		}
-		tableStats := statsHandle.GetTableStats(tblInfo)
+		tableStats := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 		if tableStats == nil || tableStats.Pseudo {
 			continue
 		}
@@ -142,7 +142,7 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 		if physTblIDsWithNeededCols.Has(physicalTblID) {
 			return
 		}
-		tblStats := statsHandle.GetTableStats(tbl)
+		tblStats := statsHandle.GetPhysicalTableStats(tbl.ID, tbl)
 		if tblStats == nil || tblStats.Pseudo {
 			return
 		}
@@ -397,7 +397,7 @@ func collectSyncIndices(ctx base.PlanContext,
 			idxCol := idx.FindColumnByName(colName)
 			idxID := idx.ID
 			if idxCol != nil {
-				tblStats := stats.GetTableStats(tbl)
+				tblStats := stats.GetPhysicalTableStats(tbl.ID, tbl)
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
@@ -448,7 +448,7 @@ func recordSingleTableRuntimeStats(sctx base.PlanContext, tblID int64) (stats *s
 		return nil, false, nil
 	}
 	tableInfo := tbl.Meta()
-	stats = statsHandle.GetTableStats(tableInfo)
+	stats = statsHandle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// Skip the warning if the table is a temporary table because the temporary table doesn't have stats.
 	skip = tableInfo.TempTableType != model.TempTableNone
 	return stats, skip, nil

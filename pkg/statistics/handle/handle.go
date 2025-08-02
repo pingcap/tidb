@@ -171,38 +171,24 @@ func NewHandle(
 	return handle, nil
 }
 
-// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-// TODO: remove GetTableStats later on.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
-	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+// GetPhysicalTableStats retrieves the statistics table from cache or creates a pseudo statistics table.
+func (h *Handle) GetPhysicalTableStats(tableID int64, tblInfo *model.TableInfo) *statistics.Table {
+	return h.getStatsByPhysicalID(tableID, tblInfo)
 }
 
-// GetTableStatsForAutoAnalyze is to get table stats but it will not return pseudo stats.
-func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table {
-	return h.getPartitionStats(tblInfo, tblInfo.ID, false)
+// GetPhysicalNonPseudoTableStats retrieves the statistics table from cache, but it will not return pseudo.
+// Note: this function may return nil if the table is not found in the cache.
+func (h *Handle) GetPhysicalNonPseudoTableStats(tableID int64) *statistics.Table {
+	return h.getStatsByPhysicalID(tableID, nil)
 }
 
-// GetPartitionStats retrieves the partition stats from cache.
-// TODO: remove GetTableStats later on.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	return h.getPartitionStats(tblInfo, pid, true)
-}
+func (h *Handle) getStatsByPhysicalID(pid int64, tblInfo *model.TableInfo) *statistics.Table {
+	intest.Assert(h != nil, "stats handle is nil")
 
-// GetPartitionStatsForAutoAnalyze is to get partition stats but it will not return pseudo stats.
-func (h *Handle) GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	return h.getPartitionStats(tblInfo, pid, false)
-}
-
-func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
 	var tbl *statistics.Table
-	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo, false, false)
-		tbl.PhysicalID = pid
-		return tbl
-	}
 	tbl, ok := h.Get(pid)
 	if !ok {
-		if returnPseudo {
+		if tblInfo != nil {
 			tbl = statistics.PseudoTable(tblInfo, false, true)
 			tbl.PhysicalID = pid
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {

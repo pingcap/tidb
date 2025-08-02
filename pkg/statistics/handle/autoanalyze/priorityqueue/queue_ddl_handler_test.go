@@ -963,7 +963,7 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
 
 	// Check the stats of the indexes.
-	tableStats := h.GetTableStats(tableInfo)
+	tableStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
