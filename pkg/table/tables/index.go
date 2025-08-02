@@ -260,7 +260,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				return nil, err
 			}
 			if keyIsTempIdxKey {
-				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, false)
+				metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, false)
 			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
@@ -269,7 +269,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				if err != nil {
 					return nil, err
 				}
-				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, true)
+				metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, true)
 			}
 			if !opt.IgnoreAssertion && (!opt.Untouched) {
 				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
@@ -335,7 +335,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 					return nil, err
 				}
 				if keyIsTempIdxKey {
-					metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, false)
+					metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, false)
 				}
 				if len(tempKey) > 0 {
 					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
@@ -344,7 +344,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 					if err != nil {
 						return nil, err
 					}
-					metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, true)
+					metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, true)
 				}
 			} else if lazyCheck {
 				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
@@ -466,7 +466,7 @@ func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue 
 				if err != nil {
 					return err
 				}
-				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, doubleWrite)
+				metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, doubleWrite)
 			}
 		} else {
 			if len(key) > 0 {
@@ -482,7 +482,6 @@ func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue 
 				if err != nil {
 					return err
 				}
-				metrics.DDLSetTempIndexWrite(connID, c.tblInfo.ID, 1, doubleWrite)
 			}
 			if len(tempKey) > 0 {
 				tempVal := tempValElem.Encode(nil)
@@ -490,6 +489,7 @@ func (c *index) Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValue 
 				if err != nil {
 					return err
 				}
+				metrics.DDLAddOneTempIndexWrite(connID, c.tblInfo.ID, doubleWrite)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {
