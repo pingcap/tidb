@@ -16,6 +16,7 @@ package model
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -204,6 +205,12 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
+
+	// EngineAttribute is the ENGINE_ATTRIBUTE for the table.
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+
+	// StorageClassTier is the storage class tier of the table level.
+	StorageClassTier StorageClassTier `json:"storage_class_tier,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -1131,12 +1138,13 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               ast.CIStr      `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
+	ID                 int64            `json:"id"`
+	Name               ast.CIStr        `json:"name"`
+	LessThan           []string         `json:"less_than"`
+	InValues           [][]string       `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
+	Comment            string           `json:"comment,omitempty"`
+	StorageClassTier   StorageClassTier `json:"storage_class_tier,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
@@ -1397,4 +1405,97 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	}
 
 	return duration.ParseDuration(t.JobInterval)
+}
+
+// EngineAttribute is the JSON format of ENGINE_ATTRIBUTE property of tables.
+type EngineAttribute struct {
+	// StorageClass is the storage class tier of the table.
+	// It is either a string literal, a JSON object, or a slice of JSON object,
+	// which can be used to define the storage class tier and scope.
+	// For example, the storage class tier can be one of the following:
+	// - STANDARD: The standard storage class tier, used for frequently accessed
+	//   data that is stored on TiKV's local disk.
+	// - IA: The infrequent access storage class tier, used for data that is not
+	//   frequently accessed and is stored on cloud storage like S3.
+	// The storage class tier can also be defined with a scope, such as
+	// `{"tier": "STANDARD", "names_in": ["partition1", "partition2"]}`.
+	// The scope can be defined with `names_in`, `less_than`, or `values_in` fields.
+	// - `names_in`: A list of partition names that the storage class tier applies to.
+	// - `less_than`: A JSON array of the values to match partitions which are
+	//   defined as LESS THAN (<VALUE>, ...) where (<VALUE>, ...) <= (<less-than-value>, ...)
+	// - `values_in`: A JSON array to match partitions defined by VALUES_IN
+	//   where the values are FULLY covered by <in-values>.
+	//
+	// Note: Currently, the scope only supports `names_in`.
+	// Note: Order matters. E.g. `[{"tier": "STANDARD"}, {"tier": "IA", "names_in": ["p2"]}]`
+	//       will apply `STANDARD` to all partitions, including "p2".
+	StorageClass json.RawMessage `json:"storage_class"`
+}
+
+// ParseEngineAttributeFromString parses the JSON format of ENGINE_ATTRIBUTE property of tables.
+func ParseEngineAttributeFromString(input string) (*EngineAttribute, error) {
+	attr := &EngineAttribute{}
+	if len(input) == 0 {
+		return attr, nil
+	}
+	err := json.Unmarshal([]byte(input), attr)
+	if err != nil {
+		return nil, err
+	}
+	return attr, nil
+}
+
+// StorageClassTier is the name of storage class tiers.
+type StorageClassTier string
+
+const (
+	// StorageClassTierStandard is the standard storage class tier.
+	// This is the default storage class tier, used for frequently accessed
+	// data that is stored on TiKV's local disk.
+	StorageClassTierStandard StorageClassTier = "STANDARD"
+	// StorageClassTierIA is the infrequent access storage class tier.
+	// Data is stored on cloud storage like S3.
+	StorageClassTierIA StorageClassTier = "IA"
+	// StorageClassTierDefault is an alias for StorageClassTierStandard.
+	StorageClassTierDefault StorageClassTier = StorageClassTierStandard
+)
+
+// Valid checks if the storage class tier is valid.
+func (s StorageClassTier) Valid() bool {
+	switch s {
+	case StorageClassTierStandard, StorageClassTierIA:
+		return true
+	default:
+		return false
+	}
+}
+
+// String implements fmt.Stringer interface for StorageClassTier.
+func (s StorageClassTier) String() string {
+	return string(s)
+}
+
+// StorageClassDef is the tier & scope definition for storage class.
+type StorageClassDef struct {
+	// Tier is the storage class tier, e.g. "STANDARD" or "IA".
+	Tier StorageClassTier `json:"tier"`
+	// NamesIn is a list of partition names that the storage class tier applies to.
+	NamesIn []string `json:"names_in"`
+	// LessThan is a list of values to match partitions which are defined as
+	// LESS THAN (<VALUE>, ...) where (<VALUE>, ...) <= (<less-than-value>, ...).
+	LessThan *string `json:"less_than"`
+	// ValuesIn is a list of values to match partitions defined by VALUES_IN
+	// where the values are FULLY covered by <in-values>.
+	ValuesIn []string `json:"values_in"`
+}
+
+// HasNoScopeDef checks if the storage class definition has no scope definition.
+func (d *StorageClassDef) HasNoScopeDef() bool {
+	return len(d.NamesIn) == 0 && d.LessThan == nil && len(d.ValuesIn) == 0
+}
+
+// StorageClassSettings is the settings for storage class.
+type StorageClassSettings struct {
+	// StorageClassDef is the storage class definition.
+	Defs []*StorageClassDef `json:"defs"`
 }
