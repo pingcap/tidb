@@ -104,7 +104,7 @@ func TestManager(t *testing.T) {
 			mgr := storage.NewTaskManager(pool)
 			ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 			require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
-				_, err := importer.CreateJob(ctx, se.GetSQLExecutor(), "db", "tbl", 1, "", &importer.ImportParameters{}, 1)
+				_, err := importer.CreateJob(ctx, se.GetSQLExecutor(), "db", "tbl", 1, "", "", &importer.ImportParameters{}, 1)
 				return err
 			}))
 			// verify through the user keyspace session from user keyspace
