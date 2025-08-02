@@ -28,6 +28,7 @@ import (
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1110,34 +1111,98 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 	return selectivity
 }
 
-// outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
-// and the searched value does not appear in the topN
-func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {
-	// If the table hasn't been modified, it's safe to return 0.
-	if modifyCount == 0 {
-		return 0
+// unmatchedEqAverage estimates the row count for equal conditions not matched in TopN or last value of a bucket.
+// Func call can pass in nil for c or idx, but at least one of them must be non-nil. If both are nil, then
+// the returned result will be based on realtimeRowCount only, and the maxEstimate will be equal to realtimeRowCount.
+func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *statistics.Index, realtimeRowCount float64) (result, maxEstimate float64) {
+	fullRowCount, fullNDV, histRowCount, histNDV, minTopN, lenTopN, fullResult := float64(0), float64(0), float64(0), float64(0), float64(0), float64(0), float64(0)
+	if c != nil {
+		// Use column stats if available.
+		fullRowCount = c.TotalRowCount()
+		fullNDV = float64(c.Histogram.NDV)
+		histRowCount = c.Histogram.NotNullCount()
+		histNDV = float64(c.Histogram.NDV - int64(c.TopN.Num()))
+		minTopN = float64(c.TopN.MinCount())
+		lenTopN = float64(c.TopN.Num())
+	} else if idx != nil {
+		// Use index stats if available.
+		fullRowCount = idx.TotalRowCount()
+		fullNDV = float64(idx.Histogram.NDV)
+		histRowCount = idx.Histogram.NotNullCount()
+		histNDV = float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+		minTopN = float64(idx.TopN.MinCount())
+		lenTopN = float64(idx.TopN.Num())
 	}
-	// Calculate "newly added rows" using original row count. We do NOT use notNullCount here
-	// because that can always be less than realtimeRowCount if NULLs exist
-	newRows := realtimeRowCount - origRowCount
-	// If the original row count is zero - take the min of original row count and realtimeRowCount
-	if notNullCount <= 0 {
-		notNullCount = min(origRowCount, realtimeRowCount)
+	if fullNDV > 0 {
+		fullResult = fullRowCount / fullNDV
 	}
-	// If realtimeRowCount has reduced below the original, we can't determine if there has been a
-	// combination of inserts/updates/deletes or only deletes - any out of range estimate is unreliable
-	if newRows < 0 {
-		newRows = min(notNullCount, realtimeRowCount)
+	addedRows := realtimeRowCount - fullRowCount
+	// We may be missing stats if we've added rows since the last analysis, or if we have no histogram buckets
+	missingStats := addedRows > 0 || (histRowCount == 0 && lenTopN > 0 && lenTopN < fullNDV)
+	// If the histogram NDV and histogram row count are greater than zero - then we have histogram buckets.
+	// Only return the "average" of the remainder if it is greater than zero.
+	if histNDV > 0 && histRowCount > 0 {
+		result = histRowCount / histNDV
+		maxEstimate = histRowCount - (histNDV - 1)
+	} else if missingStats || fullNDV <= 0 {
+		// If we are missing histogram statistics, revert to using statistics from the full table.
+		if fullRowCount > 0 {
+			if fullNDV > 0 {
+				result = fullResult
+				maxEstimate = fullRowCount - (fullNDV - 1)
+			} else {
+				// If we stil haven't derived a result - it's because we didn't have a valid NDV.
+				// Use sqrt to derive a default NDV.
+				defNDV := math.Sqrt(fullRowCount)
+				result = fullRowCount / defNDV
+				maxEstimate = fullRowCount - (defNDV - 1)
+			}
+		} else if realtimeRowCount > 0 {
+			// if the original table stats were empty, revert to realtimeRowCount
+			defaultNDV := math.Sqrt(realtimeRowCount)
+			result = realtimeRowCount / defaultNDV
+			// This also means that we don't have a valid maxEstimate, so we set it to large value to reflect it's risk.
+			maxEstimate = realtimeRowCount - (defaultNDV - 1)
+		}
 	}
-	// if no NDV - derive an NDV using sqrt
-	if ndv <= 0 {
-		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
-	} else {
-		// We need to increase the ndv by increaseFactor because the estimate will be increased by
-		// the caller of the function
-		ndv *= increaseFactor
+	// If we didn't get a result, but we have a fullResult - use that.
+	if result <= 0 && fullResult > 0 {
+		result = fullResult
 	}
-	return max(1, newRows/ndv)
+	// Do not allow the result to be greater than the smallest TopN value.
+	if minTopN > 0 {
+		result = min(result, minTopN)
+		// If we have valid stats, the "worst case" estimate should not be greater than the smallest TopN value.
+		if !missingStats {
+			if maxEstimate > 0 {
+				maxEstimate = min(minTopN, maxEstimate)
+			} else {
+				maxEstimate = minTopN
+			}
+		}
+	}
+	if maxEstimate <= 0 {
+		// If we've gotten here - our worst case is very large.
+		maxEstimate = addedRows
+	}
+	skewEstimate := adjustEQSkewRisk(sctx, maxEstimate, result)
+	// Also return the maxEstimate, so the caller can assess the risk of skew.
+	return max(0, result+skewEstimate), maxEstimate
+}
+
+func adjustEQSkewRisk(sctx planctx.PlanContext, maxEstimate, currRowEst float64) float64 {
+	// skewRatio determines how much of the potential skew should be considered between the estimated/average
+	// row count and the worst case row count. This code should only be considered when we do not have a matching
+	// value in the TopN or histogram buckets.
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	skewEstimate := float64(0)
+	if skewRatio > 0 {
+		// Calculate the adjusted value that should be considered to be added to the original estimate by the
+		// calling function.
+		skewEstimate = max(0, (maxEstimate-currRowEst)*skewRatio)
+	}
+	return skewEstimate
 }
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.

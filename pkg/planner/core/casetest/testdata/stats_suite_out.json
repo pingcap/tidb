@@ -19,7 +19,7 @@
       },
       {
         "SQL": "select count(1) from t1 where b > 0 group by a, b",
-        "AggInput": "[{[1 2] 4}]",
+        "AggInput": "[{[1 2] 2.4}]",
         "JoinInput": ""
       },
       {
