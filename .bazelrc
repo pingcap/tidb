@@ -1,4 +1,4 @@
-startup --host_jvm_args=-Xmx4g
+startup --host_jvm_args=-Xmx8g
 startup --unlimit_coredumps
 dump: --http_connector_attempts=2
 dump: --http_connector_retry_max_timeout=5s
@@ -20,7 +20,7 @@ test:ci --verbose_failures --test_verbose_timeout_warnings
 test:ci --test_env=GO_TEST_WRAP_TESTV=1
 test:ci --experimental_ui_max_stdouterr_bytes=268435456
 test:ci --test_timeout=150,300,900,3600
-test:ci --flaky_test_attempts=5
+test:ci --flaky_test_attempts=1
 test:race --test_timeout=1200,6000,18000,72000
 
 try-import /data/bazel
