@@ -383,7 +383,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isINLProbeChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
-	case *PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		childCtx.isRoot = true
 		childCtx.label = Empty
 		childCtx.isLastChild = true

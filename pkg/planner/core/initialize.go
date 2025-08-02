@@ -26,22 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes PhysicalShuffle.
-func (p PhysicalShuffle) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffle {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShuffle, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalShuffleReceiverStub.
-func (p PhysicalShuffleReceiverStub) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleReceiverStub {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiver, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes Update.
 func (p Update) Init(ctx base.PlanContext) *Update {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
