@@ -6257,13 +6257,13 @@ def go_deps():
         name = "com_github_prometheus_client_golang",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_golang",
-        sha256 = "ab84ebfcbae87a0cbecc01b537f73eec6047d4f016c29719feb922470f086aa2",
-        strip_prefix = "github.com/prometheus/client_golang@v1.22.0",
+        sha256 = "f104d43e35b9217845792ec8eabbde59e31a11aaba64c47408cff8bafde2aa9e",
+        strip_prefix = "github.com/prometheus/client_golang@v1.23.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
         ],
     )
     go_repository(
@@ -6283,13 +6283,13 @@ def go_deps():
         name = "com_github_prometheus_common",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/common",
-        sha256 = "8f7ceb4d12a165e6b4533dc994937b936717daa3c2b231a499f8189372cfc843",
-        strip_prefix = "github.com/prometheus/common@v0.63.0",
+        sha256 = "c97b1ab4d2c723923b367dbe48c283eafc0b94eb14faf8c98d81746b015242a9",
+        strip_prefix = "github.com/prometheus/common@v0.65.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
         ],
     )
     go_repository(
