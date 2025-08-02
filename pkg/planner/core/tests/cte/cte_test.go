@@ -38,7 +38,7 @@ func TestCTEWithDifferentSchema(t *testing.T) {
    row_1 varchar(255) DEFAULT NULL,
    PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-	tk.MustExec(`create ALGORITHM=UNDEFINED DEFINER=db_a@'%' SQL SECURITY DEFINER VIEW view_test_v1 as (
+	tk.MustExec(`create VIEW view_test_v1 as (
                          with rs1 as(
                             select otn.*
                              from tmp_table1 otn
