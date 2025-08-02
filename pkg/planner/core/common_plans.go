@@ -209,12 +209,6 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
-// Change represents a change plan.
-type Change struct {
-	baseSchemaProducer
-	*ast.ChangeStmt
-}
-
 // Prepare represents prepare plan.
 type Prepare struct {
 	baseSchemaProducer
