@@ -37,17 +37,22 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -1033,6 +1038,14 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
+	require.Eventually(s.T(), func() bool {
+		err := s.tk.QueryToErr("SELECT * FROM load_data.register_task;")
+		if err != nil {
+			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			return false
+		}
+		return true
+	}, 10*time.Second, 100*time.Millisecond)
 
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)
@@ -1047,9 +1060,9 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		func() {
 			// cannot run 2 import job to the same target table.
 			tk2 := testkit.NewTestKit(s.T(), s.store)
-			err = tk2.QueryToErr(sql)
-			s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
-			s.ErrorContains(err, "there is active job on the target table already")
+			err = tk2.ExecToErr(sql)
+			s.ErrorIs(err, infoschema.ErrProtectedTableMode)
+			s.ErrorContains(err, "Table register_task is in mode Import")
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
 				resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
@@ -1316,4 +1329,107 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 	// it should success even if the parent table is empty
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func (s *mockGCSSuite) TestTableMode() {
+	content := []byte(`1,1
+	2,2`)
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "table-mode-test",
+			Name:       "data.csv",
+		},
+		Content: content,
+	})
+	s.prepareAndUseDB("import_into")
+	createTableSQL := "create table import_into.table_mode (id int primary key, fk int);"
+	s.tk.MustExec(createTableSQL)
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO import_into.table_mode
+		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
+
+	// Test import into clean up can alter table mode to Normal finally.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode", `return`)
+	err := s.tk.QueryToErr(loadDataSQL)
+	require.ErrorContains(s.T(), err, "occur an error when reset table mode to normal")
+	require.Eventually(s.T(), func() bool {
+		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
+		if err != nil {
+			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			return false
+		}
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
+	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode")
+
+	// Test import into post process will alter table mode to Normal.
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer func() {
+			testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess")
+			wg.Done()
+		}()
+		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return")
+		s.tk.MustExec(loadDataSQL)
+	}()
+	go func() {
+		defer wg.Done()
+		tk2 := testkit.NewTestKit(s.T(), s.store)
+		require.Eventually(s.T(), func() bool {
+			err := tk2.QueryToErr("SELECT * FROM import_into.table_mode;")
+			if err != nil {
+				require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+				return false
+			}
+			return true
+		}, 10*time.Second, 100*time.Millisecond)
+		tk2.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows([]string{"1 1", "2 2"}...))
+	}()
+	wg.Wait()
+
+	// Test occur retryable error when checksum
+	s.tk.MustExec("truncate table table_mode")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError", `return`)
+	getError := false
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
+			if err != nil && *errP == common.ErrWriteTooSlow {
+				getError = true
+				testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError")
+			}
+		},
+	)
+	s.tk.MustQuery(loadDataSQL)
+	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
+	require.True(s.T(), getError)
+
+	// Test import into check table is empty get error.
+	s.tk.MustExec("truncate table table_mode")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
+	err = s.tk.QueryToErr(loadDataSQL)
+	require.ErrorContains(s.T(), err, "check is empty get error")
+	s.adminRepairTable("import_into", "table_mode", createTableSQL)
+	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
+
+	// Test import into check table is not empty before alter table mode to Import.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
+	err = s.tk.QueryToErr(loadDataSQL)
+	require.ErrorContains(s.T(), err, "PreCheck failed: target table is not empty")
+	s.adminRepairTable("import_into", "table_mode", createTableSQL)
+	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
+}
+
+func (s *mockGCSSuite) adminRepairTable(db, table, createTableSQL string) {
+	domainutil.RepairInfo.SetRepairMode(true)
+	domainutil.RepairInfo.SetRepairTableList([]string{db + "." + table})
+	dom := domain.GetDomain(s.tk.Session())
+	dbInfo, ok := dom.InfoCache().GetLatest().SchemaByName(ast.NewCIStr(db))
+	require.True(s.T(), ok)
+	tableInfo, err := dom.InfoCache().GetLatest().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
+	s.NoError(err)
+	domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tableInfo.Meta())
+	s.tk.MustExec("admin repair table " + table + " " + createTableSQL)
 }

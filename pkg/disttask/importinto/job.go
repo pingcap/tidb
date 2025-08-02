@@ -25,15 +25,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -90,6 +93,10 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		exec := se.GetSQLExecutor()
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
 			plan.User, plan.Parameters, plan.TotalFileSize)
+		if err2 != nil {
+			return err2
+		}
+		err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
 		if err2 != nil {
 			return err2
 		}
