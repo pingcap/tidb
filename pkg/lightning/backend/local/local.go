@@ -807,6 +807,11 @@ func (local *Backend) Close() {
 	if local.nextgenHTTPCli != nil {
 		local.nextgenHTTPCli.CloseIdleConnections()
 	}
+	if local.ticiWriteGroup != nil {
+		if err := local.ticiWriteGroup.Close(); err != nil {
+			local.logger.Error("failed to close tici write group", zap.Error(err))
+		}
+	}
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -1772,6 +1777,11 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 }
 
 // InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
-func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) {
-	local.ticiWriteGroup = tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) error {
+	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
+	if err != nil {
+		return err
+	}
+	local.ticiWriteGroup = ticiWriteGroup
+	return nil
 }

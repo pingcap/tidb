@@ -53,8 +53,9 @@ func (m *MockMetaServiceClient) MarkTableUploadFinished(ctx context.Context, in 
 
 func newTestTiCIManagerCtx(mockClient MetaServiceClient) *ManagerCtx {
 	return &ManagerCtx{
-		Conn:              nil,
+		conn:              nil,
 		metaServiceClient: mockClient,
+		ctx:               context.Background(),
 	}
 }
 
@@ -172,11 +173,6 @@ func TestMarkTableUploadFinished(t *testing.T) {
 		Once()
 	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
 	assert.Error(t, err)
-}
-
-func TestTiCIManagerCtxClose(t *testing.T) {
-	ctx := &ManagerCtx{Conn: nil}
-	assert.NoError(t, ctx.Close())
 }
 
 func TestModelTableToTiCITableInfo(t *testing.T) {

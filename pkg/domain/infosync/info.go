@@ -946,21 +946,21 @@ func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 		}
 		failpoint.Return(errors.New("mock create TiCI index failed"))
 	})
-	ticiManager, err := tici.NewTiCIManager("0.0.0.0", "50061")
+	ticiManager, err := tici.NewTiCIManager(ctx, GetEtcdClient())
 	if err != nil {
 		return err
 	}
-	defer ticiManager.Conn.Close()
+	defer ticiManager.Close()
 	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
 }
 
 // DropFullTextIndex drop fulltext index on TiCI.
 func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
-	ticiManager, err := tici.NewTiCIManager("0.0.0.0", "50061")
+	ticiManager, err := tici.NewTiCIManager(ctx, GetEtcdClient())
 	if err != nil {
 		return err
 	}
-	defer ticiManager.Conn.Close()
+	defer ticiManager.Close()
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }
 
