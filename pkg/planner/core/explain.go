@@ -118,7 +118,7 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 		if normalized {
 			buffer.WriteString("?")
 		} else {
-			buffer.WriteString(p.FtsQueryInfo.QueryText)
+			buffer.WriteString("\""+p.FtsQueryInfo.QueryText+"\"")
 		}
 		buffer.WriteString(" IN ")
 		if normalized {
