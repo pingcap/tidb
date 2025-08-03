@@ -16,9 +16,11 @@ package expression
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -122,8 +124,14 @@ func extractDependentColumns(result []*Column, expr Expression) []*Column {
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
-	result := make([]*Column, 0, 8)
-	return extractColumns(result, expr, nil)
+	tmp := make(map[*Column]struct{}, 8)
+	extractColumns(tmp, expr, nil)
+	result := slices.Collect(maps.Keys(tmp))
+	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
+	slices.SortFunc(result, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	return result
 }
 
 // ExtractCorColumns extracts correlated column from given expression.
@@ -151,25 +159,36 @@ func ExtractCorColumns(expr Expression) (cols []*CorrelatedColumn) {
 //
 // Provide an additional filter argument, this can be done in one step.
 // To avoid allocation for cols that not need.
-func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter func(*Column) bool) []*Column {
-	for _, expr := range exprs {
-		result = extractColumns(result, expr, filter)
+func ExtractColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
+	if len(exprs) == 0 {
+		return nil
 	}
+	m := make(map[*Column]struct{}, len(exprs))
+	for _, expr := range exprs {
+		extractColumns(m, expr, filter)
+	}
+	result := slices.Collect(maps.Keys(m))
+	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
+	slices.SortFunc(result, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	result = slices.CompactFunc(result, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
 	return result
 }
 
-func extractColumns(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+func extractColumns(result map[*Column]struct{}, expr Expression, filter func(*Column) bool) {
 	switch v := expr.(type) {
 	case *Column:
 		if filter == nil || filter(v) {
-			result = append(result, v)
+			result[v] = struct{}{}
 		}
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
-			result = extractColumns(result, arg, filter)
+			extractColumns(result, arg, filter)
 		}
 	}
-	return result
 }
 
 // ExtractEquivalenceColumns detects the equivalence from CNF exprs.
