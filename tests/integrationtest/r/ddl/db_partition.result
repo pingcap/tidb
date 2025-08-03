@@ -628,12 +628,12 @@ TableReader	1.00	root		data:Selection
   └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
 explain format = 'brief' select * from t where a between "3" and "4";
 id	estRows	task	access object	operator info
-PartitionUnion	2.00	root		
+PartitionUnion	2.33	root		
 ├─TableReader	1.00	root		data:Selection
 │ └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
 │   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	1.00	root		data:Selection
-  └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+└─TableReader	1.33	root		data:Selection
+  └─Selection	1.33	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
     └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a between "3" and "4";
 b	a
@@ -641,12 +641,12 @@ b	a
 4	4
 explain format = 'brief' select * from t where a >= "3" and a <= "4";
 id	estRows	task	access object	operator info
-PartitionUnion	2.00	root		
+PartitionUnion	2.33	root		
 ├─TableReader	1.00	root		data:Selection
 │ └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
 │   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	1.00	root		data:Selection
-  └─Selection	1.00	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
+└─TableReader	1.33	root		data:Selection
+  └─Selection	1.33	cop[tikv]		ge(ddl__db_partition.t.a, "3"), le(ddl__db_partition.t.a, "4")
     └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a >= "3" and a <= "4";
 b	a
