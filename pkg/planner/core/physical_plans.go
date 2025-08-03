@@ -78,7 +78,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalApply{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
-	_ base.PhysicalPlan = &PhysicalMergeJoin{}
+	_ base.PhysicalPlan = &physicalop.PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
@@ -87,7 +87,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalTableSample{}
 
 	_ PhysicalJoin = &PhysicalHashJoin{}
-	_ PhysicalJoin = &PhysicalMergeJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &PhysicalIndexHashJoin{}
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
@@ -1416,25 +1416,6 @@ func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
 	return p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfBool
 }
 
-// PhysicalMergeJoin represents merge join implementation of LogicalJoin.
-type PhysicalMergeJoin struct {
-	physicalop.BasePhysicalJoin
-
-	CompareFuncs []expression.CompareFunc `plan-cache-clone:"shallow"`
-	// Desc means whether inner child keep desc order.
-	Desc bool
-}
-
-// MemoryUsage return the memory usage of PhysicalMergeJoin
-func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfSlice + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
-	return
-}
-
 // PhysicalExchangeReceiver accepts connection and receives data passively.
 type PhysicalExchangeReceiver struct {
 	physicalop.BasePhysicalPlan
@@ -1626,20 +1607,6 @@ func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
 // AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
 func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalMergeJoin)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalJoin = *base
-	cloned.CompareFuncs = append(cloned.CompareFuncs, p.CompareFuncs...)
-	cloned.Desc = p.Desc
-	return cloned, nil
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
@@ -1905,17 +1872,6 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 		return
 	}
 	return p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt64
-}
-
-// BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx base.PlanContext, joinType logicalop.JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
-	baseJoin := physicalop.BasePhysicalJoin{
-		JoinType:      joinType,
-		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},
-		LeftJoinKeys:  leftKeys,
-		RightJoinKeys: rightKeys,
-	}
-	return PhysicalMergeJoin{BasePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
 }
 
 // SafeClone clones this op.PhysicalPlan and handles its panic.

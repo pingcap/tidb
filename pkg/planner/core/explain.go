@@ -563,51 +563,6 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalMergeJoin) ExplainInfo() string {
-	return p.explainInfo(false)
-}
-
-func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
-	sortedExplainExpressionList := expression.SortedExplainExpressionList
-	if normalized {
-		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
-			return expression.SortedExplainNormalizedExpressionList(exprs)
-		}
-	}
-
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := new(strings.Builder)
-	buffer.WriteString(p.JoinType.String())
-	physicalop.ExplainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
-	if len(p.LeftJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))
-	}
-	if len(p.RightJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(evalCtx, p.RightJoinKeys))
-	}
-	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s",
-			sortedExplainExpressionList(evalCtx, p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			sortedExplainExpressionList(evalCtx, p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			sortedExplainExpressionList(evalCtx, p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
 	explainIDs := make([]fmt.Stringer, len(p.DataSources))
 	for i := range p.DataSources {
