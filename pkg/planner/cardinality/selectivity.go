@@ -606,14 +606,15 @@ const valueAwareRowAddedThreshold = 0.5
 // IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
 // has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
 func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum,
-	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
-	if modifyCount <= 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
-		return false
-	}
+	histCnt float64, histNDV float64, realtimeRowCount int64) bool {
 
 	// This represents data changes since ANALYZE - we use absolute difference as a proxy for
 	// activity level since we cannot distinguish between inserts, deletes, and updates
 	newRowsAdded := hg.AbsRowCountDifference(realtimeRowCount)
+
+	if newRowsAdded == 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
+		return false
+	}
 
 	// Calculate average count per distinct value
 	avgValueCount := hg.NotNullCount() / histNDV
@@ -1157,24 +1158,18 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 // unmatchedEqAverage estimates the row count for equal conditions not matched in TopN or last value of a bucket.
 // Func call can pass in nil for c or idx, but at least one of them must be non-nil. If both are nil, then
 // the returned result will be based on realtimeRowCount only, and the maxEstimate will be equal to realtimeRowCount.
-func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *statistics.Index, realtimeRowCount float64) (result, maxEstimate float64) {
+func unmatchedEQAverage(sctx planctx.PlanContext, hg *statistics.Histogram, topN *statistics.TopN, realtimeRowCount float64) (result, maxEstimate float64) {
 	fullRowCount, fullNDV, histRowCount, histNDV, minTopN, lenTopN, fullResult := float64(0), float64(0), float64(0), float64(0), float64(0), float64(0), float64(0)
-	if c != nil {
-		// Use column stats if available.
-		fullRowCount = c.TotalRowCount()
-		fullNDV = float64(c.Histogram.NDV)
-		histRowCount = c.Histogram.NotNullCount()
-		histNDV = float64(c.Histogram.NDV - int64(c.TopN.Num()))
-		minTopN = float64(c.TopN.MinCount())
-		lenTopN = float64(c.TopN.Num())
-	} else if idx != nil {
-		// Use index stats if available.
-		fullRowCount = idx.TotalRowCount()
-		fullNDV = float64(idx.Histogram.NDV)
-		histRowCount = idx.Histogram.NotNullCount()
-		histNDV = float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-		minTopN = float64(idx.TopN.MinCount())
-		lenTopN = float64(idx.TopN.Num())
+	if hg != nil {
+		fullRowCount = hg.TotalRowCount()
+		fullNDV = float64(hg.NDV)
+		histRowCount = hg.NotNullCount()
+		histNDV = float64(hg.NDV)
+	}
+	if topN != nil {
+		histNDV = float64(hg.NDV - int64(topN.Num()))
+		minTopN = float64(topN.MinCount())
+		lenTopN = float64(topN.Num())
 	}
 	if fullNDV > 0 {
 		if fullRowCount > 0 {
@@ -1185,11 +1180,11 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 			maxEstimate = realtimeRowCount - (fullNDV - 1)
 		}
 	}
-	addedRows := realtimeRowCount - fullRowCount
+	addedRows := hg.AbsRowCountDifference(int64(realtimeRowCount))
 	// We may be missing stats if we've added rows since the last analysis, or if we have no histogram buckets
 	missingStats := addedRows > 0 || (histRowCount == 0 && lenTopN > 0 && lenTopN < fullNDV)
 	// If the histogram NDV and histogram row count are greater than zero - then we have histogram buckets.
-	// Only return the "average" of the remainder if it is greater than zero.
+	// Only return the "average" from the histogram buckets if we actually have buckets.
 	if histNDV > 0 && histRowCount > 0 {
 		result = histRowCount / histNDV
 		maxEstimate = histRowCount - (histNDV - 1)
@@ -1198,7 +1193,6 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 		if fullRowCount > 0 {
 			if fullNDV > 0 {
 				result = fullResult
-
 			} else {
 				// If we stil haven't derived a result - it's because we didn't have a valid NDV.
 				// Use sqrt to derive a default NDV.
@@ -1207,11 +1201,14 @@ func unmatchedEQAverage(sctx planctx.PlanContext, c *statistics.Column, idx *sta
 				maxEstimate = fullRowCount - (defNDV - 1)
 			}
 		} else if realtimeRowCount > 0 {
-			// if the original table stats were empty, revert to realtimeRowCount
-			defaultNDV := math.Sqrt(realtimeRowCount)
-			result = realtimeRowCount / defaultNDV
-			// This also means that we don't have a valid maxEstimate, so we set it to large value to reflect it's risk.
-			maxEstimate = realtimeRowCount - (defaultNDV - 1)
+			allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
+			// if the original table stats were empty, revert to realtimeRowCount - if allowed.
+			if allowUseModifyCount {
+				defaultNDV := math.Sqrt(realtimeRowCount)
+				result = realtimeRowCount / defaultNDV
+				// This also means that we don't have a valid maxEstimate, so we set it to large value to reflect it's risk.
+				maxEstimate = realtimeRowCount - (defaultNDV - 1)
+			}
 		}
 	}
 	// If we didn't get a result, but we have a fullResult - use that.

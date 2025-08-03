@@ -171,11 +171,11 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&c.Histogram, val, histCnt, histNDV, realtimeRowCount) {
 		return histCnt, nil
 	}
 	// 3. use uniform distribution assumption for the remainder
-	result, _ = unmatchedEQAverage(sctx, c, nil, float64(realtimeRowCount))
+	result, _ = unmatchedEQAverage(sctx, &c.Histogram, c.TopN, float64(realtimeRowCount))
 
 	return result, nil
 }

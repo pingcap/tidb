@@ -424,13 +424,13 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount) {
 		return histCnt
 	}
 	// 3. Estimate the remaining average estimate based upon the NDV and row count.
 	//    Func `unmatchedEqAverage` will account for whether the remainder is based upon values remaining in the
 	//	  histogram or using the original average estimate.
-	result, _ = unmatchedEQAverage(sctx, nil, idx, float64(realtimeRowCount))
+	result, _ = unmatchedEQAverage(sctx, &idx.Histogram, idx.TopN, float64(realtimeRowCount))
 	return result
 }
 
