@@ -81,8 +81,8 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalWindow{}
-	_ base.PhysicalPlan = &PhysicalShuffle{}
-	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
+	_ base.PhysicalPlan = &physicalop.PhysicalShuffle{}
+	_ base.PhysicalPlan = &physicalop.PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
 	_ base.PhysicalPlan = &PhysicalTableSample{}
 
@@ -1735,86 +1735,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
 		p.Ranges[0].IsPointNonNullable(tc)
-}
-
-// PhysicalShuffle represents a shuffle plan.
-// `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
-//
-//	to build the child executors chain.
-//
-// Take `Window` operator for example:
-//
-//	Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//	  ==> Shuffle: for main thread
-//	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//	  ==> DataSource: for `fetchDataAndSplit` thread
-type PhysicalShuffle struct {
-	physicalop.BasePhysicalPlan
-
-	Concurrency int
-	Tails       []base.PhysicalPlan
-	DataSources []base.PhysicalPlan
-
-	SplitterType PartitionSplitterType
-	ByItemArrays [][]expression.Expression
-}
-
-// MemoryUsage return the memory usage of PhysicalShuffle
-func (p *PhysicalShuffle) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays))) +
-		int64(cap(p.Tails)+cap(p.DataSources))*size.SizeOfInterface
-
-	for _, plan := range p.Tails {
-		sum += plan.MemoryUsage()
-	}
-	for _, plan := range p.DataSources {
-		sum += plan.MemoryUsage()
-	}
-	for _, exprs := range p.ByItemArrays {
-		sum += int64(cap(exprs)) * size.SizeOfInterface
-		for _, expr := range exprs {
-			sum += expr.MemoryUsage()
-		}
-	}
-	return
-}
-
-// PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
-type PartitionSplitterType int
-
-const (
-	// PartitionHashSplitterType is the splitter splits by hash.
-	PartitionHashSplitterType = iota
-	// PartitionRangeSplitterType is the splitter that split sorted data into the same range
-	PartitionRangeSplitterType
-)
-
-// PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
-// and actually, is executed by `executor.shuffleWorker`.
-type PhysicalShuffleReceiverStub struct {
-	physicalop.PhysicalSchemaProducer
-
-	// Receiver points to `executor.shuffleReceiver`.
-	Receiver unsafe.Pointer
-	// DataSource is the op.PhysicalPlan of the Receiver.
-	DataSource base.PhysicalPlan
-}
-
-// MemoryUsage return the memory usage of PhysicalShuffleReceiverStub
-func (p *PhysicalShuffleReceiverStub) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface
-	if p.DataSource != nil {
-		sum += p.DataSource.MemoryUsage()
-	}
-	return
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

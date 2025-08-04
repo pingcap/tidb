@@ -510,7 +510,7 @@ func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, fou
 		if foundLimit {
 			return x.GetTablePlan().ID() == destTablePlanID
 		}
-	case *plannercore.PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		return needReportExecutionSummary(x.DataSource, destTablePlanID, foundLimit)
 	case *plannercore.PhysicalCTE:
 		if needReportExecutionSummary(x.SeedPlan, destTablePlanID, foundLimit) {
