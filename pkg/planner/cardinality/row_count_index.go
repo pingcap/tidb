@@ -16,7 +16,6 @@ package cardinality
 
 import (
 	"bytes"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -556,7 +555,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 		minSel *= selectivity
 	}
-	// Sort them.
+	// Sort selectivities ascending (most selective first) for exponential backoff
 	slices.Sort(singleColumnEstResults)
 	l := len(singleColumnEstResults)
 	failpoint.Inject("cleanEstResults", func() {
@@ -583,19 +582,20 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	maxSel = max(idxLowBound, singleColumnEstResults[0])
 	// minSel assumes independence between columns, so is the product of all single column selectivities.
 	minSel = max(idxLowBound, minSel)
-	minTwoCol := min(singleColumnEstResults[0], singleColumnEstResults[1], idxLowBound)
-	multTwoCol := singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1])
-	if l == 2 {
-		return max(minTwoCol, multTwoCol), minSel, maxSel, true, nil
+	// corrSel is the selectivity of the most filtering column
+	corrSel = max(idxLowBound, singleColumnEstResults[0])
+
+	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
+	maxCols := min(MaxExponentialBackoffCols, l)
+	minBound := idxLowBound
+	for i := 0; i < maxCols; i++ {
+		minBound = min(minBound, singleColumnEstResults[i])
 	}
-	minThreeCol := min(minTwoCol, singleColumnEstResults[2])
-	multThreeCol := multTwoCol * math.Sqrt(math.Sqrt(singleColumnEstResults[2]))
-	if l == 3 {
-		return max(minThreeCol, multThreeCol), minSel, maxSel, true, nil
-	}
-	minFourCol := min(minThreeCol, singleColumnEstResults[3])
-	multFourCol := multThreeCol * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3])))
-	return max(minFourCol, multFourCol), minSel, maxSel, true, nil
+
+	// Apply exponential backoff to pre-sorted selectivities
+	multResult := ApplyExponentialBackoff(singleColumnEstResults, minBound, 1.0)
+
+	return multResult, minSel, maxSel, true, nil
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.

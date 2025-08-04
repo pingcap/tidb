@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -75,23 +76,59 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 
 // EstimateColsNDVWithMatchedLen returns the NDV of a couple of columns.
 // If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
-// Otherwise, we simply return the max NDV among the columns, which is a lower bound.
+// Otherwise, it uses exponential backoff estimation.
 func EstimateColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
-	ndv := 1.0
+	// First try exact match
 	if groupNDV := profile.GetGroupNDV4Cols(cols); groupNDV != nil {
-		return math.Max(groupNDV.NDV, ndv), len(groupNDV.Cols)
+		return math.Max(groupNDV.NDV, 1.0), len(groupNDV.Cols)
 	}
+
+	// Use exponential backoff estimation for all other cases
+	return estimateNDVWithExponentialBackoff(cols, schema, profile)
+}
+
+// estimateNDVWithExponentialBackoff applies exponential backoff estimation to NDV calculation.
+func estimateNDVWithExponentialBackoff(
+	cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
+	if profile == nil || len(cols) == 0 {
+		return 1.0, 1
+	}
+
+	// Collect individual column NDVs
+	singleColumnNDVs := make([]float64, 0, len(cols))
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return ndv, 1
+		return 1.0, 1
 	}
+
 	for _, idx := range indices {
-		// It is a very naive estimation.
 		col := schema.Columns[idx]
-		ndv = math.Max(ndv, profile.ColNDVs[col.UniqueID])
+		if colNDV, exists := profile.ColNDVs[col.UniqueID]; exists && colNDV > 0 {
+			singleColumnNDVs = append(singleColumnNDVs, colNDV)
+		}
 	}
-	return ndv, 1
+
+	if len(singleColumnNDVs) == 0 {
+		return 1.0, 1
+	}
+
+	// Sort NDVs in descending order (highest NDV first for exponential backoff)
+	slices.Sort(singleColumnNDVs)
+	slices.Reverse(singleColumnNDVs)
+
+	// Calculate bounds
+	lowerBound := singleColumnNDVs[0] // At least max individual column NDV
+	upperBound := profile.RowCount    // At most total row count
+	// In case RowCount is not accurate, we fall back to naive approach
+	if upperBound <= lowerBound {
+		return lowerBound, len(cols)
+	}
+
+	// Apply exponential backoff directly to NDV values
+	resultNDV := ApplyExponentialBackoff(singleColumnNDVs, lowerBound, upperBound)
+
+	return resultNDV, len(cols)
 }
 
 // EstimateColsDNVWithMatchedLenFromUniqueIDs is similar to EstimateColsDNVWithMatchedLen, but it receives UniqueIDs instead of Columns.
