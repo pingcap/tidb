@@ -40,17 +40,17 @@ func (m *MockMetaServiceClient) CreateIndex(ctx context.Context, in *CreateIndex
 	args := m.Called(ctx, in)
 	return args.Get(0).(*CreateIndexResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) GetCloudStoragePath(ctx context.Context, in *GetCloudStoragePathRequest, opts ...grpc.CallOption) (*GetCloudStoragePathResponse, error) {
+func (m *MockMetaServiceClient) GetCloudStoragePath(ctx context.Context, in *GetImportStoragePathRequest, opts ...grpc.CallOption) (*GetImportStoragePathResponse, error) {
 	args := m.Called(ctx, in)
-	return args.Get(0).(*GetCloudStoragePathResponse), args.Error(1)
+	return args.Get(0).(*GetImportStoragePathResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) MarkPartitionUploadFinished(ctx context.Context, in *MarkPartitionUploadFinishedRequest, opts ...grpc.CallOption) (*MarkPartitionUploadFinishedResponse, error) {
+func (m *MockMetaServiceClient) FinishPartitionUpload(ctx context.Context, in *FinishImportPartitionUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
 	args := m.Called(ctx, in)
-	return args.Get(0).(*MarkPartitionUploadFinishedResponse), args.Error(1)
+	return args.Get(0).(*FinishImportResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) MarkTableUploadFinished(ctx context.Context, in *MarkTableUploadFinishedRequest, opts ...grpc.CallOption) (*MarkTableUploadFinishedResponse, error) {
+func (m *MockMetaServiceClient) FinishIndexUpload(ctx context.Context, in *FinishImportIndexUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
 	args := m.Called(ctx, in)
-	return args.Get(0).(*MarkTableUploadFinishedResponse), args.Error(1)
+	return args.Get(0).(*FinishImportResponse), args.Error(1)
 }
 func (m *MockMetaServiceClient) GetShardLocalCacheInfo(ctx context.Context, in *GetShardLocalCacheRequest, opts ...grpc.CallOption) (*GetShardLocalCacheResponse, error) {
 	args := m.Called(ctx, in)
@@ -99,87 +99,89 @@ func TestCreateFulltextIndex(t *testing.T) {
 func TestGetCloudStoragePath(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
-	tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
-	indexInfo := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx"), Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}
+	tblID := int64(1)
+	indexID := int64(2)
 	schemaName := "testdb"
 	lower, upper := []byte("a"), []byte("z")
 
 	mockClient.
 		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetCloudStoragePathResponse{Status: 0, S3Path: "/s3/path"}, nil).
+		Return(&GetImportStoragePathResponse{Status: 0, S3Path: "/s3/path"}, nil).
 		Once()
-	path, err := ctx.GetCloudStoragePath(context.Background(), tblInfo, indexInfo, schemaName, lower, upper)
+	path, err := ctx.GetCloudStoragePath(context.Background(), tblID, indexID, schemaName, lower, upper)
 	assert.NoError(t, err)
 	assert.Equal(t, "/s3/path", path)
 
 	mockClient.
 		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetCloudStoragePathResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		Return(&GetImportStoragePathResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
-	_, err = ctx.GetCloudStoragePath(context.Background(), tblInfo, indexInfo, schemaName, lower, upper)
+	_, err = ctx.GetCloudStoragePath(context.Background(), tblID, indexID, schemaName, lower, upper)
 	assert.Error(t, err)
 
 	mockClient.
 		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetCloudStoragePathResponse{}, errors.New("rpc error")).
+		Return(&GetImportStoragePathResponse{}, errors.New("rpc error")).
 		Once()
-	_, err = ctx.GetCloudStoragePath(context.Background(), tblInfo, indexInfo, schemaName, lower, upper)
+	_, err = ctx.GetCloudStoragePath(context.Background(), tblID, indexID, schemaName, lower, upper)
 	assert.Error(t, err)
 }
 
-func TestMarkPartitionUploadFinished(t *testing.T) {
+func TestFinishPartitionUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
-	s3Path := "/s3/path"
+	tableID := int64(1)
+	indexID := int64(2)
+	lower, upper := []byte("a"), []byte("z")
 
 	// 1st call – success
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{Status: 0}, nil).
+		On("FinishPartitionUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: 0}, nil).
 		Once()
-	assert.NoError(t, ctx.MarkPartitionUploadFinished(context.Background(), s3Path))
+	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper, "/s3/path"))
 
 	// 2nd call – business error from TiCI
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		On("FinishPartitionUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
-	assert.Error(t, ctx.MarkPartitionUploadFinished(context.Background(), s3Path))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper, "/s3/path"))
 
 	// 3rd call – RPC error
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{}, errors.New("rpc error")).
+		On("FinishPartitionUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
-	assert.Error(t, ctx.MarkPartitionUploadFinished(context.Background(), s3Path))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper, "/s3/path"))
 
 	mockClient.AssertExpectations(t)
 }
 
-func TestMarkTableUploadFinished(t *testing.T) {
+func TestFinishIndexUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
 	tableID, indexID := int64(1), int64(2)
 
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{Status: 0}, nil).
+		On("FinishIndexUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: 0}, nil).
 		Once()
-	err := ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
+	err := ctx.FinishIndexUpload(context.Background(), tableID, indexID)
 	assert.NoError(t, err)
 
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		On("FinishIndexUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
-	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), tableID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{}, errors.New("rpc error")).
+		On("FinishIndexUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
-	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), tableID, indexID)
 	assert.Error(t, err)
 }
 

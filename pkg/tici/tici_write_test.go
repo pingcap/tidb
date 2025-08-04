@@ -231,7 +231,7 @@ func TestTiCIDataWriterGroup_FetchCloudStoragePath_NotWritable(t *testing.T) {
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
 		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetCloudStoragePathResponse{Status: 0}, nil).
+		Return(&GetImportStoragePathResponse{Status: 0}, nil).
 		Once()
 	group := &DataWriterGroup{mgrCtx: ticiMgr}
 	group.writable.Store(false)
@@ -239,21 +239,21 @@ func TestTiCIDataWriterGroup_FetchCloudStoragePath_NotWritable(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestTiCIDataWriterGroup_MarkPartitionUploadFinished_NotWritable(t *testing.T) {
+func TestTiCIDataWriterGroup_FinishPartitionUpload_NotWritable(t *testing.T) {
 	ctx := context.Background()
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{Status: 0}, nil).
+		On("FinishPartitionUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: 0}, nil).
 		Once()
 	group := &DataWriterGroup{mgrCtx: ticiMgr}
 	group.writable.Store(false)
-	err := group.MarkPartitionUploadFinished(ctx)
+	err := group.FinishPartitionUpload(ctx, nil, nil)
 	assert.NoError(t, err)
 }
 
-func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
+func TestTiCIDataWriterGroup_FinishIndexUpload(t *testing.T) {
 	ctx := context.Background()
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
 		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
@@ -261,8 +261,8 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{Status: 0}, nil).
+		On("FinishIndexUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: 0}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
@@ -273,7 +273,7 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 		}
 	}
 
-	err := group.MarkTableUploadFinished(ctx)
+	err := group.FinishIndexUpload(ctx)
 	assert.NoError(t, err)
 }
 
