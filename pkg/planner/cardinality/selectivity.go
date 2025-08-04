@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	outOfRangeBetweenRate int64 = 100
+	outOfRangeNDV int64 = 100
 )
 
 // Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
@@ -1145,8 +1145,8 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 	if increaseRowCount <= 0 {
 		return 0 // it must be 0 since the histogram contains the whole data
 	}
-	if ndv < outOfRangeBetweenRate {
-		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	if ndv < outOfRangeNDV {
+		ndv = outOfRangeNDV // avoid inaccurate selectivity caused by small NDV
 	}
 	selectivity := 1 / float64(ndv)
 	if selectivity*float64(columnRowCount) > float64(increaseRowCount) {
@@ -1171,44 +1171,27 @@ func unmatchedEQAverage(sctx planctx.PlanContext, hg *statistics.Histogram, topN
 		minTopN = float64(topN.MinCount())
 		lenTopN = float64(topN.Num())
 	}
-	if fullNDV > 0 {
+	addedRows := hg.AbsRowCountDifference(int64(realtimeRowCount))
+	missingHist := histRowCount == 0 && lenTopN > 0 && lenTopN <= fullNDV
+	allTopN := missingHist && lenTopN == fullNDV
+	if histNDV > 0 && histRowCount > 0 {
+		result = histRowCount / histNDV
+		maxEstimate = histRowCount - (histNDV - 1)
+	} else {
+		if allTopN {
+			// Reduce the risk of low NDV.
+			fullNDV = max(float64(outOfRangeNDV), fullNDV)
+		}
+		if fullNDV <= 0 {
+			fullNDV = float64(outOfRangeNDV)
+		}
+		// Setup default estimates if don't have histogram buckets.
 		if fullRowCount > 0 {
 			fullResult = fullRowCount / fullNDV
 			maxEstimate = fullRowCount - (fullNDV - 1)
 		} else if realtimeRowCount > 0 {
 			fullResult = realtimeRowCount / fullNDV
 			maxEstimate = realtimeRowCount - (fullNDV - 1)
-		}
-	}
-	addedRows := hg.AbsRowCountDifference(int64(realtimeRowCount))
-	// We may be missing stats if we've added rows since the last analysis, or if we have no histogram buckets
-	missingStats := addedRows > 0 || (histRowCount == 0 && lenTopN > 0 && lenTopN < fullNDV)
-	// If the histogram NDV and histogram row count are greater than zero - then we have histogram buckets.
-	// Only return the "average" from the histogram buckets if we actually have buckets.
-	if histNDV > 0 && histRowCount > 0 {
-		result = histRowCount / histNDV
-		maxEstimate = histRowCount - (histNDV - 1)
-	} else if missingStats || fullNDV <= 0 {
-		// If we are missing histogram statistics, revert to using statistics from the full table.
-		if fullRowCount > 0 {
-			if fullNDV > 0 {
-				result = fullResult
-			} else {
-				// If we stil haven't derived a result - it's because we didn't have a valid NDV.
-				// Use sqrt to derive a default NDV.
-				defNDV := math.Sqrt(fullRowCount)
-				result = fullRowCount / defNDV
-				maxEstimate = fullRowCount - (defNDV - 1)
-			}
-		} else if realtimeRowCount > 0 {
-			allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
-			// if the original table stats were empty, revert to realtimeRowCount - if allowed.
-			if allowUseModifyCount {
-				defaultNDV := math.Sqrt(realtimeRowCount)
-				result = realtimeRowCount / defaultNDV
-				// This also means that we don't have a valid maxEstimate, so we set it to large value to reflect it's risk.
-				maxEstimate = realtimeRowCount - (defaultNDV - 1)
-			}
 		}
 	}
 	// If we didn't get a result, but we have a fullResult - use that.
@@ -1219,13 +1202,7 @@ func unmatchedEQAverage(sctx planctx.PlanContext, hg *statistics.Histogram, topN
 	if minTopN > 0 {
 		result = min(result, minTopN)
 		// If we have valid stats, the "worst case" estimate should not be greater than the smallest TopN value.
-		if !missingStats {
-			if maxEstimate > 0 {
-				maxEstimate = min(minTopN, maxEstimate)
-			} else {
-				maxEstimate = minTopN
-			}
-		}
+		maxEstimate = min(minTopN, maxEstimate)
 	}
 	if maxEstimate <= 0 {
 		// If we've gotten here - our worst case is very large.
