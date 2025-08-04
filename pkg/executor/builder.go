@@ -264,7 +264,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildUnionScanExec(v)
 	case *plannercore.PhysicalHashJoin:
 		return b.buildHashJoin(v)
-	case *plannercore.PhysicalMergeJoin:
+	case *physicalop.PhysicalMergeJoin:
 		return b.buildMergeJoin(v)
 	case *physicalop.PhysicalIndexJoin:
 		return b.buildIndexLookUpJoin(v)
@@ -1585,7 +1585,7 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
-func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.Executor {
+func (b *executorBuilder) buildMergeJoin(v *physicalop.PhysicalMergeJoin) exec.Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
