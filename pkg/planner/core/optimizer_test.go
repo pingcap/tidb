@@ -121,7 +121,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 	var plans []*physicalop.BasePhysicalPlan
 	tableReader := &PhysicalTableReader{}
-	partWindow := &PhysicalWindow{
+	partWindow := &physicalop.PhysicalWindow{
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
@@ -205,7 +205,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	start(partWindow, 0, 4, 0)
 
 	// Window <- Sort <- Window <- Sort <- ExchangeReceiver <- ExchangeSender
-	partWindow1 := &PhysicalWindow{
+	partWindow1 := &physicalop.PhysicalWindow{
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
@@ -224,7 +224,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 
 	// Window <- Sort <- Window(x) <- Sort <- ExchangeReceiver <- ExchangeSender(x)
 	// Fine-grained shuffle is disabled because Window is not hash partition.
-	nonPartWindow := &PhysicalWindow{}
+	nonPartWindow := &physicalop.PhysicalWindow{}
 	partialSort1 = &physicalop.PhysicalSort{
 		IsPartialSort: true,
 	}
