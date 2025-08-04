@@ -2326,9 +2326,6 @@
       },
       {
         "SQL": "SELECT COUNT(t) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
-<<<<<<< HEAD
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg"
-=======
         "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(test.t.b)->Column#21",
@@ -2345,7 +2342,6 @@
           "        │ └─IndexRangeScan 11159909.91 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
           "        └─TableRowIDScan(Probe) 11148.75 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
->>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
       },
       {
         "SQL": "SELECT COUNT(a) FROM t t1 WHERE t1.a IN (SELECT t2.a FROM t t2, t t3 WHERE t2.b = t3.b)",

@@ -1333,9 +1333,6 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-<<<<<<< HEAD
-          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
-=======
           "      └─TableRangeScan 9.90 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       },
@@ -1371,7 +1368,6 @@
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
           "      └─TableRangeScan 9.90 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
->>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
         ]
       },
       {
@@ -1383,15 +1379,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 91.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 91.00 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
           "  ├─IndexFullScan(Build) 108.91 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 108.91 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
         ]
       },
       {
@@ -1399,15 +1389,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
           "  ├─IndexFullScan(Build) 189.11 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 189.11 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
         ]
       },
       {
@@ -1429,15 +1413,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 451.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 451.00 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
           "  ├─IndexFullScan(Build) 504.95 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 504.95 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
         ]
       },
       {
@@ -1445,15 +1423,9 @@
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
           "└─IndexLookUp 10.00 root  ",
-<<<<<<< HEAD
-          "  ├─IndexFullScan(Build) 460.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
-          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "    └─TableRowIDScan 460.00 cop[tikv] table:t keep order:false, stats:pseudo"
-=======
           "  ├─IndexFullScan(Build) 549.50 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
           "    └─TableRowIDScan 549.50 cop[tikv] table:t keep order:false, stats:pseudo"
->>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
         ]
       },
       {
