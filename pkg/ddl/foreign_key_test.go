@@ -443,3 +443,15 @@ func TestForeignKeyInWriteOnlyMode(t *testing.T) {
 		require.Contains(t, err.Error(), "Table 'test.child' doesn't exist")
 	}
 }
+
+func TestFix59705(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set foreign_key_checks=off;")
+	tk.MustExec("create table child (id int,pid_test int,foreign key (pid_test) references parent(pid));")
+	tk.MustGetErrMsg("alter table child change column pid_test pid varchar(10);", "[schema:1146]Table 'test.parent' doesn't exist")
+	tk.MustExec("create table parent(pid int primary key);")
+	tk.MustGetErrMsg("alter table child change column pid_test pid varchar(10);", "[ddl:3780]Referencing column 'pid' and referenced column 'pid' in foreign key constraint 'fk_1' are incompatible.")
+	tk.MustQuery("select * from information_schema.key_column_usage;")
+}
