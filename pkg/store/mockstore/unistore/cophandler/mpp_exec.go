@@ -294,6 +294,9 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 }
 
 func (e *indexScanExec) Process(key, value []byte) error {
+	if len(key) > 4 && key[0] == 'x' {
+		key = key[4:] // remove the keyspace prefix
+	}
 	values, err := tablecodec.DecodeIndexKV(key, value, e.numIdxCols, e.hdlStatus, e.colInfos)
 	if err != nil {
 		return err

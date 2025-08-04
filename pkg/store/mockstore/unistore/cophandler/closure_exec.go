@@ -902,6 +902,9 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 			restoredCols = append(restoredCols, c)
 		}
 	}
+	if len(key) > 4 && key[0] == 'x' {
+		key = key[4:] // remove the keyspace prefix
+	}
 	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
 	if err != nil {
 		return err
