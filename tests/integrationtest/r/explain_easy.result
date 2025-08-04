@@ -145,11 +145,19 @@ explain format = 'brief' select * from t4 use index(idx) where a > 1 and b > 1 a
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─IndexLookUp	1.00	root		
+<<<<<<< HEAD
   ├─Selection(Build)	3.00	cop[tikv]		gt(explain_easy.t4.b, 1)
   │ └─IndexRangeScan	9.00	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf], keep order:false, stats:pseudo
   └─Limit(Probe)	1.00	cop[tikv]		offset:0, count:1
     └─Selection	1.00	cop[tikv]		gt(explain_easy.t4.c, 1)
       └─TableRowIDScan	3.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+=======
+  ├─Selection(Build)	14.08	cop[tikv]		gt(explain_easy.t4.b, 1)
+  │ └─IndexRangeScan	42.24	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf], keep order:false, stats:pseudo
+  └─Limit(Probe)	1.00	cop[tikv]		offset:0, count:1
+    └─Selection	1.00	cop[tikv]		gt(explain_easy.t4.c, 1)
+      └─TableRowIDScan	14.08	cop[tikv]	table:t4	keep order:false, stats:pseudo
+>>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
 explain format = 'brief' select * from t4 where a > 1 and c > 1 limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1

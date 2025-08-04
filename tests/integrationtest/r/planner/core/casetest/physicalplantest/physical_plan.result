@@ -202,8 +202,13 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─IndexReader	1.00	root		index:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
+<<<<<<< HEAD
     └─Selection	1.00	cop[tikv]		intdiv(planner__core__casetest__physicalplantest__physical_plan.tn.a, 2)
       └─IndexFullScan	1.25	cop[tikv]	table:tn, index:a(a, b, c, d)	keep order:true, stats:pseudo
+=======
+    └─Selection	80.99	cop[tikv]		intdiv(planner__core__casetest__physicalplantest__physical_plan.tn.a, 2)
+      └─IndexFullScan	101.24	cop[tikv]	table:tn, index:a(a, b, c, d)	keep order:true, stats:pseudo
+>>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
 show warnings;
 Level	Code	Message
 explain format = 'brief' select /*+ LIMIT_TO_COP() */ a from tn where a > 10 limit 1;
