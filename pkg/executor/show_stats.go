@@ -126,15 +126,15 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsMeta(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
+				e.appendTableForStatsMeta(db.O, tbl.Name.O, partitionName, h.GetNonPseudoPhysicalTableStats(tbl.ID))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
+						e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
+					e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
 				}
 			}
 		}
@@ -143,7 +143,7 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 }
 
 func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo {
+	if statsTbl == nil || statsTbl.Pseudo {
 		return
 	}
 	if !statsTbl.IsAnalyzed() {
@@ -293,7 +293,8 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 }
 
 func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string, isIndex int, hist statistics.Histogram,
-	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage) {
+	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage,
+) {
 	e.appendRow([]any{
 		dbName,
 		tblName,
@@ -528,15 +529,15 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsHealthy(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
+				e.appendTableForStatsHealthy(db.O, tbl.Name.O, partitionName, h.GetNonPseudoPhysicalTableStats(tbl.ID))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
+						e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
+					e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
 				}
 			}
 		}
