@@ -174,7 +174,6 @@ func NewHandle(
 // GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
 // physicalTableID can be a table ID or partition ID.
 func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
-	intest.Assert(h != nil, "stats handle is nil")
 	tblStats := h.getStatsByPhysicalID(physicalTableID, tblInfo)
 	intest.Assert(tblStats != nil, "stats shoud not be nil")
 	return tblStats
@@ -184,13 +183,10 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 // physcialTableID can be a table ID or partition ID.
 // Note: this function may return nil if the table is not found in the cache.
 func (h *Handle) GetNonPseudoPhysicalTableStats(physicalTableID int64) *statistics.Table {
-	intest.Assert(h != nil, "stats handle is nil")
 	return h.getStatsByPhysicalID(physicalTableID, nil)
 }
 
 func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
-	intest.Assert(h != nil, "stats handle is nil")
-	// Just in case.
 	if h == nil {
 		if tblInfo != nil {
 			tbl := statistics.PseudoTable(tblInfo, false, false)
