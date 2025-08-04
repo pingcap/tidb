@@ -320,7 +320,8 @@ func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
 		seq,
 		ca,
 		3,
-		compressorBuffer{nil, nil, nil, nil},
+		nil,
+		compressorBuffer{nil, nil, nil},
 	}
 }
 
@@ -330,6 +331,7 @@ type compressedWriter struct {
 	compressedSequence   *uint8
 	compressionAlgorithm int
 	zstdLevel            zstd.EncoderLevel
+	compressedPacket     *bytes.Buffer
 	compressorBuffer     compressorBuffer
 }
 
@@ -367,8 +369,8 @@ func (cw *compressedWriter) Flush() error {
 	if cw.compressorBuffer.payload == nil {
 		cw.compressorBuffer.payload = new(bytes.Buffer)
 	}
-	if cw.compressorBuffer.compressedPacket == nil {
-		cw.compressorBuffer.compressedPacket = new(bytes.Buffer)
+	if cw.compressedPacket == nil {
+		cw.compressedPacket = new(bytes.Buffer)
 	}
 
 	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
@@ -394,12 +396,16 @@ func (cw *compressedWriter) Flush() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer cw.compressorBuffer.Reset()
+	// always reset the compressed packet buffer.
+	defer cw.compressedPacket.Reset()
 
 	uncompressedLength := 0
 	compressedHeader := make([]byte, 7)
 
-	if len(data) > minCompressLength {
+	needCompress := len(data) > minCompressLength
+	if needCompress {
+		// only reset the payload buffer if we are compressing.
+		defer cw.compressorBuffer.Reset()
 		uncompressedLength = len(data)
 		_, err := w.Write(data)
 		if err != nil {
@@ -412,7 +418,7 @@ func (cw *compressedWriter) Flush() error {
 	}
 
 	var compressedLength int
-	if len(data) > minCompressLength {
+	if needCompress {
 		compressedLength = len(cw.compressorBuffer.payload.Bytes())
 	} else {
 		compressedLength = len(data)
@@ -424,24 +430,21 @@ func (cw *compressedWriter) Flush() error {
 	compressedHeader[4] = byte(uncompressedLength)
 	compressedHeader[5] = byte(uncompressedLength >> 8)
 	compressedHeader[6] = byte(uncompressedLength >> 16)
-	_, err = cw.compressorBuffer.compressedPacket.Write(compressedHeader)
+	_, err = cw.compressedPacket.Write(compressedHeader)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	*cw.compressedSequence++
 
-	if len(data) > minCompressLength {
-		_, err = cw.compressorBuffer.compressedPacket.Write(cw.compressorBuffer.payload.Bytes())
+	if needCompress {
+		_, err = cw.compressedPacket.Write(cw.compressorBuffer.payload.Bytes())
 	} else {
-		_, err = cw.compressorBuffer.compressedPacket.Write(data)
+		_, err = cw.compressedPacket.Write(data)
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = w.Close(); err != nil {
-		return errors.Trace(err)
-	}
-	_, err = cw.w.Write(cw.compressorBuffer.compressedPacket.Bytes())
+	_, err = cw.w.Write(cw.compressedPacket.Bytes())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -449,18 +452,14 @@ func (cw *compressedWriter) Flush() error {
 }
 
 type compressorBuffer struct {
-	payload          *bytes.Buffer
-	compressedPacket *bytes.Buffer
-	zlibWriter       *zlib.Writer
-	zstdWriter       *zstd.Encoder
+	payload    *bytes.Buffer
+	zlibWriter *zlib.Writer
+	zstdWriter *zstd.Encoder
 }
 
 func (c *compressorBuffer) Reset() {
 	if c.payload != nil {
 		c.payload.Reset()
-	}
-	if c.compressedPacket != nil {
-		c.compressedPacket.Reset()
 	}
 	if c.zlibWriter != nil {
 		c.zlibWriter.Reset(c.payload)
