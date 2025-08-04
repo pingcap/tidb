@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -114,28 +115,45 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemaNames()
-	for _, db := range dbs {
-		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
-		if err != nil {
-			return errors.Trace(err)
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
+	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+	paritionedTables := make(map[int64]*model.TableInfo)
+	for _, result := range tableInfoResult {
+		for _, tbl := range result.TableInfos {
+			paritionedTables[tbl.ID] = tbl
 		}
-		for _, tbl := range tables {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
+	}
+	for _, db := range dbs {
+		if fieldFilter != "" && db.L != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
+			continue
+		}
+		tableNames, err := do.InfoSchema().SchemaSimpleTableInfos(ctx, db)
+		terror.Log(err)
+		for _, nameInfo := range tableNames {
+			tblID := nameInfo.ID
+			paritionedTable, ok := paritionedTables[tblID]
+			// Partitioned table:
+			if ok {
+				// For dynamic partitioned table, we need to display the global table as well.
+				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
+					e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, "global", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
 				}
-				e.appendTableForStatsMeta(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
-					}
+				pi := paritionedTable.GetPartitionInfo()
+				for _, def := range pi.Definitions {
+					e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
 				}
 			} else {
-				for _, def := range pi.Definitions {
-					e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
-				}
+				// Non-partitioned table:
+				e.appendTableForStatsMeta(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(nameInfo.ID))
 			}
 		}
 	}
@@ -143,7 +161,7 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 }
 
 func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo {
+	if statsTbl == nil || statsTbl.Pseudo {
 		return
 	}
 	if !statsTbl.IsAnalyzed() {
@@ -293,7 +311,8 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 }
 
 func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string, isIndex int, hist statistics.Histogram,
-	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage) {
+	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage,
+) {
 	e.appendRow([]any{
 		dbName,
 		tblName,
@@ -513,31 +532,37 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
+	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+	paritionedTables := make(map[int64]*model.TableInfo)
+	for _, result := range tableInfoResult {
+		for _, tbl := range result.TableInfos {
+			paritionedTables[tbl.ID] = tbl
+		}
+	}
 	for _, db := range dbs {
 		if fieldFilter != "" && db.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
 		}
-		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tableNames, err := do.InfoSchema().SchemaSimpleTableInfos(ctx, db)
 		terror.Log(err)
-		for _, tbl := range tables {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
+		for _, nameInfo := range tableNames {
+			tblID := nameInfo.ID
+			paritionedTable, ok := paritionedTables[tblID]
+			// Partitioned table:
+			if ok {
+				// For dynamic partitioned table, we need to display the global table as well.
+				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
+					e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, "global", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
 				}
-				e.appendTableForStatsHealthy(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
-					}
+				pi := paritionedTable.GetPartitionInfo()
+				for _, def := range pi.Definitions {
+					e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
 				}
 			} else {
-				for _, def := range pi.Definitions {
-					e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
-				}
+				// Non-partitioned table:
+				e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(nameInfo.ID))
 			}
 		}
 	}
