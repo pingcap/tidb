@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -503,19 +502,13 @@ func TestRenameTableAutoIDs(t *testing.T) {
 }
 
 // enableReadOnlyDDLFp enables the failpoint to mock read-only DDLs.
-func enableReadOnlyDDLFp() {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
-}
-
-func disableReadOnlyDDLFp() {
-	failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL")
+func enableReadOnlyDDLFp(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
 }
 
 func TestAlterSchemaReadonlyBasic(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -535,8 +528,7 @@ func TestAlterSchemaReadonlyBasic(t *testing.T) {
 }
 
 func TestAlterSchemaReadonlyPrivilege(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
@@ -559,8 +551,7 @@ func TestAlterSchemaReadonlyPrivilege(t *testing.T) {
 }
 
 func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -587,8 +578,7 @@ func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 }
 
 func TestAlterDBReadOnlyNotBlockByIrrelevantTxn(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -604,8 +594,7 @@ func TestAlterDBReadOnlyNotBlockByIrrelevantTxn(t *testing.T) {
 }
 
 func TestAccessDBInTxnAfterDDLDone(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -619,8 +608,7 @@ func TestAccessDBInTxnAfterDDLDone(t *testing.T) {
 }
 
 func TestReadWriteDDLNotBlockByTxn(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -635,8 +623,7 @@ func TestReadWriteDDLNotBlockByTxn(t *testing.T) {
 }
 
 func TestReadOnlyInMiddleState(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -669,8 +656,7 @@ func TestReadOnlyInMiddleState(t *testing.T) {
 }
 
 func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
+	enableReadOnlyDDLFp(t)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 	sv.SetDomain(dom)
@@ -707,10 +693,8 @@ func TestKillBlockReadOnlyDDLTxn(t *testing.T) {
 }
 
 func TestErrInWaitingUncommittedTxn(t *testing.T) {
-	enableReadOnlyDDLFp()
-	defer disableReadOnlyDDLFp()
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCheckUncommittedTxnError", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCheckUncommittedTxnError")
+	enableReadOnlyDDLFp(t)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCheckUncommittedTxnError", "return")
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
