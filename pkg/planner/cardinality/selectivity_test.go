@@ -1746,7 +1746,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	sctx := testKit.Session()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
@@ -1765,7 +1765,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	statsTbl = h.GetTableStats(table.Meta())
+	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
 	insufficientCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
@@ -1784,7 +1784,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	statsTbl = h.GetTableStats(table.Meta())
+	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
 	enhancedCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
