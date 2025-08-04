@@ -123,7 +123,6 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
-	// TODO: use fieldPatternsLike to filter partitioned tables.
 	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	paritionedTables := make(map[int64]*model.TableInfo)
 	for _, result := range tableInfoResult {
@@ -533,7 +532,6 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
-	// TODO: use fieldPatternsLike to filter partitioned tables.
 	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	paritionedTables := make(map[int64]*model.TableInfo)
 	for _, result := range tableInfoResult {
