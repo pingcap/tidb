@@ -1185,18 +1185,23 @@ func unmatchedEQAverage(sctx planctx.PlanContext, hg *statistics.Histogram, topN
 		if fullNDV <= 0 {
 			fullNDV = float64(outOfRangeNDV)
 		}
-		// Setup default estimates if don't have histogram buckets.
+		// Setup default estimates if we don't have histogram buckets.
 		if fullRowCount > 0 {
 			fullResult = fullRowCount / fullNDV
 			maxEstimate = fullRowCount - (fullNDV - 1)
 		} else if realtimeRowCount > 0 {
-			fullResult = realtimeRowCount / fullNDV
-			maxEstimate = realtimeRowCount - (fullNDV - 1)
+			allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
+			if allowUseModifyCount {
+				fullResult = realtimeRowCount / fullNDV
+				maxEstimate = realtimeRowCount - (fullNDV - 1)
+			}
 		}
 	}
 	// If we didn't get a result, but we have a fullResult - use that.
 	if result <= 0 && fullResult > 0 {
 		result = fullResult
+	} else {
+		result = 1.0
 	}
 	// Do not allow the result to be greater than the smallest TopN value.
 	if minTopN > 0 {
@@ -1204,8 +1209,8 @@ func unmatchedEQAverage(sctx planctx.PlanContext, hg *statistics.Histogram, topN
 		// If we have valid stats, the "worst case" estimate should not be greater than the smallest TopN value.
 		maxEstimate = min(minTopN, maxEstimate)
 	}
+	// If we've gotten here - our worst case is very large.
 	if maxEstimate <= 0 {
-		// If we've gotten here - our worst case is very large.
 		maxEstimate = addedRows
 	}
 	skewEstimate := adjustEQSkewRisk(sctx, maxEstimate, result)
