@@ -412,7 +412,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 }
 
 func createMockStore(t *testing.T) (store kv.Storage) {
-	session.SetSchemaLease(200 * time.Millisecond)
+	vardef.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
