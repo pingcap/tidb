@@ -1481,18 +1481,19 @@ func (n *SetCollationExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type exprTextPositionCleaner struct {
+type exprCleaner struct {
+	// for Text Position clean.
 	oldTextPos []int
 	restore    bool
-	// ast.FuncCallExpr should be case-insensitive.
+	// for Name.O clean, ast.FuncCallExpr should be case-insensitive.
 	oldOriginFuncName []string
 }
 
-func (e *exprTextPositionCleaner) BeginRestore() {
+func (e *exprCleaner) BeginRestore() {
 	e.restore = true
 }
 
-func (e *exprTextPositionCleaner) Enter(n Node) (node Node, skipChildren bool) {
+func (e *exprCleaner) Enter(n Node) (node Node, skipChildren bool) {
 	if e.restore {
 		n.SetOriginTextPosition(e.oldTextPos[0])
 		e.oldTextPos = e.oldTextPos[1:]
@@ -1511,14 +1512,14 @@ func (e *exprTextPositionCleaner) Enter(n Node) (node Node, skipChildren bool) {
 	return n, false
 }
 
-func (e *exprTextPositionCleaner) Leave(n Node) (node Node, ok bool) {
+func (e *exprCleaner) Leave(n Node) (node Node, ok bool) {
 	return n, true
 }
 
 // ExpressionDeepEqual compares the equivalence of two expressions.
 func ExpressionDeepEqual(a ExprNode, b ExprNode) bool {
-	cleanerA := &exprTextPositionCleaner{}
-	cleanerB := &exprTextPositionCleaner{}
+	cleanerA := &exprCleaner{}
+	cleanerB := &exprCleaner{}
 	a.Accept(cleanerA)
 	b.Accept(cleanerB)
 	result := reflect.DeepEqual(a, b)
