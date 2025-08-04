@@ -5,10 +5,7 @@ go_library(
     srcs = ["plan_clone_generator.go"],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/generator/plan_cache",
     visibility = ["//visibility:private"],
-    deps = [
-        "//pkg/planner/core",
-        "//pkg/planner/core/operator/physicalop",
-    ],
+    deps = ["//pkg/planner/core"],
 )
 
 go_binary(
