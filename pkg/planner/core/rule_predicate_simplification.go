@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -63,6 +64,9 @@ func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateT
 	}
 	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), con) {
 		return otherPredicate
+	}
+	if con.Value.IsNull() {
+		return falsePredicate
 	}
 	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
 	if err == nil {
@@ -198,7 +202,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
-	pruneEmptyORBranches(sctx, simplifiedPredicate)
+	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -251,12 +255,8 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 
 // Check for constant false condition.
 func unsatisfiableExpression(ctx base.PlanContext, p expression.Expression) bool {
-	if constExpr, ok := p.(*expression.Constant); ok {
-		if b, err := constExpr.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx()); err == nil && b == 0 {
-			return true
-		}
-	}
-	return false
+	sc := ctx.GetSessionVars().StmtCtx
+	return logicalop.IsConstFalse(sc, p)
 }
 
 func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
@@ -361,9 +361,9 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate
 // and another scalar predicate.
-func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) {
+func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
 	if len(predicates) <= 1 {
-		return
+		return predicates
 	}
 	for i := range predicates {
 		for j := i + 1; j < len(predicates); j++ {
@@ -382,14 +382,21 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
+				if unsatisfiableExpression(sctx, predicates[j]) {
+					return []expression.Expression{predicates[j]}
+				}
 			} else if iType == orPredicate && jType == scalarPredicate {
 				predicates[i] = updateOrPredicate(sctx, ithPredicate, jthPredicate)
 				if maybeOverOptimized4PlanCache {
 					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR predicate simplification is triggered")
 				}
+				if unsatisfiableExpression(sctx, predicates[i]) {
+					return []expression.Expression{predicates[i]}
+				}
 			}
 		}
 	}
+	return predicates
 }
 
 // shortCircuitANDORLogicalConstants simplifies logical expressions by performing short-circuit evaluation

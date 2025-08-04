@@ -74,6 +74,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -116,6 +117,8 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
 	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
+const normalClosedConnsCapacity = 1000
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
@@ -127,6 +130,9 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+
+	normalClosedConnsMutex sync.Mutex
+	normalClosedConns      *kvcache.SimpleLRUCache
 
 	userResLock  sync.RWMutex // userResLock used to protect userResource
 	userResource map[string]*userResourceLimits
@@ -147,6 +153,8 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+
+	StandbyController
 }
 
 // NewTestServer creates a new Server for test.
@@ -198,6 +206,41 @@ func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 		return false, ""
 	}
 	return true, s.statusAddr
+}
+
+type normalCloseConnKey struct {
+	keyspaceName string
+	connID       string
+}
+
+func (k normalCloseConnKey) Hash() []byte {
+	return []byte(fmt.Sprintf("%s-%s", k.keyspaceName, k.connID))
+}
+
+// SetNormalClosedConn sets the normal closed connection message by specified connID.
+func (s *Server) SetNormalClosedConn(keyspaceName, connID, msg string) {
+	if connID == "" {
+		return
+	}
+
+	s.normalClosedConnsMutex.Lock()
+	defer s.normalClosedConnsMutex.Unlock()
+	s.normalClosedConns.Put(normalCloseConnKey{keyspaceName: keyspaceName, connID: connID}, msg)
+}
+
+// GetNormalClosedConn gets the normal closed connection message.
+func (s *Server) GetNormalClosedConn(keyspaceName, connID string) string {
+	if connID == "" {
+		return ""
+	}
+
+	s.normalClosedConnsMutex.Lock()
+	defer s.normalClosedConnsMutex.Unlock()
+	v, ok := s.normalClosedConns.Get(normalCloseConnKey{keyspaceName: keyspaceName, connID: connID})
+	if !ok {
+		return ""
+	}
+	return v.(string)
 }
 
 // ConnectionCount gets current connection count.
@@ -252,6 +295,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		normalClosedConns: kvcache.NewSimpleLRUCache(normalClosedConnsCapacity, 0, 0),
 		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
@@ -643,6 +687,10 @@ func (s *Server) registerConn(conn *clientConn) bool {
 
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	if s.StandbyController != nil {
+		s.StandbyController.OnConnActive()
+	}
+
 	// init the connInfo
 	_, _, err := conn.PeerHost("", false)
 	if err != nil {
@@ -815,20 +863,34 @@ func (s *Server) checkConnectionCount() error {
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*sessmgr.ProcessInfo {
 	rs := make(map[uint64]*sessmgr.ProcessInfo)
-	maps.Copy(rs, s.getUserProcessList())
+	maps.Copy(rs, s.GetUserProcessList())
 	if s.dom != nil {
 		maps.Copy(rs, s.dom.SysProcTracker().GetSysProcessList())
 	}
 	return rs
 }
 
-func (s *Server) getUserProcessList() map[uint64]*sessmgr.ProcessInfo {
+// GetUserProcessList returns all process info that are created by user.
+func (s *Server) GetUserProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
+		}
+	}
+	return rs
+}
+
+// GetClientCapabilityList returns all client capability.
+func (s *Server) GetClientCapabilityList() map[uint64]uint32 {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]uint32)
+	for id, client := range s.clients {
+		if client.ctx.Session != nil {
+			rs[id] = client.capability
 		}
 	}
 	return rs
@@ -1178,4 +1240,9 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, id := range connIDs {
 		s.Kill(id, false, false, false)
 	}
+}
+
+// Health returns if the server is healthy (begin to shut down)
+func (s *Server) Health() bool {
+	return s.health.Load()
 }
