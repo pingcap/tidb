@@ -12,7 +12,7 @@ s3-bucket = "next-gen-test"
 s3-region = "local"
 
 [kvengine]
-remote-coprocessor-addr = "http://127.0.0.1:20001/coprocessor"
+remote-coprocessor-addr = "http://127.0.0.1:19000/coprocessor"
 remote-coprocessor-min-blocks-size = 32768                     # 32MB by default
 
 [ia]
