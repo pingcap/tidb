@@ -17,7 +17,7 @@
 # It need TCP ports:
 # - pd: 2379, 2380, 2381, 2383, 2384
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
-# - tikv-worker: 1900
+# - tikv-worker: 19000
 
 set -euo pipefail
 
