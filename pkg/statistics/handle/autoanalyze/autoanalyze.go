@@ -468,7 +468,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			pi := tblInfo.GetPartitionInfo()
 			// No partitions, analyze the whole table.
 			if pi == nil {
-				statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+				statsTbl := statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
 				sql := "analyze table %n.%n"
 				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
@@ -485,7 +485,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 					partitionDefs = append(partitionDefs, def)
 				}
 			}
-			partitionStats := getPartitionStats(statsHandle, tblInfo, partitionDefs)
+			partitionStats := getPartitionStats(statsHandle, partitionDefs)
 			if pruneMode == variable.Dynamic {
 				analyzed := tryAutoAnalyzePartitionTableInDynamicMode(
 					sctx,
@@ -518,13 +518,12 @@ func RandomPickOneTableAndTryAutoAnalyze(
 
 func getPartitionStats(
 	statsHandle statstypes.StatsHandle,
-	tblInfo *model.TableInfo,
 	defs []model.PartitionDefinition,
 ) map[int64]*statistics.Table {
 	partitionStats := make(map[int64]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		partitionStats[def.ID] = statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
+		partitionStats[def.ID] = statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
 	}
 
 	return partitionStats
