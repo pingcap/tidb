@@ -124,9 +124,9 @@ func extractDependentColumns(result []*Column, expr Expression) []*Column {
 // ExtractColumns extracts all columns from an expression.
 func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
-	tmp := make(map[*Column]struct{}, 8)
+	tmp := make(map[int64]*Column, 8)
 	extractColumns(tmp, expr, nil)
-	result := slices.Collect(maps.Keys(tmp))
+	result := slices.Collect(maps.Values(tmp))
 	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
 	slices.SortFunc(result, func(a, b *Column) int {
 		return cmp.Compare(a.UniqueID, b.UniqueID)
@@ -163,26 +163,23 @@ func ExtractColumnsFromExpressions(exprs []Expression, filter func(*Column) bool
 	if len(exprs) == 0 {
 		return nil
 	}
-	m := make(map[*Column]struct{}, len(exprs))
+	m := make(map[int64]*Column, len(exprs))
 	for _, expr := range exprs {
 		extractColumns(m, expr, filter)
 	}
-	result := slices.Collect(maps.Keys(m))
+	result := slices.Collect(maps.Values(m))
 	// The keys in a map are unordered, so to ensure stability, we need to sort them here.
 	slices.SortFunc(result, func(a, b *Column) int {
 		return cmp.Compare(a.UniqueID, b.UniqueID)
 	})
-	result = slices.CompactFunc(result, func(a, b *Column) bool {
-		return a.UniqueID == b.UniqueID
-	})
 	return result
 }
 
-func extractColumns(result map[*Column]struct{}, expr Expression, filter func(*Column) bool) {
+func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
 	switch v := expr.(type) {
 	case *Column:
 		if filter == nil || filter(v) {
-			result[v] = struct{}{}
+			result[v.UniqueID] = v
 		}
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
