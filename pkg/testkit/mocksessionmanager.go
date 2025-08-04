@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // MockSessionManager is a mocked session manager which is used for test.
@@ -148,6 +148,13 @@ func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
 	return ok
 }
 
+// InternalSessionCount implements the Manager.InternalSessionCount interface.
+func (msm *MockSessionManager) InternalSessionCount() int {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	return len(msm.internalSessions)
+}
+
 // DeleteInternalSession is to delete the internal session pointer from the map in the Manager
 func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()
@@ -196,7 +203,7 @@ func (msm *MockSessionManager) KillNonFlashbackClusterConn() {
 func (msm *MockSessionManager) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	msm.mu.Lock()
 	for _, se := range msm.Conn {
-		session.RemoveLockDDLJobs(se, jobs, false)
+		variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, false)
 	}
 	msm.mu.Unlock()
 }

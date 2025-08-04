@@ -54,6 +54,21 @@ func (p *LogicalPartitionUnionAll) PruneColumns(parentUsedCols []*expression.Col
 	return p, nil
 }
 
+// PushDownTopN implements LogicalPlan interface.
+func (p *LogicalPartitionUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	transformedUnionAll := p.LogicalUnionAll.PushDownTopN(topNLogicalPlan, opt)
+
+	unionAll, isUnionAll := transformedUnionAll.(*LogicalUnionAll)
+	if !isUnionAll {
+		// Return the transformed plan if it's no longer a LogicalUnionAll
+		return transformedUnionAll
+	}
+
+	// Update the wrapped LogicalUnionAll with the transformed result
+	p.LogicalUnionAll = *unionAll
+	return p
+}
+
 // ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	return utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll(p, prop)

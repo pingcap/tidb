@@ -354,9 +354,6 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function: sf.Function.Clone(),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
-	if sf.hashcode != nil {
-		c.hashcode = slices.Clone(sf.hashcode)
-	}
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}
@@ -561,6 +558,12 @@ func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (typ
 // HashCode implements Expression interface.
 func (sf *ScalarFunction) HashCode() []byte {
 	if len(sf.hashcode) > 0 {
+		if intest.InTest {
+			copyhashcode := make([]byte, len(sf.hashcode))
+			copy(copyhashcode, sf.hashcode)
+			ReHashCode(sf)
+			intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
+		}
 		return sf.hashcode
 	}
 	ReHashCode(sf)

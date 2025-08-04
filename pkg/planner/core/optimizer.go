@@ -836,7 +836,7 @@ func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 
 func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
 	switch x := plan.(type) {
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
@@ -1197,7 +1197,7 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
-	var physLock *PhysicalLock
+	var physLock *physicalop.PhysicalLock
 	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
@@ -1208,7 +1208,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			pointGet = x
 		case *BatchPointGetPlan:
 			batchPointGet = x
-		case *PhysicalLock:
+		case *physicalop.PhysicalLock:
 			physLock = x
 		case *physicalop.PhysicalUnionScan:
 			unionScan = x

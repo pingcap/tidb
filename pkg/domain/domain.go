@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
@@ -226,7 +227,7 @@ type Domain struct {
 
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory
+	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -541,7 +542,7 @@ func NewDomainWithEtcdClient(
 	statsLease time.Duration,
 	dumpFileGcLease time.Duration,
 	factory pools.Factory,
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory,
+	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
@@ -605,6 +606,7 @@ func NewDomainWithEtcdClient(
 		do.infoCache,
 		do.schemaLease,
 		do.sysSessionPool,
+		isvalidator.New(do.schemaLease),
 	)
 	do.initDomainSysVars()
 
@@ -730,7 +732,14 @@ func (do *Domain) Init(
 	}
 
 	do.isSyncer.InitRequiredFields(
-		do.info, do.ddl.SchemaSyncer(), do.autoidClient,
+		func() sessmgr.InfoSchemaCoordinator {
+			if do.info == nil {
+				return nil
+			}
+			return do.info.GetSessionManager()
+		},
+		do.ddl.SchemaSyncer(),
+		do.autoidClient,
 		func() (pools.Resource, error) {
 			return do.sysExecutorFactory(do)
 		},
@@ -848,6 +857,12 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 	return mgr.SessPool(), nil
 }
 
+// GetCrossKSMgr returns the cross keyspace session manager.
+// it's exported for test only.
+func (do *Domain) GetCrossKSMgr() *crossks.Manager {
+	return do.crossKSSessMgr
+}
+
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease
@@ -883,9 +898,9 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err

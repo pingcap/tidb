@@ -2102,9 +2102,8 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				}
 			}
 		}
-		relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
 		for len(virtualExprs) > 0 {
-			relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
+			relatedCols := expression.ExtractColumnsFromExpressions(virtualExprs, nil)
 			virtualExprs = virtualExprs[:0]
 			for _, col := range relatedCols {
 				cols.data[col.ID] = struct{}{}
@@ -2112,7 +2111,6 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 					virtualExprs = append(virtualExprs, col.VirtualExpr)
 				}
 			}
-			relatedCols = relatedCols[:0]
 		}
 	}
 	if tblInfo.PKIsHandle {

@@ -1,9 +1,28 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "config",
-    srcs = ["advancer_conf.go"],
+    srcs = [
+        "command_conf.go",
+        "tidb_conf.go",
+        "types.go",
+    ],
     importpath = "github.com/pingcap/tidb/br/pkg/streamhelper/config",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_spf13_pflag//:pflag"],
+    deps = [
+        "//pkg/sessionctx/vardef",
+        "@com_github_spf13_pflag//:pflag",
+    ],
+)
+
+go_test(
+    name = "config_test",
+    timeout = "short",
+    srcs = ["config_test.go"],
+    flaky = True,
+    deps = [
+        ":config",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
 )

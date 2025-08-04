@@ -267,7 +267,7 @@ type WindowImpl struct {
 }
 
 // NewWindowImpl creates a new WindowImpl.
-func NewWindowImpl(window *plannercore.PhysicalWindow) *WindowImpl {
+func NewWindowImpl(window *physicalop.PhysicalWindow) *WindowImpl {
 	return &WindowImpl{baseImpl{plan: window}}
 }
 

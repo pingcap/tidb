@@ -902,9 +902,9 @@ func (*pushDownJoin) predicatePushDown(
 		copy(remainCond, predicates)
 		nullSensitive := join.JoinType == logicalop.AntiLeftOuterSemiJoin || join.JoinType == logicalop.LeftOuterSemiJoin
 		if join.JoinType == logicalop.RightOuterJoin {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, rightSchema, leftSchema, nullSensitive)
 		} else {
-			joinConds, remainCond = expression.PropConstOverOuterJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
+			joinConds, remainCond = expression.PropConstOverSpecialJoin(join.SCtx().GetExprCtx(), joinConds, remainCond, leftSchema, rightSchema, nullSensitive)
 		}
 		eq, left, right, other := join.ExtractOnCondition(joinConds, leftSchema, rightSchema, false, false)
 		join.AppendJoinConds(eq, left, right, other)

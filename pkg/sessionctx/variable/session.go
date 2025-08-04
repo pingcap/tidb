@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -52,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
@@ -67,9 +69,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 var (
@@ -3657,4 +3661,34 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 		return true
 	}
 	return false
+}
+
+// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
+func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog bool) {
+	if sv.InRestrictedSQL {
+		return
+	}
+	sv.TxnCtxMu.Lock()
+	defer sv.TxnCtxMu.Unlock()
+	if sv.TxnCtx == nil {
+		return
+	}
+	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
+		for jobID, jobMDL := range jobs {
+			if _, ok := jobMDL.TableIDs[tblID.(int64)]; ok && value.(int64) < jobMDL.Ver {
+				delete(jobs, jobID)
+				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
+				logFn := logutil.BgLogger().Debug
+				if elapsedTime > time.Minute && printLog {
+					logFn = logutil.BgLogger().Info
+				}
+				logFn("old running transaction block DDL",
+					zap.Int64("table ID", tblID.(int64)),
+					zap.Int64("jobID", jobID),
+					zap.Uint64("connection ID", sv.ConnectionID),
+					zap.Duration("elapsed time", elapsedTime))
+			}
+		}
+		return true
+	})
 }

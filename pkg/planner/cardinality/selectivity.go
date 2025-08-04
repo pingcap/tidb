@@ -116,8 +116,7 @@ func Selectivity(
 		ret *= sel
 	}
 
-	extractedCols := make([]*expression.Column, 0, coll.ColNum())
-	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
+	extractedCols := expression.ExtractColumnsFromExpressions(remainedExprs, nil)
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
@@ -514,7 +513,6 @@ func CalcTotalSelectivityForMVIdxPath(
 				}
 			}
 			cols := expression.ExtractColumnsFromExpressions(
-				nil,
 				path.AccessConds,
 				func(column *expression.Column) bool {
 					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
@@ -591,6 +589,49 @@ func compareType(l, r int) int {
 }
 
 const unknownColumnID = math.MinInt64
+
+// staleLastBucketThreshold is the threshold for detecting stale last bucket estimates.
+// If the last bucket's count is less than 30% of the average bucket count, we consider
+// it potentially stale.
+const staleLastBucketThreshold = 0.3
+
+// valueAwareRowAddedThreshold is the minimum ratio of newly added rows relative to
+// the average value count required to trigger the stale bucket heuristic.
+// If new rows >= (avgValueCount * threshold), we consider applying the heuristic.
+const valueAwareRowAddedThreshold = 0.5
+
+// IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
+// has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
+func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum,
+	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
+	if modifyCount <= 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
+		return false
+	}
+
+	// This represents data changes since ANALYZE - we use absolute difference as a proxy for
+	// activity level since we cannot distinguish between inserts, deletes, and updates
+	newRowsAdded := hg.AbsRowCountDifference(realtimeRowCount)
+
+	// Calculate average count per distinct value
+	avgValueCount := hg.NotNullCount() / histNDV
+
+	// Only apply heuristic when new rows are significant relative to average value count
+	if newRowsAdded < avgValueCount*valueAwareRowAddedThreshold {
+		return false
+	}
+
+	// Use LocateBucket to check if this value is at the last bucket's upper bound
+	_, bucketIdx, inBucket, matchLastValue := hg.LocateBucket(sctx, val)
+
+	// Check if this is the last bucket's upper bound value (end value)
+	isLastBucketEndValue := (bucketIdx == len(hg.Buckets)-1) && inBucket && matchLastValue
+	if !isLastBucketEndValue {
+		return false
+	}
+
+	// If count is much less than average value count, it's likely underrepresented
+	return histCnt < avgValueCount*staleLastBucketThreshold
+}
 
 // getConstantColumnID receives two expressions and if one of them is column and another is constant, it returns the
 // ID of the column.
@@ -867,7 +908,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil
 	}
-	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
+	cols := expression.ExtractColumnsFromExpressions(filters, nil)
 	if len(cols) != 1 {
 		return false, 0, nil
 	}

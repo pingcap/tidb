@@ -118,6 +118,8 @@ const (
 	connStatusReading
 	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
 	connStatusWaitShutdown = 3                           // Notified by server to close.
+
+	tidbGatewayAttrsConnKey = "TiDB-Gateway-ConnID"
 )
 
 var (
@@ -1111,6 +1113,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
+						tidbGatewayConnID := cc.attrs[tidbGatewayAttrsConnKey]
+						cc.server.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, "read packet timeout")
 						logutil.Logger(ctx).Info("read packet timeout, close this connection",
 							zap.Duration("idle", idleTime),
 							zap.Uint64("waitTimeout", waitTimeout),
@@ -1344,6 +1348,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 		cc.server.releaseToken(token)
 		cc.lastActive = time.Now()
+		if cc.server.StandbyController != nil {
+			cc.server.StandbyController.OnConnActive()
+		}
 	}()
 
 	vars := cc.ctx.GetSessionVars()

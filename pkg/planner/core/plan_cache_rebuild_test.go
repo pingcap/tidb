@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -271,18 +272,18 @@ func TestCheckPlanClone(t *testing.T) {
 	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
 
 	// same map
-	l1 := &core.PhysicalLock{}
-	l2 := &core.PhysicalLock{}
+	l1 := &physicalop.PhysicalLock{}
+	l2 := &physicalop.PhysicalLock{}
 	l1.TblID2Handle = make(map[int64][]util.HandleCols)
 	l2.TblID2Handle = l1.TblID2Handle
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same map pointers, path *core.PhysicalLock.TblID2Handle")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same map pointers, path *physicalop.PhysicalLock.TblID2Handle")
 
 	// same pointer in map
 	l2.TblID2Handle = make(map[int64][]util.HandleCols)
 	cols := make([]util.HandleCols, 10)
 	l1.TblID2Handle[1] = cols
 	l2.TblID2Handle[1] = cols
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same slice pointers, path *core.PhysicalLock.TblID2Handle[int64]")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same slice pointers, path *physicalop.PhysicalLock.TblID2Handle[int64]")
 
 	// same sctx
 	l1.TblID2Handle[1] = nil
@@ -291,7 +292,7 @@ func TestCheckPlanClone(t *testing.T) {
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)
-	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *core.PhysicalLock.BasePhysicalPlan.Plan.ctx(*mock.Context)")
+	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same pointer, path *physicalop.PhysicalLock.BasePhysicalPlan.Plan.ctx(*mock.Context)")
 
 	// test tag
 	type S struct {

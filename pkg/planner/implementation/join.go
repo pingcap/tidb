@@ -16,6 +16,7 @@ package implementation
 
 import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 
@@ -53,7 +54,7 @@ type MergeJoinImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *MergeJoinImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	mergeJoin := impl.plan.(*plannercore.PhysicalMergeJoin)
+	mergeJoin := impl.plan.(*physicalop.PhysicalMergeJoin)
 	// The children here are only used to calculate the cost.
 	mergeJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
 	selfCost := mergeJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount(), 0)
@@ -63,12 +64,12 @@ func (impl *MergeJoinImpl) CalcCost(_ float64, children ...memo.Implementation) 
 
 // AttachChildren implements Implementation AttachChildren interface.
 func (impl *MergeJoinImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
-	mergeJoin := impl.plan.(*plannercore.PhysicalMergeJoin)
+	mergeJoin := impl.plan.(*physicalop.PhysicalMergeJoin)
 	mergeJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
 	return impl
 }
 
 // NewMergeJoinImpl creates a new MergeJoinImpl.
-func NewMergeJoinImpl(mergeJoin *plannercore.PhysicalMergeJoin) *MergeJoinImpl {
+func NewMergeJoinImpl(mergeJoin *physicalop.PhysicalMergeJoin) *MergeJoinImpl {
 	return &MergeJoinImpl{baseImpl{plan: mergeJoin}}
 }

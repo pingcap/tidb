@@ -58,7 +58,7 @@ func createFailDBSuiteWithLease(t *testing.T, lease time.Duration) (s *failedSui
 		}),
 	)
 	require.NoError(t, err)
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 

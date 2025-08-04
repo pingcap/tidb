@@ -104,7 +104,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	require.NoError(t, err)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
-	session.SetSchemaLease(time.Duration(*lease) * time.Second)
+	vardef.SetSchemaLease(time.Duration(*lease) * time.Second)
 	require.NoError(t, ddl.StartOwnerManager(context.Background(), s.store))
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)

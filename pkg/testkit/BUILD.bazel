@@ -35,6 +35,7 @@ go_library(
         "//pkg/session/sessionapi",
         "//pkg/session/sessmgr",
         "//pkg/session/txninfo",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/util",
         "//pkg/store",

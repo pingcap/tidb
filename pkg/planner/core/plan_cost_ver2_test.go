@@ -643,9 +643,9 @@ func TestIndexLookUpRowsLimit(t *testing.T) {
 	tk.MustExec(`create table t(a int, b int, key ia(a))`)
 	rs := tk.MustQuery("explain format='cost_trace' select * from t use index(ia) where a>6 limit 5 offset 100").Rows()
 	// the cost formula should consider limit-offset clause, only scan 5 rows
-	require.Equal(t, "(scan(5*logrowsize(24)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
+	require.Equal(t, "(scan(5*logrowsize(48)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
 	rs = tk.MustQuery("explain format='cost_trace' select * from t use index(ia) where a>6 limit 20 offset 100").Rows()
-	require.Equal(t, "(scan(20*logrowsize(24)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
+	require.Equal(t, "(scan(20*logrowsize(48)*tikv_scan_factor(40.7)))*1.00", rs[3][3].(string))
 }
 
 func TestTiFlashCostFactors(t *testing.T) {

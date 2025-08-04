@@ -62,7 +62,7 @@ func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
-	session.SetSchemaLease(5 * time.Second)
+	vardef.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -156,7 +156,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		}
 		t.Log("create realtikv store with keyspace:", ks)
 	}
-	session.SetSchemaLease(500 * time.Millisecond)
+	vardef.SetSchemaLease(500 * time.Millisecond)
 
 	path := *TiKVPath
 	if len(ks) > 0 {

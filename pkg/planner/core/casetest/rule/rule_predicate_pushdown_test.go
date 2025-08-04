@@ -49,11 +49,10 @@ func runPredicatePushdownTestData(t *testing.T, tk *testkit.TestKit, name string
 }
 
 func TestConstantPropagateWithCollation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	// create table
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key, name varchar(20));")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t (id int primary key, name varchar(20));")
 
-	runPredicatePushdownTestData(t, tk, "TestConstantPropagateWithCollation")
+		runPredicatePushdownTestData(t, testKit, "TestConstantPropagateWithCollation")
+	})
 }

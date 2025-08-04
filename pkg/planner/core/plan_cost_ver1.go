@@ -769,8 +769,9 @@ func (p *PhysicalApply) GetPlanCostVer1(taskType property.TaskType, option *opti
 	return p.PlanCost, nil
 }
 
-// GetCost computes cost of merge join operator itself.
-func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64 {
+// getCost4PhysicalMergeJoin computes cost of merge join operator itself.
+func getCost4PhysicalMergeJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64) float64 {
+	p := pp.(*physicalop.PhysicalMergeJoin)
 	outerCnt := lCnt
 	innerCnt := rCnt
 	innerKeys := p.RightJoinKeys
@@ -815,8 +816,9 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64, costFlag uint64) float64
 	return cpuCost + memoryCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalMergeJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalMergeJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalMergeJoin)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil

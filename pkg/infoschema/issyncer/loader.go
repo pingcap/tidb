@@ -87,7 +87,11 @@ type Loader struct {
 	logger  *zap.Logger
 
 	// below fields are set when running background routines
-	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
+	// Note: for cross keyspace loader, we don't set below fields as system tables
+	// are forbidden to use those features.
+	//
+	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the
+	// client to the autoid service.
 	autoidClient *autoid.ClientDiscover
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
@@ -200,6 +204,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
 				zap.Strings("diffTypes", diffTypes))
+			failpoint.InjectCall("afterLoadSchemaDiffs", is.SchemaMetaVersion())
 			return is, false, currentSchemaVersion, relatedChanges, nil
 		}
 		// We can fall back to full load, don't need to return the error.
