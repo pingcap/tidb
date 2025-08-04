@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -436,6 +437,11 @@ func FolderNotEmpty(path string) bool {
 
 // GenKeyExistsErr builds a ErrKeyExists error.
 func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	if bytes.HasPrefix(key, []byte{'x'}) && len(key) > 4 {
+		if len(keyspace.GetKeyspaceNameBySettings()) > 0 {
+			key = key[4:] // remove the keyspace prefix.
+		}
+	}
 	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
 	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
 	if err != nil {
