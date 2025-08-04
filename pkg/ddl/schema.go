@@ -188,7 +188,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}
-	trxTableName := "CLUSTER_TIDB_TRX"
+	trxTableName := infoschema.ClusterTableTiDBTrx
 	failpoint.Inject("mockModifySchemaReadOnlyDDL", func() {
 		trxTableName = "TIDB_TRX"
 	})
