@@ -140,7 +140,6 @@ go_test(
         "//pkg/util/cdcutil",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
-        "//pkg/util/etcd",
         "//pkg/util/logutil",
         "//pkg/util/mock",
         "//pkg/util/promutil",
