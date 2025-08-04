@@ -207,8 +207,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		// And the rows of rest columns after filtering may be discrete, so we need to add some penalty for it.
 		// so late materialization cost = lmRowSize * scanFactor * totalRowCount + restRowSize * scanFactor * rows * lateMaterializationFactor
 		// And for small tables, len(p.LateMaterializationFilterCondition) always equal to 0, so do
-		cols := make([]*expression.Column, 0, len(p.Columns))
-		cols = expression.ExtractColumnsFromExpressions(cols, p.LateMaterializationFilterCondition, nil)
+		cols := expression.ExtractColumnsFromExpressions(p.LateMaterializationFilterCondition, nil)
 		lmRowSize := getAvgRowSize(p.StatsInfo(), cols)
 		totalRowCount := rows/p.lateMaterializationSelectivity + TiFlashStartupRowPenalty
 		p.PlanCostVer2 = costusage.NewCostVer2(option, scanFactor,
