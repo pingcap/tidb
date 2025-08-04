@@ -551,14 +551,14 @@ partition by range (a) (
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	globalStats := h.GetTableStats(tableInfo)
+	globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(2)
 	// modify count is 2 because we didn't analyze p1 after the second insert
 	require.Equal(t, int64(9), globalStats.RealtimeCount)
 	require.Equal(t, int64(2), globalStats.ModifyCount)
 
 	tk.MustExec("analyze table t partition p1;")
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4) + p2.count(4)
 	// The value of modify count is 0 now.
 	require.Equal(t, int64(9), globalStats.RealtimeCount)
@@ -567,7 +567,7 @@ partition by range (a) (
 	tk.MustExec("alter table t drop partition p2;")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
 	require.Equal(t, int64(7), globalStats.RealtimeCount)
 }
@@ -604,7 +604,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	globalStats := h.GetTableStats(tableInfo)
+	globalStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
@@ -613,7 +613,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	// We will update the global-stats after the truncate operation.
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("analyze table t;")
@@ -621,7 +621,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	// The truncate operation only delete the data from the partition p2 and p4. It will not delete the partition-stats.
 	require.Len(t, result, 7)
 	// The result for the globalStats.count will be right now
-	globalStats = h.GetTableStats(tableInfo)
+	globalStats = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 }
 

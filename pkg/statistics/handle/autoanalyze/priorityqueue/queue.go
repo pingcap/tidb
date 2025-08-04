@@ -281,7 +281,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			if pi == nil {
 				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
+					pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID),
 				)
 				err := pq.pushWithoutLock(job)
 				if err != nil {
@@ -297,7 +297,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 					partitionDefs = append(partitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
+			partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 			// If the prune mode is static, we need to analyze every partition as a separate table.
 			if pruneMode == variable.Static {
 				for pIDAndName, stats := range partitionStats {
@@ -314,7 +314,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			} else {
 				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 					tblInfo,
-					pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
+					pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID),
 					partitionStats,
 				)
 				err := pq.pushWithoutLock(job)
@@ -551,11 +551,11 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 					filteredPartitionDefs = append(filteredPartitionDefs, def)
 				}
 			}
-			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
+			partitionStats := GetPartitionStats(pq.statsHandle, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 				tableMeta,
 				// Get global stats for dynamic partitioned table.
-				pq.statsHandle.GetTableStatsForAutoAnalyze(tableMeta),
+				pq.statsHandle.GetNonPseudoPhysicalTableStats(tableMeta.ID),
 				partitionStats,
 			)
 		}
@@ -589,7 +589,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		tableMeta := tableInfo.Meta()
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
-		partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
+		partitionStats := GetPartitionStats(pq.statsHandle, partitionDefs)
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 			tableMeta,
 			stats,

@@ -308,7 +308,7 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	// We simply choose one physical id to get its stats.
 	var tbl *statistics.Table
 	for _, pid := range physicalIDs {
-		tbl = sa.statsHandle.GetPartitionStats(tblInfo, pid)
+		tbl = sa.statsHandle.GetPhysicalTableStats(pid, tblInfo)
 		if !tbl.Pseudo {
 			break
 		}
@@ -468,7 +468,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			pi := tblInfo.GetPartitionInfo()
 			// No partitions, analyze the whole table.
 			if pi == nil {
-				statsTbl := statsHandle.GetTableStatsForAutoAnalyze(tblInfo)
+				statsTbl := statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
 				sql := "analyze table %n.%n"
 				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
@@ -485,7 +485,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 					partitionDefs = append(partitionDefs, def)
 				}
 			}
-			partitionStats := getPartitionStats(statsHandle, tblInfo, partitionDefs)
+			partitionStats := getPartitionStats(statsHandle, partitionDefs)
 			if pruneMode == variable.Dynamic {
 				analyzed := tryAutoAnalyzePartitionTableInDynamicMode(
 					sctx,
@@ -518,13 +518,12 @@ func RandomPickOneTableAndTryAutoAnalyze(
 
 func getPartitionStats(
 	statsHandle statstypes.StatsHandle,
-	tblInfo *model.TableInfo,
 	defs []model.PartitionDefinition,
 ) map[int64]*statistics.Table {
 	partitionStats := make(map[int64]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		partitionStats[def.ID] = statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, def.ID)
+		partitionStats[def.ID] = statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
 	}
 
 	return partitionStats
@@ -686,7 +685,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			zap.Int("analyze partition batch size", analyzePartitionBatchSize),
 		)
 
-		statsTbl := statsHandle.GetTableStats(tblInfo)
+		statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
@@ -731,7 +730,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			}
 		}
 		if len(needAnalyzePartitionNames) > 0 {
-			statsTbl := statsHandle.GetTableStats(tblInfo)
+			statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 
 			for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
