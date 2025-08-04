@@ -140,7 +140,9 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("}")
 		case "*core.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo", "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
+		case "*core.PhysPlanPartInfo":
+			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
+		case "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
 			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
 		case "kv.Handle":
 			c.write("if op.%v != nil {", f.Name)

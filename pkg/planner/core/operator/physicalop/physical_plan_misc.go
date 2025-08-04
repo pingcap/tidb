@@ -61,7 +61,8 @@ type PhysPlanPartInfo struct {
 
 const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
 
-func (pi *PhysPlanPartInfo) cloneForPlanCache() *PhysPlanPartInfo {
+// CloneForPlanCache clones the PhysPlanPartInfo for plan cache.
+func (pi *PhysPlanPartInfo) CloneForPlanCache() *PhysPlanPartInfo {
 	if pi == nil {
 		return nil
 	}

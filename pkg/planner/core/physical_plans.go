@@ -1689,40 +1689,6 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 	return statsInfos
 }
 
-// PhysicalShow represents a show plan.
-type PhysicalShow struct {
-	physicalop.PhysicalSchemaProducer
-
-	logicalop.ShowContents
-
-	Extractor base.ShowPredicateExtractor
-}
-
-// MemoryUsage return the memory usage of PhysicalShow
-func (p *PhysicalShow) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.ShowContents.MemoryUsage() + size.SizeOfInterface
-	return
-}
-
-// PhysicalShowDDLJobs is for showing DDL job list.
-type PhysicalShowDDLJobs struct {
-	physicalop.PhysicalSchemaProducer
-
-	JobNumber int64
-}
-
-// MemoryUsage return the memory usage of PhysicalShowDDLJobs
-func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-	return p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt64
-}
-
 // SafeClone clones this op.PhysicalPlan and handles its panic.
 func SafeClone(sctx base.PlanContext, v base.PhysicalPlan) (_ base.PhysicalPlan, err error) {
 	defer func() {

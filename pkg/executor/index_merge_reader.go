@@ -621,7 +621,7 @@ type partialTableWorker struct {
 	prunedPartitions   []table.PhysicalTable
 	byItems            []*plannerutil.ByItems
 	scannedKeys        uint64
-	pushedLimit        *plannercore.PushedDownLimit
+	pushedLimit        *physicalop.PushedDownLimit
 }
 
 // needPartitionHandle indicates whether we need create a partitionHandle or not.
@@ -1172,7 +1172,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 	}
 }
 
-func pushedLimitCountingDown(pushedLimit *plannercore.PushedDownLimit, handles []kv.Handle) (next bool, res []kv.Handle) {
+func pushedLimitCountingDown(pushedLimit *physicalop.PushedDownLimit, handles []kv.Handle) (next bool, res []kv.Handle) {
 	fhsLen := uint64(len(handles))
 	// The number of handles is less than the offset, discard all handles.
 	if fhsLen <= pushedLimit.Offset {
@@ -1202,7 +1202,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 	defer close(workCh)
 	failpoint.Inject("testIndexMergePanicProcessWorkerUnion", nil)
 
-	var pushedLimit *plannercore.PushedDownLimit
+	var pushedLimit *physicalop.PushedDownLimit
 	if w.indexMerge.pushedLimit != nil {
 		pushedLimit = w.indexMerge.pushedLimit.Clone()
 	}
@@ -1301,7 +1301,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 // intersectionCollectWorker is used to dispatch index-merge-table-task to original workCh and resultCh.
 // a kind of interceptor to control the pushed down limit restriction. (should be no performance impact)
 type intersectionCollectWorker struct {
-	pushedLimit *plannercore.PushedDownLimit
+	pushedLimit *physicalop.PushedDownLimit
 	collectCh   chan *indexMergeTableTask
 	limitDone   chan struct{}
 }
@@ -1675,7 +1675,7 @@ type partialIndexWorker struct {
 	prunedPartitions   []table.PhysicalTable
 	byItems            []*plannerutil.ByItems
 	scannedKeys        uint64
-	pushedLimit        *plannercore.PushedDownLimit
+	pushedLimit        *physicalop.PushedDownLimit
 	dagPB              *tipb.DAGRequest
 	plan               []base.PhysicalPlan
 }

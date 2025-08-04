@@ -56,22 +56,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalShow.
-func (p PhysicalShow) Init(ctx base.PlanContext) *PhysicalShow {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShow, &p, 0)
-	// Just use pseudo stats to avoid panic.
-	p.SetStats(&property.StatsInfo{RowCount: 1})
-	return &p
-}
-
-// Init initializes PhysicalShowDDLJobs.
-func (p PhysicalShowDDLJobs) Init(ctx base.PlanContext) *PhysicalShowDDLJobs {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShowDDLJobs, &p, 0)
-	// Just use pseudo stats to avoid panic.
-	p.SetStats(&property.StatsInfo{RowCount: 1})
-	return &p
-}
-
 // Init initializes PhysicalLock.
 func (p PhysicalLock) Init(ctx base.PlanContext, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalLock {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeLock, &p, 0)

@@ -872,7 +872,7 @@ func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 		root.SetPlan(extraProj)
 	}
 
-	reader.PushedLimit = &PushedDownLimit{
+	reader.PushedLimit = &physicalop.PushedDownLimit{
 		Offset: p.Offset,
 		Count:  p.Count,
 	}
@@ -906,7 +906,7 @@ func sinkIntoIndexMerge(p *physicalop.PhysicalLimit, t base.Task) bool {
 	if !ok {
 		return false
 	}
-	imReader.PushedLimit = &PushedDownLimit{
+	imReader.PushedLimit = &physicalop.PushedDownLimit{
 		Count:  p.Count,
 		Offset: p.Offset,
 	}
