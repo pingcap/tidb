@@ -174,26 +174,20 @@ func (w *DataWriter) FetchCloudStoragePath(
 func (w *DataWriter) MarkPartitionUploadFinished(
 	ctx context.Context,
 	ticiMgr *ManagerCtx,
-	s3PathOpt ...string,
+	lowerBound, upperBound []byte,
 ) error {
 	logger := w.logger
-	s3Path := w.s3Path
-	if len(s3PathOpt) > 0 && s3PathOpt[0] != "" {
-		s3Path = s3PathOpt[0]
-	}
-	if s3Path == "" {
-		logger.Warn("no s3Path set for MarkPartitionUploadFinished")
-		return nil // or return an error if s3Path is required
-	}
-	err := ticiMgr.MarkPartitionUploadFinished(ctx, s3Path)
+	err := ticiMgr.MarkPartitionUploadFinished(ctx, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound)
 	if err != nil {
 		logger.Error("failed to mark partition upload finished",
-			zap.String("s3Path", s3Path),
+			zap.String("startKey", string(lowerBound)),
+			zap.String("endKey", string(upperBound)),
 			zap.Error(err),
 		)
 	} else {
 		logger.Info("successfully marked partition upload finished",
-			zap.String("s3Path", s3Path),
+			zap.String("startKey", string(lowerBound)),
+			zap.String("endKey", string(upperBound)),
 		)
 	}
 	return err
@@ -455,12 +449,13 @@ func (g *DataWriterGroup) FetchCloudStoragePath(
 // Optionally, you can pass a slice of s3Paths to override the stored s3Path for each writer.
 func (g *DataWriterGroup) MarkPartitionUploadFinished(
 	ctx context.Context,
+	lowerBound, upperBound []byte,
 ) error {
 	if !g.writable.Load() {
 		return nil
 	}
 	for _, w := range g.writers {
-		if err := w.MarkPartitionUploadFinished(ctx, g.mgrCtx); err != nil {
+		if err := w.MarkPartitionUploadFinished(ctx, g.mgrCtx, lowerBound, upperBound); err != nil {
 			return err
 		}
 	}

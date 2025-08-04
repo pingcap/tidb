@@ -231,7 +231,7 @@ func TestTiCIDataWriterGroup_FetchCloudStoragePath_NotWritable(t *testing.T) {
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
 		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetCloudStoragePathResponse{Status: 0}, nil).
+		Return(&GetImportStoragePathResponse{Status: 0}, nil).
 		Once()
 	group := &DataWriterGroup{mgrCtx: ticiMgr}
 	group.writable.Store(false)
@@ -249,7 +249,7 @@ func TestTiCIDataWriterGroup_MarkPartitionUploadFinished_NotWritable(t *testing.
 		Once()
 	group := &DataWriterGroup{mgrCtx: ticiMgr}
 	group.writable.Store(false)
-	err := group.MarkPartitionUploadFinished(ctx)
+	err := group.MarkPartitionUploadFinished(ctx, nil, nil)
 	assert.NoError(t, err)
 }
 

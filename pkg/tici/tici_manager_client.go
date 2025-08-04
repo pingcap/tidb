@@ -264,60 +264,13 @@ func (t *ManagerCtx) GetCloudStoragePath(
 	schemaName string,
 	lowerBound, upperBound []byte,
 ) (string, error) {
-	// Convert model.IndexInfo to IndexInfo and extract information needed
-	indexColumns := make([]*ColumnInfo, 0)
-	for i := range indexInfo.Columns {
-		offset := indexInfo.Columns[i].Offset
-		indexColumns = append(indexColumns, &ColumnInfo{
-			ColumnId:     tblInfo.Columns[offset].ID,
-			ColumnName:   tblInfo.Columns[offset].Name.String(),
-			Type:         int32(tblInfo.Columns[offset].GetType()),
-			ColumnLength: int32(tblInfo.Columns[offset].FieldType.StorageLength()),
-			Decimal:      int32(tblInfo.Columns[offset].GetDecimal()),
-			DefaultVal:   tblInfo.Columns[offset].DefaultValueBit,
-			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[offset].GetFlag()),
-			IsArray:      len(indexInfo.Columns) > 1,
-		})
-	}
-	indexerIndexInfo := &IndexInfo{
-		TableId:   tblInfo.ID,
-		IndexId:   indexInfo.ID,
-		IndexName: indexInfo.Name.String(),
-		IndexType: IndexType_FULL_TEXT,
-		Columns:   indexColumns,
-		IsUnique:  indexInfo.Unique,
-		ParserInfo: &ParserInfo{
-			ParserType: ParserType_DEFAULT_PARSER,
-		},
-	}
-
-	tableColumns := make([]*ColumnInfo, 0)
-	for i := range tblInfo.Columns {
-		tableColumns = append(tableColumns, &ColumnInfo{
-			ColumnId:     tblInfo.Columns[i].ID,
-			ColumnName:   tblInfo.Columns[i].Name.String(),
-			Type:         int32(tblInfo.Columns[i].GetType()),
-			ColumnLength: int32(tblInfo.Columns[i].FieldType.StorageLength()),
-			Decimal:      int32(tblInfo.Columns[i].GetDecimal()),
-			DefaultVal:   tblInfo.Columns[i].DefaultValueBit,
-			IsPrimaryKey: mysql.HasPriKeyFlag(tblInfo.Columns[i].GetFlag()),
-			IsArray:      len(tblInfo.Columns) > 1,
-		})
-	}
-	indexerTableInfo := &TableInfo{
-		TableId:      tblInfo.ID,
-		TableName:    tblInfo.Name.L,
-		DatabaseName: schemaName,
-		Version:      int64(tblInfo.Version),
-		Columns:      tableColumns,
-		IsClustered:  tblInfo.HasClusteredIndex(),
-	}
-
 	req := &GetImportStoragePathRequest{
-		IndexInfo:  indexerIndexInfo,
-		TableInfo:  indexerTableInfo,
-		LowerBound: lowerBound,
-		UpperBound: upperBound,
+		TableId: tblInfo.ID,
+		IndexId: indexInfo.ID,
+		KeyRange: &KeyRange{
+			StartKey: lowerBound,
+			EndKey:   upperBound,
+		},
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -335,16 +288,16 @@ func (t *ManagerCtx) GetCloudStoragePath(
 	}
 	if resp.Status != 0 {
 		logutil.BgLogger().Error("Request TiCI cloud storage path failed",
-			zap.Int64("tableID", indexerTableInfo.TableId),
-			zap.Int64("indexID", indexerIndexInfo.TableId),
+			zap.Int64("tableID", tblInfo.ID),
+			zap.Int64("indexID", indexInfo.ID),
 			zap.String("startKey", string(lowerBound)),
 			zap.String("endKey", string(upperBound)),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return "", fmt.Errorf("tici cloud storage path error: %s", resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("Requested TiCI cloud storage path",
-		zap.Int64("tableID", indexerTableInfo.TableId),
-		zap.Int64("indexID", indexerIndexInfo.TableId),
+		zap.Int64("tableID", tblInfo.ID),
+		zap.Int64("indexID", indexInfo.ID),
 		zap.String("startKey", string(lowerBound)),
 		zap.String("endKey", string(upperBound)),
 		zap.String("filepath", resp.S3Path))
@@ -354,10 +307,17 @@ func (t *ManagerCtx) GetCloudStoragePath(
 // MarkPartitionUploadFinished notifies TiCI Meta Service that all partitions for the given table are uploaded.
 func (t *ManagerCtx) MarkPartitionUploadFinished(
 	ctx context.Context,
-	s3Path string,
+	tableId int64,
+	indexId int64,
+	lowerBound, upperBound []byte,
 ) error {
 	req := &MarkPartitionUploadFinishedRequest{
-		S3Path: s3Path,
+		TableId: tableId,
+		IndexId: indexId,
+		KeyRange: &KeyRange{
+			StartKey: lowerBound,
+			EndKey:   upperBound,
+		},
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -375,11 +335,17 @@ func (t *ManagerCtx) MarkPartitionUploadFinished(
 	}
 	if resp.Status != 0 {
 		logutil.BgLogger().Error("MarkPartitionUploadFinished failed",
-			zap.String("s3Path", s3Path),
+			zap.Int64("tableID", tableId),
+			zap.Int64("indexID", indexId),
+			zap.String("startKey", string(lowerBound)),
+			zap.String("endKey", string(upperBound)),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return fmt.Errorf("tici mark partition upload finished error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("MarkPartitionUploadFinished success", zap.String("s3Path", s3Path))
+	logutil.BgLogger().Info("MarkPartitionUploadFinished success", zap.Int64("tableID", tableId),
+		zap.Int64("indexID", indexId),
+		zap.String("startKey", string(lowerBound)),
+		zap.String("endKey", string(upperBound)))
 	return nil
 }
 

@@ -651,7 +651,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		if err := local.ticiWriteGroup.CloseFileWriters(ctx); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.CloseFileWriters failed")
 		}
-		if err := local.ticiWriteGroup.MarkPartitionUploadFinished(ctx); err != nil {
+		if err := local.ticiWriteGroup.MarkPartitionUploadFinished(ctx, j.keyRange.Start, j.keyRange.End); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.MarkPartitionUploadFinished failed")
 		}
 	}
