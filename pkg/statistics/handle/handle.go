@@ -172,25 +172,39 @@ func NewHandle(
 }
 
 // GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
-func (h *Handle) GetPhysicalTableStats(tableID int64, tblInfo *model.TableInfo) *statistics.Table {
-	return h.getStatsByPhysicalID(tableID, tblInfo)
+// physicalTableID can be a table ID or partition ID.
+func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
+	intest.Assert(h != nil, "stats handle is nil")
+	tblStats := h.getStatsByPhysicalID(physicalTableID, tblInfo)
+	intest.Assert(tblStats != nil, "stats shoud not be nil")
+	return tblStats
 }
 
 // GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
+// physcialTableID can be a table ID or partition ID.
 // Note: this function may return nil if the table is not found in the cache.
-func (h *Handle) GetNonPseudoPhysicalTableStats(tableID int64) *statistics.Table {
-	return h.getStatsByPhysicalID(tableID, nil)
+func (h *Handle) GetNonPseudoPhysicalTableStats(physicalTableID int64) *statistics.Table {
+	intest.Assert(h != nil, "stats handle is nil")
+	return h.getStatsByPhysicalID(physicalTableID, nil)
 }
 
-func (h *Handle) getStatsByPhysicalID(pid int64, tblInfo *model.TableInfo) *statistics.Table {
+func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
 	intest.Assert(h != nil, "stats handle is nil")
+	// Just in case.
+	if h == nil {
+		if tblInfo != nil {
+			tbl := statistics.PseudoTable(tblInfo, false, false)
+			tbl.PhysicalID = physicalTableID
+			return tbl
+		}
+		return nil
+	}
 
-	var tbl *statistics.Table
-	tbl, ok := h.Get(pid)
+	tbl, ok := h.Get(physicalTableID)
 	if !ok {
 		if tblInfo != nil {
 			tbl = statistics.PseudoTable(tblInfo, false, true)
-			tbl.PhysicalID = pid
+			tbl.PhysicalID = physicalTableID
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 				h.UpdateStatsCache(types.CacheUpdate{
 					Updated: []*statistics.Table{tbl},

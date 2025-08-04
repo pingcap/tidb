@@ -508,13 +508,16 @@ type StatsHandle interface {
 	handleutil.TableInfoGetter
 
 	// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
-	GetPhysicalTableStats(tableID int64, tblInfo *model.TableInfo) *statistics.Table
+	// physicalTableID can be a table ID or partition ID.
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 
 	//  GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
+	// physicalTableID can be a table ID or partition ID.
 	//  Note: this function may return nil if the table is not found in the cache.
-	GetNonPseudoPhysicalTableStats(tableID int64) *statistics.Table
+	GetNonPseudoPhysicalTableStats(physicalTableID int64) *statistics.Table
 
 	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+	// TODO: remove this function and use GetPhysicalTableStats instead.
 	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
 
 	// StatsGC is used to do the GC job.
