@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -44,8 +45,8 @@ type ManagerCtx struct {
 // The same as https://github.com/pingcap-inc/tici/blob/master/src/servicediscovery/mod.rs#L4
 const MetaServiceEelectionKey = "/tici/metaservice/election"
 
-// NewTiCIManager creates a new TiCI manager.
-func NewTiCIManager(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
+// NewManagerCtx creates a new TiCI manager.
+func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
 	addr, err := getMetaServiceLeaderAddress(ctx, client)
 	if err != nil {
 		return nil, err
@@ -58,6 +59,23 @@ func NewTiCIManager(ctx context.Context, client *clientv3.Client) (*ManagerCtx, 
 	ctx, cancel := context.WithCancel(ctx)
 	managerCtx := &ManagerCtx{
 		metaServiceClient: NewMetaServiceClient(conn),
+		ctx:               ctx,
+		cancel:            cancel,
+	}
+	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
+	managerCtx.wg.Add(1)
+	go func() {
+		defer managerCtx.wg.Done()
+		managerCtx.updateClient(ch)
+	}()
+	return managerCtx, nil
+}
+
+// NewNilManagerCtx creates a new TiCI manager with a nil MetaServiceClient.
+func NewNilManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	managerCtx := &ManagerCtx{
+		metaServiceClient: nil,
 		ctx:               ctx,
 		cancel:            cancel,
 	}
@@ -400,6 +418,52 @@ func (t *ManagerCtx) MarkTableUploadFinished(
 		zap.Int64("tableID", tableID),
 		zap.Int64("indexID", indexID))
 	return nil
+}
+
+// ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
+func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardLocalCacheInfo, error) {
+	ticiKeyRanges := make([]*KeyRange, 0, len(keyRanges))
+	for _, r := range keyRanges {
+		ticiKeyRanges = append(ticiKeyRanges, &KeyRange{
+			StartKey: r.StartKey,
+			EndKey:   r.EndKey,
+		})
+	}
+
+	request := &GetShardLocalCacheRequest{
+		TableId:   tableID,
+		IndexId:   indexID,
+		KeyRanges: ticiKeyRanges,
+		Limit:     int32(limit),
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.metaServiceClient == nil {
+		var errMsg string
+		if t.err != nil {
+			errMsg = t.err.Error()
+		}
+		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
+		return nil, errors.Wrap(t.err, "meta service client is nil")
+	}
+	resp, err := t.metaServiceClient.GetShardLocalCacheInfo(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Status != 0 {
+		return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %d", resp.Status)
+	}
+
+	var s = "ShardLocalCacheInfos:["
+	for _, info := range resp.ShardLocalCacheInfos {
+		if info != nil {
+			s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
+				info.Shard.ShardId, info.Shard.StartKey, info.Shard.EndKey, info.Shard.Epoch, info.LocalCacheAddrs)
+		}
+	}
+	s += "]"
+	logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
+	return resp.ShardLocalCacheInfos, nil
 }
 
 // ModelTableToTiCITableInfo converts a model.TableInfo to a TableInfo.

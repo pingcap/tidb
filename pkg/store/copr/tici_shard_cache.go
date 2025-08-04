@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 )
 
 const (
@@ -108,53 +108,28 @@ type Client interface {
 
 // TiCIShardCacheClient is a gRPC client for the TiCI shard cache service.
 type TiCIShardCacheClient struct {
-	c *grpc.ClientConn
+	client     *tici.ManagerCtx
+	etcdClient *clientv3.Client
 }
 
 // NewTiCIShardCacheClient creates a new TiCIShardCacheClient instance.
-func NewTiCIShardCacheClient() (*TiCIShardCacheClient, error) {
-	c, err := grpc.DialContext(context.Background(), "127.0.0.1:50061", grpc.WithInsecure())
-	return &TiCIShardCacheClient{c}, err
+func NewTiCIShardCacheClient(etcdClient *clientv3.Client) (*TiCIShardCacheClient, error) {
+	client, err := tici.NewNilManagerCtx(context.Background(), etcdClient)
+	if err != nil {
+		return nil, err
+	}
+	return &TiCIShardCacheClient{client: client, etcdClient: etcdClient}, nil
 }
 
 // ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
 func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) (ret []*ShardWithAddr, err error) {
-	ticiKeyRanges := make([]*tici.KeyRange, 0, len(keyRanges))
-	for _, r := range keyRanges {
-		ticiKeyRanges = append(ticiKeyRanges, &tici.KeyRange{
-			StartKey: r.StartKey,
-			EndKey:   r.EndKey,
-		})
-	}
-
-	request := &tici.GetShardLocalCacheRequest{
-		TableId:   tableID,
-		IndexId:   indexID,
-		KeyRanges: ticiKeyRanges,
-		Limit:     int32(limit),
-	}
-
-	response := new(tici.GetShardLocalCacheResponse)
-	err = c.c.Invoke(ctx, tici.MetaService_GetShardLocalCacheInfo_FullMethodName, request, response)
+	infos, err := c.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
 	if err != nil {
 		return nil, err
 	}
-	if response.Status != 0 {
-		return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %d", response.Status)
-	}
-
-	var s = "ShardLocalCacheInfos:["
-	for _, info := range response.ShardLocalCacheInfos {
-		if info != nil {
-			s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
-				info.Shard.ShardId, info.Shard.StartKey, info.Shard.EndKey, info.Shard.Epoch, info.LocalCacheAddrs)
-		}
-	}
-	s += "]"
-	logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
 
 	ts := time.Now().Unix()
-	for _, s := range response.ShardLocalCacheInfos {
+	for _, s := range infos {
 		if s != nil {
 			shard := &ShardWithAddr{}
 			shard.ShardID = s.Shard.ShardId
@@ -172,7 +147,12 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 
 // Close closes the gRPC client connection.
 func (c *TiCIShardCacheClient) Close() {
-	c.c.Close()
+	if c.client != nil {
+		c.client.Close()
+	}
+	if err := c.etcdClient.Close(); err != nil {
+		logutil.BgLogger().Error("failed to close etcd client", zap.Error(err))
+	}
 }
 
 // TiCIShardCache is a cache for TiCI shard information.
