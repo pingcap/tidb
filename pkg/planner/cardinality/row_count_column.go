@@ -420,7 +420,6 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 	if len(idxCols) == 1 {
 		count, err := GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
 		return count, 0, err
-
 	}
 	tmpRan := []*ranger.Range{
 		{
