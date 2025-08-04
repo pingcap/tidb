@@ -276,6 +276,8 @@ type Config struct {
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
+	// Standby is the config for standby mode.
+	Standby Standby `toml:"standby" json:"standby"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -888,6 +890,20 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+}
+
+// Standby is the config for standby mode.
+type Standby struct {
+	// StandByMode indicates whether to enable the standby mode.
+	StandByMode bool `toml:"standby-mode" json:"standby-mode"`
+	// MaxIdleSeconds specifies the maximum idle time in seconds before tidb exits.
+	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
+	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
+	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+	// EnableZeroBackend is used to control the behavior of standby idle watcher.
+	// When it is enabled, the idle watcher will not wait for session migration
+	// and will not consider client interactive connections.
+	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()

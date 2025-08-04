@@ -26,30 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes PhysicalWindow.
-func (p PhysicalWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalShuffle.
-func (p PhysicalShuffle) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffle {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShuffle, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalShuffleReceiverStub.
-func (p PhysicalShuffleReceiverStub) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleReceiverStub {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiver, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes Update.
 func (p Update) Init(ctx base.PlanContext) *Update {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
@@ -121,13 +97,6 @@ func (p PhysicalHashJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, 
 	tp := plancodec.TypeHashJoin
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, tp, &p, offset)
 	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalMergeJoin.
-func (p PhysicalMergeJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalMergeJoin {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMergeJoin, &p, offset)
 	p.SetStats(stats)
 	return &p
 }

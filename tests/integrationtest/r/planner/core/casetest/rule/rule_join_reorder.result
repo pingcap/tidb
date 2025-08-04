@@ -4633,9 +4633,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#7->Column#11
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
@@ -4649,9 +4649,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	estRows	task	access object	operator info
 HashJoin	4.69	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5132,9 +5132,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
@@ -5148,9 +5148,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -5166,9 +5166,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format = 'brief' select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -5184,9 +5184,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -5203,9 +5203,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 explain format = 'brief' select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -5221,9 +5221,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -6869,9 +6869,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │     └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
@@ -6884,9 +6884,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │     └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
@@ -6901,9 +6901,9 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
   │     └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
   └─MaxOneRow(Probe)	1.00	root		
     └─Projection	2.00	root		Column#10->Column#14
-      └─IndexReader	1.76	root		index:Selection
-        └─Selection	1.76	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
-          └─IndexFullScan	2.20	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
+      └─IndexReader	81.98	root		index:Selection
+        └─Selection	81.98	cop[tikv]		gt(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+          └─IndexFullScan	102.48	cop[tikv]	table:t2, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format = 'brief' select /*+ leading(t4, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);

@@ -582,7 +582,7 @@ id	estRows	task	access object	operator info
 Limit	2.00	root		offset:0, count:2
 └─IndexReader	2.00	root		index:Limit
   └─Limit	2.00	cop[tikv]		offset:0, count:2
-    └─IndexRangeScan	2.62	cop[tikv]	table:t0, index:a(a, b)	range:[2,2], keep order:true, stats:pseudo
+    └─IndexRangeScan	2.50	cop[tikv]	table:t0, index:a(a, b)	range:[2,2], keep order:true, stats:pseudo
 explain format = 'brief' select * from t1 where a >= 2 and a <= 2 and b = 2 and c > 2;
 id	estRows	task	access object	operator info
 IndexReader	1.25	root		index:IndexRangeScan
@@ -1151,15 +1151,15 @@ TableReader_8	3.00	130.42	root		data:Selection_7
   └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_13	1.00	98.74	root		offset:0, count:1
-└─TableReader_33	1.00	98.74	root		data:Limit_32
+Limit_13	1.00	105.07	root		offset:0, count:1
+└─TableReader_33	1.00	105.07	root		data:Limit_32
   └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_9	1.00	98.74	root		offset:0, count:1
-└─TableReader_16	1.00	98.74	root		data:Limit_15
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_16	1.00	105.07	root		data:Limit_15
   └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
@@ -1171,15 +1171,15 @@ TableReader_8	3.00	130.42	root		data:Selection_7
   └─TableFullScan_6	5.00	1136.54	cop[tikv]	table:t	keep order:false
 explain format = 'verbose' select * from t where b = 6 order by a limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_13	1.00	98.74	root		offset:0, count:1
-└─TableReader_33	1.00	98.74	root		data:Limit_32
+Limit_13	1.00	105.07	root		offset:0, count:1
+└─TableReader_33	1.00	105.07	root		data:Limit_32
   └─Limit_32	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_31	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_30	5.00	1136.54	cop[tikv]	table:t	keep order:true
 explain format = 'verbose' select * from t where b = 6 limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_9	1.00	98.74	root		offset:0, count:1
-└─TableReader_16	1.00	98.74	root		data:Limit_15
+Limit_9	1.00	105.07	root		offset:0, count:1
+└─TableReader_16	1.00	105.07	root		data:Limit_15
   └─Limit_15	1.00	1386.04	cop[tikv]		offset:0, count:1
     └─Selection_14	1.00	1386.04	cop[tikv]		eq(planner__core__casetest__integration.t.b, 6)
       └─TableFullScan_13	5.00	1136.54	cop[tikv]	table:t	keep order:false
