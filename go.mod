@@ -33,7 +33,7 @@ require (
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.1
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
-	github.com/daixiang0/gci v0.13.6
+	github.com/daixiang0/gci v0.13.7
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
@@ -51,7 +51,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
-	github.com/golangci/golangci-lint/v2 v2.3.0
+	github.com/golangci/golangci-lint/v2 v2.3.1
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.7.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -170,7 +170,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
-	github.com/ldez/grignotin v0.9.0 // indirect
+	github.com/ldez/grignotin v0.10.0 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
