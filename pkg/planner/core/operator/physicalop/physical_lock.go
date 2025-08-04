@@ -47,23 +47,23 @@ func (p PhysicalLock) Init(ctx base.PlanContext, stats *property.StatsInfo, prop
 }
 
 // MemoryUsage return the memory usage of PhysicalLock
-func (pl *PhysicalLock) MemoryUsage() (sum int64) {
-	if pl == nil {
+func (p *PhysicalLock) MemoryUsage() (sum int64) {
+	if p == nil {
 		return
 	}
 
-	sum = pl.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
-	if pl.Lock != nil {
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
+	if p.Lock != nil {
 		sum += int64(unsafe.Sizeof(ast.SelectLockInfo{}))
 	}
 
-	for _, vals := range pl.TblID2Handle {
+	for _, vals := range p.TblID2Handle {
 		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(vals))*size.SizeOfInterface
 		for _, val := range vals {
 			sum += val.MemoryUsage()
 		}
 	}
-	for _, val := range pl.TblID2PhysTblIDCol {
+	for _, val := range p.TblID2PhysTblIDCol {
 		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
 	}
 	return
