@@ -117,8 +117,7 @@ func Selectivity(
 		ret *= sel
 	}
 
-	extractedCols := make([]*expression.Column, 0, coll.ColNum())
-	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
+	extractedCols := expression.ExtractColumnsFromExpressions(remainedExprs, nil)
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
@@ -515,7 +514,6 @@ func CalcTotalSelectivityForMVIdxPath(
 				}
 			}
 			cols := expression.ExtractColumnsFromExpressions(
-				nil,
 				path.AccessConds,
 				func(column *expression.Column) bool {
 					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
@@ -912,7 +910,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil
 	}
-	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
+	cols := expression.ExtractColumnsFromExpressions(filters, nil)
 	if len(cols) != 1 {
 		return false, 0, nil
 	}
