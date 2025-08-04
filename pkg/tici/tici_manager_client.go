@@ -41,9 +41,9 @@ type ManagerCtx struct {
 	wg                sync.WaitGroup     // wg is used to wait for goroutines to finish
 }
 
-// MetaServiceEelectionKey is the election path used for meta service leader election.
+// MetaServiceElectionKey is the election path used for meta service leader election.
 // The same as https://github.com/pingcap-inc/tici/blob/master/src/servicediscovery/mod.rs#L4
-const MetaServiceEelectionKey = "/tici/metaservice/election"
+const MetaServiceElectionKey = "/tici/metaservice/election"
 
 // NewManagerCtx creates a new TiCI manager.
 func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
@@ -62,7 +62,7 @@ func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, e
 		ctx:               ctx,
 		cancel:            cancel,
 	}
-	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
+	ch := client.Watch(managerCtx.ctx, MetaServiceElectionKey, clientv3.WithPrefix())
 	managerCtx.wg.Add(1)
 	go func() {
 		defer managerCtx.wg.Done()
@@ -79,7 +79,7 @@ func NewNilManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx
 		ctx:               ctx,
 		cancel:            cancel,
 	}
-	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
+	ch := client.Watch(managerCtx.ctx, MetaServiceElectionKey, clientv3.WithPrefix())
 	managerCtx.wg.Add(1)
 	go func() {
 		defer managerCtx.wg.Done()
@@ -89,7 +89,7 @@ func NewNilManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx
 }
 
 func getMetaServiceLeaderAddress(ctx context.Context, client *clientv3.Client) (string, error) {
-	resp, err := client.Get(ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
+	resp, err := client.Get(ctx, MetaServiceElectionKey, clientv3.WithPrefix())
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get meta service election key")
 	}
@@ -103,7 +103,7 @@ func getMetaServiceLeaderAddress(ctx context.Context, client *clientv3.Client) (
 	return string(kv.Value), nil
 }
 
-// updateClient listens for changes in the MetaServiceEelectionKey in etcd and updates the metaServiceClient accordingly.
+// updateClient listens for changes in the MetaServiceElectionKey in etcd and updates the metaServiceClient accordingly.
 func (t *ManagerCtx) updateClient(ch clientv3.WatchChan) {
 	for resp := range ch {
 		for _, event := range resp.Events {
@@ -313,7 +313,7 @@ func (t *ManagerCtx) GetCloudStoragePath(
 		IsClustered:  tblInfo.HasClusteredIndex(),
 	}
 
-	req := &GetCloudStoragePathRequest{
+	req := &GetImportStoragePathRequest{
 		IndexInfo:  indexerIndexInfo,
 		TableInfo:  indexerTableInfo,
 		LowerBound: lowerBound,
@@ -329,7 +329,7 @@ func (t *ManagerCtx) GetCloudStoragePath(
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
 		return "", errors.Wrap(t.err, "meta service client is nil")
 	}
-	resp, err := t.metaServiceClient.GetCloudStoragePath(ctx, req)
+	resp, err := t.metaServiceClient.GetImportStoragePath(ctx, req)
 	if err != nil {
 		return "", err
 	}

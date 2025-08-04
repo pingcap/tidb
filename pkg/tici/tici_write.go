@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -229,11 +228,11 @@ func (w *DataWriter) WriteHeader(ctx context.Context, commitTS uint64) error {
 	pkIdxPB := ModelPrimaryKeyToTiCIIndexInfo(w.tblInfo)
 
 	// Use proto.Marshal to serialize TableInfo and IndexInfo.
-	tblBytes, err := proto.Marshal(tblPB)
+	tblBytes, err := tblPB.Marshal()
 	if err != nil {
 		return errors.Annotate(err, "marshal TableInfo (proto)")
 	}
-	idxBytes, err := proto.Marshal(idxPB)
+	idxBytes, err := idxPB.Marshal()
 	if err != nil {
 		return errors.Annotate(err, "marshal IndexInfo (proto)")
 	}
@@ -243,7 +242,7 @@ func (w *DataWriter) WriteHeader(ctx context.Context, commitTS uint64) error {
 	if pkIdxPB == nil {
 		pkIdxBytes = nil
 	} else {
-		pkIdxBytes, err = proto.Marshal(pkIdxPB)
+		pkIdxBytes, err = pkIdxPB.Marshal()
 		if err != nil {
 			return errors.Annotate(err, "marshal PKIndexInfo (proto)")
 		}
