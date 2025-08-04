@@ -35,15 +35,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// ExplainInfo implements Plan interface.
-func (p *PhysicalLock) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString(p.Lock.LockType.String())
-	str.WriteString(" ")
-	str.WriteString(strconv.FormatUint(p.Lock.WaitSec, 10))
-	return str.String()
-}
-
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {

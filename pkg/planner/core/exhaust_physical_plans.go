@@ -3789,7 +3789,7 @@ func exhaustPhysicalPlans4LogicalLock(lp base.LogicalPlan, prop *property.Physic
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
-	lock := PhysicalLock{
+	lock := physicalop.PhysicalLock{
 		Lock:               p.Lock,
 		TblID2Handle:       p.TblID2Handle,
 		TblID2PhysTblIDCol: p.TblID2PhysTblIDCol,

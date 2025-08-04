@@ -1197,7 +1197,7 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
-	var physLock *PhysicalLock
+	var physLock *physicalop.PhysicalLock
 	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
@@ -1208,7 +1208,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			pointGet = x
 		case *BatchPointGetPlan:
 			batchPointGet = x
-		case *PhysicalLock:
+		case *physicalop.PhysicalLock:
 			physLock = x
 		case *physicalop.PhysicalUnionScan:
 			unionScan = x

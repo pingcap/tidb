@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -271,8 +272,8 @@ func TestCheckPlanClone(t *testing.T) {
 	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
 
 	// same map
-	l1 := &core.PhysicalLock{}
-	l2 := &core.PhysicalLock{}
+	l1 := &physicalop.PhysicalLock{}
+	l2 := &physicalop.PhysicalLock{}
 	l1.TblID2Handle = make(map[int64][]util.HandleCols)
 	l2.TblID2Handle = l1.TblID2Handle
 	require.Equal(t, checkUnclearPlanCacheClone(l1, l2).Error(), "same map pointers, path *core.PhysicalLock.TblID2Handle")
