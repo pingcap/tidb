@@ -1,3 +1,17 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 syntax = "proto3";
 
 package tici;
@@ -239,6 +253,8 @@ service MetaService {
 
   // -----------------------------------------------------------------------------
   // APIs for importing data
+  rpc StartImportIndex(StartImportIndexRequest)
+      returns (StartImportIndexResponse);
 
   // Returns the cloud storage path where TiDB should upload a baseline shard
   // for the specified [table_info, index_info, key_range].
@@ -247,13 +263,13 @@ service MetaService {
 
   // Called by Import DXF to notify Meta Service after a partitions for
   // the given index are uploaded.
-  rpc MarkPartitionUploadFinished(MarkPartitionUploadFinishedRequest)
-      returns (MarkPartitionUploadFinishedResponse);
+  rpc FinishPartitionUpload(FinishPartitionUploadRequest)
+      returns (FinishPartitionUploadResponse);
 
   // Called to notify Meta Service that the whole table/index upload is
   // finished.
-  rpc MarkTableUploadFinished(MarkTableUploadFinishedRequest)
-      returns (MarkTableUploadFinishedResponse);
+  rpc FinishImportIndexUpload(FinishImportIndexUploadRequest)
+      returns (FinishImportIndexUploadResponse);
 
   // -----------------------------------------------------------------------------
 }
@@ -523,18 +539,30 @@ message GetIndexProgressResponse {
 //    GC data after consumed by downstream consumers.
 // -----------------------------------------------------------------------------
 
+message StartImportIndexRequest {
+  // Table ID of the target table.
+  int64 table_id = 1;
+  // Index ID of the target index.
+  int64 index_id = 2;
+  // Start TSO of the import job.
+  uint64 start_ts = 3;
+}
+
+message StartImportIndexResponse {
+  // 0 - success
+  // ... other error codes
+  int32 status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+  // The import index job_id in TiCI
+  uint64 job_id = 3;
+}
+
 message GetImportStoragePathRequest {
-  // Detailed schema of the fts being built.
-  IndexInfo index_info = 1;
-  // Parent table metadata.
-  TableInfo table_info = 2;
-  // Inclusive lower key bound (encoded handle/rowID), non-empty.
-  bytes lower_bound = 3;
-  // Exclusive upper key bound, non-empty.
-  bytes upper_bound = 4;
-  // TODO: Use KeyRange instead of `lower_bound` `upper_bound`.
-  // Key range for the partition being uploaded.
-  // KeyRange key_range = 3;
+  int64 table_id = 1;
+  int64 index_id = 2;
+  // Key range for the partition being uploaded. [Inclusive, exclusive)
+  KeyRange key_range = 3;
 }
 
 message GetImportStoragePathResponse {
@@ -548,16 +576,16 @@ message GetImportStoragePathResponse {
   string s3_path = 3;
 }
 
-message MarkPartitionUploadFinishedRequest {
-  // The same S3 path previously returned by GetCloudStoragePath.
-  // We assume the path is unique for each partition so it can be used to
-  // identify the partition.
-  string s3_path = 1;
+message FinishPartitionUploadRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  // Key range for the partition uploaded. [Inclusive, exclusive)
+  KeyRange key_range = 3;
 }
 
 // DXF receives this in-band result so callers can
 // inspect the status and customized results.
-message MarkPartitionUploadFinishedResponse {
+message FinishPartitionUploadResponse {
   // 0 - success
   // ... other error codes
   int32 status = 1;
@@ -565,14 +593,14 @@ message MarkPartitionUploadFinishedResponse {
   string error_message = 2;
 }
 
-message MarkTableUploadFinishedRequest {
+message FinishImportIndexUploadRequest {
   // Table ID of the target table.
   int64 table_id = 1;
   // Index ID of the target index.
   int64 index_id = 2;
 }
 
-message MarkTableUploadFinishedResponse {
+message FinishImportIndexUploadResponse {
   // 0 - success
   // ... other error codes
   int32 status = 1;

@@ -74,7 +74,8 @@ func NewTiCIDataWriter(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	schema string,
-) *DataWriter {
+	ticiMgr *ManagerCtx,
+) (*DataWriter, error) {
 	baseLogger := logutil.Logger(ctx)
 	logger := baseLogger.With(
 		zap.Int64("tableID", tblInfo.ID),
@@ -86,12 +87,17 @@ func NewTiCIDataWriter(
 		zap.String("schema", schema),
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
+	// FIXME: I'm not sure whether it is the right place to mark the import index job as started in TiCI.
+	err := ticiMgr.StartImportIndex(ctx, tblInfo.ID, idxInfo.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &DataWriter{
 		tblInfo: tblInfo,
 		idxInfo: idxInfo,
 		schema:  schema,
 		logger:  logger,
-	}
+	}, nil
 }
 
 // InitTICIFileWriter initializes the ticiFileWriter for this TiCIDataWriter.
@@ -334,10 +340,6 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 		zap.Int("fulltextIndexCount", len(fulltextIndexes)),
 	)
 
-	for _, idx := range fulltextIndexes {
-		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
-	}
-
 	etcdClient, err := getEtcdClient()
 	if err != nil {
 		return nil, err
@@ -346,6 +348,15 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 	if err != nil {
 		return nil, err
 	}
+
+	for _, idx := range fulltextIndexes {
+		w, err := NewTiCIDataWriter(ctx, tblInfo, idx, schema, mgrCtx)
+		if err != nil {
+			return nil, err
+		}
+		writers = append(writers, w)
+	}
+
 	g := &DataWriterGroup{
 		writers:    writers,
 		mgrCtx:     mgrCtx,
@@ -370,7 +381,9 @@ func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblI
 	)
 
 	for _, idx := range fulltextIndexes {
-		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
+		// We ignore the error in the test setup,
+		w, _ := NewTiCIDataWriter(ctx, tblInfo, idx, schema, mgrCtx)
+		writers = append(writers, w)
 	}
 
 	g := &DataWriterGroup{

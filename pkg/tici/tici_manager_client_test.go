@@ -43,13 +43,13 @@ func (m *MockMetaServiceClient) GetCloudStoragePath(ctx context.Context, in *Get
 	args := m.Called(ctx, in)
 	return args.Get(0).(*GetImportStoragePathResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) MarkPartitionUploadFinished(ctx context.Context, in *MarkPartitionUploadFinishedRequest, opts ...grpc.CallOption) (*MarkPartitionUploadFinishedResponse, error) {
+func (m *MockMetaServiceClient) MarkPartitionUploadFinished(ctx context.Context, in *FinishPartitionUploadRequest, opts ...grpc.CallOption) (*FinishPartitionUploadResponse, error) {
 	args := m.Called(ctx, in)
-	return args.Get(0).(*MarkPartitionUploadFinishedResponse), args.Error(1)
+	return args.Get(0).(*FinishPartitionUploadResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) MarkTableUploadFinished(ctx context.Context, in *MarkTableUploadFinishedRequest, opts ...grpc.CallOption) (*MarkTableUploadFinishedResponse, error) {
+func (m *MockMetaServiceClient) MarkTableUploadFinished(ctx context.Context, in *FinishImportIndexUploadRequest, opts ...grpc.CallOption) (*FinishImportIndexUploadResponse, error) {
 	args := m.Called(ctx, in)
-	return args.Get(0).(*MarkTableUploadFinishedResponse), args.Error(1)
+	return args.Get(0).(*FinishImportIndexUploadResponse), args.Error(1)
 }
 func (m *MockMetaServiceClient) GetShardLocalCacheInfo(ctx context.Context, in *GetShardLocalCacheRequest, opts ...grpc.CallOption) (*GetShardLocalCacheResponse, error) {
 	args := m.Called(ctx, in)
@@ -134,21 +134,21 @@ func TestMarkPartitionUploadFinished(t *testing.T) {
 	// 1st call – success
 	mockClient.
 		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{Status: 0}, nil).
+		Return(&FinishPartitionUploadResponse{Status: 0}, nil).
 		Once()
 	assert.NoError(t, ctx.MarkPartitionUploadFinished(context.Background(), tableID, indexID, lower, upper))
 
 	// 2nd call – business error from TiCI
 	mockClient.
 		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		Return(&FinishPartitionUploadResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
 	assert.Error(t, ctx.MarkPartitionUploadFinished(context.Background(), tableID, indexID, lower, upper))
 
 	// 3rd call – RPC error
 	mockClient.
 		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{}, errors.New("rpc error")).
+		Return(&FinishPartitionUploadResponse{}, errors.New("rpc error")).
 		Once()
 	assert.Error(t, ctx.MarkPartitionUploadFinished(context.Background(), tableID, indexID, lower, upper))
 
@@ -162,21 +162,21 @@ func TestMarkTableUploadFinished(t *testing.T) {
 
 	mockClient.
 		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{Status: 0}, nil).
+		Return(&FinishImportIndexUploadResponse{Status: 0}, nil).
 		Once()
 	err := ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
 	assert.NoError(t, err)
 
 	mockClient.
 		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		Return(&FinishImportIndexUploadResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
 	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
 		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{}, errors.New("rpc error")).
+		Return(&FinishImportIndexUploadResponse{}, errors.New("rpc error")).
 		Once()
 	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
 	assert.Error(t, err)

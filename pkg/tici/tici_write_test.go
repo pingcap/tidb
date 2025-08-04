@@ -245,7 +245,7 @@ func TestTiCIDataWriterGroup_MarkPartitionUploadFinished_NotWritable(t *testing.
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
 		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{Status: 0}, nil).
+		Return(&FinishPartitionUploadResponse{Status: 0}, nil).
 		Once()
 	group := &DataWriterGroup{mgrCtx: ticiMgr}
 	group.writable.Store(false)
@@ -262,7 +262,7 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
 		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{Status: 0}, nil).
+		Return(&FinishImportIndexUploadResponse{Status: 0}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {

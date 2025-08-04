@@ -255,6 +255,47 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 	return nil
 }
 
+// StartImportIndex register an TiCI import job for a (fulltext) index on TiCI.
+func (t *ManagerCtx) StartImportIndex(
+	ctx context.Context,
+	tableID int64,
+	indexID int64,
+) error {
+	req := &StartImportIndexRequest{
+		TableId: tableID,
+		IndexId: indexID,
+		// TODO: Set the StartTs as the commit_tso of imported data
+		StartTs: uint64(0),
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.metaServiceClient == nil {
+		var errMsg string
+		if t.err != nil {
+			errMsg = t.err.Error()
+		}
+		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
+		return errors.Wrap(t.err, "meta service client is nil")
+	}
+	resp, err := t.metaServiceClient.StartImportIndex(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp.Status != 0 {
+		logutil.BgLogger().Error("start import index failed",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
+			zap.String("errorMessage", resp.ErrorMessage))
+		return fmt.Errorf("tici start import index error: %s", resp.ErrorMessage)
+	}
+	logutil.BgLogger().Info("start import index success",
+		zap.Int64("tableID", tableID),
+		zap.Int64("indexID", indexID),
+		zap.Uint64("ticiJobID", resp.JobId),
+	)
+	return nil
+}
+
 // GetCloudStoragePath requests the S3 path from TiCI Meta Service
 // for a baseline shard upload.
 func (t *ManagerCtx) GetCloudStoragePath(
@@ -311,7 +352,7 @@ func (t *ManagerCtx) MarkPartitionUploadFinished(
 	indexId int64,
 	lowerBound, upperBound []byte,
 ) error {
-	req := &MarkPartitionUploadFinishedRequest{
+	req := &FinishPartitionUploadRequest{
 		TableId: tableId,
 		IndexId: indexId,
 		KeyRange: &KeyRange{
@@ -329,7 +370,7 @@ func (t *ManagerCtx) MarkPartitionUploadFinished(
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
 		return errors.Wrap(t.err, "meta service client is nil")
 	}
-	resp, err := t.metaServiceClient.MarkPartitionUploadFinished(ctx, req)
+	resp, err := t.metaServiceClient.FinishPartitionUpload(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -355,7 +396,7 @@ func (t *ManagerCtx) MarkTableUploadFinished(
 	tableID int64,
 	indexID int64,
 ) error {
-	req := &MarkTableUploadFinishedRequest{
+	req := &FinishImportIndexUploadRequest{
 		TableId: tableID,
 		IndexId: indexID,
 	}
@@ -369,7 +410,7 @@ func (t *ManagerCtx) MarkTableUploadFinished(
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
 		return errors.Wrap(t.err, "meta service client is nil")
 	}
-	resp, err := t.metaServiceClient.MarkTableUploadFinished(ctx, req)
+	resp, err := t.metaServiceClient.FinishImportIndexUpload(ctx, req)
 	if err != nil {
 		return err
 	}
