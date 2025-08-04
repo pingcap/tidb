@@ -35,15 +35,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// ExplainInfo implements Plan interface.
-func (p *PhysicalLock) ExplainInfo() string {
-	var str strings.Builder
-	str.WriteString(p.Lock.LockType.String())
-	str.WriteString(" ")
-	str.WriteString(strconv.FormatUint(p.Lock.WaitSec, 10))
-	return str.String()
-}
-
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
@@ -559,63 +550,6 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(true))
 		}
 	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalMergeJoin) ExplainInfo() string {
-	return p.explainInfo(false)
-}
-
-func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
-	sortedExplainExpressionList := expression.SortedExplainExpressionList
-	if normalized {
-		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
-			return expression.SortedExplainNormalizedExpressionList(exprs)
-		}
-	}
-
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := new(strings.Builder)
-	buffer.WriteString(p.JoinType.String())
-	physicalop.ExplainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
-	if len(p.LeftJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))
-	}
-	if len(p.RightJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(evalCtx, p.RightJoinKeys))
-	}
-	if len(p.LeftConditions) > 0 {
-		fmt.Fprintf(buffer, ", left cond:%s",
-			sortedExplainExpressionList(evalCtx, p.LeftConditions))
-	}
-	if len(p.RightConditions) > 0 {
-		fmt.Fprintf(buffer, ", right cond:%s",
-			sortedExplainExpressionList(evalCtx, p.RightConditions))
-	}
-	if len(p.OtherConditions) > 0 {
-		fmt.Fprintf(buffer, ", other cond:%s",
-			sortedExplainExpressionList(evalCtx, p.OtherConditions))
-	}
-	return buffer.String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalShuffle) ExplainInfo() string {
-	explainIDs := make([]fmt.Stringer, len(p.DataSources))
-	for i := range p.DataSources {
-		explainIDs[i] = p.DataSources[i].ExplainID()
-	}
-
-	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v, data sources:%v", p.Concurrency, explainIDs)
 	return buffer.String()
 }
 

@@ -26,22 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes PhysicalShuffle.
-func (p PhysicalShuffle) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffle {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShuffle, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalShuffleReceiverStub.
-func (p PhysicalShuffleReceiverStub) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleReceiverStub {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiver, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes Update.
 func (p Update) Init(ctx base.PlanContext) *Update {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
@@ -88,14 +72,6 @@ func (p PhysicalShowDDLJobs) Init(ctx base.PlanContext) *PhysicalShowDDLJobs {
 	return &p
 }
 
-// Init initializes PhysicalLock.
-func (p PhysicalLock) Init(ctx base.PlanContext, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalLock {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeLock, &p, 0)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalTableScan.
 func (p PhysicalTableScan) Init(ctx base.PlanContext, offset int) *PhysicalTableScan {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeTableScan, &p, offset)
@@ -113,13 +89,6 @@ func (p PhysicalHashJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, 
 	tp := plancodec.TypeHashJoin
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, tp, &p, offset)
 	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalMergeJoin.
-func (p PhysicalMergeJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalMergeJoin {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMergeJoin, &p, offset)
 	p.SetStats(stats)
 	return &p
 }

@@ -65,7 +65,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
 	_ base.PhysicalPlan = &physicalop.NominalSort{}
-	_ base.PhysicalPlan = &PhysicalLock{}
+	_ base.PhysicalPlan = &physicalop.PhysicalLock{}
 	_ base.PhysicalPlan = &physicalop.PhysicalLimit{}
 	_ base.PhysicalPlan = &PhysicalIndexScan{}
 	_ base.PhysicalPlan = &PhysicalTableScan{}
@@ -78,16 +78,16 @@ var (
 	_ base.PhysicalPlan = &PhysicalApply{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &PhysicalHashJoin{}
-	_ base.PhysicalPlan = &PhysicalMergeJoin{}
+	_ base.PhysicalPlan = &physicalop.PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalWindow{}
-	_ base.PhysicalPlan = &PhysicalShuffle{}
-	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
+	_ base.PhysicalPlan = &physicalop.PhysicalShuffle{}
+	_ base.PhysicalPlan = &physicalop.PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
 	_ base.PhysicalPlan = &PhysicalTableSample{}
 
 	_ PhysicalJoin = &PhysicalHashJoin{}
-	_ PhysicalJoin = &PhysicalMergeJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
 	_ PhysicalJoin = &PhysicalIndexHashJoin{}
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
@@ -1416,25 +1416,6 @@ func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
 	return p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfBool
 }
 
-// PhysicalMergeJoin represents merge join implementation of LogicalJoin.
-type PhysicalMergeJoin struct {
-	physicalop.BasePhysicalJoin
-
-	CompareFuncs []expression.CompareFunc `plan-cache-clone:"shallow"`
-	// Desc means whether inner child keep desc order.
-	Desc bool
-}
-
-// MemoryUsage return the memory usage of PhysicalMergeJoin
-func (p *PhysicalMergeJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalJoin.MemoryUsage() + size.SizeOfSlice + int64(cap(p.CompareFuncs))*size.SizeOfFunc + size.SizeOfBool
-	return
-}
-
 // PhysicalExchangeReceiver accepts connection and receives data passively.
 type PhysicalExchangeReceiver struct {
 	physicalop.BasePhysicalPlan
@@ -1628,53 +1609,6 @@ func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
 }
 
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalMergeJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalMergeJoin)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalJoin = *base
-	cloned.CompareFuncs = append(cloned.CompareFuncs, p.CompareFuncs...)
-	cloned.Desc = p.Desc
-	return cloned, nil
-}
-
-// PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
-type PhysicalLock struct {
-	physicalop.BasePhysicalPlan
-
-	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
-
-	TblID2Handle       map[int64][]util.HandleCols
-	TblID2PhysTblIDCol map[int64]*expression.Column
-}
-
-// MemoryUsage return the memory usage of PhysicalLock
-func (pl *PhysicalLock) MemoryUsage() (sum int64) {
-	if pl == nil {
-		return
-	}
-
-	sum = pl.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
-	if pl.Lock != nil {
-		sum += int64(unsafe.Sizeof(ast.SelectLockInfo{}))
-	}
-
-	for _, vals := range pl.TblID2Handle {
-		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(vals))*size.SizeOfInterface
-		for _, val := range vals {
-			sum += val.MemoryUsage()
-		}
-	}
-	for _, val := range pl.TblID2PhysTblIDCol {
-		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalHashAgg is hash operator of aggregate.
 type PhysicalHashAgg struct {
 	physicalop.BasePhysicalAgg
@@ -1770,86 +1704,6 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 		p.Ranges[0].IsPointNonNullable(tc)
 }
 
-// PhysicalShuffle represents a shuffle plan.
-// `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
-//
-//	to build the child executors chain.
-//
-// Take `Window` operator for example:
-//
-//	Shuffle -> Window -> Sort -> DataSource, will be separated into:
-//	  ==> Shuffle: for main thread
-//	  ==> Window -> Sort(:Tail) -> shuffleWorker: for workers
-//	  ==> DataSource: for `fetchDataAndSplit` thread
-type PhysicalShuffle struct {
-	physicalop.BasePhysicalPlan
-
-	Concurrency int
-	Tails       []base.PhysicalPlan
-	DataSources []base.PhysicalPlan
-
-	SplitterType PartitionSplitterType
-	ByItemArrays [][]expression.Expression
-}
-
-// MemoryUsage return the memory usage of PhysicalShuffle
-func (p *PhysicalShuffle) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfInt*2 + size.SizeOfSlice*(3+int64(cap(p.ByItemArrays))) +
-		int64(cap(p.Tails)+cap(p.DataSources))*size.SizeOfInterface
-
-	for _, plan := range p.Tails {
-		sum += plan.MemoryUsage()
-	}
-	for _, plan := range p.DataSources {
-		sum += plan.MemoryUsage()
-	}
-	for _, exprs := range p.ByItemArrays {
-		sum += int64(cap(exprs)) * size.SizeOfInterface
-		for _, expr := range exprs {
-			sum += expr.MemoryUsage()
-		}
-	}
-	return
-}
-
-// PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
-type PartitionSplitterType int
-
-const (
-	// PartitionHashSplitterType is the splitter splits by hash.
-	PartitionHashSplitterType = iota
-	// PartitionRangeSplitterType is the splitter that split sorted data into the same range
-	PartitionRangeSplitterType
-)
-
-// PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
-// and actually, is executed by `executor.shuffleWorker`.
-type PhysicalShuffleReceiverStub struct {
-	physicalop.PhysicalSchemaProducer
-
-	// Receiver points to `executor.shuffleReceiver`.
-	Receiver unsafe.Pointer
-	// DataSource is the op.PhysicalPlan of the Receiver.
-	DataSource base.PhysicalPlan
-}
-
-// MemoryUsage return the memory usage of PhysicalShuffleReceiverStub
-func (p *PhysicalShuffleReceiverStub) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfPointer + size.SizeOfInterface
-	if p.DataSource != nil {
-		sum += p.DataSource.MemoryUsage()
-	}
-	return
-}
-
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
 func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
 	for _, child := range plan.Children() {
@@ -1905,17 +1759,6 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 		return
 	}
 	return p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt64
-}
-
-// BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx base.PlanContext, joinType logicalop.JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
-	baseJoin := physicalop.BasePhysicalJoin{
-		JoinType:      joinType,
-		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},
-		LeftJoinKeys:  leftKeys,
-		RightJoinKeys: rightKeys,
-	}
-	return PhysicalMergeJoin{BasePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
 }
 
 // SafeClone clones this op.PhysicalPlan and handles its panic.

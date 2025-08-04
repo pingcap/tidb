@@ -185,82 +185,6 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 	return p.ResolveIndicesItself()
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	lSchema := p.Children()[0].Schema()
-	rSchema := p.Children()[1].Schema()
-	for i, col := range p.LeftJoinKeys {
-		newKey, err := col.ResolveIndices(lSchema)
-		if err != nil {
-			return err
-		}
-		p.LeftJoinKeys[i] = newKey.(*expression.Column)
-	}
-	for i, col := range p.RightJoinKeys {
-		newKey, err := col.ResolveIndices(rSchema)
-		if err != nil {
-			return err
-		}
-		p.RightJoinKeys[i] = newKey.(*expression.Column)
-	}
-	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
-		if err != nil {
-			return err
-		}
-	}
-	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
-		if err != nil {
-			return err
-		}
-	}
-
-	mergedSchema := expression.MergeSchema(lSchema, rSchema)
-
-	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
-		if err != nil {
-			return err
-		}
-	}
-
-	colsNeedResolving := p.Schema().Len()
-	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
-		colsNeedResolving--
-	}
-	// To avoid that two plan shares the same column slice.
-	shallowColSlice := make([]*expression.Column, p.Schema().Len())
-	copy(shallowColSlice, p.Schema().Columns)
-	p.SetSchema(expression.NewSchema(shallowColSlice...))
-	foundCnt := 0
-	// The two column sets are all ordered. And the colsNeedResolving is the subset of the mergedSchema.
-	// So we can just move forward j if there's no matching is found.
-	// We don't use the normal ResolvIndices here since there might be duplicate columns in the schema.
-	//   e.g. The schema of child_0 is [col0, col0, col1]
-	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
-	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.Schema().Columns[i].EqualColumn(mergedSchema.Columns[j]) {
-			j++
-			continue
-		}
-		p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
-		p.Schema().Columns[i].Index = j
-		i++
-		j++
-		foundCnt++
-	}
-	if foundCnt < colsNeedResolving {
-		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
-	}
-	return
-}
-
 // resolveIndices4PhysicalUnionScan implements Plan interface.
 func resolveIndices4PhysicalUnionScan(pp base.PhysicalPlan) (err error) {
 	p := pp.(*physicalop.PhysicalUnionScan)
@@ -500,26 +424,6 @@ func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 	return err
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalShuffle) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	// There may be one or more DataSource
-	for i := range p.ByItemArrays {
-		// Each DataSource has an array of HashByItems
-		for j := range p.ByItemArrays[i] {
-			// "Shuffle" get value of items from `DataSource`, other than children[0].
-			p.ByItemArrays[i][j], err = p.ByItemArrays[i][j].ResolveIndices(p.DataSources[i].Schema())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return err
-}
-
 // resolveIndexForInlineProjection ensures that during the execution of the physical plan, the column index can
 // be correctly mapped to the column in its subplan.
 func resolveIndexForInlineProjection(p *physicalop.PhysicalSchemaProducer) error {
@@ -687,24 +591,6 @@ func (p *Update) ResolveIndices() (err error) {
 		}
 	}
 	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalLock) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for i, cols := range p.TblID2Handle {
-		for j, col := range cols {
-			resolvedCol, err := col.ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-			p.TblID2Handle[i][j] = resolvedCol
-		}
-	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.

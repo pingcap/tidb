@@ -134,7 +134,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalMergeJoin:
+	case *physicalop.PhysicalMergeJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -174,7 +174,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "MaxOneRow"
 	case *logicalop.LogicalLimit, *physicalop.PhysicalLimit:
 		str = "Limit"
-	case *PhysicalLock, *logicalop.LogicalLock:
+	case *physicalop.PhysicalLock, *logicalop.LogicalLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
@@ -345,9 +345,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *physicalop.PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
-	case *PhysicalShuffle:
+	case *physicalop.PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
-	case *PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
 	case *PointGetPlan:
 		str = "PointGet("
