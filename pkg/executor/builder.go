@@ -220,7 +220,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
 		return b.buildPrepare(v)
-	case *plannercore.PhysicalLock:
+	case *physicalop.PhysicalLock:
 		return b.buildSelectLock(v)
 	case *plannercore.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
@@ -768,7 +768,7 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) exec.Execut
 	return e
 }
 
-func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) exec.Executor {
+func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Executor {
 	if !b.inSelectLockStmt {
 		b.inSelectLockStmt = true
 		defer func() { b.inSelectLockStmt = false }()
