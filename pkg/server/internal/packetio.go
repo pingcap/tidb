@@ -315,24 +315,24 @@ func (p *PacketIO) Flush() error {
 
 func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
 	return &compressedWriter{
+		compressorBuffer{nil, nil, nil},
 		w,
 		new(bytes.Buffer),
 		seq,
+		nil,
 		ca,
 		3,
-		nil,
-		compressorBuffer{nil, nil, nil},
 	}
 }
 
 type compressedWriter struct {
+	compressorBuffer     compressorBuffer
 	w                    io.Writer
 	buf                  *bytes.Buffer
 	compressedSequence   *uint8
+	compressedPacket     *bytes.Buffer
 	compressionAlgorithm int
 	zstdLevel            zstd.EncoderLevel
-	compressedPacket     *bytes.Buffer
-	compressorBuffer     compressorBuffer
 }
 
 func (cw *compressedWriter) Write(data []byte) (n int, err error) {
