@@ -487,8 +487,4 @@ func (p *MySQLPrivilege) RoleGraph() map[auth.RoleIdentity]roleGraphEdgesTable {
 	return p.roleGraph
 }
 
-func (h *Handle) CheckFullData(t *testing.T, value bool) {
-	require.True(t, h.fullData.Load() == value)
-}
-
 var NewMySQLPrivilege = newMySQLPrivilege

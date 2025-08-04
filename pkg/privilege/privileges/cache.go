@@ -426,9 +426,7 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
-func findRole(ctx context.Context, h *Handle, user string, host string, role *auth.RoleIdentity) bool {
-	terror.Log(h.ensureActiveUser(ctx, user))
-	terror.Log(h.ensureActiveUser(ctx, role.Username))
+func findRole(h *Handle, user string, host string, role *auth.RoleIdentity) bool {
 	mysqlPrivilege := h.Get()
 	return mysqlPrivilege.FindRole(user, host, role)
 }
@@ -2243,10 +2241,6 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 type Handle struct {
 	sctx util.SessionPool
 	priv atomic.Pointer[MySQLPrivilege]
-	// Only load the active user's data to save memory
-	// username => struct{}
-	activeUsers sync.Map
-	fullData    atomic.Bool
 }
 
 // NewHandle returns a Handle.
@@ -2258,24 +2252,6 @@ func NewHandle(sctx util.SessionPool) *Handle {
 	return ret
 }
 
-// ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
-	if p := ctx.Value("mock"); p != nil {
-		visited := p.(*bool)
-		*visited = true
-	}
-	if h.fullData.Load() {
-		// All users data are in-memory, nothing to do
-		return nil
-	}
-
-	_, exist := h.activeUsers.Load(user)
-	if exist {
-		return nil
-	}
-	return h.updateUsers([]string{user})
-}
-
 func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
 	for {
 		old := h.Get()
@@ -2283,9 +2259,6 @@ func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
 		if swapped {
 			break
 		}
-	}
-	for user := range userList {
-		h.activeUsers.Store(user, struct{}{})
 	}
 }
 
@@ -2309,25 +2282,13 @@ func (h *Handle) UpdateAll() error {
 		return errors.Trace(err)
 	}
 	h.priv.Store(priv)
-	h.fullData.Store(true)
 	return nil
 }
 
 // Update loads the privilege info from kv storage for the list of users.
 func (h *Handle) Update(userList []string) error {
-	h.fullData.Store(false)
 	if len(userList) > 100 {
 		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
-	}
-	needReload := false
-	for _, user := range userList {
-		if _, ok := h.activeUsers.Load(user); ok {
-			needReload = true
-			break
-		}
-	}
-	if !needReload {
-		return nil
 	}
 
 	return h.updateUsers(userList)

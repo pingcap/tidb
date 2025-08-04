@@ -15,7 +15,6 @@
 package privilege
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -46,7 +45,7 @@ type VerificationInfo struct {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+	ShowGrants(sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
 	// FetchColumnPrivileges gets column privilege for user
 	FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
@@ -65,7 +64,7 @@ type Manager interface {
 	RequestVerification(activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
 
 	// RequestVerificationWithUser verifies specific user privilege for the request.
-	RequestVerificationWithUser(ctx context.Context, db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
+	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
 
 	// HasExplicitlyGrantedDynamicPrivilege verifies is a user has a dynamic privilege granted
 	// without using the SUPER privilege as a fallback.
@@ -76,7 +75,7 @@ type Manager interface {
 	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
 
 	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
-	RequestDynamicVerificationWithUser(ctx context.Context, privName string, grantable bool, user *auth.UserIdentity) bool
+	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 
 	// VerifyAccountAutoLockInMemory automatically unlock when the time comes.
 	VerifyAccountAutoLockInMemory(user string, host string) (bool, error)
@@ -96,7 +95,7 @@ type Manager interface {
 	GetAuthWithoutVerification(user, host string) bool
 
 	// MatchIdentity matches an identity
-	MatchIdentity(ctx context.Context, user, host string, skipNameResolve bool) (string, string, bool)
+	MatchIdentity(user, host string, skipNameResolve bool) (string, string, bool)
 
 	// MatchUserResourceGroupName matches a user with specified resource group name
 	MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (string, bool)
@@ -109,13 +108,13 @@ type Manager interface {
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.
-	ActiveRoles(ctx context.Context, sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
+	ActiveRoles(sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
 
 	// FindEdge find if there is an edge between role and user.
-	FindEdge(ctx context.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
+	FindEdge(role *auth.RoleIdentity, user *auth.UserIdentity) bool
 
 	// GetDefaultRoles returns all default roles for certain user.
-	GetDefaultRoles(ctx context.Context, user, host string) []*auth.RoleIdentity
+	GetDefaultRoles(user, host string) []*auth.RoleIdentity
 
 	// GetAllRoles return all roles of user.
 	GetAllRoles(user, host string) []*auth.RoleIdentity
@@ -124,7 +123,7 @@ type Manager interface {
 	IsDynamicPrivilege(privNameInUpper string) bool
 
 	// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
-	GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error)
+	GetAuthPluginForConnection(user, host string) (string, error)
 
 	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 	GetAuthPlugin(user, host string) (string, error)

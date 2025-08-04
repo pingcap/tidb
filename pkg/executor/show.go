@@ -200,7 +200,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowEngines:
 		return e.fetchShowEngines(ctx)
 	case ast.ShowGrants:
-		return e.fetchShowGrants(ctx)
+		return e.fetchShowGrants()
 	case ast.ShowIndex:
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
@@ -1886,7 +1886,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowGrants(ctx context.Context) error {
+func (e *ShowExec) fetchShowGrants() error {
 	vars := e.Ctx().GetSessionVars()
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker == nil {
@@ -1915,11 +1915,11 @@ func (e *ShowExec) fetchShowGrants(ctx context.Context) error {
 		if r.Hostname == "" {
 			r.Hostname = "%"
 		}
-		if !checker.FindEdge(ctx, r, e.User) {
+		if !checker.FindEdge(r, e.User) {
 			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
 		}
 	}
-	gs, err := checker.ShowGrants(ctx, e.Ctx(), e.User, e.Roles)
+	gs, err := checker.ShowGrants(e.Ctx(), e.User, e.Roles)
 	if err != nil {
 		return errors.Trace(err)
 	}
