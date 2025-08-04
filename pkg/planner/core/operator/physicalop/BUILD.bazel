@@ -13,6 +13,7 @@ go_library(
         "physical_max_one_row.go",
         "physical_mem_table.go",
         "physical_merge_join.go",
+        "physical_plan_misc.go",
         "physical_projection.go",
         "physical_schema_producer.go",
         "physical_selection.go",

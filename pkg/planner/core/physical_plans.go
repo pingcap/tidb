@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -95,7 +95,7 @@ var (
 
 type tableScanAndPartitionInfo struct {
 	tableScan        *PhysicalTableScan
-	physPlanPartInfo *PhysPlanPartInfo
+	physPlanPartInfo *physicalop.PhysPlanPartInfo
 }
 
 // MemoryUsage return the memory usage of tableScanAndPartitionInfo
@@ -154,7 +154,7 @@ type PhysicalTableReader struct {
 	IsCommonHandle bool
 
 	// Used by partition table.
-	PlanPartInfo *PhysPlanPartInfo
+	PlanPartInfo *physicalop.PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
@@ -163,50 +163,6 @@ type PhysicalTableReader struct {
 func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	loadTableStats(ctx, ts.Table, ts.physicalTableID)
-}
-
-// PhysPlanPartInfo indicates partition helper info in physical plan.
-type PhysPlanPartInfo struct {
-	PruningConds   []expression.Expression
-	PartitionNames []ast.CIStr
-	Columns        []*expression.Column
-	ColumnNames    types.NameSlice
-}
-
-const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
-
-func (pi *PhysPlanPartInfo) cloneForPlanCache() *PhysPlanPartInfo {
-	if pi == nil {
-		return nil
-	}
-	cloned := new(PhysPlanPartInfo)
-	cloned.PruningConds = cloneExpressionsForPlanCache(pi.PruningConds, nil)
-	cloned.PartitionNames = pi.PartitionNames
-	cloned.Columns = cloneColumnsForPlanCache(pi.Columns, nil)
-	cloned.ColumnNames = pi.ColumnNames
-	return cloned
-}
-
-// MemoryUsage return the memory usage of PhysPlanPartInfo
-func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
-	if pi == nil {
-		return
-	}
-
-	sum = emptyPartitionInfoSize
-	for _, cond := range pi.PruningConds {
-		sum += cond.MemoryUsage()
-	}
-	for _, cis := range pi.PartitionNames {
-		sum += cis.MemoryUsage()
-	}
-	for _, col := range pi.Columns {
-		sum += col.MemoryUsage()
-	}
-	for _, colName := range pi.ColumnNames {
-		sum += colName.MemoryUsage()
-	}
-	return
 }
 
 // SetTablePlanForTest sets tablePlan field for test usage only
@@ -285,7 +241,7 @@ func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.PlanPartInfo = &PhysPlanPartInfo{
+	reader.PlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   sg.Source.AllConds,
 		PartitionNames: sg.Source.PartitionNames,
 		Columns:        sg.Source.TblCols,
@@ -358,7 +314,7 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 
 	// Used by partition table.
-	PlanPartInfo *PhysPlanPartInfo
+	PlanPartInfo *physicalop.PhysPlanPartInfo
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -452,33 +408,6 @@ func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, is.Table, is.physicalTableID)
 }
 
-// PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
-type PushedDownLimit struct {
-	Offset uint64
-	Count  uint64
-}
-
-// Clone clones this pushed-down list.
-func (p *PushedDownLimit) Clone() *PushedDownLimit {
-	if p == nil {
-		return nil
-	}
-	cloned := new(PushedDownLimit)
-	*cloned = *p
-	return cloned
-}
-
-const pushedDownLimitSize = size.SizeOfUint64 * 2
-
-// MemoryUsage return the memory usage of PushedDownLimit
-func (p *PushedDownLimit) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return pushedDownLimitSize
-}
-
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	physicalop.PhysicalSchemaProducer
@@ -493,12 +422,12 @@ type PhysicalIndexLookUpReader struct {
 
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
-	PushedLimit *PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 
 	CommonHandleCols []*expression.Column
 
 	// Used by partition table.
-	PlanPartInfo *PhysPlanPartInfo
+	PlanPartInfo *physicalop.PhysPlanPartInfo
 
 	// required by cost calculation
 	expectedCnt uint64
@@ -630,7 +559,7 @@ type PhysicalIndexMergeReader struct {
 	AccessMVIndex bool
 
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexMergeReader.
-	PushedLimit *PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 	// ByItems is used to support sorting the handles returned by partialPlans.
 	ByItems []*util.ByItems
 
@@ -644,7 +573,7 @@ type PhysicalIndexMergeReader struct {
 	TablePlans []base.PhysicalPlan
 
 	// Used by partition table.
-	PlanPartInfo *PhysPlanPartInfo
+	PlanPartInfo *physicalop.PhysPlanPartInfo
 
 	KeepOrder bool
 
@@ -917,7 +846,7 @@ type PhysicalTableScan struct {
 	// ByItems only for partition table with orderBy + pushedLimit
 	ByItems []*util.ByItems
 
-	PlanPartInfo *PhysPlanPartInfo
+	PlanPartInfo *physicalop.PhysPlanPartInfo
 
 	SampleInfo *tablesampler.TableSampleInfo `plan-cache-clone:"must-nil"`
 

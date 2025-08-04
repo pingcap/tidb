@@ -20,6 +20,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"runtime/trace"
 	"slices"
 	"sort"
@@ -98,7 +99,7 @@ type IndexMergeReaderExecutor struct {
 	tableRequest *tipb.DAGRequest
 
 	keepOrder   bool
-	pushedLimit *plannercore.PushedDownLimit
+	pushedLimit *physicalop.PushedDownLimit
 	byItems     []*plannerutil.ByItems
 
 	// columns are only required by union scan.
