@@ -154,7 +154,7 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 				}
 			} else {
 				// Non-partitioned table:
-				e.appendTableForStatsMeta(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
+				e.appendTableForStatsMeta(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(nameInfo.ID))
 			}
 		}
 	}
@@ -564,7 +564,7 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 				}
 			} else {
 				// Non-partitioned table:
-				e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
+				e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(nameInfo.ID))
 			}
 		}
 	}
