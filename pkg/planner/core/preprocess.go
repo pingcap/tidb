@@ -1935,7 +1935,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		if err != nil {
 			return nil, err
 		}
-		dbInfoLatest, _ := latestIS.SchemaByName(dbName)
+		dbInfoLatest, _ := domainSchema.SchemaByName(dbName)
 		if dbInfo.ReadOnly != dbInfoLatest.ReadOnly {
 			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
 		}

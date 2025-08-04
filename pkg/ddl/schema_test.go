@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -661,7 +660,7 @@ func TestReadOnlyInMiddleState(t *testing.T) {
 		return len(txnIDs) == 1
 	}, 5*time.Second, 100*time.Millisecond)
 	is := sessiontxn.GetTxnManager(tk3.Session()).GetTxnInfoSchema()
-	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test_db"))
+	dbInfo, ok := is.SchemaByName(pmodel.NewCIStr("test_db"))
 	require.True(t, ok)
 	require.True(t, dbInfo.ReadOnly)
 	tk3.MustExec("insert into test_db.t values (1)") // TODO(fzzf678): this should fail, fix this after adding the check read only logic
