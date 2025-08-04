@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -514,31 +515,38 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
+	// TODO: use fieldPatternsLike to filter partitioned tables.
+	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+	paritionedTables := make(map[int64]*model.TableInfo)
+	for _, result := range tableInfoResult {
+		for _, tbl := range result.TableInfos {
+			paritionedTables[tbl.ID] = tbl
+		}
+	}
 	for _, db := range dbs {
 		if fieldFilter != "" && db.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
 		}
-		tables, err := do.InfoSchema().SchemaTableInfos(ctx, db)
+		tableNames, err := do.InfoSchema().SchemaSimpleTableInfos(ctx, db)
 		terror.Log(err)
-		for _, tbl := range tables {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-				partitionName := ""
-				if pi != nil {
-					partitionName = "global"
+		for _, nameInfo := range tableNames {
+			tblID := nameInfo.ID
+			paritionedTable, ok := paritionedTables[tblID]
+			// Partitioned table:
+			if ok {
+				// For dynamic partitioned table, we need to display the global table as well.
+				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
+					e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, "global", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
 				}
-				e.appendTableForStatsHealthy(db.O, tbl.Name.O, partitionName, h.GetNonPseudoPhysicalTableStats(tbl.ID))
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
-					}
+				pi := paritionedTable.GetPartitionInfo()
+				for _, def := range pi.Definitions {
+					e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
 				}
 			} else {
-				for _, def := range pi.Definitions {
-					e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
-				}
+				// Non-partitioned table:
+				e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
 			}
 		}
 	}
