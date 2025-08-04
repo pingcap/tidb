@@ -43,7 +43,7 @@ func ApplyExponentialBackoff(sortedValues []float64, lowerBound, upperBound floa
 
 	for i := 1; i < maxCols; i++ {
 		val := sortedValues[i]
-		for j := 0; j < i; j++ {
+		for range i {
 			val = math.Sqrt(val)
 		}
 		result *= val

@@ -588,7 +588,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	// Calculate minimum bound: take minimum of all selectivities (up to limit) and index bound
 	maxCols := min(MaxExponentialBackoffCols, l)
 	minBound := idxLowBound
-	for i := 0; i < maxCols; i++ {
+	for i := range maxCols {
 		minBound = min(minBound, singleColumnEstResults[i])
 	}
 
