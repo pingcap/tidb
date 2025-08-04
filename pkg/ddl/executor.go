@@ -417,7 +417,7 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 
 func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, readOnly bool) (err error) {
 	dbName := stmt.Name
-	if metadef.IsMemOrSysDB(dbName.L) {
+	if util.IsSysDB(dbName.L) || util.IsSystemView(dbName.L) {
 		return dbterror.ErrAccessSystemDBRejected.GenWithStackByArgs(dbName.L)
 	}
 	is := e.infoCache.GetLatest()
