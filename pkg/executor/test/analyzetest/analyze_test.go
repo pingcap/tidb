@@ -2555,7 +2555,7 @@ PARTITION BY RANGE ( a ) (
 	// flaky test, fix it later
 	//tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	//require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	//tbl := h.GetTableStats(tableInfo)
+	//tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	//require.Equal(t, 0, len(tbl.Columns))
 
 	// ignore both p0's 3 buckets, persisted-partition-options' 1 bucket, just use table-level 2 buckets
