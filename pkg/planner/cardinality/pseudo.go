@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -244,53 +242,4 @@ func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, co
 		rowCount = tableRowCount
 	}
 	return rowCount, nil
-}
-
-// getPseudoRowCountWithPartialStats calculates the row count if there are no statistics on the index, but there are column stats available.
-func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
-	tableRowCount float64, idxCols []*expression.Column) (totalCount float64, corrCount float64, err error) {
-	if tableRowCount == 0 {
-		return 0, 0, nil
-	}
-	tmpRan := []*ranger.Range{
-		{
-			LowVal:    make([]types.Datum, 1),
-			HighVal:   make([]types.Datum, 1),
-			Collators: make([]collate.Collator, 1),
-		},
-	}
-	var (
-		count float64
-		colID int64
-	)
-	totalCount = float64(0)
-	corrCount = float64(0)
-	for _, indexRange := range indexRanges {
-		selectivity := float64(1.0)
-		corrSelectivity := float64(1.0)
-		for i := range indexRange.LowVal {
-			tmpRan[0].LowVal[0] = indexRange.LowVal[i]
-			tmpRan[0].HighVal[0] = indexRange.HighVal[i]
-			tmpRan[0].Collators[0] = indexRange.Collators[0]
-			if i == len(indexRange.LowVal)-1 {
-				tmpRan[0].LowExclude = indexRange.LowExclude
-				tmpRan[0].HighExclude = indexRange.HighExclude
-			}
-			colID = idxCols[i].UniqueID
-			if statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
-				count, err = getPseudoRowCountByColumnRanges(sctx.GetSessionVars().StmtCtx.TypeCtx(), tableRowCount, tmpRan, 0)
-			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
-			}
-			if err != nil {
-				return 0, 0, errors.Trace(err)
-			}
-			selectivity *= count / tableRowCount
-			corrSelectivity = min(corrSelectivity, count/tableRowCount)
-		}
-		totalCount += selectivity * tableRowCount
-		corrCount += corrSelectivity * tableRowCount
-	}
-	totalCount = mathutil.Clamp(totalCount, 1, tableRowCount)
-	return totalCount, corrCount, nil
 }

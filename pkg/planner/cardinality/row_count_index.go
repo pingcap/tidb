@@ -66,12 +66,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	corrResult = float64(0)
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
 		if hasColumnStats(sctx, coll, idxCols) {
-			// If it is a single column index and there are column stats, use column estimation instead.
-			if len(idxCols) == 1 {
-				result, err = GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges)
-			} else {
-				result, corrResult, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
-			}
+			result, corrResult, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
 		} else {
 			colsLen := -1
 			if idx != nil && idx.Info.Unique {
