@@ -16,7 +16,28 @@ syntax = "proto3";
 
 package tici;
 
-option go_package = "pkg/tici";
+import "gogoproto/gogo.proto";
+import "rustproto.proto";
+
+option (gogoproto.sizer_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.goproto_sizecache_all) = false;
+option (rustproto.lite_runtime_all) = true;
+
+enum ErrorCode {
+  SUCCESS = 0;
+  UNKNOWN_ERROR = 1;
+  INVALID_ARGUMENTS = 2;
+
+  SHARD_NOT_FOUND = 11;
+  INDEX_NOT_FOUND = 12;
+  WORKER_NOT_FOUND = 13;
+  SHARD_NOT_SCHEDULED = 14;
+  COMPACTION_NOT_FOUND = 15;
+}
 
 message WorkerNodeStatus {
   // TODO Need more metrics, such as disk usage, quotas, cache miss rates
@@ -42,7 +63,8 @@ message WorkerNodeShardStatus {
   bytes start_key = 1;
   bytes end_key = 2;
   // TODO shard_id is unique across tables and indexes.
-  // We still need them because in meta service we are not currently maintain this correspondence.
+  // We still need them because in meta service we are not currently maintain
+  // this correspondence.
   int64 table_id = 3;
   int64 index_id = 4;
   uint64 shard_id = 5;
@@ -50,8 +72,12 @@ message WorkerNodeShardStatus {
   uint64 seq = 7;
 }
 
-message WorkerNodeCompactionStatus {
+message WorkerNodeCompactionStatus { CompactFragRequest req = 1; }
 
+message ImportWriteStatus {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  string file_prefix = 4;
 }
 
 message WorkerNodeHeartbeatRequest {
@@ -59,11 +85,11 @@ message WorkerNodeHeartbeatRequest {
   WorkerNodeStatus status = 2;
   repeated WorkerNodeShardStatus shards = 3;
   repeated WorkerNodeCompactionStatus compactions = 4;
+  repeated ImportWriteStatus import_writes = 5;
 }
 
 message WorkerNodeHeartbeatResponse {
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   repeated AddShardRequest to_add_shards = 2;
   // We assume the `shard_id`s are unique across tables,
   // So using `shard_id` is enough here.
@@ -78,44 +104,72 @@ message ReaderNodeHeartbeatRequest {
   ReaderNodeStatus status = 2;
   // TiFlash server address
   string tiflash_server_addr = 3;
+  // List of cached shard IDs on this reader
+  repeated uint64 cached_shard_ids = 4;
 }
 
 // Reader node heartbeat response
 message ReaderNodeHeartbeatResponse {
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
+  // List of shard headers that should be kept in cache
+  repeated ShardManifestHeader shards_to_keep = 3;
+  // List of shard headers that should be removed from cache
+  repeated ShardManifestHeader shards_to_remove = 4;
 }
 
-// Fragment metadata primarily stores all data files under a ​​fragment​​
+// Fragment metadata primarily stores all data files under a
+// ​​fragment​​
+message FragProperty {
+  // Total file size of fragment.
+  uint64 size = 1;
+  // Distinct handle count in fragment.
+  uint64 count = 2;
+  bytes min_handle = 3;
+  bytes mid_handle = 4;
+  bytes max_handle = 5;
+}
+
 message FragMeta {
   // Data format version​​, used for future iterative upgrades
   uint64 format_version = 1;
   // Root path of the fragment​​
   string frag_path = 2;
-  // Data files under the fragment​​, relative path under frag_path
-  repeated string data_files = 3;
+
+  bool has_deleted_set = 3;
+
+  message IndexSegment {
+    string seg_id = 1;
+    string del_suffix = 2;
+  }
+  repeated IndexSegment segs = 4;
+
+  FragProperty property = 5;
 }
 
-message AppendFragMetaRequest {
+message AppendDeltaFragMetaRequest {
   int64 table_id = 1;
   int64 index_id = 2;
   uint64 shard_id = 3;
-  string last_cdc_file = 4;
-  string worker_node_addr = 5;
-  repeated FragMeta frag_metas = 6;
+  string worker_node_addr = 4;
+  repeated FragMeta frag_metas = 5;
+  string last_cdc_file = 6;
 }
 
-message AppendFragMetaResponse {
-  // 0 - success
-  // ... other error codes
-  int32 status = 1;
+message AppendFragMetaResponse { ErrorCode status = 1; }
+
+message AppendBaseFragMetaRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  repeated FragMeta frag_metas = 3;
 }
 
-// Key range definition for shard cache queries
+// Key range definition
 message KeyRange {
+  // Inclusive lower key bound
   bytes start_key = 1;
+  // Exclusive upper key bound
   bytes end_key = 2;
 }
 
@@ -129,7 +183,7 @@ message ShardLocalCacheInfo {
 message GetShardLocalCacheRequest {
   // Table ID to filter shards
   int64 table_id = 1;
-  // Index ID to filter shards  
+  // Index ID to filter shards
   int64 index_id = 2;
   repeated KeyRange key_ranges = 3;
   // at most `limit` shards can be returned
@@ -138,7 +192,6 @@ message GetShardLocalCacheRequest {
 
 // Response containing shard local cache information
 message GetShardLocalCacheResponse {
-  // Operation result status code, 0 means success
   int32 status = 1;
   repeated ShardLocalCacheInfo shard_local_cache_infos = 2;
 }
@@ -146,127 +199,151 @@ message GetShardLocalCacheResponse {
 message DebugGetShardManifestRequest {
   int64 table_id = 1;
   int64 index_id = 2;
-  KeyRange keyrange = 3;
+  KeyRange key_range = 3;
 }
 
 message DebugGetShardManifestResponse {
-  repeated FragMeta frag_metas = 1;
-}
-
-// -----------------------------------------------------------------------------
-// TiCI Full-text index data import workflow during Import Into (with DXF):
-// -----------------------------------------------------------------------------
-// 1. TiDB requests a cloud storage object path ("file") from the TiCI Meta
-//    Service. It provides the table info, index info, and key range for the
-//    specific data shard. TiDB import code path expects a unique file path
-//    for each shard to write its key-value pairs. Currently, only S3 is 
-//    supported as the cloud storage backend.
-//
-// 2. After import DXF has uploaded all data shards belonging to a baseline 
-//    full text index, it calls `MarkPartitionUploadFinished`. This allows 
-//    TiCI to mark the shard as complete and make it available to downstream 
-//    consumers.
-// -----------------------------------------------------------------------------
-
-message GetCloudStoragePathRequest {
-  // Detailed schema of the fts being built.
-  IndexInfo index_info = 1;
-  // Parent table metadata.
-  TableInfo table_info = 2;
-  // Inclusive lower key bound (encoded handle/rowID), non-empty.
-  bytes lower_bound = 3;
-  // Exclusive upper key bound, non-empty.
-  bytes upper_bound = 4;
-}
-
-message GetCloudStoragePathResponse {
-  // 0 - success
-  // ... other error codes
   int32 status = 1;
-  // Optional human‑readable diagnostics, only defined when status ≠ 0.
-  string error_message = 2;
-  // Object key inside the bucket that TiDB Import should write to.
-  string s3_path = 3;
+  repeated FragMeta frag_metas = 2;
+  uint64 shard_id = 3;
 }
-
-message MarkPartitionUploadFinishedRequest {
-  // The same S3 path previously returned by GetCloudStoragePath.
-  // We assume the path is unique for each partition so it can be used to
-  // identify the partition.
-  string s3_path = 1;
-}
-
-// DXF receives this in-band result so callers can
-// inspect the status and customized results.
-message MarkPartitionUploadFinishedResponse {
-  // 0 - success
-  // ... other error codes
-  int32 status = 1;
-  // Optional human‑readable diagnostics, only defined when status ≠ 0.
-  string error_message = 2;
-}
-
-message MarkTableUploadFinishedRequest {
-  // Table ID of the target table.
-  int64 table_id = 1;
-  // Index ID of the target index.
-  int64 index_id = 2;
-}
-
-message MarkTableUploadFinishedResponse {
-  // 0 - success
-  // ... other error codes
-  int32 status = 1;
-  // Optional human‑readable diagnostics, only defined when status ≠ 0.
-  string error_message = 2;
-}
-
 
 service MetaService {
-  // Maintains heartbeat from worker nodes(such as writers, compactors) to meta service.
-  rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest) returns (WorkerNodeHeartbeatResponse);
+  // Maintains heartbeat from worker nodes(such as writers, compactors) to meta
+  // service.
+  rpc WorkerNodeHeartbeat(WorkerNodeHeartbeatRequest)
+      returns (WorkerNodeHeartbeatResponse);
 
   // Maintains heartbeat from reader nodes to meta service.
-  rpc ReaderNodeHeartbeat(ReaderNodeHeartbeatRequest) returns (ReaderNodeHeartbeatResponse);
+  rpc ReaderNodeHeartbeat(ReaderNodeHeartbeatRequest)
+      returns (ReaderNodeHeartbeatResponse);
 
-  // TODO It will eventually replace the same RPCs in rs
+  // -----------------------------------------------------------------------------
+  // APIs for create indexes
+
   // CreateIndex creates a new index
   rpc CreateIndex(CreateIndexRequest) returns (CreateIndexResponse);
-  
+
   // DropIndex removes an existing index
   rpc DropIndex(DropIndexRequest) returns (DropIndexResponse);
-  
-  // GetIndexProgress retrieves the current progress of an index build
-  rpc GetIndexProgress(GetIndexProgressRequest) returns (GetIndexProgressResponse);
 
-  rpc AppendFragMeta(AppendFragMetaRequest) returns (AppendFragMetaResponse);
+  // GetIndexProgress retrieves the current progress of an index build
+  rpc GetIndexProgress(GetIndexProgressRequest)
+      returns (GetIndexProgressResponse);
+
+  // -----------------------------------------------------------------------------
+
+  rpc AppendDeltaFragMeta(AppendDeltaFragMetaRequest)
+      returns (AppendFragMetaResponse);
+
+  // TODO: this method should be replace by `FinishPartitionBuild`
+  /// Append base fragment metadata, used for baseline shards
+  /// MetaService is responsible for
+  /// 1. Find the overlapped Shards for the given table_id, index_id and
+  /// key_range
+  /// 2. Append the frags to all the overlapped shards' baseline frags
+  rpc AppendBaseFragMeta(AppendBaseFragMetaRequest)
+      returns (AppendFragMetaResponse);
 
   // Get shard local cache information
-  rpc GetShardLocalCacheInfo(GetShardLocalCacheRequest) returns (GetShardLocalCacheResponse);
+  rpc GetShardLocalCacheInfo(GetShardLocalCacheRequest)
+      returns (GetShardLocalCacheResponse);
 
   // Debug usage: get shard manifest from meta service writer
-  rpc DebugGetShardManifest(DebugGetShardManifestRequest) returns (DebugGetShardManifestResponse);
+  rpc DebugGetShardManifest(DebugGetShardManifestRequest)
+      returns (DebugGetShardManifestResponse);
+
+  rpc FinishCompactFragments(FinishCompactFragRequest)
+      returns (FinishCompactFragResponse);
+
+  // -----------------------------------------------------------------------------
+  // APIs for importing data
+  rpc SubmitImportIndexJob(ImportIndexJobRequest)
+      returns (ImportIndexJobResponse);
 
   // Returns the cloud storage path where TiDB should upload a baseline shard
-  // for the specified [table_info, index_info, key_range].
-  rpc GetCloudStoragePath(GetCloudStoragePathRequest)
-      returns (GetCloudStoragePathResponse);
+  // for the specified [table_id, index_id, key_range].
+  rpc GetImportStoragePath(GetImportStoragePathRequest)
+      returns (GetImportStoragePathResponse);
 
-  // Called by Import DXF to notify Meta Service after all partitions for 
+  // Called by Import DXF to notify Meta Service after a partition for
   // the given index are uploaded.
-  rpc MarkPartitionUploadFinished(MarkPartitionUploadFinishedRequest)
-      returns (MarkPartitionUploadFinishedResponse);
+  rpc FinishImportPartitionUpload(FinishImportPartitionUploadRequest)
+      returns (FinishImportResponse);
 
-  // Called to notify Meta Service that the whole table/index upload is finished.
-  rpc MarkTableUploadFinished(MarkTableUploadFinishedRequest)
-      returns (MarkTableUploadFinishedResponse);
+  // Called by TiCI worker to notify Meta Service after a partition for
+  // the given index is built.
+  rpc FinishImportPartitionBuild(FinishImportPartitionBuildRequest)
+      returns (FinishImportResponse);
+
+  // Called to notify Meta Service that the whole table/index upload is
+  // finished.
+  rpc FinishImportIndexUpload(FinishImportIndexUploadRequest)
+      returns (FinishImportResponse);
+
+  // -----------------------------------------------------------------------------
 }
 
+enum CompactType {
+  Delta = 0;
+  Base = 1;
+  Full = 2;
+}
 
-// IndexerService provides index creation and deletion functionality
-service IndexerService {
+message CompactFragRequest {
+  ShardManifestHeader shard = 1;
+  int64 table_id = 2;
+  int64 index_id = 3;
+  uint64 seq = 4;
+  uint64 timestamp = 5;
+  string leader_term = 6;
+  repeated FragMeta input_frags = 7;
+  S3Location upload_location = 8;
+  CompactType compact_type = 9;
+  string worker = 10;
+}
+
+message CompactFragResponse { int32 status = 1; }
+
+message FinishCompactFragRequest {
+  string addr = 1;
+  ShardManifestHeader shard = 2;
+  int64 table_id = 3;
+  int64 index_id = 4;
+  uint64 seq = 5;
+  uint64 timestamp = 6;
+  string leader_term = 7;
+  repeated FragMeta input_frags = 8;
+  repeated FragMeta output_frags = 9;
+}
+
+message FinishCompactFragResponse { int32 status = 1; }
+
+// WorkerService provides index creation and deletion functionality
+service WorkerService {
   // Add shard for an index
   rpc AddShard(AddShardRequest) returns (AddShardResponse);
+  // Compact a shard
+  rpc CompactFragments(CompactFragRequest) returns (CompactFragResponse);
+  // Write import data to a shard
+  rpc ImportWrite(ImportWriteRequest) returns (ImportWriteResponse);
+}
+
+message ImportWriteRequest {
+  uint64 task_id = 1;
+  int64 table_id = 2;
+  int64 index_id = 3;
+  // The location of the file to be imported
+  // For example, s3://bucket/prefix/filename
+  string file_location = 4;
+  // The location of the fragment prefix
+  // For example, s3://bucket/prefix/
+  string frag_prefix = 5;
+}
+
+message ImportWriteResponse {
+  // Operation result status code, 0 means success
+  int32 status = 1;
 }
 
 // IndexType represents the type of index
@@ -296,6 +373,11 @@ message ShardManifestHeader {
   uint64 epoch = 4;
 }
 
+message S3Location {
+  string bucket = 1;
+  string prefix = 2;
+}
+
 // AddShardRequest is sent from meta service to worker node
 message AddShardRequest {
   ShardManifestHeader shard = 1;
@@ -305,10 +387,8 @@ message AddShardRequest {
   TableInfo table_info = 3;
   // If the shard is created from scratch, this field is empty
   string cdc_s3_last_file = 4;
-  string cdc_s3_bucket = 5;
-  string cdc_s3_prefix = 6;
-  string s3_upload_bucket = 7;
-  string s3_upload_prefix = 8;
+  S3Location cdc_location = 5;
+  S3Location upload_location = 6;
 }
 
 // AddShardResponse
@@ -327,8 +407,7 @@ message CreateIndexRequest {
 
 // CreateIndexResponse is a response to the index creation request
 message CreateIndexResponse {
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
   // Created index ID
@@ -337,16 +416,13 @@ message CreateIndexResponse {
 
 // DropIndexRequest is a request to drop an index
 message DropIndexRequest {
-  // Table ID
-  int64  table_id = 1;
-  // Index ID
-  int64  index_id = 2;
+  int64 table_id = 1;
+  int64 index_id = 2;
 }
 
 // DropIndexResponse is a response to the index drop request
 message DropIndexResponse {
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
 }
@@ -439,8 +515,7 @@ message GetIndexProgressResponse {
     NOTFOUND = 4;
     ERROR = 5;
   }
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
   // Number of documents indexed so far
@@ -454,3 +529,98 @@ message GetIndexProgressResponse {
   // S3 path where the index is stored
   string s3_path = 7;
 }
+
+// -----------------------------------------------------------------------------
+// TiCI Full-text index data import workflow during Import Into (with DXF):
+// -----------------------------------------------------------------------------
+// 1. TiDB requests a cloud storage object path ("file") from the TiCI Meta
+//    Service. It provides the table info, index info, and key range for the
+//    specific data shard. TiDB import code path expects a unique file path
+//    for each shard to write its key-value pairs. Currently, only S3 is
+//    supported as the cloud storage backend.
+//
+// 2. After import DXF has uploaded one partition data belonging to a baseline
+//    full text index, it calls `FinishPartitionUpload`. This allows
+//    TiCI to mark the partition as complete and make it available to downstream
+//    consumers.
+//
+// 3. After import DXF has uploaded all partitions data belonging to a baseline
+//    full text index on a table, it calls `FinishIndexUploadRequest`.
+//    This allows TiCI to mark the table as complete and make it available to
+//    GC data after consumed by downstream consumers.
+// -----------------------------------------------------------------------------
+
+message ImportIndexJobRequest {
+  // Table ID of the target table.
+  int64 table_id = 1;
+  // Index ID of the target index.
+  int64 index_id = 2;
+  // Start TSO of the import job.
+  uint64 start_ts = 3;
+}
+
+message ImportIndexJobResponse {
+  ErrorCode status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+  // The import index job_id in TiCI
+  uint64 job_id = 3;
+}
+
+message GetImportStoragePathRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  // Key range for the partition being uploaded. [Inclusive, exclusive)
+  KeyRange key_range = 3;
+}
+
+message GetImportStoragePathResponse {
+  ErrorCode status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+  // Object key inside the bucket that TiDB Import should write to.
+  // The format is "s3://bucket/prefix/filename".
+  string s3_path = 3;
+}
+
+message FinishImportPartitionUploadRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  // Key range for the partition uploaded.
+  KeyRange key_range = 3;
+  string s3_path = 4;
+}
+
+// - If the index is built successfully, the `status` field should be 0,
+//  and the `frag_metas` field should contain the metadata of the uploaded
+//  baseline fragments. MetaService is responsible for
+//  1. Find the overlapped Shards for the given table_id, index_id and key_range
+//  2. Append the frags to all the overlapped shards' baseline frags
+//  3. Update the ImportTask with task_id status as finished
+// - If the index building meet unrecoverable errors, then MetaService should
+//  update the ImportTask with task_id status as failed
+message FinishImportPartitionBuildRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  uint64 task_id = 3;
+  ErrorCode status = 4;
+  // The uploaded fragment metadata when status is 0.
+  repeated FragMeta frag_metas = 5;
+  // The error message if the status is not 0.
+  string error_message = 6;
+}
+
+message FinishImportIndexUploadRequest {
+  // Table ID of the target table.
+  int64 table_id = 1;
+  // Index ID of the target index.
+  int64 index_id = 2;
+}
+
+message FinishImportResponse {
+  ErrorCode status = 1;
+  // Optional human‑readable diagnostics, only defined when status ≠ 0.
+  string error_message = 2;
+}
+
+// -----------------------------------------------------------------------------

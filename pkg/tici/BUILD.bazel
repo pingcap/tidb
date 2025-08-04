@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "tici.pb.go",
         "tici_file_writer.go",
-        "tici_grpc.pb.go",
         "tici_manager_client.go",
         "tici_write.go",
     ],
@@ -24,6 +23,8 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_gogo_protobuf//gogoproto",
+        "@com_github_golang_protobuf//proto",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -33,8 +34,6 @@ go_library(
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//status",
-        "@org_golang_google_protobuf//reflect/protoreflect",
-        "@org_golang_google_protobuf//runtime/protoimpl",
         "@org_uber_go_zap//:zap",
     ],
 )

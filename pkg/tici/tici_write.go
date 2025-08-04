@@ -75,7 +75,8 @@ func NewTiCIDataWriter(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	schema string,
-) *DataWriter {
+	ticiMgr *ManagerCtx,
+) (*DataWriter, error) {
 	baseLogger := logutil.Logger(ctx)
 	logger := baseLogger.With(
 		zap.Int64("tableID", tblInfo.ID),
@@ -87,12 +88,17 @@ func NewTiCIDataWriter(
 		zap.String("schema", schema),
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
+	// FIXME: I'm not sure whether it is the right place to mark the import index job as started in TiCI.
+	err := ticiMgr.StartImportIndex(ctx, tblInfo.ID, idxInfo.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &DataWriter{
 		tblInfo: tblInfo,
 		idxInfo: idxInfo,
 		schema:  schema,
 		logger:  logger,
-	}
+	}, nil
 }
 
 // InitTICIFileWriter initializes the ticiFileWriter for this TiCIDataWriter.
@@ -152,7 +158,7 @@ func (w *DataWriter) FetchCloudStoragePath(
 	lowerBound, upperBound []byte,
 ) (string, error) {
 	logger := w.logger
-	s3Path, err := ticiMgr.GetCloudStoragePath(ctx, w.tblInfo, w.idxInfo, w.schema, lowerBound, upperBound)
+	s3Path, err := ticiMgr.GetCloudStoragePath(ctx, w.tblInfo.ID, w.idxInfo.ID, w.schema, lowerBound, upperBound)
 	if err != nil {
 		logger.Error("failed to get TiCI cloud storage path",
 			zap.Error(err),
@@ -170,11 +176,12 @@ func (w *DataWriter) FetchCloudStoragePath(
 	return s3Path, nil
 }
 
-// MarkPartitionUploadFinished notifies TiCI Meta Service that a partition upload is finished.
+// FinishPartitionUpload notifies TiCI Meta Service that a partition upload is finished.
 // Uses the stored s3Path if not explicitly provided.
-func (w *DataWriter) MarkPartitionUploadFinished(
+func (w *DataWriter) FinishPartitionUpload(
 	ctx context.Context,
 	ticiMgr *ManagerCtx,
+	lowerBound, upperBound []byte,
 	s3PathOpt ...string,
 ) error {
 	logger := w.logger
@@ -183,30 +190,32 @@ func (w *DataWriter) MarkPartitionUploadFinished(
 		s3Path = s3PathOpt[0]
 	}
 	if s3Path == "" {
-		logger.Warn("no s3Path set for MarkPartitionUploadFinished")
+		logger.Warn("no s3Path set for FinishPartitionUpload")
 		return nil // or return an error if s3Path is required
 	}
-	err := ticiMgr.MarkPartitionUploadFinished(ctx, s3Path)
+	err := ticiMgr.FinishPartitionUpload(ctx, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound, s3Path)
 	if err != nil {
 		logger.Error("failed to mark partition upload finished",
-			zap.String("s3Path", s3Path),
+			zap.String("startKey", string(lowerBound)),
+			zap.String("endKey", string(upperBound)),
 			zap.Error(err),
 		)
 	} else {
 		logger.Info("successfully marked partition upload finished",
-			zap.String("s3Path", s3Path),
+			zap.String("startKey", string(lowerBound)),
+			zap.String("endKey", string(upperBound)),
 		)
 	}
 	return err
 }
 
-// MarkTableUploadFinished notifies TiCI Meta Service that the whole table/index upload is finished.
-func (w *DataWriter) MarkTableUploadFinished(
+// FinishIndexUpload notifies TiCI Meta Service that the whole table/index upload is finished.
+func (w *DataWriter) FinishIndexUpload(
 	ctx context.Context,
 	ticiMgr *ManagerCtx,
 ) error {
 	logger := w.logger
-	if err := ticiMgr.MarkTableUploadFinished(ctx, w.tblInfo.ID, w.idxInfo.ID); err != nil {
+	if err := ticiMgr.FinishIndexUpload(ctx, w.tblInfo.ID, w.idxInfo.ID); err != nil {
 		logger.Error("failed to mark table upload finished", zap.Error(err))
 		return err
 	}
@@ -322,10 +331,6 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 		zap.Int("fulltextIndexCount", len(fulltextIndexes)),
 	)
 
-	for _, idx := range fulltextIndexes {
-		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
-	}
-
 	etcdClient, err := getEtcdClient()
 	if err != nil {
 		return nil, err
@@ -334,6 +339,15 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 	if err != nil {
 		return nil, err
 	}
+
+	for _, idx := range fulltextIndexes {
+		w, err := NewTiCIDataWriter(ctx, tblInfo, idx, schema, mgrCtx)
+		if err != nil {
+			return nil, err
+		}
+		writers = append(writers, w)
+	}
+
 	g := &DataWriterGroup{
 		writers:    writers,
 		mgrCtx:     mgrCtx,
@@ -358,7 +372,9 @@ func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblI
 	)
 
 	for _, idx := range fulltextIndexes {
-		writers = append(writers, NewTiCIDataWriter(ctx, tblInfo, idx, schema))
+		// We ignore the error in the test setup,
+		w, _ := NewTiCIDataWriter(ctx, tblInfo, idx, schema, mgrCtx)
+		writers = append(writers, w)
 	}
 
 	g := &DataWriterGroup{
@@ -433,28 +449,29 @@ func (g *DataWriterGroup) FetchCloudStoragePath(
 	return nil
 }
 
-// MarkPartitionUploadFinished runs MarkPartitionUploadFinished for all writers.
+// FinishPartitionUpload runs FinishPartitionUpload for all writers.
 // Optionally, you can pass a slice of s3Paths to override the stored s3Path for each writer.
-func (g *DataWriterGroup) MarkPartitionUploadFinished(
+func (g *DataWriterGroup) FinishPartitionUpload(
 	ctx context.Context,
+	lowerBound, upperBound []byte,
 ) error {
 	if !g.writable.Load() {
 		return nil
 	}
 	for _, w := range g.writers {
-		if err := w.MarkPartitionUploadFinished(ctx, g.mgrCtx); err != nil {
+		if err := w.FinishPartitionUpload(ctx, g.mgrCtx, lowerBound, upperBound); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// MarkTableUploadFinished runs MarkTableUploadFinished for all writers.
-func (g *DataWriterGroup) MarkTableUploadFinished(
+// FinishIndexUpload runs FinishIndexUpload for all writers.
+func (g *DataWriterGroup) FinishIndexUpload(
 	ctx context.Context,
 ) error {
 	for _, w := range g.writers {
-		if err := w.MarkTableUploadFinished(ctx, g.mgrCtx); err != nil {
+		if err := w.FinishIndexUpload(ctx, g.mgrCtx); err != nil {
 			return err
 		}
 		w.logger.Info("successfully marked table upload finished for TICIDataWriter")
