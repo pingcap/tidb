@@ -104,10 +104,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == logicalop.LeftOuterJoin {
-			extractedCols := make([]*expression.Column, 0, 8)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.LeftConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+			tmp := make([]expression.Expression, 0, len(join.LeftConditions)+len(join.OtherConditions)+len(eqConds))
+			tmp = append(tmp, join.OtherConditions...)
+			tmp = append(tmp, join.LeftConditions...)
+			tmp = append(tmp, eqConds...)
+			extractedCols := expression.ExtractColumnsFromExpressions(tmp, nil)
 			affectedGroups := 0
 			for i := range lhsGroup {
 				for _, col := range extractedCols {
@@ -148,10 +150,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == logicalop.RightOuterJoin {
-			extractedCols := make([]*expression.Column, 0, 8)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.RightConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+			tmp := make([]expression.Expression, 0, len(join.OtherConditions)+len(join.RightConditions)+len(eqConds))
+			tmp = append(tmp, join.OtherConditions...)
+			tmp = append(tmp, join.RightConditions...)
+			tmp = append(tmp, eqConds...)
+			extractedCols := expression.ExtractColumnsFromExpressions(tmp, nil)
 			affectedGroups := 0
 			for i := range rhsGroup {
 				for _, col := range extractedCols {

@@ -195,8 +195,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	//nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
-		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
-
+		selfUsedCols = append(selfUsedCols, expression.ExtractColumnsFromExpressions(aggrFunc.Args, nil)...)
 		var cols []*expression.Column
 		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
 		selfUsedCols = append(selfUsedCols, cols...)
