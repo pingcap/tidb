@@ -37,6 +37,18 @@ var (
 
 	InPacketBytes  prometheus.Counter
 	OutPacketBytes prometheus.Counter
+
+	// ReadCompressedPacketBytes is the compressed length from the compressed packet header when reading
+	ReadCompressedPacketBytes prometheus.Counter
+
+	// ReadCompressedPacketBytesSaved is the uncompressed length minus the compressed payload length and header
+	ReadCompressedPacketBytesSaved prometheus.Counter
+
+	// WriteCompressedPacketBytes is the compressed length from the compressed packet header when writing
+	WriteCompressedPacketBytes prometheus.Counter
+
+	// WriteCompressedPacketBytesSaved is the uncompressed length minus the compressed payload length and header
+	WriteCompressedPacketBytesSaved prometheus.Counter
 )
 
 func init() {
@@ -118,4 +130,9 @@ func InitMetricsVars() {
 
 	InPacketBytes = metrics.PacketIOCounter.WithLabelValues("In")
 	OutPacketBytes = metrics.PacketIOCounter.WithLabelValues("Out")
+
+	ReadCompressedPacketBytes = metrics.PacketIOCounter.WithLabelValues("read_compressed")
+	ReadCompressedPacketBytesSaved = metrics.PacketIOCounter.WithLabelValues("read_compressed_saved")
+	WriteCompressedPacketBytes = metrics.PacketIOCounter.WithLabelValues("write_compressed")
+	WriteCompressedPacketBytesSaved = metrics.PacketIOCounter.WithLabelValues("write_compressed_saved")
 }

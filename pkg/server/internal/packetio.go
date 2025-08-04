@@ -40,6 +40,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"io"
+	"math"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -403,6 +404,12 @@ func (cw *compressedWriter) Flush() error {
 	} else {
 		compressedLength = len(data)
 	}
+	server_metrics.WriteCompressedPacketBytes.Add(float64(compressedLength))
+
+	if uncompressedLength > 0 {
+		server_metrics.WriteCompressedPacketBytesSaved.Add(math.Max(float64(0), float64(uncompressedLength-(compressedLength+7))))
+	}
+
 	compressedHeader[0] = byte(compressedLength)
 	compressedHeader[1] = byte(compressedLength >> 8)
 	compressedHeader[2] = byte(compressedLength >> 16)
@@ -426,6 +433,7 @@ func (cw *compressedWriter) Flush() error {
 	}
 	w.Close()
 	_, err = cw.w.Write(compressedPacket.Bytes())
+
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -462,6 +470,7 @@ func (cr *compressedReader) Read(data []byte) (n int, err error) {
 		compressedLength := int(uint32(compressedHeader[0]) | uint32(compressedHeader[1])<<8 | uint32(compressedHeader[2])<<16)
 		compressedSequence := compressedHeader[3]
 		uncompressedLength := int(uint32(compressedHeader[4]) | uint32(compressedHeader[5])<<8 | uint32(compressedHeader[6])<<16)
+		server_metrics.ReadCompressedPacketBytes.Add(float64(compressedLength))
 
 		if compressedSequence != *cr.compressedSequence {
 			return n, server_err.ErrInvalidSequence.GenWithStack(
@@ -471,6 +480,10 @@ func (cr *compressedReader) Read(data []byte) (n int, err error) {
 
 		r := io.NopCloser(cr.r)
 		if uncompressedLength > 0 {
+			// If the uncompressedLength is 0 we didn't save anything as that means the payload
+			// isn't compressed. As that still needs a 7 byte compresed header we could even say
+			// that we lost 7 bytes.
+			server_metrics.ReadCompressedPacketBytesSaved.Add(math.Max(float64(0), float64(uncompressedLength-(compressedLength+7))))
 			switch cr.compressionAlgorithm {
 			case mysql.CompressionZlib:
 				var err error
