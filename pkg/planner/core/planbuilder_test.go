@@ -252,7 +252,7 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tblInfo := &model.TableInfo{}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -287,7 +287,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	aggDescs := []*aggregation.AggFuncDesc{aggDesc1, aggDesc2}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -386,7 +386,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 
 	// hash join
-	hashJoin := &PhysicalHashJoin{
+	hashJoin := &physicalop.PhysicalHashJoin{
 		Concurrency:     4,
 		UseOuterToBuild: true,
 	}

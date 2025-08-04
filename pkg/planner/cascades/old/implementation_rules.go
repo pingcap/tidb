@@ -199,7 +199,7 @@ func (*ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 func (*ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*logicalop.LogicalTableScan)
-	ts := plannercore.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	ts := physicalop.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.SortItems[0].Desc
@@ -438,7 +438,7 @@ func getImplForHashJoin(expr *memo.GroupExpr, prop *property.PhysicalProperty, i
 		expCntScale := prop.ExpectedCnt / stats.RowCount
 		chReqProps[1-innerIdx].ExpectedCnt = expr.Children[1-innerIdx].Prop.Stats.RowCount * expCntScale
 	}
-	hashJoin := plannercore.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	hashJoin := physicalop.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(expr.Group.Prop.Schema)
 	return impl.NewHashJoinImpl(hashJoin)
 }

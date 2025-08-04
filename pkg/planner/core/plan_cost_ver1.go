@@ -176,13 +176,13 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer1(_ property.TaskType, option 
 	for len(tmp.Children()) > 0 {
 		tmp = tmp.Children()[0]
 	}
-	ts := tmp.(*PhysicalTableScan)
+	ts := tmp.(*physicalop.PhysicalTableScan)
 	tblCost, err := ts.GetPlanCostVer1(property.CopMultiReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
 	p.PlanCost -= tblCost
-	p.PlanCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
+	p.PlanCost += getCardinality(p.indexPlan, costFlag) * ts.GetScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)
@@ -402,8 +402,9 @@ func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan base.Physica
 	return plan.StatsCount() * cardinality.GetAvgRowSize(p.SCtx(), getTblStats(plan), plan.Schema().Columns, isIdxScan, false)
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalTableScan calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalTableScan(pp base.PhysicalPlan, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalTableScan)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -413,11 +414,11 @@ func (p *PhysicalTableScan) GetPlanCostVer1(_ property.TaskType, option *optimiz
 	var rowCount, rowSize, scanFactor float64
 	costModelVersion := p.SCtx().GetSessionVars().CostModelVersion
 	scanFactor = p.SCtx().GetSessionVars().GetScanFactor(p.Table)
-	if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= cost.SmallScanThreshold {
+	if p.Desc && p.Prop != nil && p.Prop.ExpectedCnt >= cost.SmallScanThreshold {
 		scanFactor = p.SCtx().GetSessionVars().GetDescScanFactor(p.Table)
 	}
 	rowCount = getCardinality(p, costFlag)
-	rowSize = p.getScanRowSize()
+	rowSize = p.GetScanRowSize()
 	selfCost = rowCount * rowSize * scanFactor
 	if option.GetTracer() != nil {
 		setPhysicalTableOrIndexScanCostDetail(p, option.GetTracer(), rowCount, rowSize, scanFactor, costModelVersion)
@@ -836,8 +837,9 @@ func getPlanCostVer14PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCost, nil
 }
 
-// GetCost computes cost of hash join operator itself.
-func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, _ bool, costFlag uint64, op *optimizetrace.PhysicalOptimizeOp) float64 {
+// getCost4PhysicalHashJoin computes cost of hash join operator itself.
+func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64, op *optimizetrace.PhysicalOptimizeOp) float64 {
+	p := pp.(*physicalop.PhysicalHashJoin)
 	buildCnt, probeCnt := lCnt, rCnt
 	build := p.Children()[0]
 	// Taking the right as the inner for right join or using the outer to build a hash table.
@@ -849,7 +851,7 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, _ bool, costFlag uint64, 
 	oomUseTmpStorage := vardef.EnableTmpStorageOnOOM.Load()
 	memQuota := sessVars.MemTracker.GetBytesLimit() // sessVars.MemQuotaQuery && hint
 	rowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
-	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.storeTp != kv.TiFlash
+	spill := oomUseTmpStorage && memQuota > 0 && rowSize*buildCnt > float64(memQuota) && p.StoreTp != kv.TiFlash
 	// Cost of building hash table.
 	cpuFactor := sessVars.GetCPUFactor()
 	diskFactor := sessVars.GetDiskFactor()
@@ -924,8 +926,9 @@ func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64, _ bool, costFlag uint64, 
 	return cpuCost + memoryCost + diskCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalHashJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalHashJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalHashJoin(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalHashJoin)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1257,7 +1260,7 @@ func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {
 // and for TiFlash, it's len(access-range) * len(access-column) * seek-factor.
 func estimateNetSeekCost(copTaskPlan base.PhysicalPlan) float64 {
 	switch x := copTaskPlan.(type) {
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		if x.StoreType == kv.TiFlash { // the old TiFlash interface uses cop-task protocol
 			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.SCtx().GetSessionVars().GetSeekFactor(x.Table)
 		}
@@ -1272,8 +1275,8 @@ func estimateNetSeekCost(copTaskPlan base.PhysicalPlan) float64 {
 // getTblStats returns the tbl-stats of this plan, which contains all columns before pruning.
 func getTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
 	switch x := copTaskPlan.(type) {
-	case *PhysicalTableScan:
-		return x.tblColHists
+	case *physicalop.PhysicalTableScan:
+		return x.TblColHists
 	case *PhysicalIndexScan:
 		return x.tblColHists
 	default:
@@ -1284,7 +1287,7 @@ func getTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
 // getTableNetFactor returns the corresponding net factor of this table, it's mainly for temporary tables
 func getTableNetFactor(copTaskPlan base.PhysicalPlan) float64 {
 	switch x := copTaskPlan.(type) {
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)
 	case *PhysicalIndexScan:
 		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)

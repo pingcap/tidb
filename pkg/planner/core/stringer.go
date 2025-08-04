@@ -116,9 +116,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "CheckTable"
 	case *PhysicalIndexScan:
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

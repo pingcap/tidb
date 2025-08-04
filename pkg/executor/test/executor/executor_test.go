@@ -789,7 +789,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
 	var opsNeedsCovered = []base.PhysicalPlan{
-		&plannercore.PhysicalHashJoin{},
+		&physicalop.PhysicalHashJoin{},
 		&physicalop.PhysicalMergeJoin{},
 		&physicalop.PhysicalIndexJoin{},
 		&plannercore.PhysicalIndexHashJoin{},

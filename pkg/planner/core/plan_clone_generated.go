@@ -24,39 +24,6 @@ import (
 )
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableScan)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
-	cloned.filterCondition = cloneExpressionsForPlanCache(op.filterCondition, nil)
-	cloned.LateMaterializationFilterCondition = cloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
-	cloned.HandleIdx = make([]int, len(op.HandleIdx))
-	copy(cloned.HandleIdx, op.HandleIdx)
-	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone()
-	}
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
-	if op.SampleInfo != nil {
-		return nil, false
-	}
-	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
-	copy(cloned.constColsByCond, op.constColsByCond)
-	if op.runtimeFilterList != nil {
-		return nil, false
-	}
-	if op.UsedColumnarIndexes != nil {
-		return nil, false
-	}
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexScan)
 	*cloned = *op
@@ -106,23 +73,6 @@ func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan
 		return nil, false
 	}
 	cloned.BasePhysicalAgg = *basePlan
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalHashJoin)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalJoin = *basePlan
-	cloned.EqualConditions = cloneScalarFunctionsForPlanCache(op.EqualConditions, nil)
-	cloned.NAEqualConditions = cloneScalarFunctionsForPlanCache(op.NAEqualConditions, nil)
-	if op.runtimeFilterList != nil {
-		return nil, false
-	}
 	return cloned, true
 }
 
