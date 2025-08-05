@@ -137,6 +137,18 @@ create table t (a blob(10000), b timestamp, index idx(a(3069), b));
 Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
 create table t (a blob(10000), b timestamp, index idx(a(3068), b));
 drop table if exists t;
+create table posts (id int auto_increment primary key, title varchar(500) character set utf8, subtitle varchar(500) character set utf8, unique key(title, subtitle));
+alter table posts convert to character set utf8mb4;
+Error 1071 (42000): Specified key was too long (4000 bytes); max key length is 3072 bytes
+drop table if exists posts;
+create table t(a varchar(1000) character set utf8, primary key(a));
+alter table t convert to character set utf8mb4;
+Error 1071 (42000): Specified key was too long (4000 bytes); max key length is 3072 bytes
+drop table if exists t;
+create table t(a varchar(1000) character set utf8, key(a));
+alter table t convert to character set utf8mb4;
+Error 1071 (42000): Specified key was too long (4000 bytes); max key length is 3072 bytes
+drop table if exists t;
 drop table if exists t1; create table t1(id int ); insert into t1 values (1);
 select * from t1;
 id
