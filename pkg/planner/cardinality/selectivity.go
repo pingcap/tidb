@@ -913,7 +913,11 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	if len(cols) != 1 {
 		return false, 0, nil
 	}
-	col := slices.Collect(maps.Values(cols))[0]
+	var col *expression.Column
+	for _, c := range cols {
+		col = c
+		break
+	}
 	tp := col.RetType
 	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
 		return false, 0, nil
