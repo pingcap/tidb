@@ -143,6 +143,7 @@ func (m *Manager) GetOrCreate(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	failpoint.InjectCall("injectETCDCli", &etcdCli, ks)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
 		if err != nil {
@@ -226,6 +227,16 @@ func (m *Manager) GetOrCreate(
 	return mgr, nil
 }
 
+// CloseKS closes the session manager for the specified keyspace.
+func (m *Manager) CloseKS(targetKS string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if mgr, ok := m.sessMgrs[targetKS]; ok {
+		mgr.close()
+		delete(m.sessMgrs, targetKS)
+	}
+}
+
 // Close closes all session managers and their associated resources.
 func (m *Manager) Close() {
 	m.mu.Lock()
@@ -294,7 +305,9 @@ func (m *SessionManager) close() {
 		logger.Error("failed to close etcd client", zap.Error(err))
 	}
 	// lifecycle of SYSTEM store is managed outside, skip close.
-	if ks != keyspace.System {
+	needCloseStore := ks != keyspace.System
+	failpoint.InjectCall("skipCloseStore", &needCloseStore)
+	if needCloseStore {
 		if err := m.store.Close(); err != nil {
 			logger.Error("failed to close store", zap.Error(err))
 		}

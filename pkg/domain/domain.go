@@ -857,6 +857,12 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 	return mgr.SessPool(), nil
 }
 
+// CloseKSSessMgr closes the session manager for the given keyspace.
+// it's exported for test only.
+func (do *Domain) CloseKSSessMgr(targetKS string) {
+	do.crossKSSessMgr.CloseKS(targetKS)
+}
+
 // GetCrossKSMgr returns the cross keyspace session manager.
 // it's exported for test only.
 func (do *Domain) GetCrossKSMgr() *crossks.Manager {
