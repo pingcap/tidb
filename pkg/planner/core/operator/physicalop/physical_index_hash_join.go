@@ -63,10 +63,10 @@ func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPla
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexHashJoin)
-	*cloned = *op
-	inlj, ok := op.PhysicalIndexJoin.CloneForPlanCache(newCtx)
+	*cloned = *p
+	inlj, ok := p.PhysicalIndexJoin.CloneForPlanCache(newCtx)
 	if !ok {
 		return nil, false
 	}
