@@ -594,24 +594,6 @@ func (p *Update) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalLock) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for i, cols := range p.TblID2Handle {
-		for j, col := range cols {
-			resolvedCol, err := col.ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-			p.TblID2Handle[i][j] = resolvedCol
-		}
-	}
-	return nil
-}
-
-// ResolveIndices implements Plan interface.
 func (p *Insert) ResolveIndices() (err error) {
 	err = p.baseSchemaProducer.ResolveIndices()
 	if err != nil {

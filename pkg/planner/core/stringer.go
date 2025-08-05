@@ -174,7 +174,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "MaxOneRow"
 	case *logicalop.LogicalLimit, *physicalop.PhysicalLimit:
 		str = "Limit"
-	case *PhysicalLock, *logicalop.LogicalLock:
+	case *physicalop.PhysicalLock, *logicalop.LogicalLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"

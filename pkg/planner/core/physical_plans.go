@@ -65,7 +65,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalUnionAll{}
 	_ base.PhysicalPlan = &physicalop.PhysicalSort{}
 	_ base.PhysicalPlan = &physicalop.NominalSort{}
-	_ base.PhysicalPlan = &PhysicalLock{}
+	_ base.PhysicalPlan = &physicalop.PhysicalLock{}
 	_ base.PhysicalPlan = &physicalop.PhysicalLimit{}
 	_ base.PhysicalPlan = &PhysicalIndexScan{}
 	_ base.PhysicalPlan = &PhysicalTableScan{}
@@ -1536,39 +1536,6 @@ func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
 // AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
 func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
-}
-
-// PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
-type PhysicalLock struct {
-	physicalop.BasePhysicalPlan
-
-	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
-
-	TblID2Handle       map[int64][]util.HandleCols
-	TblID2PhysTblIDCol map[int64]*expression.Column
-}
-
-// MemoryUsage return the memory usage of PhysicalLock
-func (pl *PhysicalLock) MemoryUsage() (sum int64) {
-	if pl == nil {
-		return
-	}
-
-	sum = pl.BasePhysicalPlan.MemoryUsage() + size.SizeOfPointer + size.SizeOfMap*2
-	if pl.Lock != nil {
-		sum += int64(unsafe.Sizeof(ast.SelectLockInfo{}))
-	}
-
-	for _, vals := range pl.TblID2Handle {
-		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(vals))*size.SizeOfInterface
-		for _, val := range vals {
-			sum += val.MemoryUsage()
-		}
-	}
-	for _, val := range pl.TblID2PhysTblIDCol {
-		sum += size.SizeOfInt64 + size.SizeOfPointer + val.MemoryUsage()
-	}
-	return
 }
 
 // PhysicalHashAgg is hash operator of aggregate.

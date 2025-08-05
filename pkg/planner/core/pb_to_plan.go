@@ -323,7 +323,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		// Set the expression column unique ID.
 		// Since the expression is build from PB, It has not set the expression column ID yet.
 		schemaCols := memTable.Schema().Columns
-		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
+		cols := expression.ExtractColumnsFromExpressions(predicates, nil)
 		for i := range cols {
 			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
 		}
