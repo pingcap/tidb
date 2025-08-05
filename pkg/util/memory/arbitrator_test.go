@@ -269,7 +269,7 @@ func (m *MemArbitrator) checkEntryQuotaByPriority(
 	}
 }
 
-func (m *MemArbitrator) clearAwaitFreeForTest() {
+func (m *MemArbitrator) resetAwaitFreeForTest() {
 	t := testState
 	for i := range m.awaitFree.budget.shards {
 		b := &m.awaitFree.budget.shards[i]
@@ -795,7 +795,7 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 	m.cleanupNotifer()
 	{ // Priority mode -> Disable mode
 		require.True(t, m.allocated() == 0)
-		m.awaitFree.pool.allocate(123)
+		m.ConsumeQuotaFromAwaitFreePool(0, 99)
 
 		requestSize := newLimit + 1
 		m.restartEntryForTest(entry1, newDefCtxForTest(ArbitrationPriorityLow))
@@ -815,7 +815,7 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 		require.True(t, entry2.ctx.memPriority == ArbitrationPriorityLow)
 
 		require.Equal(t, 0, m.runOneRound())
-		require.True(t, m.execMu.blockedState.allocated == 123)
+		require.True(t, m.execMu.blockedState.allocated == 100)
 		m.checkTaskExec(pairSuccessFail{}, 0, NumByPattern{0, 0, 0})
 
 		require.True(t, m.tasksCountForTest() == 2)
@@ -841,8 +841,8 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 		m.checkEntryQuotaByPriority(entry2, ArbitrationPriorityLow, requestSize)
 		require.True(t, m.allocated() == requestSize*2+m.awaitFreePoolCap())
 		require.True(t, m.tasksCountForTest() == 0)
-		m.awaitFree.pool.release(m.awaitFree.pool.allocated())
-		m.clearAwaitFreeForTest()
+		m.ConsumeQuotaFromAwaitFreePool(0, -99)
+		m.resetAwaitFreeForTest()
 		m.checkEntryForTest(entry1, entry2)
 		m.checkTaskExec(pairSuccessFail{2, 0}, 0, NumByPattern{})
 		m.resetEntryForTest(entry1, entry2)
@@ -1529,7 +1529,7 @@ func TestMemArbitrator(t *testing.T) {
 		}
 		e2 := m.addEntryForTest(nil)
 		e3 := m.addEntryForTest(newDefCtxForTest(ArbitrationPriorityMedium))
-		m.updateTrackedMemStats()
+		m.updateTrackedHeapStats()
 		usedHeap += e1Men
 		require.Equal(t, m.avoidance.heapTracked.Load(), usedHeap)
 		require.True(t, m.buffer.size.Load() == e1Men)
@@ -1547,10 +1547,10 @@ func TestMemArbitrator(t *testing.T) {
 		require.True(t, m.avoidance.size.Load() == m.heapController.heapAlloc.Load()+m.heapController.memOffHeap.Load()-m.avoidance.heapTracked.Load())
 		require.True(t, m.avoidance.size.Load() > m.mu.limit-m.mu.softLimit.size)
 
-		m.updateTrackedMemStats()
+		m.updateTrackedHeapStats()
 		require.True(t, m.buffer.size.Load() == e1Men)
 		e1Men = 3
-		m.updateTrackedMemStats()
+		m.updateTrackedHeapStats()
 		require.True(t, m.buffer.size.Load() == 17) // no update to smaller size
 
 		now := time.Now()
@@ -1599,7 +1599,7 @@ func TestMemArbitrator(t *testing.T) {
 		m.checkEntryForTest(e1, e2, e3)
 		m.deleteEntryForTest(e1, e2, e3)
 		m.checkEntryForTest()
-		m.clearAwaitFreeForTest()
+		m.resetAwaitFreeForTest()
 		m.setMemStatsForTest(0, 0, 0, 0)
 		require.True(t, m.allocated() == 0)
 	}
@@ -1840,7 +1840,7 @@ func TestMemArbitrator(t *testing.T) {
 		m.deleteEntryForTest(e1)
 		m.checkEntryForTest()
 
-		m.updateTrackedMemStats()
+		m.updateTrackedHeapStats()
 		m.setMemStatsForTest(0, 0, 0, 0)
 	}
 	{ // test mem risk
@@ -2205,7 +2205,7 @@ func TestMemArbitrator(t *testing.T) {
 		m.UnixTimeSec = debugTime.Unix()
 
 		e1ctx := m.newCtxWithHelperForTest(ArbitrationPriorityMedium, NoWaitAverse, RequirePrivilege)
-		e1ctx.LastMaxMem = 23
+		e1ctx.PrevMaxMem = 23
 		e1ctx.memQuotaLimit = 29
 		e1ctx.arbitrateHelper.(*arbitrateHelperForTest).heapUsedCB = func() int64 {
 			return 31
@@ -2214,7 +2214,7 @@ func TestMemArbitrator(t *testing.T) {
 
 		require.True(t, m.buffer.size.Load() == 23)
 		require.True(t, m.buffer.quotaLimit.Load() == 0)
-		m.updateTrackedMemStats()
+		m.updateTrackedHeapStats()
 		require.True(t, m.buffer.size.Load() == 31)
 		require.True(t, m.buffer.quotaLimit.Load() == 0)
 
