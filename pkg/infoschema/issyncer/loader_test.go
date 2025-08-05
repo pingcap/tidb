@@ -127,7 +127,7 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 	l := NewLoaderForCrossKS(store, infoschema.NewCache(nil, 1))
 	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
-	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
+	_, _, _, _, err = l.LoadWithTS(ver.Ver, false)
 	require.ErrorContains(t, err, "system database not found")
 
 	ctx := tidbkv.WithInternalSourceType(context.Background(), tidbkv.InternalTxnAdmin)
@@ -149,7 +149,7 @@ func TestLoadFromTSForCrossKS(t *testing.T) {
 	}))
 	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
 	require.NoError(t, err)
-	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
+	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
 	require.NoError(t, err)
 	allSchemas := is.AllSchemas()
 	require.EqualValues(t, 1, is.SchemaMetaVersion())
