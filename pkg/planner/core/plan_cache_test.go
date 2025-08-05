@@ -1525,37 +1525,37 @@ func TestPlanCacheMVIndexRandomly(t *testing.T) {
 }
 
 func TestPlanCacheMVIndexManually(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
 
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
-		}
-	)
-	planSuiteData := plannercore.GetPlanCacheSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
+		var (
+			input  []string
+			output []struct {
+				SQL    string
+				Result []string
+			}
+		)
+		planSuiteData := plannercore.GetPlanCacheSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = input[i]
-		})
-		if strings.HasPrefix(strings.ToLower(input[i]), "select") ||
-			strings.HasPrefix(strings.ToLower(input[i]), "execute") ||
-			strings.HasPrefix(strings.ToLower(input[i]), "show") {
-			result := tk.MustQuery(input[i])
+		for i := range input {
 			testdata.OnRecord(func() {
-				output[i].Result = testdata.ConvertRowsToStrings(result.Rows())
+				output[i].SQL = input[i]
 			})
-			result.Check(testkit.Rows(output[i].Result...))
-		} else {
-			tk.MustExec(input[i])
+			if strings.HasPrefix(strings.ToLower(input[i]), "select") ||
+				strings.HasPrefix(strings.ToLower(input[i]), "execute") ||
+				strings.HasPrefix(strings.ToLower(input[i]), "show") {
+				result := tk.MustQuery(input[i])
+				testdata.OnRecord(func() {
+					output[i].Result = testdata.ConvertRowsToStrings(result.Rows())
+				})
+				result.Check(testkit.Rows(output[i].Result...))
+			} else {
+				tk.MustExec(input[i])
+			}
 		}
-	}
+	})
 }
 
 func BenchmarkPlanCacheBindingMatch(b *testing.B) {

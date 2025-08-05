@@ -42,119 +42,118 @@ import (
 )
 
 func TestEncodeDecodePlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
-	tk.MustExec("create table tp (a int ,b int,c int) partition by hash(b) partitions 5;")
-	tk.MustExec("set tidb_enable_collect_execution_info=1;")
-	tk.MustExec("set tidb_partition_prune_mode='static';")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1,t2")
+		tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
+		tk.MustExec("create table tp (a int ,b int,c int) partition by hash(b) partitions 5;")
+		tk.MustExec("set tidb_enable_collect_execution_info=1;")
+		tk.MustExec("set tidb_partition_prune_mode='static';")
 
-	tk.Session().GetSessionVars().PlanID.Store(0)
-	getPlanTree := func() (str1, str2 string) {
-		info := tk.Session().ShowProcess()
-		require.NotNil(t, info)
-		p, ok := info.Plan.(base.Plan)
-		require.True(t, ok)
-		encodeStr := core.EncodePlan(p)
-		planTree, err := plancodec.DecodePlan(encodeStr)
-		require.NoError(t, err)
+		tk.Session().GetSessionVars().PlanID.Store(0)
+		getPlanTree := func() (str1, str2 string) {
+			info := tk.Session().ShowProcess()
+			require.NotNil(t, info)
+			p, ok := info.Plan.(base.Plan)
+			require.True(t, ok)
+			encodeStr := core.EncodePlan(p)
+			planTree, err := plancodec.DecodePlan(encodeStr)
+			require.NoError(t, err)
 
-		// test the new encoding method
-		flat := core.FlattenPhysicalPlan(p, true)
-		newEncodeStr := core.EncodeFlatPlan(flat)
-		newPlanTree, err := plancodec.DecodePlan(newEncodeStr)
-		require.NoError(t, err)
+			// test the new encoding method
+			flat := core.FlattenPhysicalPlan(p, true)
+			newEncodeStr := core.EncodeFlatPlan(flat)
+			newPlanTree, err := plancodec.DecodePlan(newEncodeStr)
+			require.NoError(t, err)
 
-		return planTree, newPlanTree
-	}
-	tk.MustExec("select max(a) from t1 where a>0;")
-	planTree, newplanTree := getPlanTree()
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+			return planTree, newPlanTree
+		}
+		tk.MustExec("select max(a) from t1 where a>0;")
+		planTree, newplanTree := getPlanTree()
+		require.Contains(t, planTree, "time")
+		require.Contains(t, planTree, "loops")
+		require.Contains(t, newplanTree, "time")
+		require.Contains(t, newplanTree, "loops")
 
-	tk.MustExec("prepare stmt from \"select max(a) from t1 where a > ?\";")
-	tk.MustExec("set @a = 1;")
-	tk.MustExec("execute stmt using @a;")
-	planTree, newplanTree = getPlanTree()
-	require.Empty(t, planTree)
-	require.Empty(t, newplanTree)
+		tk.MustExec("prepare stmt from \"select max(a) from t1 where a > ?\";")
+		tk.MustExec("set @a = 1;")
+		tk.MustExec("execute stmt using @a;")
+		planTree, newplanTree = getPlanTree()
+		require.Empty(t, planTree)
+		require.Empty(t, newplanTree)
 
-	tk.MustExec("insert into t1 values (1,1,1), (2,2,2);")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Insert")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Insert")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+		tk.MustExec("insert into t1 values (1,1,1), (2,2,2);")
+		planTree, newplanTree = getPlanTree()
+		require.Contains(t, planTree, "Insert")
+		require.Contains(t, planTree, "time")
+		require.Contains(t, planTree, "loops")
+		require.Contains(t, newplanTree, "Insert")
+		require.Contains(t, newplanTree, "time")
+		require.Contains(t, newplanTree, "loops")
 
-	tk.MustExec("update t1 set b = 3 where c = 1;")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Update")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Update")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+		tk.MustExec("update t1 set b = 3 where c = 1;")
+		planTree, newplanTree = getPlanTree()
+		require.Contains(t, planTree, "Update")
+		require.Contains(t, planTree, "time")
+		require.Contains(t, planTree, "loops")
+		require.Contains(t, newplanTree, "Update")
+		require.Contains(t, newplanTree, "time")
+		require.Contains(t, newplanTree, "loops")
 
-	tk.MustExec("delete from t1 where b = 3;")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Delete")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Delete")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+		tk.MustExec("delete from t1 where b = 3;")
+		planTree, newplanTree = getPlanTree()
+		require.Contains(t, planTree, "Delete")
+		require.Contains(t, planTree, "time")
+		require.Contains(t, planTree, "loops")
+		require.Contains(t, newplanTree, "Delete")
+		require.Contains(t, newplanTree, "time")
+		require.Contains(t, newplanTree, "loops")
 
-	tk.MustExec("with cte(a) as (select 1) select * from cte")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Projection_7")
-	require.Contains(t, planTree, "1->Column#3")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Projection_7")
-	require.Contains(t, newplanTree, "1->Column#3")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+		tk.MustExec("with cte(a) as (select 1) select * from cte")
+		planTree, newplanTree = getPlanTree()
+		require.Contains(t, planTree, "Projection_7")
+		require.Contains(t, planTree, "1->Column#3")
+		require.Contains(t, planTree, "time")
+		require.Contains(t, planTree, "loops")
+		require.Contains(t, newplanTree, "Projection_7")
+		require.Contains(t, newplanTree, "1->Column#3")
+		require.Contains(t, newplanTree, "time")
+		require.Contains(t, newplanTree, "loops")
 
-	tk.MustExec("with cte(a) as (select 2) select * from cte")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Projection_7")
-	require.Contains(t, planTree, "2->Column#3")
-	require.Contains(t, planTree, "time")
-	require.Contains(t, planTree, "loops")
-	require.Contains(t, newplanTree, "Projection_7")
-	require.Contains(t, newplanTree, "2->Column#3")
-	require.Contains(t, newplanTree, "time")
-	require.Contains(t, newplanTree, "loops")
+		tk.MustExec("with cte(a) as (select 2) select * from cte")
+		planTree, newplanTree = getPlanTree()
+		require.Contains(t, planTree, "Projection_7")
+		require.Contains(t, planTree, "2->Column#3")
+		require.Contains(t, planTree, "time")
+		require.Contains(t, planTree, "loops")
+		require.Contains(t, newplanTree, "Projection_7")
+		require.Contains(t, newplanTree, "2->Column#3")
+		require.Contains(t, newplanTree, "time")
+		require.Contains(t, newplanTree, "loops")
 
-	tk.MustExec("select * from tp")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "PartitionUnion")
-	require.Contains(t, newplanTree, "PartitionUnion")
+		tk.MustExec("select * from tp")
+		planTree, newplanTree = getPlanTree()
+		require.Contains(t, planTree, "PartitionUnion")
+		require.Contains(t, newplanTree, "PartitionUnion")
 
-	tk.MustExec("select row_number() over (partition by c) from t1;")
-	planTree, newplanTree = getPlanTree()
-	require.Contains(t, planTree, "Shuffle")
-	require.Contains(t, planTree, "ShuffleReceiver")
-	require.Contains(t, newplanTree, "Shuffle")
-	require.Contains(t, newplanTree, "ShuffleReceiver")
+		tk.MustExec("select row_number() over (partition by c) from t1;")
+		planTree, newplanTree = getPlanTree()
+		require.Contains(t, planTree, "Shuffle")
+		require.Contains(t, planTree, "ShuffleReceiver")
+		require.Contains(t, newplanTree, "Shuffle")
+		require.Contains(t, newplanTree, "ShuffleReceiver")
+	})
 }
 
 func TestNormalizedDigest(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
-	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
-	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
-	tk.MustExec("create table t3 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
-	tk.MustExec("create table t4 (a int key,b int) partition by hash(a) partitions 2;")
-	tk.MustExec(`CREATE TABLE  bmsql_order_line  (
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
+		tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
+		tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
+		tk.MustExec("create table t3 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+		tk.MustExec("create table t4 (a int key,b int) partition by hash(a) partitions 2;")
+		tk.MustExec(`CREATE TABLE  bmsql_order_line  (
 	   ol_w_id  int(11) NOT NULL,
 	   ol_d_id  int(11) NOT NULL,
 	   ol_o_id  int(11) NOT NULL,
@@ -167,7 +166,7 @@ func TestNormalizedDigest(t *testing.T) {
 	   ol_dist_info  char(24) DEFAULT NULL,
 	  PRIMARY KEY ( ol_w_id , ol_d_id , ol_o_id , ol_number ) NONCLUSTERED
 	);`)
-	tk.MustExec(`CREATE TABLE  bmsql_district  (
+		tk.MustExec(`CREATE TABLE  bmsql_district  (
 	   d_w_id  int(11) NOT NULL,
 	   d_id  int(11) NOT NULL,
 	   d_ytd  decimal(12,2) DEFAULT NULL,
@@ -181,7 +180,7 @@ func TestNormalizedDigest(t *testing.T) {
 	   d_zip  char(9) DEFAULT NULL,
 	  PRIMARY KEY ( d_w_id , d_id ) NONCLUSTERED
 	);`)
-	tk.MustExec(`CREATE TABLE  bmsql_stock  (
+		tk.MustExec(`CREATE TABLE  bmsql_stock  (
 	   s_w_id  int(11) NOT NULL,
 	   s_i_id  int(11) NOT NULL,
 	   s_quantity  int(11) DEFAULT NULL,
@@ -202,105 +201,105 @@ func TestNormalizedDigest(t *testing.T) {
 	  PRIMARY KEY ( s_w_id , s_i_id ) NONCLUSTERED
 	);`)
 
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/mockRandomPlanID", "return(true)")
-	require.NoError(t, err)
-	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/mockRandomPlanID")
+		err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/mockRandomPlanID", "return(true)")
 		require.NoError(t, err)
-	}()
+		defer func() {
+			err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/mockRandomPlanID")
+			require.NoError(t, err)
+		}()
 
-	normalizedDigestCases := []struct {
-		sql1   string
-		sql2   string
-		isSame bool
-	}{
-		{
-			sql1:   "select * from t1;",
-			sql2:   "select * from t2;",
-			isSame: false,
-		},
-		{ // test for tableReader and tableScan.
-			sql1:   "select * from t1 where a<1",
-			sql2:   "select * from t1 where a<2",
-			isSame: true,
-		},
-		{
-			sql1:   "select * from t1 where a<1",
-			sql2:   "select * from t1 where a=2",
-			isSame: false,
-		},
-		{ // test for point get.
-			sql1:   "select * from t1 where a=3",
-			sql2:   "select * from t1 where a=2",
-			isSame: true,
-		},
-		{ // test for indexLookUp.
-			sql1:   "select * from t1 use index(b) where b=3",
-			sql2:   "select * from t1 use index(b) where b=1",
-			isSame: true,
-		},
-		{ // test for indexReader.
-			sql1:   "select a+1,b+2 from t1 use index(b) where b=3",
-			sql2:   "select a+2,b+3 from t1 use index(b) where b=2",
-			isSame: true,
-		},
-		{ // test for merge join.
-			sql1:   "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
-			sql2:   "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>2;",
-			isSame: true,
-		},
-		{ // test for indexLookUpJoin.
-			sql1:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
-			sql2:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
-			isSame: true,
-		},
-		{ // test for hashJoin.
-			sql1:   "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
-			sql2:   "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
-			isSame: true,
-		},
-		{ // test for diff join.
-			sql1:   "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
-			sql2:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
-			isSame: false,
-		},
-		{ // test for diff join.
-			sql1:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
-			sql2:   "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
-			isSame: false,
-		},
-		{ // test for apply.
-			sql1:   "select * from t1 where t1.b > 0 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >1)",
-			sql2:   "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >0)",
-			isSame: true,
-		},
-		{ // test for apply.
-			sql1:   "select * from t1 where t1.b > 0 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >1)",
-			sql2:   "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
-			isSame: false,
-		},
-		{ // test for topN.
-			sql1:   "SELECT * from t1 where a!=1 order by c limit 1",
-			sql2:   "SELECT * from t1 where a!=2 order by c limit 2",
-			isSame: true,
-		},
-		{ // test for union
-			sql1:   "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
-			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
-			isSame: true,
-		},
-		{ // test for tablescan partition
-			sql1:   "select * from t3 where a=5",
-			sql2:   "select * from t3 where a=15",
-			isSame: true,
-		},
-		{ // test for point get partition
-			sql1:   "select * from t4 where a=4",
-			sql2:   "select * from t4 where a=30",
-			isSame: true,
-		},
-		{
-			sql1: `SELECT  COUNT(*) AS low_stock
+		normalizedDigestCases := []struct {
+			sql1   string
+			sql2   string
+			isSame bool
+		}{
+			{
+				sql1:   "select * from t1;",
+				sql2:   "select * from t2;",
+				isSame: false,
+			},
+			{ // test for tableReader and tableScan.
+				sql1:   "select * from t1 where a<1",
+				sql2:   "select * from t1 where a<2",
+				isSame: true,
+			},
+			{
+				sql1:   "select * from t1 where a<1",
+				sql2:   "select * from t1 where a=2",
+				isSame: false,
+			},
+			{ // test for point get.
+				sql1:   "select * from t1 where a=3",
+				sql2:   "select * from t1 where a=2",
+				isSame: true,
+			},
+			{ // test for indexLookUp.
+				sql1:   "select * from t1 use index(b) where b=3",
+				sql2:   "select * from t1 use index(b) where b=1",
+				isSame: true,
+			},
+			{ // test for indexReader.
+				sql1:   "select a+1,b+2 from t1 use index(b) where b=3",
+				sql2:   "select a+2,b+3 from t1 use index(b) where b=2",
+				isSame: true,
+			},
+			{ // test for merge join.
+				sql1:   "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+				sql2:   "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>2;",
+				isSame: true,
+			},
+			{ // test for indexLookUpJoin.
+				sql1:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+				sql2:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
+				isSame: true,
+			},
+			{ // test for hashJoin.
+				sql1:   "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+				sql2:   "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
+				isSame: true,
+			},
+			{ // test for diff join.
+				sql1:   "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+				sql2:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
+				isSame: false,
+			},
+			{ // test for diff join.
+				sql1:   "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+				sql2:   "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>3;",
+				isSame: false,
+			},
+			{ // test for apply.
+				sql1:   "select * from t1 where t1.b > 0 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >1)",
+				sql2:   "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >0)",
+				isSame: true,
+			},
+			{ // test for apply.
+				sql1:   "select * from t1 where t1.b > 0 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null and t2.c >1)",
+				sql2:   "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
+				isSame: false,
+			},
+			{ // test for topN.
+				sql1:   "SELECT * from t1 where a!=1 order by c limit 1",
+				sql2:   "SELECT * from t1 where a!=2 order by c limit 2",
+				isSame: true,
+			},
+			{ // test for union
+				sql1:   "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+				sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
+				isSame: true,
+			},
+			{ // test for tablescan partition
+				sql1:   "select * from t3 where a=5",
+				sql2:   "select * from t3 where a=15",
+				isSame: true,
+			},
+			{ // test for point get partition
+				sql1:   "select * from t4 where a=4",
+				sql2:   "select * from t4 where a=30",
+				isSame: true,
+			},
+			{
+				sql1: `SELECT  COUNT(*) AS low_stock
 					FROM
 					(
 						SELECT  *
@@ -309,7 +308,7 @@ func TestNormalizedDigest(t *testing.T) {
 						AND s_quantity < 2
 						AND s_i_id IN ( SELECT /*+ TIDB_INLJ(bmsql_order_line) */ ol_i_id FROM bmsql_district JOIN bmsql_order_line ON ol_w_id = d_w_id AND ol_d_id = d_id AND ol_o_id >= d_next_o_id - 20 AND ol_o_id < d_next_o_id WHERE d_w_id = 1 AND d_id = 2 )
 					) AS L;`,
-			sql2: `SELECT  COUNT(*) AS low_stock
+				sql2: `SELECT  COUNT(*) AS low_stock
 					FROM
 					(
 						SELECT  *
@@ -318,12 +317,13 @@ func TestNormalizedDigest(t *testing.T) {
 						AND s_quantity < 6
 						AND s_i_id IN ( SELECT /*+ TIDB_INLJ(bmsql_order_line) */ ol_i_id FROM bmsql_district JOIN bmsql_order_line ON ol_w_id = d_w_id AND ol_d_id = d_id AND ol_o_id >= d_next_o_id - 70 AND ol_o_id < d_next_o_id WHERE d_w_id = 5 AND d_id = 6 )
 					) AS L;`,
-			isSame: true,
-		},
-	}
-	for _, testCase := range normalizedDigestCases {
-		testNormalizeDigest(tk, t, testCase.sql1, testCase.sql2, testCase.isSame)
-	}
+				isSame: true,
+			},
+		}
+		for _, testCase := range normalizedDigestCases {
+			testNormalizeDigest(tk, t, testCase.sql1, testCase.sql2, testCase.isSame)
+		}
+	})
 }
 
 func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, isSame bool) {
@@ -364,29 +364,29 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 }
 
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	// Create virtual `tiflash` replica info.
-	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-		Count:     1,
-		Available: true,
-	}
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+		// Create virtual `tiflash` replica info.
+		is := dom.InfoSchema()
+		tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
+		}
 
-	rows := tk.MustQuery("explain select * from t").Rows()
-	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
+		rows := tk.MustQuery("explain select * from t").Rows()
+		require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 
-	rows = tk.MustQuery("explain format='hint' select * from t").Rows()
-	require.Equal(t, rows[0][0], "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
+		rows = tk.MustQuery("explain format='hint' select * from t").Rows()
+		require.Equal(t, rows[0][0], "read_from_storage(@`sel_1` tiflash[`test`.`t`])")
 
-	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
-	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
-	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
+		hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
+		rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
+		require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
+	})
 }
 
 func BenchmarkDecodePlan(b *testing.B) {
@@ -470,63 +470,62 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 }
 
 func TestCopPaging(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
 
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("set session tidb_enable_paging = 1")
+		tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
+		defer tk.MustExec("drop table t")
+		for i := range 1024 {
+			tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
+		}
+		tk.MustExec("analyze table t all columns")
 
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("set session tidb_enable_paging = 1")
-	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
-	defer tk.MustExec("drop table t")
-	for i := range 1024 {
-		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
-	}
-	tk.MustExec("analyze table t all columns")
+		// limit 960 should go paging
+		for range 10 {
+			tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+				"Limit 4.00 root  offset:0, count:960",
+				"└─IndexLookUp 4.00 root  ",
+				"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+				"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+				"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+				"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+		}
 
-	// limit 960 should go paging
-	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:960",
-			"└─IndexLookUp 4.00 root  ",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
-	}
+		// selection between limit and indexlookup, limit 960 should also go paging
+		for range 10 {
+			tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+				"Limit 3.20 root  offset:0, count:960",
+				"└─IndexLookUp 3.20 root  ",
+				"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+				"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+				"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+				"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+		}
 
-	// selection between limit and indexlookup, limit 960 should also go paging
-	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:960",
-			"└─IndexLookUp 3.20 root  ",
-			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
-	}
+		// limit 961 exceeds the threshold, it should not go paging
+		for range 10 {
+			tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+				"Limit 4.00 root  offset:0, count:961",
+				"└─IndexLookUp 4.00 root  ",
+				"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+				"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+				"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+				"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
+		}
 
-	// limit 961 exceeds the threshold, it should not go paging
-	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 4.00 root  offset:0, count:961",
-			"└─IndexLookUp 4.00 root  ",
-			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
-	}
-
-	// selection between limit and indexlookup, limit 961 should not go paging too
-	for range 10 {
-		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit 3.20 root  offset:0, count:961",
-			"└─IndexLookUp 3.20 root  ",
-			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
-	}
+		// selection between limit and indexlookup, limit 961 should not go paging too
+		for range 10 {
+			tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+				"Limit 3.20 root  offset:0, count:961",
+				"└─IndexLookUp 3.20 root  ",
+				"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+				"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+				"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+				"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
+		}
+	})
 }
 
 func TestBuildFinalModeAggregation(t *testing.T) {
