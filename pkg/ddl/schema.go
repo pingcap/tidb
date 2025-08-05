@@ -190,7 +190,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	}
 	trxTableName := infoschema.ClusterTableTiDBTrx
 	failpoint.Inject("mockModifySchemaReadOnlyDDL", func() {
-		trxTableName = "TIDB_TRX"
+		trxTableName = infoschema.TableTiDBTrx
 	})
 
 	switch job.SchemaState {
