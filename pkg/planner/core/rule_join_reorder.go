@@ -116,6 +116,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 				for _, col := range extractedCols {
 					if lhsSchema.Contains(col) {
 						affectedGroups++
+						break
 					}
 				}
 				if affectedGroups > 1 {
@@ -159,6 +160,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 				for _, col := range extractedCols {
 					if rhsSchema.Contains(col) {
 						affectedGroups++
+						break
 					}
 				}
 				if affectedGroups > 1 {
