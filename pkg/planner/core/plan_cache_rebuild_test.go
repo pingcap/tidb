@@ -239,7 +239,7 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 	ctx = context.WithValue(ctx, core.PlanCacheKeyTestClone{}, func(plan, cloned base.Plan) {
 		checked = true
 		require.NoError(t, checkUnclearPlanCacheClone(plan, cloned,
-			".ctx", ".AccessCondition", ".filterCondition", ".Conditions", ".Exprs", ".IndexConstants",
+			".ctx", ".AccessCondition", ".FilterCondition", ".Conditions", ".Exprs", ".IndexConstants",
 			"*collate", ".IdxCols", ".OutputColumns", ".EqualConditions", ".OuterHashKeys", ".InnerHashKeys",
 			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".PhysicalSchemaProducer.schema",
 			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".baseSchemaProducer.schema",
@@ -255,21 +255,21 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 
 func TestCheckPlanClone(t *testing.T) {
 	// totally same pointer
-	ts1 := &core.PhysicalTableScan{}
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts1).Error(), "same pointer, path *core.PhysicalTableScan")
+	ts1 := &physicalop.PhysicalTableScan{}
+	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts1).Error(), "same pointer, path *physicalop.PhysicalTableScan")
 
 	// share the same slice
-	ts2 := &core.PhysicalTableScan{}
+	ts2 := &physicalop.PhysicalTableScan{}
 	ts1.AccessCondition = make([]expression.Expression, 10)
 	ts2.AccessCondition = ts1.AccessCondition
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same slice pointers, path *core.PhysicalTableScan.AccessCondition")
+	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same slice pointers, path *physicalop.PhysicalTableScan.AccessCondition")
 
 	// same slice element
 	ts2.AccessCondition = make([]expression.Expression, 10)
 	expr := &expression.Column{}
 	ts1.AccessCondition[0] = expr
 	ts2.AccessCondition[0] = expr
-	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *core.PhysicalTableScan.AccessCondition[0](*expression.Column)")
+	require.Equal(t, checkUnclearPlanCacheClone(ts1, ts2).Error(), "same pointer, path *physicalop.PhysicalTableScan.AccessCondition[0](*expression.Column)")
 
 	// same map
 	l1 := &physicalop.PhysicalLock{}

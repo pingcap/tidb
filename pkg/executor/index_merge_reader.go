@@ -223,7 +223,7 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 			switch x := plan[0].(type) {
 			case *plannercore.PhysicalIndexScan:
 				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
-			case *plannercore.PhysicalTableScan:
+			case *physicalop.PhysicalTableScan:
 				e.ranges[i], err = x.ResolveCorrelatedColumns()
 			default:
 				err = errors.Errorf("unsupported plan type %T", plan[0])
@@ -467,7 +467,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 }
 
 func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, workID int) error {
-	ts := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan)
+	ts := e.partialPlans[workID][0].(*physicalop.PhysicalTableScan)
 
 	tbls := make([]table.Table, 0, 1)
 	if e.partitionTableMode && len(e.byItems) == 0 {
@@ -932,7 +932,7 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	if e.indexUsageReporter != nil {
 		for _, p := range e.partialPlans {
 			switch p := p[0].(type) {
-			case *plannercore.PhysicalTableScan:
+			case *physicalop.PhysicalTableScan:
 				e.indexUsageReporter.ReportCopIndexUsageForHandle(e.table, p.ID())
 			case *plannercore.PhysicalIndexScan:
 				e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, p.Index.ID, p.ID())
@@ -1045,7 +1045,7 @@ func (w *indexMergeProcessWorker) pruneTableWorkerTaskIdxRows(task *indexMergeTa
 		return
 	}
 	// IndexScan no need to prune retChk, Columns required by byItems are always first.
-	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*plannercore.PhysicalTableScan); ok {
+	if plan, ok := w.indexMerge.partialPlans[task.partialPlanID][0].(*physicalop.PhysicalTableScan); ok {
 		prune := make([]int, 0, len(w.indexMerge.byItems))
 		for _, item := range plan.ByItems {
 			c, _ := item.Expr.(*expression.Column)

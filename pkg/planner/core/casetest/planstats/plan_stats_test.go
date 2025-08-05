@@ -118,7 +118,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // > Any
 				sql: "select * from t where t.b > any(select d from t where t.c > 2)",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					ph, ok := p.(*plannercore.PhysicalHashJoin)
+					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
 					ptr, ok := ph.Children()[0].(*plannercore.PhysicalTableReader)
 					require.True(t, ok)
@@ -128,7 +128,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // in
 				sql: "select * from t where t.b in (select d from t where t.c > 2)",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					ph, ok := p.(*plannercore.PhysicalHashJoin)
+					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
 					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 					require.True(t, ok)
@@ -138,7 +138,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // not in
 				sql: "select * from t where t.b not in (select d from t where t.c > 2)",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					ph, ok := p.(*plannercore.PhysicalHashJoin)
+					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
 					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 					require.True(t, ok)
@@ -148,7 +148,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // exists
 				sql: "select * from t t1 where exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					ph, ok := p.(*plannercore.PhysicalHashJoin)
+					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
 					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 					require.True(t, ok)
@@ -158,7 +158,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // not exists
 				sql: "select * from t t1 where not exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					ph, ok := p.(*plannercore.PhysicalHashJoin)
+					ph, ok := p.(*physicalop.PhysicalHashJoin)
 					require.True(t, ok)
 					ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
 					require.True(t, ok)

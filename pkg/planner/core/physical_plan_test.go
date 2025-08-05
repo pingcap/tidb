@@ -479,7 +479,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 			switch v := p.(type) {
 			case *physicalop.PhysicalSelection:
 				if len(v.Children()) == 1 {
-					if ts, ok := v.Children()[0].(*core.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
+					if ts, ok := v.Children()[0].(*physicalop.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
 						return v
 					}
 				}
@@ -503,7 +503,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 		}
 		sel := findSelection(p)
 		require.NotNil(t, sel)
-		ts := sel.Children()[0].(*core.PhysicalTableScan)
+		ts := sel.Children()[0].(*physicalop.PhysicalTableScan)
 		require.NotNil(t, ts)
 		// manually push down the condition `client_no = c.company_no`
 		var selected expression.Expression

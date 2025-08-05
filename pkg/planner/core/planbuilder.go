@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -1671,15 +1672,15 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	is.initSchema(append(is.IdxCols, commonCols...), true)
 
 	// It's double read case.
-	ts := PhysicalTableScan{
+	ts := physicalop.PhysicalTableScan{
 		Columns:         idxColInfos,
 		Table:           tblInfo,
 		TableAsName:     &tblInfo.Name,
 		DBName:          dbName,
-		physicalTableID: physicalID,
-		isPartition:     isPartition,
-		tblColHists:     &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
+		PhysicalTableID: physicalID,
+		TblColHists:     &(statistics.PseudoTable(tblInfo, false, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
+	ts.SetIsPartition(isPartition)
 	ts.SetSchema(idxColSchema)
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
 	switch {

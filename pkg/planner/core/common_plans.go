@@ -1356,7 +1356,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 		for i, op := range ops {
 			operators[i].BriefName = op.ExplainID().String()
 			switch op.Origin.(type) {
-			case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalHashJoin, *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *physicalop.PhysicalMergeJoin:
+			case *PhysicalTableReader, *PhysicalIndexReader, *physicalop.PhysicalHashJoin, *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *physicalop.PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
 			}
 		}
@@ -1555,7 +1555,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx())
 	case *PhysicalTableReader:
-		tableScan, ok := v.TablePlans[0].(*PhysicalTableScan)
+		tableScan, ok := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
 			return false
 		}

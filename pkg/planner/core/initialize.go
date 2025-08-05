@@ -56,24 +56,9 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalTableScan.
-func (p PhysicalTableScan) Init(ctx base.PlanContext, offset int) *PhysicalTableScan {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeTableScan, &p, offset)
-	return &p
-}
-
 // Init initializes PhysicalIndexScan.
 func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndexScan {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIdxScan, &p, offset)
-	return &p
-}
-
-// Init initializes PhysicalHashJoin.
-func (p PhysicalHashJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashJoin {
-	tp := plancodec.TypeHashJoin
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, tp, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
 	return &p
 }
 
@@ -137,10 +122,10 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.SetSchema(p.tablePlan.Schema())
-		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
+		p.HandleCols = p.TablePlans[0].(*physicalop.PhysicalTableScan).HandleCols
 	} else {
 		switch p.PartialPlans[0][0].(type) {
-		case *PhysicalTableScan:
+		case *physicalop.PhysicalTableScan:
 			p.SetSchema(p.PartialPlans[0][0].Schema())
 		default:
 			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
@@ -149,7 +134,7 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	if p.KeepOrder {
 		switch x := p.PartialPlans[0][0].(type) {
-		case *PhysicalTableScan:
+		case *physicalop.PhysicalTableScan:
 			p.ByItems = x.ByItems
 		case *PhysicalIndexScan:
 			p.ByItems = x.ByItems
