@@ -162,7 +162,7 @@ func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalPro
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
-	pShow := PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
+	pShow := physicalop.PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	rt := &RootTask{}
@@ -196,7 +196,7 @@ func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.Phys
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
-	pShow := PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
+	pShow := physicalop.PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	rt := &RootTask{}
@@ -2076,7 +2076,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.physPlanPartInfo = &PhysPlanPartInfo{
+	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
@@ -2151,7 +2151,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	return task, nil
 }
 
-func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
+func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physicalop.PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
 	is := getOriginalPhysicalIndexScan(ds, prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -2513,7 +2513,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
-	cop.physPlanPartInfo = &PhysPlanPartInfo{
+	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
@@ -2705,7 +2705,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
+func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.DataSource, physPlanPartInfo *physicalop.PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
 	if !is.Index.Global {
 		return conditions, nil
 	}
@@ -3049,7 +3049,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			partTp:      property.AnyType,
 			tblColHists: ds.TblColHists,
 		}
-		ts.PlanPartInfo = &PhysPlanPartInfo{
+		ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
 			PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 			PartitionNames: ds.PartitionNames,
 			Columns:        ds.TblCols,
@@ -3080,7 +3080,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	copTask.physPlanPartInfo = &PhysPlanPartInfo{
+	copTask.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,

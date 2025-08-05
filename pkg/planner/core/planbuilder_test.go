@@ -331,7 +331,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		TablePlans:     []base.PhysicalPlan{tableReader},
 		tablePlan:      tableScan,
 		ExtraHandleCol: col,
-		PushedLimit:    &PushedDownLimit{1, 2},
+		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
 	indexLookup = indexLookup.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))

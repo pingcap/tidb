@@ -41,7 +41,7 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	if op.SampleInfo != nil {
 		return nil, false
 	}
@@ -143,7 +143,7 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	}
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	if op.TableScanAndPartitionInfos != nil {
 		return nil, false
 	}
@@ -168,7 +168,7 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 	}
 	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
 	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns, nil)
-	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
 }
 
@@ -273,7 +273,7 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 	}
 	cloned.PushedLimit = op.PushedLimit.Clone()
 	cloned.CommonHandleCols = cloneColumnsForPlanCache(op.CommonHandleCols, nil)
-	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
 }
 
@@ -305,7 +305,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 		cloned.PartialPlans[i] = flattenPushDownPlan(plan)
 	}
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone()
 	}

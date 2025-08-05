@@ -249,7 +249,7 @@ func (*ImplShow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty)
 	// struct. So that we don't need to create a new PhysicalShow object, which
 	// can help us to reduce the gc pressure of golang runtime and improve the
 	// overall performance.
-	showPhys := plannercore.PhysicalShow{
+	showPhys := physicalop.PhysicalShow{
 		ShowContents: show.ShowContents,
 		Extractor:    show.Extractor,
 	}.Init(show.SCtx())
