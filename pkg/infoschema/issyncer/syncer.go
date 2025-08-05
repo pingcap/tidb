@@ -200,7 +200,8 @@ func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
 		return false
 	}
 
-	// for cross keyspace syncer, we only care about the system tables.
+	// for cross keyspace syncer, we only care about the system tables, so we can
+	// skip the MDL check for user tables.
 	for id := range tableIDs {
 		if metadef.IsReservedID(id) {
 			return false
