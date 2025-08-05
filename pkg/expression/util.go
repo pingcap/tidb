@@ -198,7 +198,6 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	for _, expr := range exprs {
 		extractColumns(m, expr, filter)
 	}
-	return
 }
 
 func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
