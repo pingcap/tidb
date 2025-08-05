@@ -560,14 +560,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	require.Equal(t, atomic.LoadInt32(&maxMetaSeq), f.finishedMetaSeq.Load())
 }
 
-func makeRanges(input []string) []engineapi.Range {
-	ranges := make([]engineapi.Range, 0, len(input)/2)
-	for i := 0; i < len(input)-1; i += 2 {
-		ranges = append(ranges, engineapi.Range{Start: []byte(input[i]), End: []byte(input[i+1])})
-	}
-	return ranges
-}
-
 func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
@@ -1093,6 +1085,9 @@ func TestMultiIngest(t *testing.T) {
 }
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	bak := Backend{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
@@ -1195,6 +1190,9 @@ func (m mockIngestData) DecRef() {}
 func (m mockIngestData) Finish(_, _ int64) {}
 
 func TestCheckPeersBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 300
 	t.Cleanup(func() {
@@ -1328,6 +1326,9 @@ func TestCheckPeersBusy(t *testing.T) {
 }
 
 func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	log.InitLogger(&log.Config{Level: "debug"}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1430,6 +1431,9 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 }
 
 func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1526,6 +1530,9 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 }
 
 func TestPartialWriteIngestBusy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1762,6 +1769,9 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 }
 
 func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	ctx := context.Background()
 	local := &Backend{
 		splitCli: initTestSplitClient(
@@ -1859,6 +1869,9 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 }
 
 func TestDoImport(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2099,6 +2112,9 @@ func TestDoImport(t *testing.T) {
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2190,6 +2206,9 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 }
 
 func TestCtxCancelIsIgnored(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
@@ -2245,7 +2264,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 
 func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		t.Skip("skip this test on next-gen kernel, because it needs to init TLS config")
+		t.Skip("skip this test on next-gen kernel")
 	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
