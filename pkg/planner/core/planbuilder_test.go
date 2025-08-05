@@ -930,7 +930,7 @@ func TestTraffic(t *testing.T) {
 		require.NoError(t, err, test.sql)
 		traffic, ok := p.(*Traffic)
 		require.True(t, ok, test.sql)
-		require.Equal(t, test.cols, len(traffic.names), test.sql)
+		require.Equal(t, test.cols, len(traffic.OutputNames()), test.sql)
 		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
 	}
 }
