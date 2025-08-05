@@ -11,6 +11,7 @@ go_test(
     deps = [
         "//autoid_service",
         "//config",
+        "//executor",
         "//kv",
         "//meta/autoid",
         "//parser/auth",

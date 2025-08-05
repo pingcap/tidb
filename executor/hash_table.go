@@ -23,7 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:executor/hash_table.go
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -34,18 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
-=======
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/bitmap"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/memory"
->>>>>>> af367b8a5ae (executor: replace `Call` with `CallWithRecover` in the close of hash join v1 (#61868)):pkg/executor/join/hash_table_v1.go
 )
 
 // hashContext keeps the needed hash context of a db table in hash join.
@@ -514,7 +502,7 @@ func (c *hashRowContainer) Len() uint64 {
 }
 
 func (c *hashRowContainer) Close() error {
-	failpoint.Inject("issue60923", nil)
+	failpoint.Inject("issue60926", nil)
 
 	defer c.memTracker.Detach()
 	c.chkBuf = nil
