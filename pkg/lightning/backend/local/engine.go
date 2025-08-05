@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -173,20 +172,15 @@ func (e *Engine) Close() error {
 }
 
 // CleanupPartialFolders cleans up the partial delete folders in the directory.
-func CleanupPartialFolders(dataDir string) error {
-	entries, err := os.ReadDir(dataDir)
-	if err != nil {
-		return err
-	}
+func CleanupPartialFolders(dataDir, tableName string, indexIDs []int64) error {
+	for _, indexID := range indexIDs {
+		_, engineUUID := backend.MakeUUID(tableName, indexID)
 
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), tombStoneFileSuffix) {
-			continue
-		}
-
-		uuid := strings.TrimSuffix(entry.Name(), tombStoneFileSuffix)
-		if err := cleanupDBFolder(dataDir, uuid); err != nil {
-			return errors.Trace(err)
+		tombstoneFile := filepath.Join(dataDir, engineUUID.String()+tombStoneFileSuffix)
+		if _, err := os.Stat(tombstoneFile); err == nil {
+			if err := cleanupDBFolder(dataDir, engineUUID.String()); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
