@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -2243,6 +2244,9 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 }
 
 func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel, because it needs to init TLS config")
+	}
 	backup := maxRetryBackoffSecond
 	maxRetryBackoffSecond = 1
 	t.Cleanup(func() {
