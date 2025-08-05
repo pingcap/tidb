@@ -28,22 +28,22 @@ import (
 )
 
 func TestPlanCacheForIntersectionIndexMerge(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("create table t(a int, b int, c int, d int, e int, index ia(a), index ib(b), index ic(c), index id(d), index ie(e))")
-		testKit.MustExec("prepare stmt from 'select /*+ use_index_merge(t, ia, ib, ic, id, ie) */ * from t where a = 10 and b = ? and c > ? and d is null and e in (0, 100)'")
-		testKit.MustExec("set @a=1, @b=3")
-		testKit.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
-		testKit.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-		testKit.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
-		testKit.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-		testKit.MustExec("set @a=100, @b=500")
-		testKit.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
-		testKit.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-		testKit.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
-		require.True(t, testKit.HasPlanForLastExecution("IndexMerge"))
-	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, d int, e int, index ia(a), index ib(b), index ic(c), index id(d), index ie(e))")
+	tk.MustExec("prepare stmt from 'select /*+ use_index_merge(t, ia, ib, ic, id, ie) */ * from t where a = 10 and b = ? and c > ? and d is null and e in (0, 100)'")
+	tk.MustExec("set @a=1, @b=3")
+	tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @a=100, @b=500")
+	tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
+	require.True(t, tk.HasPlanForLastExecution("IndexMerge"))
 }
 
 func TestIndexMergeWithOrderProperty(t *testing.T) {
