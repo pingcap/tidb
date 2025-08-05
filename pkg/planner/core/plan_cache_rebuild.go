@@ -337,7 +337,7 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *BatchPointGetPlan) (err er
 			var unsignedIntHandle bool
 			if x.TblInfo.PKIsHandle {
 				if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					pkCol = expression.ColInfo2Col(x.Schema().Columns, pkColInfo)
 				}
 				if !x.TblInfo.IsCommonHandle {
 					unsignedIntHandle = true

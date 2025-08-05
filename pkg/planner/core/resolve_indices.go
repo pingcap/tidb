@@ -574,7 +574,7 @@ func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() (err error) {
-	err = p.baseSchemaProducer.ResolveIndices()
+	err = p.SimpleSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -595,7 +595,7 @@ func (p *Update) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *Insert) ResolveIndices() (err error) {
-	err = p.baseSchemaProducer.ResolveIndices()
+	err = p.SimpleSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -630,9 +630,5 @@ func (p *Insert) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	return
-}
-
-func (*baseSchemaProducer) ResolveIndices() (err error) {
 	return
 }
