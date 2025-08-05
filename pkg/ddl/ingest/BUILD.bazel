@@ -6,6 +6,7 @@ go_library(
         "backend.go",
         "backend_mgr.go",
         "checkpoint.go",
+        "collector.go",
         "config.go",
         "disk_root.go",
         "engine.go",
@@ -35,6 +36,10 @@ go_library(
         "//pkg/lightning/errormanager",
         "//pkg/lightning/log",
         "//pkg/meta",
+<<<<<<< HEAD
+=======
+        "//pkg/meta/model",
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
         "//pkg/metrics",
         "//pkg/owner",
         "//pkg/parser/mysql",
@@ -51,6 +56,7 @@ go_library(
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
