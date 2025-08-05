@@ -274,7 +274,7 @@ func checkTableForeignKey(referTblInfo, tblInfo *model.TableInfo, fkInfo *model.
 		if refCol == nil {
 			return infoschema.ErrForeignKeyNoColumnInParent.GenWithStackByArgs(fkInfo.RefCols[i], fkInfo.Name, fkInfo.RefTable)
 		}
-		if refCol.IsGenerated() && !refCol.GeneratedStored {
+		if refCol.IsVirtualGenerated() {
 			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name, fkInfo.RefCols[i])
 		}
 		col := model.FindColumnInfo(tblInfo.Columns, fkInfo.Cols[i].L)
