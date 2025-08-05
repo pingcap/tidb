@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // Init initializes Update.
@@ -192,26 +191,6 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 		setMppOrBatchCopForTableScan(p.tablePlan)
 	}
 	return &p
-}
-
-// Init initializes PhysicalTableSample.
-func (p PhysicalTableSample) Init(ctx base.PlanContext, offset int) *PhysicalTableSample {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeTableSample, &p, offset)
-	p.SetStats(&property.StatsInfo{RowCount: 1})
-	return &p
-}
-
-// MemoryUsage return the memory usage of PhysicalTableSample
-func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
-	if p.TableSampleInfo != nil {
-		sum += p.TableSampleInfo.MemoryUsage()
-	}
-	return
 }
 
 // Init initializes PhysicalIndexReader.

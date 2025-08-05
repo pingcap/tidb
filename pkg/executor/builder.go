@@ -292,7 +292,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
 		return b.buildTableReader(v)
-	case *plannercore.PhysicalTableSample:
+	case *physicalop.PhysicalTableSample:
 		return b.buildTableSample(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
@@ -5727,7 +5727,7 @@ func (*emptySampler) finished() bool {
 	return true
 }
 
-func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+func (b *executorBuilder) buildTableSample(v *physicalop.PhysicalTableSample) *TableSampleExecutor {
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
