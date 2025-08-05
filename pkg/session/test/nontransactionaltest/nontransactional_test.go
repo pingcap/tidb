@@ -444,59 +444,19 @@ func TestNonTransactionalMetrics(t *testing.T) {
 		return counters
 	}
 
-	runAndCheck := func(tp string, fn func()) {
-		var checkMetrics []checkMetric
-		switch tp {
-		case "Insert":
-			checkMetrics = append(checkMetrics,
-				checkMetric{
-					metric: metrics.AffectedRowsCounterInsert,
-					diff:   0,
-				},
-				checkMetric{
-					metrics.StmtNodeCounter.WithLabelValues("Insert", "", "default"),
-					0,
-				})
-		case "Replace":
-			checkMetrics = append(checkMetrics,
-				checkMetric{
-					metric: metrics.AffectedRowsCounterReplace,
-					diff:   0,
-				},
-				checkMetric{
-					metric: metrics.StmtNodeCounter.WithLabelValues("Replace", "", "default"),
-					diff:   0,
-				})
-		case "Delete":
-			checkMetrics = append(checkMetrics,
-				checkMetric{
-					metric: metrics.AffectedRowsCounterDelete,
-					diff:   0,
-				},
-				checkMetric{
-					metric: metrics.StmtNodeCounter.WithLabelValues("Delete", "", "default"),
-					diff:   0,
-				})
-		case "Update":
-			checkMetrics = append(checkMetrics,
-				checkMetric{
-					metric: metrics.AffectedRowsCounterUpdate,
-					diff:   0,
-				},
-				checkMetric{
-					metric: metrics.StmtNodeCounter.WithLabelValues("Update", "", "default"),
-					diff:   0,
-				})
-		default:
-			require.FailNowf(t, "unknown type %s", tp)
+	runAndCheck := func(fn func()) {
+		checkMetrics := []checkMetric{
+			{metrics.AffectedRowsCounterInsert, 0},
+			{metrics.AffectedRowsCounterReplace, 0},
+			{metrics.AffectedRowsCounterDelete, 0},
+			{metrics.AffectedRowsCounterUpdate, 0},
+			{metrics.AffectedRowsCounterNTDML, 100},
+			{metrics.StmtNodeCounter.WithLabelValues("NTDml", "", "default"), 11}, // 1 Select + 10 Insert
+			{metrics.StmtNodeCounter.WithLabelValues("Insert", "", "default"), 0},
+			{metrics.StmtNodeCounter.WithLabelValues("Replace", "", "default"), 0},
+			{metrics.StmtNodeCounter.WithLabelValues("Delete", "", "default"), 0},
+			{metrics.StmtNodeCounter.WithLabelValues("Update", "", "default"), 0},
 		}
-		checkMetrics = append(checkMetrics, checkMetric{
-			metric: metrics.AffectedRowsCounterNTDML,
-			diff:   100,
-		}, checkMetric{
-			metric: metrics.StmtNodeCounter.WithLabelValues("NTDml", "", "default"),
-			diff:   11, // 1 Select + 10 Insert
-		})
 
 		before := readCounters(checkMetrics)
 		fn()
@@ -516,16 +476,16 @@ func TestNonTransactionalMetrics(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
 	}
-	runAndCheck("Insert", func() {
+	runAndCheck(func() {
 		tk.MustExec("BATCH LIMIT 10 INSERT INTO t2 SELECT * FROM t1")
 	})
-	runAndCheck("Update", func() {
+	runAndCheck(func() {
 		tk.MustExec("BATCH LIMIT 10 UPDATE t2 SET a = a + 1")
 	})
-	runAndCheck("Delete", func() {
+	runAndCheck(func() {
 		tk.MustExec("BATCH LIMIT 10 DELETE FROM t2")
 	})
-	runAndCheck("Replace", func() {
+	runAndCheck(func() {
 		tk.MustExec("BATCH LIMIT 10 REPLACE INTO t2 SELECT * FROM t1")
 	})
 }
