@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
@@ -81,108 +80,6 @@ func refine4NeighbourProj(p, childProj *physicalop.PhysicalProjection) {
 		}
 		col.Index = childSchemaUnionSet.FindRoot(col.Index)
 	}
-}
-
-// ResolveIndicesItself resolve indices for PhyicalPlan itself
-func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
-	lSchema := p.Children()[0].Schema()
-	rSchema := p.Children()[1].Schema()
-	ctx := p.SCtx()
-	for i, fun := range p.EqualConditions {
-		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
-		if err != nil {
-			return err
-		}
-		p.LeftJoinKeys[i] = lArg.(*expression.Column)
-		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
-		if err != nil {
-			return err
-		}
-		p.RightJoinKeys[i] = rArg.(*expression.Column)
-		p.EqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
-	}
-	for i, fun := range p.NAEqualConditions {
-		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
-		if err != nil {
-			return err
-		}
-		p.LeftNAJoinKeys[i] = lArg.(*expression.Column)
-		rArg, err := fun.GetArgs()[1].ResolveIndices(rSchema)
-		if err != nil {
-			return err
-		}
-		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
-		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx.GetExprCtx(), fun.FuncName.L, fun.GetStaticType(), lArg, rArg).(*expression.ScalarFunction)
-	}
-	for i, expr := range p.LeftConditions {
-		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
-		if err != nil {
-			return err
-		}
-	}
-	for i, expr := range p.RightConditions {
-		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
-		if err != nil {
-			return err
-		}
-	}
-
-	mergedSchema := expression.MergeSchema(lSchema, rSchema)
-
-	for i, expr := range p.OtherConditions {
-		p.OtherConditions[i], err = expr.ResolveIndices(mergedSchema)
-		if err != nil {
-			return err
-		}
-	}
-
-	colsNeedResolving := p.Schema().Len()
-	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
-		colsNeedResolving--
-	}
-	// To avoid that two plan shares the same column slice.
-	shallowColSlice := make([]*expression.Column, p.Schema().Len())
-	copy(shallowColSlice, p.Schema().Columns)
-	p.SetSchema(expression.NewSchema(shallowColSlice...))
-	foundCnt := 0
-
-	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
-	// col in join schema should be separately redirected to corresponded same col in child schema. But two
-	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
-	// we are using mapping mechanism instead of moving j forward.
-	marked := make([]bool, mergedSchema.Len())
-	for i := range colsNeedResolving {
-		findIdx := -1
-		for j := range mergedSchema.Columns {
-			if !p.Schema().Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
-				continue
-			}
-			// resolve to a same unique id one, and it not being marked.
-			findIdx = j
-			break
-		}
-		if findIdx != -1 {
-			// valid one.
-			p.Schema().Columns[i] = p.Schema().Columns[i].Clone().(*expression.Column)
-			p.Schema().Columns[i].Index = findIdx
-			marked[findIdx] = true
-			foundCnt++
-		}
-	}
-	if foundCnt < colsNeedResolving {
-		return errors.Errorf("Some columns of %v cannot find the reference from its child(ren)", p.ExplainID().String())
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalHashJoin) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	return p.ResolveIndicesItself()
 }
 
 // resolveIndices4PhysicalUnionScan implements Plan interface.
@@ -424,26 +321,6 @@ func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 	return err
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalShuffle) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	// There may be one or more DataSource
-	for i := range p.ByItemArrays {
-		// Each DataSource has an array of HashByItems
-		for j := range p.ByItemArrays[i] {
-			// "Shuffle" get value of items from `DataSource`, other than children[0].
-			p.ByItemArrays[i][j], err = p.ByItemArrays[i][j].ResolveIndices(p.DataSources[i].Schema())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return err
-}
-
 // resolveIndexForInlineProjection ensures that during the execution of the physical plan, the column index can
 // be correctly mapped to the column in its subplan.
 func resolveIndexForInlineProjection(p *physicalop.PhysicalSchemaProducer) error {
@@ -564,35 +441,6 @@ func (p *PhysicalApply) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalTableScan) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	return p.ResolveIndicesItself()
-}
-
-// ResolveIndicesItself implements PhysicalTableScan interface.
-func (p *PhysicalTableScan) ResolveIndicesItself() (err error) {
-	for i, column := range p.Schema().Columns {
-		column.Index = i
-	}
-	for i, expr := range p.LateMaterializationFilterCondition {
-		p.LateMaterializationFilterCondition[i], err = expr.ResolveIndices(p.Schema())
-		if err != nil {
-			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx().GetExprCtx().GetEvalCtx(), p.Schema())
-			if isOk {
-				p.LateMaterializationFilterCondition[i] = newCond
-				continue
-			}
-			return err
-		}
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() (err error) {
 	err = p.baseSchemaProducer.ResolveIndices()
 	if err != nil {
@@ -611,24 +459,6 @@ func (p *Update) ResolveIndices() (err error) {
 		}
 	}
 	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalLock) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	for i, cols := range p.TblID2Handle {
-		for j, col := range cols {
-			resolvedCol, err := col.ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-			p.TblID2Handle[i][j] = resolvedCol
-		}
-	}
-	return nil
 }
 
 // ResolveIndices implements Plan interface.

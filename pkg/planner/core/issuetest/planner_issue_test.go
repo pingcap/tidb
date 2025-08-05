@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ func TestIssue43461(t *testing.T) {
 	require.True(t, ok)
 
 	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
-	ts := idxLookUpPlan.TablePlans[0].(*core.PhysicalTableScan)
+	ts := idxLookUpPlan.TablePlans[0].(*physicalop.PhysicalTableScan)
 
 	require.NotEqual(t, is.Columns, ts.Columns)
 }

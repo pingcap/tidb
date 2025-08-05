@@ -100,23 +100,26 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 	if ok {
 		rowCount = count
 	} else if abs := math.Abs(corr); abs < 1 {
-		// If OptOrderingIdxSelRatio is enabled - estimate the difference between index and table filtering, as this represents
-		// the possible scan range when LIMIT rows will be found. orderRatio is the estimated percentage of that range when the first
-		// row is expected to be found. Index filtering applies orderRatio twice. Once found - rows are estimated to be clustered (expectedCnt).
-		// This formula is to bias away from non-filtering (or poorly filtering) indexes that provide order due, where filtering exists
-		// outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
-		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio >= 0 {
-			rowsToMeetFirst := (((path.CountAfterAccess - path.CountAfterIndex) * orderRatio) + (path.CountAfterIndex - dsStatsInfo.RowCount)) * orderRatio
-			rowCount = rowsToMeetFirst + expectedCnt
-		} else {
-			// Assume rows are linearly distributed throughout the range - for example: selectivity 0.1 assumes that a
-			// qualified row is found every 10th row.
-			correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
-			selectivity := dsStatsInfo.RowCount / rowCount
-			rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
-		}
+		// Assume rows are linearly distributed throughout the range - for example: selectivity 0.1 assumes that a
+		// qualified row is found every 10th row.
+		correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
+		selectivity := dsStatsInfo.RowCount / rowCount
+		rowCount = min(expectedCnt/selectivity/correlationFactor, rowCount)
+	}
+	// Estimate the difference between index matching and other filtering, as this represents the possible
+	// scan range when the LIMIT rows will be found. orderRatio controls the estimated percentage of the range when
+	// the first row is expected to be found. For example:
+	// 0.1 means 10% of the range must be scanned.
+	// 0.5 means 50% of the range must be scanned.
+	// 1 means that the full range must be scanned.
+	// <= 0 disables this adjustment.
+	// This is to bias away from non-filtering (or poorly filtering) indexes that provide order, where filtering
+	// exists outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
+	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	if path.CountAfterAccess > rowCount && orderRatio > 0 && (len(path.IndexFilters) > 0 || len(path.TableFilters) > 0) {
+		rowsToMeetFirst := (path.CountAfterAccess - rowCount) * orderRatio
+		rowCount += rowsToMeetFirst
 	}
 	return rowCount
 }
@@ -258,9 +261,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
 		return nil, 0
 	}
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
-	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+	cols := expression.ExtractColumnsFromExpressions(append(path.TableFilters, path.IndexFilters...), nil)
 	if len(cols) == 0 {
 		return nil, 0
 	}
@@ -294,8 +295,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
+	cols := expression.ExtractColumnsFromExpressions(exprs, nil)
 	if len(cols) == 0 {
 		return nil, 0
 	}

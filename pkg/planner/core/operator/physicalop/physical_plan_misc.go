@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,133 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package physicalop
 
 import (
 	"fmt"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
+
+// PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
+type PushedDownLimit struct {
+	Offset uint64
+	Count  uint64
+}
+
+// Clone clones this pushed-down list.
+func (p *PushedDownLimit) Clone() *PushedDownLimit {
+	if p == nil {
+		return nil
+	}
+	cloned := new(PushedDownLimit)
+	*cloned = *p
+	return cloned
+}
+
+const pushedDownLimitSize = size.SizeOfUint64 * 2
+
+// MemoryUsage return the memory usage of PushedDownLimit
+func (p *PushedDownLimit) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return pushedDownLimitSize
+}
+
+// SplitSelCondsWithVirtualColumn filter the select conditions which contain virtual column
+func SplitSelCondsWithVirtualColumn(conds []expression.Expression) (
+	withoutVirt []expression.Expression, withVirt []expression.Expression) {
+	for i := range conds {
+		if expression.ContainVirtualColumn(conds[i : i+1]) {
+			withVirt = append(withVirt, conds[i])
+		} else {
+			withoutVirt = append(withoutVirt, conds[i])
+		}
+	}
+	return withoutVirt, withVirt
+}
+
+// PhysPlanPartInfo indicates partition helper info in physical plan.
+type PhysPlanPartInfo struct {
+	PruningConds   []expression.Expression
+	PartitionNames []ast.CIStr
+	Columns        []*expression.Column
+	ColumnNames    types.NameSlice
+}
+
+const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
+
+// CloneForPlanCache clones the PhysPlanPartInfo for plan cache.
+func (pi *PhysPlanPartInfo) CloneForPlanCache() *PhysPlanPartInfo {
+	if pi == nil {
+		return nil
+	}
+	cloned := new(PhysPlanPartInfo)
+	cloned.PruningConds = utilfuncp.CloneExpressionsForPlanCache(pi.PruningConds, nil)
+	cloned.PartitionNames = pi.PartitionNames
+	cloned.Columns = utilfuncp.CloneColumnsForPlanCache(pi.Columns, nil)
+	cloned.ColumnNames = pi.ColumnNames
+	return cloned
+}
+
+// MemoryUsage return the memory usage of PhysPlanPartInfo
+func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
+	if pi == nil {
+		return
+	}
+
+	sum = emptyPartitionInfoSize
+	for _, cond := range pi.PruningConds {
+		sum += cond.MemoryUsage()
+	}
+	for _, cis := range pi.PartitionNames {
+		sum += cis.MemoryUsage()
+	}
+	for _, col := range pi.Columns {
+		sum += col.MemoryUsage()
+	}
+	for _, colName := range pi.ColumnNames {
+		sum += colName.MemoryUsage()
+	}
+	return
+}
+
+// TableScanAndPartitionInfo is to save PhysicalTableScan and PhysPlanPartInfo Info
+type TableScanAndPartitionInfo struct {
+	// TODO(hawkingrei): we can make it private after moving PhysicalTableReader into physicalop
+	TableScan        *PhysicalTableScan
+	PhysPlanPartInfo *PhysPlanPartInfo
+}
+
+// MemoryUsage return the memory usage of TableScanAndPartitionInfo
+func (t *TableScanAndPartitionInfo) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum += t.PhysPlanPartInfo.MemoryUsage()
+	if t.TableScan != nil {
+		sum += t.TableScan.MemoryUsage()
+	}
+	return
+}
 
 // RuntimeFilterType "IN"
 type RuntimeFilterType = variable.RuntimeFilterType
@@ -64,12 +174,12 @@ type RuntimeFilterMode = variable.RuntimeFilterMode
 type RuntimeFilter struct {
 	// runtime filter id, unique in one query plan
 	id             int
-	buildNode      *PhysicalHashJoin
+	BuildNode      *PhysicalHashJoin
 	srcExprList    []*expression.Column
 	targetExprList []*expression.Column
 	rfType         RuntimeFilterType
 	// The following properties need to be set after assigning a scan node to RF
-	rfMode     RuntimeFilterMode
+	RfMode     RuntimeFilterMode
 	targetNode *PhysicalTableScan
 	// The plan id will be set when runtime filter clone()
 	// It is only used for runtime filter pb
@@ -95,7 +205,7 @@ func NewRuntimeFilter(rfIDGenerator *util.IDGenerator, eqPredicate *expression.S
 	for _, rfType := range rfTypes {
 		rf := &RuntimeFilter{
 			id:          rfIDGenerator.GetNextID(),
-			buildNode:   buildNode,
+			BuildNode:   buildNode,
 			srcExprList: srcExprList,
 			rfType:      rfType,
 		}
@@ -104,14 +214,16 @@ func NewRuntimeFilter(rfIDGenerator *util.IDGenerator, eqPredicate *expression.S
 	return result, targetExprUniqueID
 }
 
-func (rf *RuntimeFilter) assign(targetNode *PhysicalTableScan, targetExpr *expression.Column) {
+// Assign is to assign PhysicalTableScan's info and exprssion into RuntimeFilter
+func (rf *RuntimeFilter) Assign(targetNode *PhysicalTableScan,
+	targetExpr *expression.Column) {
 	rf.targetNode = targetNode
 	if len(rf.targetNode.runtimeFilterList) == 0 {
 		// todo use session variables instead
 		rf.targetNode.maxWaitTimeMs = 10000
 	}
 	rf.targetExprList = append(rf.targetExprList, targetExpr)
-	rf.buildNode.runtimeFilterList = append(rf.buildNode.runtimeFilterList, rf)
+	rf.BuildNode.runtimeFilterList = append(rf.BuildNode.runtimeFilterList, rf)
 	rf.targetNode.runtimeFilterList = append(rf.targetNode.runtimeFilterList, rf)
 	logutil.BgLogger().Debug("Assign RF to target node",
 		zap.String("RuntimeFilter", rf.String()))
@@ -145,7 +257,7 @@ func (rf *RuntimeFilter) String() string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "id=%d", rf.id)
 	builder.WriteString(", ")
-	fmt.Fprintf(&builder, "buildNodeID=%d", rf.buildNode.ID())
+	fmt.Fprintf(&builder, "buildNodeID=%d", rf.BuildNode.ID())
 	builder.WriteString(", ")
 	if rf.targetNode == nil {
 		fmt.Fprintf(&builder, "targetNodeID=nil")
@@ -165,10 +277,10 @@ func (rf *RuntimeFilter) String() string {
 	builder.WriteString(", ")
 	fmt.Fprintf(&builder, "rfType=%s", rf.rfType)
 	builder.WriteString(", ")
-	if rf.rfMode == 0 {
+	if rf.RfMode == 0 {
 		fmt.Fprintf(&builder, "rfMode=nil")
 	} else {
-		fmt.Fprintf(&builder, "rfMode=%s", rf.rfMode)
+		fmt.Fprintf(&builder, "rfMode=%s", rf.RfMode)
 	}
 	builder.WriteString(".")
 	return builder.String()
@@ -180,10 +292,10 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 	cloned.id = rf.id
 	// Because build node only needs to get its executor id attribute when converting to pb format,
 	// so we only copy explain id here
-	if rf.buildNode == nil {
+	if rf.BuildNode == nil {
 		cloned.buildNodeID = rf.buildNodeID
 	} else {
-		cloned.buildNodeID = rf.buildNode.ID()
+		cloned.buildNodeID = rf.BuildNode.ID()
 	}
 	if rf.targetNode == nil {
 		cloned.targetNodeID = rf.targetNodeID
@@ -198,7 +310,7 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 		cloned.targetExprList = append(cloned.targetExprList, targetExpr.Clone().(*expression.Column))
 	}
 	cloned.rfType = rf.rfType
-	cloned.rfMode = rf.rfMode
+	cloned.RfMode = rf.RfMode
 	return cloned
 }
 
@@ -243,7 +355,7 @@ func (rf *RuntimeFilter) ToPB(ctx *base.BuildPBContext, client kv.Client) (*tipb
 		rfTypePB = tipb.RuntimeFilterType_MIN_MAX
 	}
 	rfModePB := tipb.RuntimeFilterMode_LOCAL
-	switch rf.rfMode {
+	switch rf.RfMode {
 	case variable.RFLocal:
 		rfModePB = tipb.RuntimeFilterMode_LOCAL
 	case variable.RFGlobal:

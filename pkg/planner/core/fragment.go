@@ -47,9 +47,9 @@ import (
 // Communication by pfs are always through shuffling / broadcasting / passing through.
 type Fragment struct {
 	// following field are filled during getPlanFragment.
-	TableScan         *PhysicalTableScan          // result physical table scan
-	ExchangeReceivers []*PhysicalExchangeReceiver // data receivers
-	CTEReaders        []*PhysicalCTE              // The receivers for CTE storage/producer.
+	TableScan         *physicalop.PhysicalTableScan // result physical table scan
+	ExchangeReceivers []*PhysicalExchangeReceiver   // data receivers
+	CTEReaders        []*PhysicalCTE                // The receivers for CTE storage/producer.
 
 	// following fields are filled after scheduling.
 	Sink MPPSink // data exporter
@@ -236,7 +236,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask,
 
 func (f *Fragment) init(p base.PhysicalPlan) error {
 	switch x := p.(type) {
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		if f.TableScan != nil {
 			return errors.New("one task contains at most one table scan")
 		}
@@ -270,7 +270,7 @@ func (f *Fragment) init(p base.PhysicalPlan) error {
 func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
-	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
+	case *physicalop.PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
 		p, err := stack[0].Clone(e.ctx.GetPlanCtx())
 		if err != nil {
 			return errors.Trace(err)
@@ -287,7 +287,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if join, ok := p.(*PhysicalHashJoin); ok {
+			if join, ok := p.(*physicalop.PhysicalHashJoin); ok {
 				join.SetChild(1-join.InnerChildIdx, ch)
 			} else {
 				p.SetChildren(ch)
@@ -297,7 +297,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		if cte, ok := p.(*PhysicalCTE); ok {
 			e.CTEGroups[cte.CTE.IDForStorage].CTEReader = append(e.CTEGroups[cte.CTE.IDForStorage].CTEReader, cte)
 		}
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		stack = append(stack, x.Children()[1-x.InnerChildIdx])
 		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
 		stack = stack[:len(stack)-1]
@@ -542,7 +542,7 @@ func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []
 }
 
 // single physical table means a table without partitions or a single partition in a partition table.
-func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *PhysicalTableScan) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *physicalop.PhysicalTableScan) ([]*kv.MPPTask, error) {
 	// update ranges according to correlated columns in access conditions like in the Open() of TableReaderExecutor
 	for _, cond := range ts.AccessCondition {
 		if len(expression.ExtractCorColumns(cond)) > 0 {
@@ -578,7 +578,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 				e.KVRanges = append(e.KVRanges, partitionKVRanges.KeyRanges...)
 			}
 		} else {
-			singlePartTbl := tbl.GetPartition(ts.physicalTableID)
+			singlePartTbl := tbl.GetPartition(ts.PhysicalTableID)
 			req, err = e.constructMPPBuildTaskForNonPartitionTable(singlePartTbl.GetPhysicalID(), ts.Table.IsCommonHandle, splitedRanges)
 			e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 		}
@@ -636,7 +636,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	return tasks, nil
 }
 
-func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
+func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *physicalop.PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
 	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
 		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
