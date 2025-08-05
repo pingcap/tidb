@@ -1546,6 +1546,8 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
 		case "Update":
 			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		case "NTDml":
+			metrics.AffectedRowsCounterNTDML.Add(float64(affectedRows))
 		}
 	}
 }

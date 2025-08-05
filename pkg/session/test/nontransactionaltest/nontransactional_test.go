@@ -21,7 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -421,4 +424,108 @@ func TestNonTransactionalDMLWorkWithForeignKey(t *testing.T) {
 	tk.MustContainErrMsg("BATCH ON b LIMIT 10 DELETE FROM t1", "Cannot delete or update a parent row: a foreign key constraint fails")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("49"))
 	cleanFn()
+}
+
+func TestNonTransactionalMetrics(t *testing.T) {
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.Nil(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+	type checkMetric struct {
+		metric prometheus.Counter
+		diff   int
+	}
+	readCounters := func(checkMetrics []checkMetric) []float64 {
+		counters := make([]float64, len(checkMetrics))
+		for i, cm := range checkMetrics {
+			counters[i] = readCounter(cm.metric)
+		}
+		return counters
+	}
+
+	runAndCheck := func(tp string, fn func()) {
+		var checkMetrics []checkMetric
+		switch tp {
+		case "Insert":
+			checkMetrics = append(checkMetrics,
+				checkMetric{
+					metric: metrics.AffectedRowsCounterInsert,
+					diff:   0,
+				},
+				checkMetric{
+					metrics.StmtNodeCounter.WithLabelValues("Insert", "", "default"),
+					0,
+				})
+		case "Replace":
+			checkMetrics = append(checkMetrics,
+				checkMetric{
+					metric: metrics.AffectedRowsCounterReplace,
+					diff:   0,
+				},
+				checkMetric{
+					metric: metrics.StmtNodeCounter.WithLabelValues("Replace", "", "default"),
+					diff:   0,
+				})
+		case "Delete":
+			checkMetrics = append(checkMetrics,
+				checkMetric{
+					metric: metrics.AffectedRowsCounterDelete,
+					diff:   0,
+				},
+				checkMetric{
+					metric: metrics.StmtNodeCounter.WithLabelValues("Delete", "", "default"),
+					diff:   0,
+				})
+		case "Update":
+			checkMetrics = append(checkMetrics,
+				checkMetric{
+					metric: metrics.AffectedRowsCounterUpdate,
+					diff:   0,
+				},
+				checkMetric{
+					metric: metrics.StmtNodeCounter.WithLabelValues("Update", "", "default"),
+					diff:   0,
+				})
+		default:
+			require.FailNowf(t, "unknown type %s", tp)
+		}
+		checkMetrics = append(checkMetrics, checkMetric{
+			metric: metrics.AffectedRowsCounterNTDML,
+			diff:   100,
+		}, checkMetric{
+			metric: metrics.StmtNodeCounter.WithLabelValues("NTDml", "", "default"),
+			diff:   11, // 1 Select + 10 Insert
+		})
+
+		before := readCounters(checkMetrics)
+		fn()
+		after := readCounters(checkMetrics)
+		for i, cm := range checkMetrics {
+			require.Equal(t, cm.diff, int(after[i]-before[i]+0.001), "metric %s should increase by %d", cm.metric.Desc().String(), cm.diff)
+		}
+	}
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
+	}
+	runAndCheck("Insert", func() {
+		tk.MustExec("BATCH LIMIT 10 INSERT INTO t2 SELECT * FROM t1")
+	})
+	runAndCheck("Update", func() {
+		tk.MustExec("BATCH LIMIT 10 UPDATE t2 SET a = a + 1")
+	})
+	runAndCheck("Delete", func() {
+		tk.MustExec("BATCH LIMIT 10 DELETE FROM t2")
+	})
+	runAndCheck("Replace", func() {
+		tk.MustExec("BATCH LIMIT 10 REPLACE INTO t2 SELECT * FROM t1")
+	})
 }

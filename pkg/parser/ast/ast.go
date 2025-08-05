@@ -175,6 +175,9 @@ func GetStmtLabel(stmtNode StmtNode) string {
 	case *CreateUserStmt:
 		return "CreateUser"
 	case *DeleteStmt:
+		if x.IsNontransactionalDML {
+			return "NTDml"
+		}
 		return "Delete"
 	case *DropDatabaseStmt:
 		return "DropDatabase"
@@ -194,6 +197,9 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		}
 		return "ExplainSQL"
 	case *InsertStmt:
+		if x.IsNontransactionalDML {
+			return "NTDml"
+		}
 		if x.IsReplace {
 			return "Replace"
 		}
@@ -205,6 +211,9 @@ func GetStmtLabel(stmtNode StmtNode) string {
 	case *RollbackStmt:
 		return "Rollback"
 	case *SelectStmt:
+		if x.IsNontransactionalDML {
+			return "NTDml"
+		}
 		return "Select"
 	case *SetStmt, *SetPwdStmt:
 		return "Set"
@@ -213,6 +222,9 @@ func GetStmtLabel(stmtNode StmtNode) string {
 	case *TruncateTableStmt:
 		return "TruncateTable"
 	case *UpdateStmt:
+		if x.IsNontransactionalDML {
+			return "NTDml"
+		}
 		return "Update"
 	case *GrantStmt:
 		return "Grant"

@@ -1191,6 +1191,8 @@ type SelectStmt struct {
 	With  *WithClause
 	// AsViewSchema indicates if this stmt provides the schema for the view. It is only used when creating the view
 	AsViewSchema bool
+	// If `IsNontransactionalDML` is true, this is a sub statement of non-transactional DML statement.
+	IsNontransactionalDML bool
 }
 
 func (*SelectStmt) resultSet() {}
@@ -2304,6 +2306,8 @@ type InsertStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints     []*TableOptimizerHint
 	PartitionNames []CIStr
+	// If `IsNontransactionalDML` is true, this is a sub statement of non-transactional DML statement.
+	IsNontransactionalDML bool
 }
 
 // Restore implements Node interface.
@@ -2537,6 +2541,8 @@ type DeleteStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints []*TableOptimizerHint
 	With       *WithClause
+	// If `IsNontransactionalDML` is true, this is a sub statement of non-transactional DML statement.
+	IsNontransactionalDML bool
 }
 
 // Restore implements Node interface.
@@ -2789,6 +2795,8 @@ type UpdateStmt struct {
 	MultipleTable bool
 	TableHints    []*TableOptimizerHint
 	With          *WithClause
+	// If `IsNontransactionalDML` is true, this is a sub statement of non-transactional DML statement.
+	IsNontransactionalDML bool
 }
 
 // Restore implements Node interface.
