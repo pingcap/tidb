@@ -695,6 +695,16 @@ func (ds *DataSource) analyzeFTSFunc() error {
 			matchedColumns = append(matchedColumns, col)
 		}
 	}
+
+	if matchedIdx == nil {
+		// If no FTS function is found, we should remove all the FTS index
+		// paths from PossibleAccessPaths.
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return path.Index != nil && path.Index.FullTextInfo != nil
+		})
+		return nil
+	}
+
 	// Remove the matched condition from PushedDownConds.
 	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
 	// Build protobuf info for the matched index.
