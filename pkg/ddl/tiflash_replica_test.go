@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -452,6 +453,8 @@ func TestCreateTableWithLike2(t *testing.T) {
 }
 
 func TestTruncateTable2(t *testing.T) {
+	t.Logf("IsEmulatorGCEnable = %v", util.IsEmulatorGCEnable())
+	util.EmulatorGCEnable()
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
