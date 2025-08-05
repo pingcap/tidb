@@ -1580,8 +1580,8 @@ func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.
 	return local.engineMgr.resetEngine(ctx, engineUUID, false)
 }
 
-func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
-	return filepath.Join(storeDir, engineUUID.String()+".sst")
+func engineSSTDir(storeDir string, uuidString string) string {
+	return filepath.Join(storeDir, uuidString+".sst")
 }
 
 // LocalWriter returns a new local writer.

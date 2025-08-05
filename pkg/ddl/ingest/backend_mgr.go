@@ -107,6 +107,10 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		ResignOwnerForTest.Store(true)
 	})
 
+	if err := local.CleanupPartialFolders(jobSortPath); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	var cpMgr *CheckpointManager

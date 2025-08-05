@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -60,6 +61,9 @@ var (
 	engineMetaKey      = []byte{0, 'm', 'e', 't', 'a'}
 	normalIterStartKey = []byte{1}
 )
+
+// tombStoneFileSuffix is the suffix of the tombstone file.
+const tombStoneFileSuffix = ".tombstone"
 
 type importMutexState uint32
 
@@ -168,21 +172,52 @@ func (e *Engine) Close() error {
 	return err
 }
 
-// Cleanup remove meta, db and duplicate detection files
-func (e *Engine) Cleanup(dataDir string) error {
-	if err := os.RemoveAll(e.sstDir); err != nil {
-		return errors.Trace(err)
+// CleanupPartialFolders cleans up the partial delete folders in the directory.
+func CleanupPartialFolders(dataDir string) error {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return err
 	}
-	uuid := e.UUID.String()
-	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupDetectDirSuffix)); err != nil {
-		return errors.Trace(err)
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), tombStoneFileSuffix) {
+			continue
+		}
+
+		uuid := strings.TrimSuffix(entry.Name(), tombStoneFileSuffix)
+		if err := cleanupDBFolder(dataDir, uuid); err != nil {
+			return errors.Trace(err)
+		}
 	}
-	if err := os.RemoveAll(filepath.Join(dataDir, uuid+DupResultDirSuffix)); err != nil {
+
+	return nil
+}
+
+// cleanupDBFolder cleans up the data folder for the given UUID.
+func cleanupDBFolder(dataDir string, uuid string) error {
+	// Mark the folder is being cleaned up.
+	tombstoneFile := filepath.Join(dataDir, uuid+tombStoneFileSuffix)
+	if _, err := os.Create(tombstoneFile); err != nil {
 		return errors.Trace(err)
 	}
 
-	dbPath := filepath.Join(dataDir, uuid)
-	return errors.Trace(os.RemoveAll(dbPath))
+	for _, dir := range []string{
+		engineSSTDir(dataDir, uuid),
+		filepath.Join(dataDir, uuid+DupDetectDirSuffix),
+		filepath.Join(dataDir, uuid+DupResultDirSuffix),
+		filepath.Join(dataDir, uuid),
+	} {
+		if err := os.RemoveAll(dir); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return errors.Trace(os.Remove(tombstoneFile))
+}
+
+// Cleanup remove meta, db and duplicate detection files
+func (e *Engine) Cleanup(dataDir string) error {
+	return cleanupDBFolder(dataDir, e.UUID.String())
 }
 
 // Exist checks if db folder existing (meta sometimes won't flush before lightning exit)
