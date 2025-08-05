@@ -193,7 +193,6 @@ func TestNotReadOnlySQLOnTiFlash(t *testing.T) {
 		testKit.MustExec("set @a=1")
 		err = testKit.ExecToErr("execute stmt_insert using @a")
 		require.EqualError(t, err, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or check if the query is not readonly and sql mode is strict.`)
-
 	})
 }
 
@@ -2195,7 +2194,6 @@ func TestIssue48257(t *testing.T) {
 
 func TestIssue54213(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-
 		tk.MustExec(`use test`)
 		tk.MustExec(`CREATE TABLE tb (
   object_id bigint(20),
@@ -2215,7 +2213,6 @@ func TestIssue54213(t *testing.T) {
 
 func TestIssue54870(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-
 		tk.MustExec("use test")
 		tk.MustExec(`create table t (id int,
 deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
@@ -2373,7 +2370,6 @@ JOIN
 
 func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists test.t;")
 		tk.MustExec("create table test.t (p int, o int, v int not null);")
