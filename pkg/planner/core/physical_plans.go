@@ -36,12 +36,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -82,7 +80,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalShuffle{}
 	_ base.PhysicalPlan = &physicalop.PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
-	_ base.PhysicalPlan = &PhysicalTableSample{}
+	_ base.PhysicalPlan = &physicalop.PhysicalTableSample{}
 
 	_ PhysicalJoin = &physicalop.PhysicalHashJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
@@ -1287,16 +1285,6 @@ func SafeClone(sctx base.PlanContext, v base.PhysicalPlan) (_ base.PhysicalPlan,
 		}
 	}()
 	return v.Clone(sctx)
-}
-
-// PhysicalTableSample represents a table sample plan.
-// It returns the sample rows to its parent operand.
-type PhysicalTableSample struct {
-	physicalop.PhysicalSchemaProducer
-	TableSampleInfo *tablesampler.TableSampleInfo
-	TableInfo       table.Table
-	PhysicalTableID int64
-	Desc            bool
 }
 
 // PhysicalCTE is for CTE.
