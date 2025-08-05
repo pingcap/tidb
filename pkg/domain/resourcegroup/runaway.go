@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -584,6 +585,11 @@ func (r *RunawayChecker) CheckCopRespError(err error) error {
 
 func (r *RunawayChecker) markQuarantine(now *time.Time) {
 	if r.setting.Watch == nil {
+		return
+	}
+	// If the latest group settings have been changed, do not mark quarantine.
+	group, err := r.manager.resourceGroupCtl.GetResourceGroup(r.resourceGroupName)
+	if err != nil || group == nil || !proto.Equal(r.setting, group.RunawaySettings) {
 		return
 	}
 	ttl := time.Duration(r.setting.Watch.LastingDurationMs) * time.Millisecond
