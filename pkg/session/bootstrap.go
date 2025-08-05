@@ -118,14 +118,15 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
-		PRIMARY KEY (Host, User));`
+		PRIMARY KEY (Host, User),
+		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
 		"User CHAR(80) NOT NULL DEFAULT ''," +
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
-		"PRIMARY KEY (Host, User)" +
-		")"
+		"PRIMARY KEY (Host, User)," +
+		"KEY i_user (User))"
 
 	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
 	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
@@ -163,7 +164,8 @@ const (
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		PRIMARY KEY (Host, DB, User));`
+		PRIMARY KEY (Host, DB, User),
+		KEY i_user (User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
@@ -174,7 +176,8 @@ const (
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
-		PRIMARY KEY (Host, DB, User, Table_name));`
+		PRIMARY KEY (Host, DB, User, Table_name),
+		KEY i_user (User));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(255),
@@ -184,7 +187,8 @@ const (
 		Column_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
-		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
+		PRIMARY KEY (Host, DB, User, Table_name, Column_name),
+		KEY i_user (User));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
@@ -320,7 +324,8 @@ const (
 		USER 				CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		DEFAULT_ROLE_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
 		DEFAULT_ROLE_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
+		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER),
+		KEY i_user (USER)
 	)`
 
 	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
@@ -383,7 +388,8 @@ const (
 		HOST char(255) NOT NULL DEFAULT '',
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
-		PRIMARY KEY (USER,HOST,PRIV)
+		PRIMARY KEY (USER,HOST,PRIV),
+		KEY i_user (USER)
 	);`
 	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
 	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
@@ -1207,12 +1213,16 @@ const (
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version220 = 220
 
+	// Add index on user field for some mysql tables.
+	version221 = 221
+
 	// next version should start with 239
+
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version220
+var currentBootstrapVersion int64 = version221
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1388,6 +1398,7 @@ var (
 		upgradeToVer218,
 		upgradeToVer219,
 		upgradeToVer220,
+		upgradeToVer221,
 	}
 )
 
@@ -3309,6 +3320,19 @@ func upgradeToVer220(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer221(s sessiontypes.Session, ver int64) {
+	if ver >= version221 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
