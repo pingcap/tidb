@@ -17,6 +17,7 @@ package crossks
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
@@ -96,6 +97,7 @@ func (m *Manager) GetOrCreate(
 		return mgr, nil
 	}
 
+	startTime := time.Now()
 	getStoreFn := getOrCreateStore
 	failpoint.InjectCall("beforeGetStore", &getStoreFn)
 	var store kv.Storage
@@ -217,6 +219,10 @@ func (m *Manager) GetOrCreate(
 		minJobIDRefresher.Start(ctx)
 	})
 	m.sessMgrs[ks] = mgr
+
+	logutil.BgLogger().Info("create cross keyspace session manager",
+		zap.String("targetKS", ks), zap.Duration("cost", time.Since(startTime)))
+
 	return mgr, nil
 }
 
@@ -277,12 +283,13 @@ func (m *SessionManager) Coordinator() sessmgr.InfoSchemaCoordinator {
 
 func (m *SessionManager) close() {
 	ks := m.store.GetKeyspace()
+	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
+	logger.Info("close cross keyspace session manager")
 	m.sessPool.Close()
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()
 	m.schemaVerSyncer.Close()
-	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
 	if err := m.etcdCli.Close(); err != nil {
 		logger.Error("failed to close etcd client", zap.Error(err))
 	}
