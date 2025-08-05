@@ -189,7 +189,7 @@ func constructIndexHashJoinStatic(
 	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*physicalop.PhysicalIndexJoin)
-		indexHashJoin := PhysicalIndexHashJoin{
+		indexHashJoin := physicalop.PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
 			// Prop is empty means that the parent operator does not need the
 			// join operator to provide any promise of the output order.
@@ -654,7 +654,7 @@ func constructIndexHashJoin(
 	indexHashJoins := make([]base.PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*physicalop.PhysicalIndexJoin)
-		indexHashJoin := PhysicalIndexHashJoin{
+		indexHashJoin := physicalop.PhysicalIndexHashJoin{
 			PhysicalIndexJoin: *join,
 			// Prop is empty means that the parent operator does not need the
 			// join operator to provide any promise of the output order.
@@ -1747,7 +1747,7 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 	case *physicalop.PhysicalIndexJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexJoinMethod
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		innerIdx = ij.GetInnerChildIdx()
 		joinMethod = indexHashJoinMethod
 	case *PhysicalIndexMergeJoin:
@@ -2738,7 +2738,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 				if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 					indexHashJoin := make([]base.PhysicalPlan, 0, len(indexJoins))
 					for _, one := range indexJoins {
-						if _, ok := one.(*PhysicalIndexHashJoin); ok {
+						if _, ok := one.(*physicalop.PhysicalIndexHashJoin); ok {
 							indexHashJoin = append(indexHashJoin, one)
 						}
 					}

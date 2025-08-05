@@ -334,6 +334,17 @@ var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType proper
 var GetPlanCostVer24PhysicalHashJoin func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
 
+// GetCost4PhysicalIndexHashJoin computes the cost of index merge join operator and its children.
+var GetCost4PhysicalIndexHashJoin func(pp base.PhysicalPlan, outerCnt, innerCnt, outerCost, innerCost float64,
+	costFlag uint64) float64
+
+// GetPlanCostVer1PhysicalIndexHashJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
+var GetPlanCostVer1PhysicalIndexHashJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// Attach2Task4PhysicalIndexHashJoin will be called by PhysicalIndexHashJoin in physicalOp pkg.
+var Attach2Task4PhysicalIndexHashJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.

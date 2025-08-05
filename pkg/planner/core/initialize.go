@@ -230,15 +230,6 @@ func (p PhysicalIndexMergeJoin) Init(ctx base.PlanContext) *PhysicalIndexMergeJo
 	return &p
 }
 
-// Init initializes PhysicalIndexHashJoin.
-func (p PhysicalIndexHashJoin) Init(ctx base.PlanContext) *PhysicalIndexHashJoin {
-	p.SetTP(plancodec.TypeIndexHashJoin)
-	p.SetID(int(ctx.GetSessionVars().PlanID.Add(1)))
-	p.SetSCtx(ctx)
-	p.Self = &p
-	return &p
-}
-
 // Init initializes BatchPointGetPlan.
 func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)

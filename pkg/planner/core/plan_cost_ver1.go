@@ -541,8 +541,9 @@ func getPlanCostVer14PhysicalIndexJoin(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
+// getCost4PhysicalIndexHashJoin computes the cost of index merge join operator and its children.
+func getCost4PhysicalIndexHashJoin(pp base.PhysicalPlan, outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
+	p := pp.(*physicalop.PhysicalIndexHashJoin)
 	var cpuCost float64
 	sessVars := p.SCtx().GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
@@ -604,8 +605,9 @@ func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost
 	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexHashJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer1PhysicalIndexHashJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer1PhysicalIndexHashJoin(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalIndexHashJoin)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil

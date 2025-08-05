@@ -301,7 +301,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

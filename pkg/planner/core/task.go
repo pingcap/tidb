@@ -191,7 +191,7 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func indexHashJoinAttach2TaskV1(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+func indexHashJoinAttach2TaskV1(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.InnerPlan)
@@ -203,7 +203,7 @@ func indexHashJoinAttach2TaskV1(p *PhysicalIndexHashJoin, tasks ...base.Task) ba
 	return t
 }
 
-func indexHashJoinAttach2TaskV2(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+func indexHashJoinAttach2TaskV2(p *physicalop.PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	// only fill the wrapped physical index join is ok.
@@ -219,8 +219,9 @@ func indexHashJoinAttach2TaskV2(p *PhysicalIndexHashJoin, tasks ...base.Task) ba
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalIndexHashJoin implements PhysicalPlan interface.
+func attach2Task4PhysicalIndexHashJoin(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalIndexHashJoin)
 	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
 		return indexHashJoinAttach2TaskV2(p, tasks...)
 	}
@@ -1511,7 +1512,7 @@ func attach2Task4PhysicalSelection(pp base.PhysicalPlan, tasks ...base.Task) bas
 func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinInfo *IndexJoinInfo, stats *property.StatsInfo) {
 	var isIndexJoin bool
 	switch p.(type) {
-	case *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
 		isIndexJoin = true
 	default:
 	}

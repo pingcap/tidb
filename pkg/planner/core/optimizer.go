@@ -952,7 +952,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalPlan) {
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
-	case *PhysicalApply, *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
