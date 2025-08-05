@@ -261,9 +261,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
 		return nil, 0
 	}
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
-	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+	cols := expression.ExtractColumnsFromExpressions(append(path.TableFilters, path.IndexFilters...), nil)
 	if len(cols) == 0 {
 		return nil, 0
 	}
@@ -297,8 +295,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
-	var cols []*expression.Column
-	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
+	cols := expression.ExtractColumnsFromExpressions(exprs, nil)
 	if len(cols) == 0 {
 		return nil, 0
 	}

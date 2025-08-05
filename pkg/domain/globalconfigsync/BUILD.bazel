@@ -21,6 +21,7 @@ go_test(
         ":globalconfigsync",
         "//pkg/kv",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

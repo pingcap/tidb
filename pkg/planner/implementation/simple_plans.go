@@ -47,7 +47,7 @@ type ShowImpl struct {
 }
 
 // NewShowImpl creates a new ShowImpl.
-func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
+func NewShowImpl(show *physicalop.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
 

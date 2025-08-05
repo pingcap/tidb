@@ -35,11 +35,11 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalStreamAgg{},
-		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalTableReader{},
+	var structures = []any{core.PhysicalIndexScan{}, core.PhysicalStreamAgg{},
+		core.PhysicalHashAgg{}, core.PhysicalTableReader{},
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
 		core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
-		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}}
+		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x
 	// var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
@@ -48,7 +48,7 @@ func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	//		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
 	//      physicalop.PhysicalIndexJoin{},
 	//		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
-	//		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
+	//		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -138,9 +138,11 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 			c.write("}")
-		case "*core.PushedDownLimit":
+		case "*physicalop.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo", "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
+		case "*physicalop.PhysPlanPartInfo":
+			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
+		case "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
 			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
 		case "kv.Handle":
 			c.write("if op.%v != nil {", f.Name)

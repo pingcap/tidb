@@ -180,7 +180,7 @@ func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(colName.Column.Name)
 		}
 		// Virtual columns cannot be used in primary key.
-		if lastCol.IsGenerated() && !lastCol.GeneratedStored {
+		if lastCol.IsVirtualGenerated() {
 			if lastCol.Hidden {
 				return nil, dbterror.ErrFunctionalIndexPrimaryKey
 			}

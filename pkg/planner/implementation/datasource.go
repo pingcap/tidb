@@ -112,7 +112,7 @@ type TableScanImpl struct {
 }
 
 // NewTableScanImpl creates a new table scan Implementation.
-func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Column,
+func NewTableScanImpl(ts *physicalop.PhysicalTableScan, cols []*expression.Column,
 	hists *statistics.HistColl) *TableScanImpl {
 	base := baseImpl{plan: ts}
 	impl := &TableScanImpl{
@@ -125,7 +125,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
-	ts := impl.plan.(*plannercore.PhysicalTableScan)
+	ts := impl.plan.(*physicalop.PhysicalTableScan)
 	width := cardinality.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblColHists, impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.GetScanFactor(ts.Table) * width
