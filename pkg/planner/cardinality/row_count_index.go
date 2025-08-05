@@ -424,16 +424,6 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		return histCnt
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-<<<<<<< HEAD
-	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
-	if histNDV <= 0 {
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
-		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
-		//
-		// If the table hasn't been modified, it's safe to return 0.
-		if modifyCount == 0 {
-			return 0
-=======
 	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
@@ -443,7 +433,6 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
 		if histNDV > 0 && modifyCount == 0 {
 			return max(float64(idx.TopN.MinCount()-1), 1)
->>>>>>> 3a097611cc6 (planner: handle histogram last bucket end value underrepresented (#62695))
 		}
 		// ELSE calculate an approximate estimate based upon newly inserted rows.
 		//
