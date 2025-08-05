@@ -897,11 +897,11 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(equivFromApply [][]intset.FastIntSet
 		// find the equivalence FD across left and right cols.
 		outConditionCols := make(map[int64]*expression.Column, 8)
 		if len(outerCondition) != 0 {
-			outConditionCols = expression.ExtractColumnsMapFromExpressionsWithReusedMap(outConditionCols, nil, outerCondition...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(outConditionCols, nil, outerCondition...)
 		}
 		if len(p.OtherConditions) != 0 {
 			// other condition may contain right side cols, it doesn't affect the judgement of intersection of non-left-equiv cols.
-			outConditionCols = expression.ExtractColumnsMapFromExpressionsWithReusedMap(outConditionCols, nil, p.OtherConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(outConditionCols, nil, p.OtherConditions...)
 		}
 		outerConditionUniqueIDs := intset.NewFastIntSet()
 		for _, col := range outConditionCols {

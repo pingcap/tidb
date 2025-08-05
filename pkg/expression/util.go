@@ -187,10 +187,10 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 	return m
 }
 
-// ExtractColumnsMapFromExpressionsWithReusedMap it the same as ExtractColumnsFromExpressions, but return a map
-func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) map[int64]*Column {
+// ExtractColumnsMapFromExpressionsWithReusedMap it the same as ExtractColumnsFromExpressions, but map can be reused.
+func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) {
 	if len(exprs) == 0 {
-		return nil
+		return
 	}
 	if m == nil {
 		m = make(map[int64]*Column, len(exprs))
@@ -198,7 +198,7 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	for _, expr := range exprs {
 		extractColumns(m, expr, filter)
 	}
-	return m
+	return
 }
 
 func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
