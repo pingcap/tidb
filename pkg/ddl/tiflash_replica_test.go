@@ -475,7 +475,7 @@ func TestTruncateTable2(t *testing.T) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for range waitForCleanDataRound {
+	require.Eventually(t, func() bool {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)
@@ -491,12 +491,8 @@ func TestTruncateTable2(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, err)
-		if !hasOldTableData {
-			break
-		}
-		time.Sleep(waitForCleanDataInterval)
-	}
-	require.False(t, hasOldTableData)
+		return !hasOldTableData
+	}, 30*time.Second, 100*time.Millisecond)
 
 	// Test for truncate table should clear the tiflash available status.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
