@@ -175,6 +175,32 @@ func ExtractColumnsFromExpressions(exprs []Expression, filter func(*Column) bool
 	return result
 }
 
+// ExtractColumnsMapFromExpressions it the same as ExtractColumnsFromExpressions, but return a map
+func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expression) map[int64]*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	m := make(map[int64]*Column, len(exprs))
+	for _, expr := range exprs {
+		extractColumns(m, expr, filter)
+	}
+	return m
+}
+
+// ExtractColumnsMapFromExpressionsWithReusedMap it the same as ExtractColumnsFromExpressions, but return a map
+func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) map[int64]*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	if m == nil {
+		m = make(map[int64]*Column, len(exprs))
+	}
+	for _, expr := range exprs {
+		extractColumns(m, expr, filter)
+	}
+	return m
+}
+
 func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
 	switch v := expr.(type) {
 	case *Column:
@@ -1484,13 +1510,13 @@ func ContainVirtualColumn(exprs []Expression) bool {
 }
 
 // ContainCorrelatedColumn checks if the expressions contain a correlated column
-func ContainCorrelatedColumn(exprs []Expression) bool {
+func ContainCorrelatedColumn(exprs ...Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *CorrelatedColumn:
 			return true
 		case *ScalarFunction:
-			if ContainCorrelatedColumn(v.GetArgs()) {
+			if ContainCorrelatedColumn(v.GetArgs()...) {
 				return true
 			}
 		}

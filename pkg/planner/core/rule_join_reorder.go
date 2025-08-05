@@ -110,11 +110,14 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			tmp = append(tmp, join.OtherConditions...)
 			tmp = append(tmp, join.LeftConditions...)
 			tmp = append(tmp, eqConds...)
-			extractedCols := expression.ExtractColumnsFromExpressions(tmp, nil)
+			extractedCols := expression.ExtractColumnsMapFromExpressions(nil, tmp...)
 			affectedGroups := 0
 			for i := range lhsGroup {
-				if slices.ContainsFunc(extractedCols, lhsGroup[i].Schema().Contains) {
-					affectedGroups++
+				lhsSchema := lhsGroup[i].Schema()
+				for _, col := range extractedCols {
+					if lhsSchema.Contains(col) {
+						affectedGroups++
+					}
 				}
 				if affectedGroups > 1 {
 					noExpand = true
