@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -32,7 +33,9 @@ import (
 	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 func (e *ShowExec) fetchShowStatsExtended(ctx context.Context) error {
@@ -523,7 +526,9 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
+	start := time.Now()
 	dbs := do.InfoSchema().AllSchemaNames()
+	logutil.BgLogger().Info("show stats healthy: schmeas", zap.Duration("cost", time.Since(start)))
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
@@ -532,6 +537,7 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
+	start = time.Now()
 	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	paritionedTables := make(map[int64]*model.TableInfo)
 	for _, result := range tableInfoResult {
@@ -539,13 +545,17 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 			paritionedTables[tbl.ID] = tbl
 		}
 	}
+	logutil.BgLogger().Info("show stats healthy: list paritioned tables", zap.Duration("cost", time.Since(start)))
+	start = time.Now()
 	for _, db := range dbs {
 		if fieldFilter != "" && db.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
 		}
+		listTablesStart := time.Now()
 		tableNames, err := do.InfoSchema().SchemaSimpleTableInfos(ctx, db)
+		logutil.BgLogger().Info("show stats healthy: list tables for db", zap.Duration("cost", time.Since(listTablesStart)))
 		terror.Log(err)
 		for _, nameInfo := range tableNames {
 			tblID := nameInfo.ID
@@ -566,6 +576,7 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 			}
 		}
 	}
+	logutil.BgLogger().Info("show stats healthy: append rows", zap.Duration("cost", time.Since(start)))
 }
 
 func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
