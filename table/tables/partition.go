@@ -155,13 +155,13 @@ type PartitionExpr struct {
 
 func initEvalBufferType(t *partitionedTable) {
 	hasExtraHandle := false
-	numCols := len(t.Cols())
+	numCols := len(t.WritableCols())
 	if !t.Meta().PKIsHandle {
 		hasExtraHandle = true
 		numCols++
 	}
 	t.evalBufferTypes = make([]*types.FieldType, numCols)
-	for i, col := range t.Cols() {
+	for i, col := range t.WritableCols() {
 		t.evalBufferTypes[i] = &col.FieldType
 	}
 
