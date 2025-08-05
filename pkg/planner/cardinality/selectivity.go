@@ -117,7 +117,7 @@ func Selectivity(
 		ret *= sel
 	}
 
-	extractedCols := slices.Collect(maps.Values(expression.ExtractColumnsMapFromExpressions(nil, remainedExprs)))
+	extractedCols := slices.Collect(maps.Values(expression.ExtractColumnsMapFromExpressions(nil, remainedExprs...)))
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
