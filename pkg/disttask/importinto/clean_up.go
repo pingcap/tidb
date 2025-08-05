@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -54,14 +55,16 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	}
 	defer redactSensitiveInfo(task, taskMeta)
 
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
-	}); err != nil {
-		return err
+	if kerneltype.IsClassic() {
+		taskManager, err := storage.GetTaskManager()
+		if err != nil {
+			return err
+		}
+		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+		}); err != nil {
+			return err
+		}
 	}
 	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {

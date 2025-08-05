@@ -96,9 +96,11 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		if err2 != nil {
 			return err2
 		}
-		err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
-		if err2 != nil {
-			return err2
+		if kerneltype.IsClassic() {
+			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
 		}
 		// in classical kernel or if we are inside SYSTEM keyspace itself, we
 		// submit the task to DXF in the same transaction as creating the job.
