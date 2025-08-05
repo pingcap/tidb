@@ -34,7 +34,10 @@ go_test(
     embed = [":serverinfo"],
     flaky = True,
     deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/util",
+        "//pkg/keyspace",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "@com_github_pingcap_errors//:errors",

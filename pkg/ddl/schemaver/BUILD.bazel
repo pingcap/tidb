@@ -12,6 +12,7 @@ go_library(
         "//pkg/ddl/logutil",
         "//pkg/ddl/util",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/metrics",
         "//pkg/sessionctx/vardef",
         "//pkg/util",
