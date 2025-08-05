@@ -59,11 +59,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 31,
-=======
-    shard_count = 36,
->>>>>>> 3a097611cc6 (planner: handle histogram last bucket end value underrepresented (#62695))
+    shard_count = 32,
     deps = [
         "//pkg/config",
         "//pkg/domain",
