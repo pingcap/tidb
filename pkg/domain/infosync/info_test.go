@@ -249,9 +249,5 @@ func TestGetServersForISSync(t *testing.T) {
 	// checkAssumedSvr = true
 	infos, err = GetServersForISSync(context.Background(), true)
 	require.NoError(t, err)
-	if kerneltype.IsClassic() {
-		require.Len(t, infos, 3)
-	} else {
-		require.Len(t, infos, 3)
-	}
+	require.Len(t, infos, 3)
 }
