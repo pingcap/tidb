@@ -138,7 +138,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 			c.write("}")
-		case "*core.PushedDownLimit":
+		case "*physicalop.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 		case "*physicalop.PhysPlanPartInfo":
 			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
