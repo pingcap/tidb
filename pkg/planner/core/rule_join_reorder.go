@@ -106,11 +106,10 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == logicalop.LeftOuterJoin {
 			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
-			tmp := make([]expression.Expression, 0, len(join.LeftConditions)+len(join.OtherConditions)+len(eqConds))
-			tmp = append(tmp, join.OtherConditions...)
-			tmp = append(tmp, join.LeftConditions...)
-			tmp = append(tmp, eqConds...)
-			extractedCols := expression.ExtractColumnsMapFromExpressions(nil, tmp...)
+			extractedCols := make(map[int64]*expression.Column, len(join.LeftConditions)+len(join.OtherConditions)+len(eqConds))
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.LeftConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
 			affectedGroups := 0
 			for i := range lhsGroup {
 				lhsSchema := lhsGroup[i].Schema()
