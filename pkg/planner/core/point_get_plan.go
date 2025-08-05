@@ -610,12 +610,12 @@ func (p *BatchPointGetPlan) ResolveIndices() error {
 
 // OutputNames returns the outputting names of each column.
 func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
-	return p.OutputNames()
+	return p.SimpleSchemaProducer.OutputNames()
 }
 
 // SetOutputNames sets the outputting name by the given slice.
 func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
-	p.SetOutputNames(names)
+	p.SimpleSchemaProducer.SetOutputNames(names)
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
