@@ -1499,7 +1499,7 @@ func (b *Builder) applyModifySchemaReadOnlyV2(m meta.Reader, diff *model.SchemaD
 	newDBInfo := oldDBInfo.Clone()
 	newDBInfo.ReadOnly = di.ReadOnly
 	b.infoschemaV2.deleteDB(di, diff.Version)
-	b.infoschemaV2.addDB(diff.Version, di)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
 }
 
