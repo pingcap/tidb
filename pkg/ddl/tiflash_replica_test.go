@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -41,7 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -475,6 +478,21 @@ func TestTruncateTable2(t *testing.T) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
+	var wg tidbutil.WaitGroupWrapper
+	bgCtx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+	wg.Run(func() {
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+			buf := make([]byte, 8<<20)
+			stackLen := runtime.Stack(buf, true)
+			logutil.BgLogger().Info(fmt.Sprintf("\n=== dump goroutine stack. ===\n%s\n", string(buf[:stackLen])))
+		}
+	})
 	require.Eventually(t, func() bool {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
