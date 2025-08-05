@@ -349,7 +349,9 @@ func (s *statsReadWriter) ReloadExtendedStatistics() error {
 			}
 			tables = append(tables, t)
 		}
-		s.statsHandler.UpdateStatsCache(tables, nil)
+		s.statsHandler.UpdateStatsCache(statstypes.CacheUpdate{
+			Updated: tables,
+		})
 		return nil
 	}, util.FlagWrapTxn)
 }
