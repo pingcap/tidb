@@ -2397,24 +2397,18 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─Projection	1.00	root		planner__core__integration.t.a, planner__core__integration.t.b
   └─IndexLookUp	1.00	root		
-    ├─IndexFullScan(Build)	4.02	cop[tikv]	table:t, index:b(b)	keep order:true
+    ├─IndexFullScan(Build)	4.00	cop[tikv]	table:t, index:b(b)	keep order:true
     └─Selection(Probe)	1.00	cop[tikv]		gt(planner__core__integration.t.a, 3)
-      └─TableRowIDScan	4.02	cop[tikv]	table:t	keep order:false
+      └─TableRowIDScan	4.00	cop[tikv]	table:t	keep order:false
 set session tidb_enable_extended_stats = off;
 explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─Projection	1.00	root		planner__core__integration.t.a, planner__core__integration.t.b
   └─IndexLookUp	1.00	root		
-<<<<<<< HEAD
     ├─IndexFullScan(Build)	2.00	cop[tikv]	table:t, index:b(b)	keep order:true
     └─Selection(Probe)	1.00	cop[tikv]		gt(planner__core__integration.t.a, 3)
       └─TableRowIDScan	2.00	cop[tikv]	table:t	keep order:false
-=======
-    ├─IndexFullScan(Build)	2.04	cop[tikv]	table:t, index:b(b)	keep order:true
-    └─Selection(Probe)	1.00	cop[tikv]		gt(planner__core__integration.t.a, 3)
-      └─TableRowIDScan	2.04	cop[tikv]	table:t	keep order:false
->>>>>>> 7540ef8bf95 (planner: refactor order ratio code (#61787))
 drop table if exists ttest;
 create table ttest (v1 int, v2 int);
 insert into ttest values(1, 2), (4,6), (1, 7);
