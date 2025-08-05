@@ -446,11 +446,8 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 				tmpRan[0].HighExclude = indexRange.HighExclude
 			}
 			colID = idxCols[i].UniqueID
-			if statistics.ColumnStatsIsInvalid(coll.GetCol(colID), sctx, coll, colID) {
-				count, err = getPseudoRowCountByColumnRanges(sctx.GetSessionVars().StmtCtx.TypeCtx(), tableRowCount, tmpRan, 0)
-			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
-			}
+			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
+			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 			if err != nil {
 				return 0, 0, errors.Trace(err)
 			}

@@ -636,6 +636,9 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 
 // hasColumnStats checks if we have collected stats on any of the given columns.
 func hasColumnStats(sctx planctx.PlanContext, coll *statistics.HistColl, idxCols []*expression.Column) bool {
+	if idxCols == nil {
+		return false
+	}
 	for i := range idxCols {
 		if !statistics.ColumnStatsIsInvalid(coll.GetCol(idxCols[i].UniqueID), sctx, coll, idxCols[i].UniqueID) {
 			return true
