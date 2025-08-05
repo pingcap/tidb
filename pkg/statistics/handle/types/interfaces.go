@@ -514,7 +514,7 @@ type StatsHandle interface {
 	// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
 	// physicalTableID can be a table ID or partition ID.
 	// Note: this function may return nil if the table is not found in the cache.
-	GetNonPseudoPhysicalTableStats(physicalTableID int64) *statistics.Table
+	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
 
 	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
 	// TODO: remove this function and use GetPhysicalTableStats instead.

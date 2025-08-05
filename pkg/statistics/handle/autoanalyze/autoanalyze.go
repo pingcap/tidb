@@ -468,7 +468,11 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			pi := tblInfo.GetPartitionInfo()
 			// No partitions, analyze the whole table.
 			if pi == nil {
-				statsTbl := statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				statsTbl, found := statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
+				if !found {
+					continue
+				}
+
 				sql := "analyze table %n.%n"
 				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
@@ -523,7 +527,10 @@ func getPartitionStats(
 	partitionStats := make(map[int64]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		partitionStats[def.ID] = statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+		stats, found := statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+		if found {
+			partitionStats[def.ID] = stats
+		}
 	}
 
 	return partitionStats

@@ -147,7 +147,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
-			partitionStats := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			if !found {
+				return nil
+			}
 			err := pq.recreateAndPushJob(sctx, lockedTables, pruneMode, partitionStats)
 			if err != nil {
 				return err
@@ -155,7 +158,10 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 		}
 		return nil
 	}
-	stats := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	return pq.recreateAndPushJob(sctx, lockedTables, pruneMode, stats)
 }
 
@@ -194,7 +200,10 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
-			partitionStats := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			if !found {
+				return nil
+			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
 			return pq.pushWithoutLock(job)
 		}
@@ -202,7 +211,10 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	}
 
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
-	stats := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	if !found {
+		return nil
+	}
 	// Directly create a new job for the newly added index.
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
