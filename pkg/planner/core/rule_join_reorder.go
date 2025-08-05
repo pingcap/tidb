@@ -111,8 +111,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.LeftConditions...)
 			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
 			affectedGroups := 0
-			for i := range lhsGroup {
-				lhsSchema := lhsGroup[i].Schema()
+			for _, lhs := range lhsGroup {
+				lhsSchema := lhs.Schema()
 				for _, col := range extractedCols {
 					if lhsSchema.Contains(col) {
 						affectedGroups++
@@ -154,8 +154,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.RightConditions...)
 			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
 			affectedGroups := 0
-			for i := range rhsGroup {
-				rhsSchema := rhsGroup[i].Schema()
+			for _, rhs := range rhsGroup {
+				rhsSchema := rhs.Schema()
 				for _, col := range extractedCols {
 					if rhsSchema.Contains(col) {
 						affectedGroups++
