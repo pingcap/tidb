@@ -155,7 +155,7 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(BatchPointGetPlan)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
+	cloned.SimpleSchemaProducer = *op.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
 	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
 	if !ok {
 		return nil, false
@@ -266,7 +266,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 func (op *Update) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(Update)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
+	cloned.SimpleSchemaProducer = *op.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
 	cloned.OrderedList = util.CloneAssignments(op.OrderedList)
 	if op.SelectPlan != nil {
 		SelectPlan, ok := op.SelectPlan.CloneForPlanCache(newCtx)
@@ -288,7 +288,7 @@ func (op *Update) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 func (op *Delete) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(Delete)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
+	cloned.SimpleSchemaProducer = *op.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
 	if op.SelectPlan != nil {
 		SelectPlan, ok := op.SelectPlan.CloneForPlanCache(newCtx)
 		if !ok {
@@ -309,7 +309,7 @@ func (op *Delete) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(Insert)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
+	cloned.SimpleSchemaProducer = *op.SimpleSchemaProducer.CloneSelfForPlanCache(newCtx)
 	cloned.Lists = cloneExpression2DForPlanCache(op.Lists)
 	cloned.OnDuplicate = util.CloneAssignments(op.OnDuplicate)
 	cloned.GenCols = op.GenCols.cloneForPlanCache()

@@ -242,11 +242,10 @@ func (p PhysicalIndexHashJoin) Init(ctx base.PlanContext) *PhysicalIndexHashJoin
 // Init initializes BatchPointGetPlan.
 func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
-	p.schema = schema
-	p.names = names
+	p.SetSchema(schema)
+	p.SetOutputNames(names)
 	p.SetStats(stats)
-	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-
+	p.Columns = ExpandVirtualColumn(p.Columns, p.Schema(), p.TblInfo.Columns)
 	return p
 }
 
