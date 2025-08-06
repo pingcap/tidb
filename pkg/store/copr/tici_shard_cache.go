@@ -147,6 +147,9 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 
 // Close closes the gRPC client connection.
 func (c *TiCIShardCacheClient) Close() {
+	if c == nil {
+		return
+	}
 	if c.client != nil {
 		c.client.Close()
 	}

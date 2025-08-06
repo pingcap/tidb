@@ -133,7 +133,7 @@ func (s *Store) Close() {
 	if s.coprCache != nil {
 		s.coprCache.cache.Close()
 	}
-	if s.TiCIShardCache != nil && s.TiCIShardCache.client != nil {
+	if s.TiCIShardCache != nil {
 		s.TiCIShardCache.client.Close()
 	}
 }
