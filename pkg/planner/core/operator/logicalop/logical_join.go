@@ -206,16 +206,12 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
-
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.joinPropConst(predicates)
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
 			AppendTableDualTraceStep(p, dual, predicates, opt)
@@ -234,6 +230,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true, nil)
 		predicates = p.joinPropConst(predicates)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -260,7 +257,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
+		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -275,8 +275,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 		predicates = p.joinPropConst(predicates)
+		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -1267,6 +1267,16 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 	return false
 }
 
+func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
+	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, true, true)
+	return len(otherCond) == 0
+}
+
+func (p *LogicalJoin) canPropagateConstantForJoinPropConst(expr expression.Expression) bool {
+	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, false, false)
+	return len(otherCond) == 0
+}
+
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
 // These conditions can be where conditions, join conditions, or collection of both.
 // If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
@@ -1706,7 +1716,8 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
-	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
+	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema,
+		innerTableSchema, nullSensitive, p.canPropagateConstantForJoinPropConst)
 	p.AttachOnConds(joinConds)
 	return predicates
 }
