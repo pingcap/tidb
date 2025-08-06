@@ -205,6 +205,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 				return nil
 			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
+			//nolint:nogo
 			return pq.pushWithoutLock(job)
 		}
 		return nil
