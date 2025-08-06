@@ -1185,37 +1185,37 @@ type s3ObjectWriter struct {
 // Write implement the io.Writer interface.
 func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
 	//t := time.Now()
-	size := len(p)
-	defer func() {
-		//dur := time.Since(t)
-		//log.Info("s3ObjectWriter write",
-		//	zap.Int("size", size),
-		//	zap.Duration("duration", dur),
-		//	zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
-		//)
-		//metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter").
-		//	Observe(float64(size) / 1024.0 / 1024.0 / dur.Seconds())
+	//size := len(p)
+	//defer func() {
+	//dur := time.Since(t)
+	//log.Info("s3ObjectWriter write",
+	//	zap.Int("size", size),
+	//	zap.Duration("duration", dur),
+	//	zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
+	//)
+	//metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter").
+	//	Observe(float64(size) / 1024.0 / 1024.0 / dur.Seconds())
 
-		s.lastSize += size
-		s.blockNum++
-		d := time.Since(s.lastTime)
-		if d > 60*time.Second {
-			sz := s.lastSize
-			bn := s.blockNum
-
-			s.lastTime = time.Now()
-			s.lastSize = 0
-			s.blockNum = 0
-			log.Info("s3ObjectWriter write 30s",
-				zap.Int("blockNum", bn),
-				zap.Int("size", sz),
-				zap.Duration("duration", d),
-				zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
-			)
-			metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter sec").
-				Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
-		}
-	}()
+	//s.lastSize += size
+	//s.blockNum++
+	//d := time.Since(s.lastTime)
+	//if d > 60*time.Second {
+	//	sz := s.lastSize
+	//	bn := s.blockNum
+	//
+	//	s.lastTime = time.Now()
+	//	s.lastSize = 0
+	//	s.blockNum = 0
+	//	log.Info("s3ObjectWriter write 30s",
+	//		zap.Int("blockNum", bn),
+	//		zap.Int("size", sz),
+	//		zap.Duration("duration", d),
+	//		zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
+	//	)
+	//	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter sec").
+	//		Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
+	//}
+	//}()
 	return s.wd.Write(p)
 }
 
