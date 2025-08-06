@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
@@ -1177,42 +1176,43 @@ func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalF
 type s3ObjectWriter struct {
 	wd       *io.PipeWriter
 	wg       *sync.WaitGroup
-	lastSize atomic.Int64
-	blockNum atomic.Int64
+	lastSize int
+	blockNum int
 	lastTime time.Time
 	err      error
 }
 
 // Write implement the io.Writer interface.
 func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
-	t := time.Now()
+	//t := time.Now()
 	size := len(p)
 	defer func() {
-		dur := time.Since(t)
-		log.Info("s3ObjectWriter write",
-			zap.Int("size", size),
-			zap.Duration("duration", dur),
-			zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
-		)
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter").
-			Observe(float64(size) / 1024.0 / 1024.0 / dur.Seconds())
+		//dur := time.Since(t)
+		//log.Info("s3ObjectWriter write",
+		//	zap.Int("size", size),
+		//	zap.Duration("duration", dur),
+		//	zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
+		//)
+		//metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter").
+		//	Observe(float64(size) / 1024.0 / 1024.0 / dur.Seconds())
 
-		s.lastSize.Add(int64(size))
-		s.blockNum.Add(1)
+		s.lastSize += size
+		s.blockNum++
 		d := time.Since(s.lastTime)
-		if d > 30*time.Second {
-			sz := s.lastSize.Load()
-			bn := s.blockNum.Load()
+		if d > 60*time.Second {
+			sz := s.lastSize
+			bn := s.blockNum
+
 			s.lastTime = time.Now()
-			s.lastSize.Store(0)
-			s.blockNum.Store(0)
+			s.lastSize = 0
+			s.blockNum = 0
 			log.Info("s3ObjectWriter write 30s",
-				zap.Int64("blockNum", bn),
-				zap.Int64("size", sz),
+				zap.Int("blockNum", bn),
+				zap.Int("size", sz),
 				zap.Duration("duration", d),
 				zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
 			)
-			metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter 30s").
+			metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter sec").
 				Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
 		}
 	}()
