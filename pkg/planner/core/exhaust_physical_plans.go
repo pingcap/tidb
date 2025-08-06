@@ -1269,7 +1269,7 @@ func constructInnerAgg(prop *property.PhysicalProperty, logicalAgg *logicalop.Lo
 	if logicalAgg == nil {
 		return child
 	}
-	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), prop)
+	physicalHashAgg := physicalop.NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), prop)
 	physicalHashAgg.SetSchema(logicalAgg.Schema().Clone())
 	return physicalHashAgg
 }
@@ -1710,7 +1710,7 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 buildHashAgg:
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
-		physicalHashAgg := NewPhysicalHashAgg(la, stats, prop)
+		physicalHashAgg := physicalop.NewPhysicalHashAgg(la, stats, prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}
@@ -3394,7 +3394,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 	}
 	// ref: https://github.com/pingcap/tiflash/blob/3ebb102fba17dce3d990d824a9df93d93f1ab
 	// 766/dbms/src/Flash/Coprocessor/AggregationInterpreterHelper.cpp#L26
-	validMppAgg := func(mppAgg *PhysicalHashAgg) bool {
+	validMppAgg := func(mppAgg *physicalop.PhysicalHashAgg) bool {
 		isFinalAgg := true
 		if mppAgg.AggFuncs[0].Mode != aggregation.FinalMode && mppAgg.AggFuncs[0].Mode != aggregation.CompleteMode {
 			isFinalAgg = false
@@ -3445,7 +3445,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 				CTEProducerStatus: prop.CTEProducerStatus,
 				NoCopPushDown:     prop.NoCopPushDown,
 			}
-			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = physicalop.Mpp1Phase
 			finalAggAdjust(agg.AggFuncs)
@@ -3467,7 +3467,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			CTEProducerStatus: prop.CTEProducerStatus,
 			NoCopPushDown:     prop.NoCopPushDown,
 		}
-		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		agg.MppRunMode = physicalop.Mpp2Phase
 		agg.MppPartitionCols = partitionCols
@@ -3483,7 +3483,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 				CTEProducerStatus: prop.CTEProducerStatus,
 				NoCopPushDown:     prop.NoCopPushDown,
 			}
-			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = physicalop.MppTiDB
 			hashAggs = append(hashAggs, agg)
@@ -3496,7 +3496,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			NoCopPushDown:     prop.NoCopPushDown,
 		}
 
-		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+		agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
 			// mpp scalar mode means the data will be pass through to only one tiFlash node at last.
@@ -3518,7 +3518,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 	if prefer {
 		var preferPlans []base.PhysicalPlan
 		for _, agg := range hashAggs {
-			if hg, ok := agg.(*PhysicalHashAgg); ok && hg.MppRunMode == preferMode {
+			if hg, ok := agg.(*physicalop.PhysicalHashAgg); ok && hg.MppRunMode == preferMode {
 				preferPlans = append(preferPlans, hg)
 			}
 		}
@@ -3586,7 +3586,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 			if childProp == nil {
 				continue
 			}
-			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
+			agg := physicalop.NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			hashAggs = append(hashAggs, agg)
 		}

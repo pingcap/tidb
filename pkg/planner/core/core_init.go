@@ -110,8 +110,13 @@ func init() {
 	utilfuncp.GetCost4PhysicalIndexHashJoin = getCost4PhysicalIndexHashJoin
 	utilfuncp.GetPlanCostVer1PhysicalIndexHashJoin = getPlanCostVer1PhysicalIndexHashJoin
 	utilfuncp.Attach2Task4PhysicalIndexHashJoin = attach2Task4PhysicalIndexHashJoin
+	// for physical hash agg
+	utilfuncp.GetCost4PhysicalHashAgg = getCost4PhysicalHashAgg
+	utilfuncp.Attach2Task4PhysicalHashAgg = attach2Task4PhysicalHashAgg
+	utilfuncp.GetPlanCostVer14PhysicalHashAgg = getPlanCostVer14PhysicalHashAgg
+	utilfuncp.GetPlanCostVer24PhysicalHashAgg = getPlanCostVer24PhysicalHashAgg
+
 	// for physical aggregation.
-	utilfuncp.InitForHash = initForHash
 	utilfuncp.InitForStream = initForStream
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow

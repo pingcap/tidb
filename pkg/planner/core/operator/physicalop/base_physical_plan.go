@@ -15,6 +15,8 @@
 package physicalop
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -146,6 +148,9 @@ func (p *BasePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 
 // StatsCount implements the base.PhysicalPlan.<5th> interface.
 func (p *BasePhysicalPlan) StatsCount() float64 {
+	if p == nil || p.StatsInfo() == nil {
+		fmt.Println(1)
+	}
 	return p.StatsInfo().RowCount
 }
 
