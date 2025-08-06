@@ -259,42 +259,6 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 	return p.ResolveIndicesItself()
 }
 
-// ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
-	// for version 1
-	for _, gs := range p.GroupingSets {
-		for _, groupingExprs := range gs {
-			for k, groupingExpr := range groupingExprs {
-				gExpr, err := groupingExpr.ResolveIndices(p.Children()[0].Schema())
-				if err != nil {
-					return err
-				}
-				groupingExprs[k] = gExpr
-			}
-		}
-	}
-	// for version 2
-	for i, oneLevel := range p.LevelExprs {
-		for j, expr := range oneLevel {
-			// expr in expand level-projections only contains column ref and literal constant projection.
-			p.LevelExprs[i][j], err = expr.ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExpand) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	return p.ResolveIndicesItself()
-}
-
 // resolveIndicesForSort is a helper function to resolve indices for sort operators.
 func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 	p := pp.(*physicalop.BasePhysicalPlan)

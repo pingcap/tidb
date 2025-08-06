@@ -1418,23 +1418,6 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 	return attachPlan2Task(p, rootTask)
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalExpand) Attach2Task(tasks ...base.Task) base.Task {
-	t := tasks[0].Copy()
-	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
-	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.
-	if mpp, ok := t.(*MppTask); ok {
-		p.SetChildren(mpp.p)
-		mpp.p = p
-		return mpp
-	}
-	// For root task
-	// since expand should be in root side accordingly, convert to root task now.
-	root := t.ConvertToRootTask(p.SCtx())
-	t = attachPlan2Task(p, root)
-	return t
-}
-
 // attach2Task4PhysicalProjection implements PhysicalPlan interface.
 func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalProjection)
@@ -1453,6 +1436,24 @@ func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) ba
 	}
 	t = t.ConvertToRootTask(p.SCtx())
 	t = attachPlan2Task(p, t)
+	return t
+}
+
+// attach2Task4PhysicalExpand implements PhysicalPlan interface.
+func attach2Task4PhysicalExpand(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalExpand)
+	t := tasks[0].Copy()
+	// current expand can only be run in MPP TiFlash mode or Root Tidb mode.
+	// if expr inside could not be pushed down to tiFlash, it will error in converting to pb side.
+	if mpp, ok := t.(*MppTask); ok {
+		p.SetChildren(mpp.p)
+		mpp.p = p
+		return mpp
+	}
+	// For root task
+	// since expand should be in root side accordingly, convert to root task now.
+	root := t.ConvertToRootTask(p.SCtx())
+	t = attachPlan2Task(p, root)
 	return t
 }
 
@@ -1811,7 +1812,7 @@ func adjust3StagePhaseAgg(p *physicalop.PhysicalHashAgg, partialAgg, finalAgg ba
 	// scale(len(groupingSets)) will change the NDV, while Expand doesn't change the NDV and groupNDV.
 	stats := mpp.p.StatsInfo().Scale(float64(1))
 	stats.RowCount = stats.RowCount * float64(len(groupingSets))
-	physicalExpand := PhysicalExpand{
+	physicalExpand := physicalop.PhysicalExpand{
 		GroupingSets: groupingSets,
 	}.Init(p.SCtx(), stats, mpp.p.QueryBlockOffset())
 	// generate a new column as groupingID to identify which this row is targeting for.

@@ -2795,7 +2795,7 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
-		expand := PhysicalExpand{
+		expand := physicalop.PhysicalExpand{
 			GroupingSets:          p.RollupGroupingSets,
 			LevelExprs:            p.LevelExprs,
 			ExtraGroupingColNames: p.ExtraGroupingColNames,
@@ -2814,7 +2814,7 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 			// require cop task type for children.F
 			tidbProp := prop.CloneEssentialFields()
 			tidbProp.TaskTp = taskType
-			expand := PhysicalExpand{
+			expand := physicalop.PhysicalExpand{
 				GroupingSets:          p.RollupGroupingSets,
 				LevelExprs:            p.LevelExprs,
 				ExtraGroupingColNames: p.ExtraGroupingColNames,

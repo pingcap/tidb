@@ -8,6 +8,7 @@ go_library(
         "base_physical_plan.go",
         "nominal_sort.go",
         "physical_apply.go",
+        "physical_expand.go",
         "physical_hash_agg.go",
         "physical_hash_join.go",
         "physical_index_hash_join.go",

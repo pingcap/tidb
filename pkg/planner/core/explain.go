@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -196,50 +195,6 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
 	}
-	return str.String()
-}
-
-func (p *PhysicalExpand) explainInfoV2() string {
-	sb := strings.Builder{}
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
-	for i, oneL := range p.LevelExprs {
-		if i == 0 {
-			sb.WriteString("level-projection:")
-			sb.WriteString("[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.Schema(), enableRedactLog))
-			sb.WriteString("]")
-		} else {
-			sb.WriteString(",[")
-			sb.WriteString(expression.ExplainExpressionList(evalCtx, oneL, p.Schema(), enableRedactLog))
-			sb.WriteString("]")
-		}
-	}
-	sb.WriteString("; schema: [")
-	colStrs := make([]string, 0, len(p.Schema().Columns))
-	for _, col := range p.Schema().Columns {
-		colStrs = append(colStrs, col.StringWithCtx(evalCtx, perrors.RedactLogDisable))
-	}
-	sb.WriteString(strings.Join(colStrs, ","))
-	sb.WriteString("]")
-	return sb.String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalExpand) ExplainInfo() string {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	if len(p.LevelExprs) > 0 {
-		return p.explainInfoV2()
-	}
-	var str strings.Builder
-	str.WriteString("group set num:")
-	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
-	if p.GroupingIDCol != nil {
-		str.WriteString(", groupingID:")
-		str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
-		str.WriteString(", ")
-	}
-	str.WriteString(p.GroupingSets.StringWithCtx(ectx, perrors.RedactLogDisable))
 	return str.String()
 }
 

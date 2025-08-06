@@ -82,6 +82,8 @@ func init() {
 	utilfuncp.ResolveIndices4PhysicalSelection = resolveIndices4PhysicalSelection
 	utilfuncp.GetPlanCostVer24PhysicalSelection = getPlanCostVer24PhysicalSelection
 	utilfuncp.GetPlanCostVer14PhysicalSelection = getPlanCostVer14PhysicalSelection
+	// for physical expand.
+	utilfuncp.Attach2Task4PhysicalExpand = attach2Task4PhysicalExpand
 	// for physical union scan.
 	utilfuncp.Attach2Task4PhysicalUnionScan = attach2Task4PhysicalUnionScan
 	utilfuncp.ResolveIndices4PhysicalUnionScan = resolveIndices4PhysicalUnionScan
