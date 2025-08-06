@@ -17,7 +17,6 @@ package local
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"math"
@@ -1473,10 +1472,7 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if kerneltype.IsNextGen() {
-		var tlsConfig *tls.Config
-		if local.tls != nil {
-			tlsConfig = local.tls.TLSConfig()
-		}
+		tlsConfig := local.tls.TLSConfig()
 		if local.nextgenHTTPCli == nil {
 			local.nextgenHTTPCli = util.ClientWithTLS(tlsConfig)
 		}

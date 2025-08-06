@@ -437,7 +437,9 @@ func FolderNotEmpty(path string) bool {
 
 // GenKeyExistsErr builds a ErrKeyExists error.
 func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
-	if bytes.HasPrefix(key, []byte{'x'}) && len(key) > 4 {
+	if len(key) > 4 && key[0] == 'x' {
+		// Start with 'x' means it contains the keyspace prefix. For details, see
+		// https://github.com/tikv/client-go/blob/1a0daf3ee77f560debe0a386e760f2ae7164b6a5/internal/apicodec/codec_v2.go#L27
 		if len(keyspace.GetKeyspaceNameBySettings()) > 0 {
 			key = key[4:] // remove the keyspace prefix.
 		}
