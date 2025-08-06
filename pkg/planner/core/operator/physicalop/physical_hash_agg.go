@@ -16,6 +16,8 @@ package physicalop
 
 import (
 	"fmt"
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tipb/go-tipb"
-	"math"
 )
 
 // PhysicalHashAgg is hash operator of aggregate.
