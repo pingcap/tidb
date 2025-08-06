@@ -568,7 +568,7 @@ func (i *MergeKVIter) Next() bool {
 	i.lastSize += len(i.Key()) + len(i.Value())
 	i.lastKeyNum++
 	d := time.Since(i.lastTime)
-	if d > 2*time.Second {
+	if d > 100*time.Second {
 		sz := i.lastSize
 		keyNum := i.lastKeyNum
 
