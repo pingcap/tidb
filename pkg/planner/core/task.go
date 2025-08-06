@@ -2057,8 +2057,8 @@ func attach2TaskForMpp(p *physicalop.PhysicalHashAgg, tasks ...base.Task) base.T
 	}
 }
 
-// attach2Task4PhyscialHashAgg implements the PhysicalPlan interface.
-func attach2Task4PhyscialHashAgg(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+// attach2Task4PhysicalHashAgg implements the PhysicalPlan interface.
+func attach2Task4PhysicalHashAgg(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalHashAgg)
 	t := tasks[0].Copy()
 	if cop, ok := t.(*CopTask); ok {

@@ -73,7 +73,7 @@ func (p BasePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, o
 // InitForHash initializes BasePhysicalAgg for hash aggregation.
 func (p *BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
 	hashAgg := &PhysicalHashAgg{*p, ""}
-	hashAgg.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
+	hashAgg.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, hashAgg, offset)
 	hashAgg.SetChildrenReqProps(props)
 	hashAgg.SetStats(stats)
 	hashAgg.SetSchema(schema)
