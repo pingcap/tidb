@@ -990,7 +990,7 @@ func getCost4PhysicalHashAgg(pp base.PhysicalPlan, inputRows float64, isRoot, is
 	sessVars := p.SCtx().GetSessionVars()
 	if isRoot {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
-		divisor, con := p.CpuCostDivisor(numDistinctFunc > 0)
+		divisor, con := p.CPUCostDivisor(numDistinctFunc > 0)
 		if divisor > 0 {
 			cpuCost /= divisor
 			// Cost of additional goroutines.

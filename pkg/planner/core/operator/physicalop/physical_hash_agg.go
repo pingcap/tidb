@@ -78,9 +78,9 @@ func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan
 	return cloned, true
 }
 
-// CpuCostDivisor computes the concurrency to which we would amortize CPU cost
+// CPUCostDivisor computes the concurrency to which we would amortize CPU cost
 // for hash aggregation.
-func (p *PhysicalHashAgg) CpuCostDivisor(hasDistinct bool) (divisor, con float64) {
+func (p *PhysicalHashAgg) CPUCostDivisor(hasDistinct bool) (divisor, con float64) {
 	if hasDistinct {
 		return 0, 0
 	}
