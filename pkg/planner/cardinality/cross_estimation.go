@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 // SelectionFactor is the factor which is used to estimate the row count of selection.
@@ -249,20 +248,19 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
 		return nil, 0
 	}
+<<<<<<< HEAD
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
 	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+=======
+	cols := expression.ExtractColumnsMapFromExpressions(nil, append(path.TableFilters, path.IndexFilters...)...)
+>>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		curCorr := float64(0)
 		for _, item := range histColl.ExtendedStats.Stats {
 			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
@@ -276,7 +274,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
@@ -285,19 +283,18 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+<<<<<<< HEAD
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
+=======
+	cols := expression.ExtractColumnsMapFromExpressions(nil, exprs...)
+>>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		hist := histColl.GetCol(col.ID)
 		if hist == nil {
 			continue
@@ -308,7 +305,7 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
