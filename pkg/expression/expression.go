@@ -298,7 +298,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	cols := ExtractColumnsFromExpressions(sf.GetArgs(), isColumnInOperand)
+	cols := ExtractColumnsMapFromExpressions(isColumnInOperand, sf.GetArgs()...)
 	return len(cols) > 0
 }
 
