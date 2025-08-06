@@ -4314,7 +4314,7 @@
 	  "points": false,
 	  "stack": false,
 	  "steppedLine": false
-	}
+  }
       ],
       "repeat": null,
       "title": "Server",

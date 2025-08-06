@@ -57,3 +57,28 @@ create view v as select cast(replace(substring_index(substring_index("",',',1),'
 desc v;
 Field	Type	Null	Key	Default	Extra
 event_id	varchar(32)	NO		NULL	
+explain format = 'brief' select * from mysql.user where user = 'xxx';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:user, index:i_user(User)	range:["xxx","xxx"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:user	keep order:false, stats:pseudo
+explain format = 'brief' select * from mysql.user where user = 'xxx' or user = 'yyy';
+id	estRows	task	access object	operator info
+IndexLookUp	20.00	root		
+├─IndexRangeScan(Build)	20.00	cop[tikv]	table:user, index:i_user(User)	range:["xxx","xxx"], ["yyy","yyy"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	20.00	cop[tikv]	table:user	keep order:false, stats:pseudo
+explain format = 'brief' select * from mysql.global_priv where user = 'xxx';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:global_priv, index:i_user(User)	range:["xxx","xxx"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:global_priv	keep order:false, stats:pseudo
+explain format = 'brief' select * from mysql.global_grants where user = 'xxx' or user = 'yyy';
+id	estRows	task	access object	operator info
+IndexLookUp	20.00	root		
+├─IndexRangeScan(Build)	20.00	cop[tikv]	table:global_grants, index:i_user(USER)	range:["xxx","xxx"], ["yyy","yyy"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	20.00	cop[tikv]	table:global_grants	keep order:false, stats:pseudo
+explain format = 'brief' select * from mysql.db where user = 'xxx';
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:db, index:i_user(User)	range:["xxx","xxx"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:db	keep order:false, stats:pseudo
