@@ -429,10 +429,12 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
 	if histNDV <= 0 || (idx.IsFullLoad() && idx.Histogram.NotNullCount() == 0) {
-		// branch 1: all NDV's are in TopN, and no histograms
-		// special case of c.Histogram.NDV > c.TopN.Num() a little bit, but the histogram is still empty.
-		if histNDV > 0 && modifyCount == 0 {
-			return max(float64(idx.TopN.MinCount()-1), 1)
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
+		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
+		//
+		// If the table hasn't been modified, it's safe to return 0.
+		if modifyCount == 0 {
+			return 0
 		}
 		// ELSE calculate an approximate estimate based upon newly inserted rows.
 		//
