@@ -88,6 +88,10 @@ type OneFileWriter struct {
 
 	logger   *zap.Logger
 	partSize int64
+
+	lastTime   time.Time
+	lastSize   int
+	lastKeyNum int
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -264,6 +268,26 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		zap.Int("size(Byte)", length),
 		zap.Float64("speed(MiB/s)", float64(length)/1024.0/1024.0/writeDuration.Seconds()),
 	)
+
+	w.lastSize += length
+	w.lastKeyNum++
+	d := time.Since(w.lastTime)
+	if d > 10*time.Second {
+		sz := w.lastSize
+		keyNum := w.lastKeyNum
+
+		w.lastTime = time.Now()
+		w.lastSize = 0
+		w.lastKeyNum = 0
+		logutil.BgLogger().Info("write one file speed",
+			zap.Int("size(Byte)", sz),
+			zap.Duration("time", d),
+			zap.Int("keyNum", keyNum),
+			zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
+		)
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("OneFileWriter 10s").
+			Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
+	}
 	return nil
 }
 
