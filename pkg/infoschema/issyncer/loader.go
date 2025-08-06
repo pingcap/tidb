@@ -155,10 +155,15 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		return nil, false, 0, nil, err
 	}
 	// fetch the commit timestamp of the schema diff
-	schemaTs, err := l.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
-	if err != nil {
-		l.logger.Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
-		schemaTs = 0
+	var schemaTs uint64
+	// on initial bootstrap, neededSchemaVersion=0, there is no schema diff
+	if neededSchemaVersion > 0 {
+		var err2 error
+		schemaTs, err2 = l.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
+		if err2 != nil {
+			l.logger.Warn("failed to get schema version", zap.Error(err2), zap.Int64("version", neededSchemaVersion))
+			schemaTs = 0
+		}
 	}
 
 	var schemaCacheSize uint64
