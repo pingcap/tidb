@@ -3493,7 +3493,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
 			DistributionJobID:     show.DistributionJobID,
-			ShowGroupKey:          show.ShowGroupKey,
+			ImportGroupKey:        show.ShowGroupKey,
 		},
 	}.Init(b.ctx)
 	isView := false

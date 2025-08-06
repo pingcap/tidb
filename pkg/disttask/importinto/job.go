@@ -322,7 +322,7 @@ func GetRuntimeInfoForJob(
 
 // GetJobLastUpdateTime get the last update time for given job from all subtasks.
 func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) {
-	taskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetDXFSvcTaskMgr()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return types.ZeroTime, err

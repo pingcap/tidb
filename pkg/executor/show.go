@@ -120,7 +120,7 @@ type ShowExec struct {
 
 	ImportJobID       *int64
 	DistributionJobID *int64
-	ShowGroupKey      string // Used for SHOW IMPORT GROUP <GROUP_KEY>
+	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
 
 type showTableRegionRowItem struct {
@@ -2626,7 +2626,7 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
-		infos, err2 = importer.GetJobsByGroupKey(ctx, exec, sctx.GetSessionVars().User.String(), e.ShowGroupKey, hasSuperPriv)
+		infos, err2 = importer.GetJobsByGroupKey(ctx, exec, sctx.GetSessionVars().User.String(), e.ImportGroupKey, hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err

@@ -2015,5 +2015,6 @@ func upgradeToVer250(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer251(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(300) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN `group_key` VARCHAR(256) NOT NULL DEFAULT '' AFTER `created_by`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_group_key(group_key)", dbterror.ErrDupKeyName)
 }

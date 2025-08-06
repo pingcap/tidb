@@ -200,17 +200,10 @@ func CreateJob(
 		return 0, err
 	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	if groupKey == "" {
-		_, err = conn.ExecuteInternal(ctx, `INSERT INTO mysql.tidb_import_jobs
-		(table_schema, table_name, table_id, created_by, parameters, source_file_size, status, step)
-		VALUES (%?, %?, %?, %?, %?, %?, %?, %?);`,
-			db, table, tableID, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
-	} else {
-		_, err = conn.ExecuteInternal(ctx, `INSERT INTO mysql.tidb_import_jobs
+	_, err = conn.ExecuteInternal(ctx, `INSERT INTO mysql.tidb_import_jobs
 		(table_schema, table_name, table_id, group_key, created_by, parameters, source_file_size, status, step)
 		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?);`,
-			db, table, tableID, groupKey, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
-	}
+		db, table, tableID, groupKey, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
 
 	if err != nil {
 		return 0, err
@@ -335,11 +328,6 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		errMsg = row.GetString(14)
 	}
 
-	var groupKey string
-	if !row.IsNull(15) {
-		groupKey = row.GetString(15)
-	}
-
 	return &JobInfo{
 		ID:             row.GetInt64(0),
 		CreateTime:     row.GetTime(1),
@@ -356,7 +344,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		Step:           row.GetString(12),
 		Summary:        summary,
 		ErrorMessage:   errMsg,
-		GroupKey:       groupKey,
+		GroupKey:       row.GetString(15),
 	}, nil
 }
 
@@ -398,7 +386,7 @@ func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, grou
 		whereClause = append(whereClause, "GROUP_KEY = %?")
 		args = append(args, groupKey)
 	} else {
-		whereClause = append(whereClause, "GROUP_KEY is not NULL")
+		whereClause = append(whereClause, "GROUP_KEY != ''")
 	}
 
 	if len(whereClause) > 0 {
