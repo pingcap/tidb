@@ -98,6 +98,17 @@ type Loader struct {
 	sysExecutorFactory func() (pools.Resource, error)
 }
 
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn) *Loader {
+	mode := LoadModeAuto
+	return &Loader{
+		mode:      mode,
+		store:     store,
+		infoCache: infoCache,
+		deferFn:   deferFn,
+		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
+	}
+}
+
 // NewLoaderForCrossKS creates a new Loader instance.
 func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loader {
 	mode := LoadModeFull
@@ -247,7 +258,8 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		// Not adding snapshot schema to history can avoid such cases.
 		data = infoschema.NewData()
 	}
-	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2)
+	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
+		WithCrossKS(l.crossKS)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -269,6 +281,19 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		l.infoCache.Insert(is, schemaTs)
 	}
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+	if !l.crossKS {
+		return false
+	}
+
+	// for cross keyspace loader, we only load diff related to system tables.
+	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
+	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
+	// ExchangePartition, etc.
+	isRelatedToSystemTables := metadef.IsReservedID(diff.TableID) || metadef.IsReservedID(diff.OldTableID)
+	return !isRelatedToSystemTables
 }
 
 // tryLoadSchemaDiffs tries to only load latest schema changes.
@@ -310,7 +335,8 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 		}
 	})
 
-	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, l.infoCache.Data, useV2)
+	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, l.infoCache.Data, useV2).
+		WithCrossKS(l.crossKS)
 	err := builder.InitWithOldInfoSchema(l.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -321,6 +347,12 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
+		if l.skipLoadingDiff(diff) {
+			// we still need to set the schema version even if we skip loading
+			// the diff to reflect where the I_S has been synced to.
+			builder.SetSchemaVersion(diff.Version)
+			continue
+		}
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
@@ -363,20 +395,23 @@ func (l *Loader) getTimestampForSchemaVersionWithNonEmptyDiff(m meta.Reader, ver
 }
 
 // fetchAllSchemasWithTables fetches all schemas with their tables.
-func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64) ([]*model.DBInfo, error) {
-	allSchemas, err := m.ListDatabases()
-	if err != nil {
-		return nil, err
-	}
+func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64) (
+	allSchemas []*model.DBInfo, err error) {
 	if l.crossKS {
-		filteredSchemas := make([]*model.DBInfo, 0, 1)
-		for _, di := range allSchemas {
-			if metadef.IsSystemDB(di.Name.L) {
-				filteredSchemas = append(filteredSchemas, di)
-				break
-			}
+		var dbInfo *model.DBInfo
+		dbInfo, err = m.GetDatabase(metadef.SystemDatabaseID)
+		if err != nil {
+			return nil, err
 		}
-		allSchemas = filteredSchemas
+		if dbInfo == nil {
+			return nil, errors.New("system database not found")
+		}
+		allSchemas = []*model.DBInfo{dbInfo}
+	} else {
+		allSchemas, err = m.ListDatabases()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(allSchemas) == 0 {
 		return nil, nil

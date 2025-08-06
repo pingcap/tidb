@@ -275,6 +275,7 @@ go_test(
         "restart_test.go",
         "rollingback_test.go",
         "schema_test.go",
+        "schema_version_test.go",
         "sequence_test.go",
         "stat_test.go",
         "table_mode_test.go",
@@ -290,6 +291,7 @@ go_test(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
         "//pkg/ddl/ingest/testutil",
