@@ -115,6 +115,8 @@ func init() {
 	utilfuncp.InitForStream = initForStream
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
+	// for physical sequence
+	utilfuncp.Attach2Task4PhysicalSequence = attach2Task4PhysicalSequence
 	// for physical PhysicalTableScan
 	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
 	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan

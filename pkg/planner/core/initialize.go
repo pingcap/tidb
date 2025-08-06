@@ -288,14 +288,6 @@ func (p FKCascade) Init(ctx base.PlanContext) *FKCascade {
 	return &p
 }
 
-// Init initializes PhysicalSequence
-func (p PhysicalSequence) Init(ctx base.PlanContext, stats *property.StatsInfo, blockOffset int, props ...*property.PhysicalProperty) *PhysicalSequence {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeSequence, &p, blockOffset)
-	p.SetStats(stats)
-	p.SetChildrenReqProps(props)
-	return &p
-}
-
 // Init initializes ScalarSubqueryEvalCtx
 func (p ScalarSubqueryEvalCtx) Init(ctx base.PlanContext, offset int) *ScalarSubqueryEvalCtx {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)

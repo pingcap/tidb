@@ -20,6 +20,7 @@ go_library(
         "physical_projection.go",
         "physical_schema_producer.go",
         "physical_selection.go",
+        "physical_sequence.go",
         "physical_show.go",
         "physical_shuffle.go",
         "physical_sort.go",
