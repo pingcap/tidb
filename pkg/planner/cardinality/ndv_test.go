@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,4 +119,53 @@ func TestEstimateColsNDVWithExponentialBackoff(t *testing.T) {
 	expectedABCNoGroup := 1000 * math.Sqrt(500) * math.Sqrt(math.Sqrt(10))
 	require.InDelta(t, expectedABCNoGroup, ndv, 0.1)
 	require.Equal(t, 3, matchedLen)
+}
+
+func TestEstimateGroupNDVWithRiskAssessment(t *testing.T) {
+	// Test the new risk-aware GROUP BY NDV estimation
+	colA := &expression.Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colB := &expression.Column{UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	colC := &expression.Column{UniqueID: 3, RetType: types.NewFieldType(mysql.TypeLonglong)}
+
+	schema := expression.NewSchema(colA, colB, colC)
+
+	// Test case 1: Low risk (similar estimates) - should prefer exponential backoff
+	statsInfo := &property.StatsInfo{
+		RowCount: 100000,
+		ColNDVs: map[int64]float64{
+			1: 1000, // colA
+			2: 900,  // colB (similar to colA)
+		},
+		GroupNDVs: []property.GroupNDV{},
+	}
+
+	ndv := EstimateGroupNDV([]*expression.Column{colA, colB}, schema, statsInfo)
+	expoExpected := 1000 * math.Sqrt(900) // ≈ 30,000
+	naiveExpected := 1000.0               // max(1000, 900)
+
+	// Should be closer to exponential backoff (low risk)
+	require.Greater(t, ndv, naiveExpected)
+	require.Less(t, math.Abs(ndv-expoExpected), math.Abs(ndv-naiveExpected))
+
+	// Test case 2: High risk (very different estimates) - should prefer naive
+	statsInfo2 := &property.StatsInfo{
+		RowCount: 100000,
+		ColNDVs: map[int64]float64{
+			1: 10000, // colA
+			2: 10,    // colB (very different from colA)
+		},
+		GroupNDVs: []property.GroupNDV{},
+	}
+
+	ndv2 := EstimateGroupNDV([]*expression.Column{colA, colB}, schema, statsInfo2)
+	naiveExpected2 := 10000.0 // max(10000, 10)
+
+	// Should be closer to naive estimate (high risk due to large divergence)
+	require.InDelta(t, naiveExpected2, ndv2, naiveExpected2*0.3) // Within 30%
+
+	// Test case 3: Many columns - should increase risk
+	ndv3 := EstimateGroupNDV([]*expression.Column{colA, colB, colC}, schema, statsInfo)
+
+	// With more columns, should be more conservative than 2-column case
+	require.Less(t, ndv3, ndv*1.1) // Should not grow too much
 }

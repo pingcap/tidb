@@ -25,7 +25,13 @@ import (
 	"go.uber.org/zap"
 )
 
-const distinctFactor = 0.8
+const (
+	distinctFactor = 0.8
+	riskThreshold  = 0.3
+	// maxNDVRowCountRatio is the maximum ratio of NDV to total row count.
+	// NDV estimates should not exceed this percentage of total rows.
+	maxNDVRowCountRatio = 0.1
+)
 
 // EstimateColumnNDV computes estimated NDV of specified column using the original
 // histogram of `DataSource` which is retrieved from storage(not the derived one).
@@ -76,22 +82,83 @@ func getTotalRowCount(statsTbl *statistics.Table, colHist *statistics.Column) in
 
 // EstimateColsNDVWithMatchedLen returns the NDV of a couple of columns.
 // If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
-// Otherwise, it uses exponential backoff estimation.
+// This method is primarily used by join operations.
 func EstimateColsNDVWithMatchedLen(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
-	// First try exact match
+	ndv := 1.0
 	if groupNDV := profile.GetGroupNDV4Cols(cols); groupNDV != nil {
-		return math.Max(groupNDV.NDV, 1.0), len(groupNDV.Cols)
+		return math.Max(groupNDV.NDV, ndv), len(groupNDV.Cols)
+	}
+	return estimateNaiveNDV(cols, schema, profile), 1
+}
+
+// EstimateGroupNDV returns NDV estimation specifically for GROUP BY operations.
+// It uses risk-aware selection between exponential backoff and naive estimates.
+func EstimateGroupNDV(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+	// First try exact match from existing GroupNDVs
+	if groupNDV := profile.GetGroupNDV4Cols(cols); groupNDV != nil {
+		return math.Max(groupNDV.NDV, 1.0)
 	}
 
-	// Use exponential backoff estimation for all other cases
-	return estimateNDVWithExponentialBackoff(cols, schema, profile)
+	// Calculate both estimates
+	expoNDV := estimateNDVWithExponentialBackoff(cols, schema, profile)
+	naiveNDV := estimateNaiveNDV(cols, schema, profile)
+
+	// Calculate risk factor and choose NDV strategy
+	riskFactor := calculateNDVRiskFactor(expoNDV, naiveNDV)
+	finalNDV := chooseNDVBasedOnRisk(expoNDV, naiveNDV, riskFactor)
+
+	return finalNDV
+}
+
+// calculateNDVRiskFactor assesses the risk of using exponential backoff vs naive estimates.
+// Higher risk factor means less confidence in exponential backoff estimate.
+func calculateNDVRiskFactor(expoNDV, naiveNDV float64) float64 {
+	// Calculate divergence between exponential backoff and naive estimates
+	maxNDV := math.Max(expoNDV, naiveNDV)
+	if maxNDV == 0 {
+		return 0.0
+	}
+	divergence := math.Abs(expoNDV-naiveNDV) / maxNDV
+	return divergence
+}
+
+// chooseNDVBasedOnRisk selects between exponential backoff and naive estimates based on risk.
+func chooseNDVBasedOnRisk(expoNDV, naiveNDV, riskFactor float64) float64 {
+	if riskFactor < riskThreshold {
+		return expoNDV
+	} else {
+		return naiveNDV
+	}
+}
+
+// estimateNaiveNDV implements the original max NDV approach.
+func estimateNaiveNDV(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+	if profile == nil || len(cols) == 0 {
+		return 1.0
+	}
+
+	maxNDV := 1.0
+	indices := schema.ColumnsIndices(cols)
+	if indices == nil {
+		return 1.0
+	}
+
+	for _, idx := range indices {
+		col := schema.Columns[idx]
+		if colNDV, exists := profile.ColNDVs[col.UniqueID]; exists && colNDV > 0 {
+			maxNDV = math.Max(maxNDV, colNDV)
+		}
+	}
+
+	return maxNDV
 }
 
 // estimateNDVWithExponentialBackoff applies exponential backoff estimation to NDV calculation.
 func estimateNDVWithExponentialBackoff(
-	cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) (float64, int) {
+	cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+	defaultNdv := 1.0
 	if profile == nil || len(cols) == 0 {
-		return 1.0, 1
+		return defaultNdv
 	}
 
 	// Collect individual column NDVs
@@ -99,7 +166,7 @@ func estimateNDVWithExponentialBackoff(
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return 1.0, 1
+		return defaultNdv
 	}
 
 	for _, idx := range indices {
@@ -110,7 +177,7 @@ func estimateNDVWithExponentialBackoff(
 	}
 
 	if len(singleColumnNDVs) == 0 {
-		return 1.0, 1
+		return defaultNdv
 	}
 
 	// Sort NDVs in descending order (highest NDV first for exponential backoff)
@@ -118,17 +185,17 @@ func estimateNDVWithExponentialBackoff(
 	slices.Reverse(singleColumnNDVs)
 
 	// Calculate bounds
-	lowerBound := singleColumnNDVs[0] // At least max individual column NDV
-	upperBound := profile.RowCount    // At most total row count
+	lowerBound := max(singleColumnNDVs[0], defaultNdv) // At least max individual column NDV
+	upperBound := profile.RowCount * maxNDVRowCountRatio
 	// In case RowCount is not accurate, we fall back to naive approach
 	if upperBound <= lowerBound {
-		return lowerBound, len(cols)
+		return lowerBound
 	}
 
 	// Apply exponential backoff directly to NDV values
 	resultNDV := ApplyExponentialBackoff(singleColumnNDVs, lowerBound, upperBound)
 
-	return resultNDV, len(cols)
+	return resultNDV
 }
 
 // EstimateColsDNVWithMatchedLenFromUniqueIDs is similar to EstimateColsDNVWithMatchedLen, but it receives UniqueIDs instead of Columns.
