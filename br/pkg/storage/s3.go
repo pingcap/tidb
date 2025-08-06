@@ -1178,6 +1178,7 @@ type s3ObjectWriter struct {
 	wd       *io.PipeWriter
 	wg       *sync.WaitGroup
 	lastSize atomic.Int64
+	blockNum atomic.Int64
 	lastTime time.Time
 	err      error
 }
@@ -1197,12 +1198,16 @@ func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
 			Observe(float64(size) / 1024.0 / 1024.0 / dur.Seconds())
 
 		s.lastSize.Add(int64(size))
+		s.blockNum.Add(1)
 		d := time.Since(s.lastTime)
 		if d > 30*time.Second {
 			sz := s.lastSize.Load()
+			bn := s.blockNum.Load()
 			s.lastTime = time.Now()
 			s.lastSize.Store(0)
+			s.blockNum.Store(0)
 			log.Info("s3ObjectWriter write",
+				zap.Int64("blockNum", bn),
 				zap.Int64("size", sz),
 				zap.Duration("duration", d),
 				zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
