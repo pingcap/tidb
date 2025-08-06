@@ -104,6 +104,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == logicalop.LeftOuterJoin {
+<<<<<<< HEAD
 			extractedCols := make([]*expression.Column, 0, 8)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.LeftConditions, nil)
@@ -112,6 +113,18 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			for i := range lhsGroup {
 				for _, col := range extractedCols {
 					if lhsGroup[i].Schema().Contains(col) {
+=======
+			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+			extractedCols := make(map[int64]*expression.Column, len(join.LeftConditions)+len(join.OtherConditions)+len(eqConds))
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.LeftConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
+			affectedGroups := 0
+			for _, lhs := range lhsGroup {
+				lhsSchema := lhs.Schema()
+				for _, col := range extractedCols {
+					if lhsSchema.Contains(col) {
+>>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 						affectedGroups++
 						break
 					}
@@ -148,6 +161,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == logicalop.RightOuterJoin {
+<<<<<<< HEAD
 			extractedCols := make([]*expression.Column, 0, 8)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
 			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.RightConditions, nil)
@@ -156,6 +170,18 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			for i := range rhsGroup {
 				for _, col := range extractedCols {
 					if rhsGroup[i].Schema().Contains(col) {
+=======
+			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+			extractedCols := make(map[int64]*expression.Column, len(join.OtherConditions)+len(join.RightConditions)+len(eqConds))
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.RightConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
+			affectedGroups := 0
+			for _, rhs := range rhsGroup {
+				rhsSchema := rhs.Schema()
+				for _, col := range extractedCols {
+					if rhsSchema.Contains(col) {
+>>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 						affectedGroups++
 						break
 					}

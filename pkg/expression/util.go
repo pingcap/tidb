@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -191,7 +192,60 @@ func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter 
 	return result
 }
 
+<<<<<<< HEAD
 func extractColumns(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+=======
+// ExtractColumnsMapFromExpressions it the same as ExtractColumnsFromExpressions, but return a map
+func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expression) map[int64]*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	m := make(map[int64]*Column, len(exprs))
+	for _, expr := range exprs {
+		extractColumns(m, expr, filter)
+	}
+	return m
+}
+
+// ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
+func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) {
+	if len(exprs) == 0 {
+		return
+	}
+	if m == nil {
+		m = make(map[int64]*Column, len(exprs))
+	}
+	for _, expr := range exprs {
+		extractColumns(m, expr, filter)
+	}
+}
+
+// ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
+func ExtractAllColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	result := make([]*Column, 0, 8)
+	for _, expr := range exprs {
+		result = extractColumnsSlices(result, expr, filter)
+	}
+	return result
+}
+
+// ExtractColumnsSetFromExpressions is the same as ExtractColumnsFromExpressions
+// it use the FastIntSet to save the Unique ID.
+func ExtractColumnsSetFromExpressions(m *intset.FastIntSet, filter func(*Column) bool, exprs ...Expression) {
+	if len(exprs) == 0 {
+		return
+	}
+	intest.Assert(m != nil)
+	for _, expr := range exprs {
+		extractColumnsSet(m, expr, filter)
+	}
+}
+
+func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
+>>>>>>> 8aa5f5f4c4a (expression: simplify the code with the ExtractColumnsFromExpressions (#62825))
 	switch v := expr.(type) {
 	case *Column:
 		if filter == nil || filter(v) {
@@ -203,6 +257,33 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 		}
 	}
 	return result
+}
+
+func extractColumnsSlices(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result = append(result, v)
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsSlices(result, arg, filter)
+		}
+	}
+	return result
+}
+
+func extractColumnsSet(result *intset.FastIntSet, expr Expression, filter func(*Column) bool) {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result.Insert(int(v.UniqueID))
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractColumnsSet(result, arg, filter)
+		}
+	}
 }
 
 // ExtractEquivalenceColumns detects the equivalence from CNF exprs.
@@ -1515,13 +1596,13 @@ func ContainVirtualColumn(exprs []Expression) bool {
 }
 
 // ContainCorrelatedColumn checks if the expressions contain a correlated column
-func ContainCorrelatedColumn(exprs []Expression) bool {
+func ContainCorrelatedColumn(exprs ...Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *CorrelatedColumn:
 			return true
 		case *ScalarFunction:
-			if ContainCorrelatedColumn(v.GetArgs()) {
+			if ContainCorrelatedColumn(v.GetArgs()...) {
 				return true
 			}
 		}
