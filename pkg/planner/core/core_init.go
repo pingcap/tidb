@@ -96,9 +96,25 @@ func init() {
 	utilfuncp.GetPlanCostVer14PhysicalIndexJoin = getPlanCostVer14PhysicalIndexJoin
 	utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin = getIndexJoinCostVer24PhysicalIndexJoin
 	utilfuncp.Attach2Task4PhysicalIndexJoin = attach2Task4PhysicalIndexJoin
+	// for physical merge join
+	utilfuncp.GetCost4PhysicalMergeJoin = getCost4PhysicalMergeJoin
+	utilfuncp.Attach2Task4PhysicalMergeJoin = attach2Task4PhysicalMergeJoin
+	utilfuncp.GetPlanCostVer14PhysicalMergeJoin = getPlanCostVer14PhysicalMergeJoin
+	utilfuncp.GetPlanCostVer24PhysicalMergeJoin = getPlanCostVer24PhysicalMergeJoin
+	// for physical hash join
+	utilfuncp.GetCost4PhysicalHashJoin = getCost4PhysicalHashJoin
+	utilfuncp.GetPlanCostVer14PhysicalHashJoin = getPlanCostVer14PhysicalHashJoin
+	utilfuncp.Attach2Task4PhysicalHashJoin = attach2Task4PhysicalHashJoin
+	utilfuncp.GetPlanCostVer24PhysicalHashJoin = getPlanCostVer24PhysicalHashJoin
+
 	// for physical aggregation.
 	utilfuncp.InitForHash = initForHash
 	utilfuncp.InitForStream = initForStream
+	// for physical window
+	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
+	// for physical PhysicalTableScan
+	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
+	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost
@@ -116,6 +132,7 @@ func init() {
 	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
 	utilfuncp.CloneColumnsForPlanCache = cloneColumnsForPlanCache
 	utilfuncp.CloneConstantsForPlanCache = cloneConstantsForPlanCache
+	utilfuncp.CloneScalarFunctionsForPlanCache = cloneScalarFunctionsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

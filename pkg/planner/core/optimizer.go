@@ -487,7 +487,7 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	logutil.BgLogger().Debug("Start runtime filter generator")
 	rfGenerator := &RuntimeFilterGenerator{
 		rfIDGenerator:      &util.IDGenerator{},
-		columnUniqueIDToRF: map[int64][]*RuntimeFilter{},
+		columnUniqueIDToRF: map[int64][]*physicalop.RuntimeFilter{},
 		parentPhysicalPlan: plan,
 	}
 	startRFGenerator := time.Now()
@@ -559,8 +559,8 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 			return
 		}
 	}
-	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
-	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
+	physicalTableScan, ok := physicalAgg.Children()[0].(*physicalop.PhysicalTableScan)
+	if !ok || !physicalTableScan.IsFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
 		return
 	}
 	// rewrite datasource and agg args
@@ -569,7 +569,7 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 
 // rewriteTableScanAndAggArgs Pick the narrowest and not null column from table
 // If there is no not null column in Data Source, the row_id or pk column will be retained
-func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
+func rewriteTableScanAndAggArgs(physicalTableScan *physicalop.PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
 
@@ -836,7 +836,7 @@ func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 
 func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
 	switch x := plan.(type) {
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
@@ -865,7 +865,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*physicalop.BasePhysicalPlan{}}
 		aggHelper.plans = append(aggHelper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		child0 := x.Children()[0]
 		child1 := x.Children()[1]
 		buildChild := child0
@@ -1197,7 +1197,7 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
-	var physLock *PhysicalLock
+	var physLock *physicalop.PhysicalLock
 	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
@@ -1208,7 +1208,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			pointGet = x
 		case *BatchPointGetPlan:
 			batchPointGet = x
-		case *PhysicalLock:
+		case *physicalop.PhysicalLock:
 			physLock = x
 		case *physicalop.PhysicalUnionScan:
 			unionScan = x

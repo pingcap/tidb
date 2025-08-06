@@ -1,0 +1,44 @@
+[
+  {
+    "Name": "TestConstantPropagateWithCollation",
+    "Cases": [
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where name='a' and length(name)=1; -- without constant propagated",
+        "Plan": [
+          "TableReader 8.00 root  data:Selection",
+          "└─Selection 8.00 cop[tikv]  eq(length(test.t.name), 1), eq(test.t.name, \"a\")",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where name='a' and length(name)=1; -- without constant propagated",
+        "Plan": [
+          "TableReader 8.00 root  data:Selection",
+          "└─Selection 8.00 cop[tikv]  eq(length(test.t.name), 1), eq(test.t.name, \"a\")",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from (select 'test' as b from t) n where length(b) > 2; -- can be substituted",
+        "Plan": [
+          "Projection 10000.00 root  test->Column#3",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  }
+]

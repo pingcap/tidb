@@ -47,7 +47,7 @@ type ShowImpl struct {
 }
 
 // NewShowImpl creates a new ShowImpl.
-func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
+func NewShowImpl(show *physicalop.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
 
@@ -267,7 +267,7 @@ type WindowImpl struct {
 }
 
 // NewWindowImpl creates a new WindowImpl.
-func NewWindowImpl(window *plannercore.PhysicalWindow) *WindowImpl {
+func NewWindowImpl(window *physicalop.PhysicalWindow) *WindowImpl {
 	return &WindowImpl{baseImpl{plan: window}}
 }
 

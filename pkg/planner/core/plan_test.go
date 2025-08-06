@@ -678,17 +678,17 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
-	window := &core.PhysicalWindow{}
+	window := &physicalop.PhysicalWindow{}
 	newPlan, err := window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	newWindow, ok := newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	window.TiFlashFineGrainedShuffleStreamCount = 8
 	newPlan, err = window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	newWindow, ok = newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 

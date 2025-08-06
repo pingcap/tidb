@@ -789,8 +789,8 @@ func TestUnreasonablyClose(t *testing.T) {
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
 	var opsNeedsCovered = []base.PhysicalPlan{
-		&plannercore.PhysicalHashJoin{},
-		&plannercore.PhysicalMergeJoin{},
+		&physicalop.PhysicalHashJoin{},
+		&physicalop.PhysicalMergeJoin{},
 		&physicalop.PhysicalIndexJoin{},
 		&plannercore.PhysicalIndexHashJoin{},
 		&plannercore.PhysicalTableReader{},
@@ -809,8 +809,8 @@ func TestUnreasonablyClose(t *testing.T) {
 		&physicalop.PhysicalProjection{},
 		&physicalop.PhysicalSelection{},
 		&physicalop.PhysicalTableDual{},
-		&plannercore.PhysicalWindow{},
-		&plannercore.PhysicalShuffle{},
+		&physicalop.PhysicalWindow{},
+		&physicalop.PhysicalShuffle{},
 		&physicalop.PhysicalUnionAll{},
 	}
 
@@ -875,7 +875,7 @@ func TestUnreasonablyClose(t *testing.T) {
 					newChild = append(newChild, x.SeedPlan)
 					hasCTE = true
 					continue
-				case *plannercore.PhysicalShuffle:
+				case *physicalop.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
 					newChild = append(newChild, x.Tails...)
 					continue

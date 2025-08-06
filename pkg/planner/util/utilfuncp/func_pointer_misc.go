@@ -285,6 +285,55 @@ var InitForHash func(base base.PhysicalPlan, ctx base.PlanContext, stats *proper
 var InitForStream func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
 	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
 
+// Attach2Task4PhysicalWindow will be called by PhysicalWindow in physicalOp pkg.
+var Attach2Task4PhysicalWindow func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetCost4PhysicalMergeJoin computes cost of merge join operator itself.
+var GetCost4PhysicalMergeJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64) float64
+
+// Attach2Task4PhysicalMergeJoin will be called by PhysicalMergeJoin in physicalOp pkg.
+var Attach2Task4PhysicalMergeJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer14PhysicalMergeJoin calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalMergeJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalMergeJoin returns the plan-cost of this sub-plan, which is:
+// plan-cost = left-child-cost + right-child-cost + filter-cost + group-cost
+var GetPlanCostVer24PhysicalMergeJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer14PhysicalTableScan calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalTableScan func(pp base.PhysicalPlan,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetCost4PhysicalHashJoin computes cost of hash join operator itself.
+var GetCost4PhysicalHashJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64,
+	op *optimizetrace.PhysicalOptimizeOp) float64
+
+// GetPlanCostVer14PhysicalHashJoin calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalHashJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// Attach2Task4PhysicalHashJoin implements PhysicalPlan interface for PhysicalHashJoin.
+var Attach2Task4PhysicalHashJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetPlanCostVer24PhysicalTableScan returns the plan-cost of this sub-plan, which is:
+// plan-cost = rows * log2(row-size) * scan-factor
+// log2(row-size) is from experiments.
+var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + probe-child-cost +
+// build-hash-cost + build-filter-cost +
+// (probe-filter-cost + probe-hash-cost) / concurrency
+var GetPlanCostVer24PhysicalHashJoin func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -311,6 +360,9 @@ var CloneColumnsForPlanCache func(cols, cloned []*expression.Column) []*expressi
 
 // CloneConstantsForPlanCache is used to clone constants for plan cache.
 var CloneConstantsForPlanCache func(constants, cloned []*expression.Constant) []*expression.Constant
+
+// CloneScalarFunctionsForPlanCache is used clone scalar functions for plan cache
+var CloneScalarFunctionsForPlanCache func(scalarFuncs, cloned []*expression.ScalarFunction) []*expression.ScalarFunction
 
 // ****************************************** optimize portal *********************************************
 
