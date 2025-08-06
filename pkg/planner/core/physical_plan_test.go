@@ -211,23 +211,23 @@ func TestDoSubQuery(t *testing.T) {
 }
 
 func TestIndexLookupCartesianJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
 
-	stmt, err := parser.New().ParseOneStmt("select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2", "", "")
-	require.NoError(t, err)
+		stmt, err := parser.New().ParseOneStmt("select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2", "", "")
+		require.NoError(t, err)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	nodeW := resolve.NewNodeW(stmt)
-	p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
-	require.NoError(t, err)
-	require.Equal(t, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}", core.ToString(p))
+		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
+		require.NoError(t, err)
+		require.Equal(t, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}", core.ToString(p))
 
-	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	lastWarn := warnings[len(warnings)-1]
-	err = plannererrors.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
-	require.True(t, terror.ErrorEqual(err, lastWarn.Err))
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		lastWarn := warnings[len(warnings)-1]
+		err = plannererrors.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+		require.True(t, terror.ErrorEqual(err, lastWarn.Err))
+	})
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
