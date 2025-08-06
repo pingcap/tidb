@@ -1206,7 +1206,7 @@ func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
 			s.lastTime = time.Now()
 			s.lastSize.Store(0)
 			s.blockNum.Store(0)
-			log.Info("s3ObjectWriter write",
+			log.Info("s3ObjectWriter write 30s",
 				zap.Int64("blockNum", bn),
 				zap.Int64("size", sz),
 				zap.Duration("duration", d),
