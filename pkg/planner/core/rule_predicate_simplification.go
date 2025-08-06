@@ -206,6 +206,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
+	simplifiedPredicate, _ = expression.DeduplicateGbyExpression(simplifiedPredicate)
 	return simplifiedPredicate
 }
 
