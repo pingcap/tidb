@@ -102,7 +102,7 @@ func (s *MemSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
 }
 
 // WaitVersionSynced implements Syncer.WaitVersionSynced interface.
-func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, _ bool) error {
+func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, _ bool) (*SyncSummary, error) {
 	ticker := time.NewTicker(checkVersionsInterval)
 	defer ticker.Stop()
 
@@ -115,17 +115,17 @@ func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVe
 	for {
 		select {
 		case <-ctx.Done():
-			return errors.Trace(ctx.Err())
+			return nil, errors.Trace(ctx.Err())
 		case <-ticker.C:
 			if vardef.EnableMDL.Load() {
 				ver, ok := s.mdlSchemaVersions.Load(jobID)
 				if ok && ver.(int64) >= latestVer {
-					return nil
+					return &SyncSummary{ServerCount: 1}, nil
 				}
 			} else {
 				ver := atomic.LoadInt64(&s.selfSchemaVersion)
 				if ver >= latestVer {
-					return nil
+					return &SyncSummary{ServerCount: 1}, nil
 				}
 			}
 		}

@@ -387,7 +387,7 @@ func waitVersionSynced(
 	checkAssumedSvr := shouldCheckAssumedServer(job)
 	logger := logutil.DDLLogger().With(zap.Int64("ver", latestSchemaVersion), zap.Bool("checkAssumedSvr", checkAssumedSvr))
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err = jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
+	sum, err := jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
 	if err != nil {
 		logger.Info("wait latest schema version encounter error",
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
@@ -395,7 +395,7 @@ func waitVersionSynced(
 	}
 	logger.Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
 		zap.Duration("take time", time.Since(timeStart)),
-		zap.String("job", job.String()))
+		zap.String("job", job.String()), zap.Stringer("summary", sum))
 	return nil
 }
 

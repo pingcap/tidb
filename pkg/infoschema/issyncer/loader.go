@@ -213,10 +213,10 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 			l.infoCache.Insert(is, schemaTs)
 			l.logger.Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
-				zap.Int64("currentSchemaVersion", currentSchemaVersion),
-				zap.Int64("neededSchemaVersion", neededSchemaVersion),
+				zap.Int64("currVer", currentSchemaVersion),
+				zap.Int64("neededVer", neededSchemaVersion),
+				zap.Int64("gotVer", is.SchemaMetaVersion()),
 				zap.Duration("elapsed time", time.Since(startTime)),
-				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
 				zap.Strings("diffTypes", diffTypes))
