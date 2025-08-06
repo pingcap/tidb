@@ -581,7 +581,7 @@ func (i *MergeKVIter) Next() bool {
 			zap.Duration("duration", d),
 			zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
 		)
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("OneFileWriter read&sort").
+		metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("OneFileWriter read&sort").
 			Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
 	}
 	return ok

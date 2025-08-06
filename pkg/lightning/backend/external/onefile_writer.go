@@ -229,7 +229,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		return err
 	}
 	// 1. encode data and write to kvStore.
-	writeStartTime := time.Now()
+	//writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -259,15 +259,15 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	writeDuration := time.Since(writeStartTime)
-	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
-		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
-	logutil.BgLogger().Info("write one file speed",
-		zap.Duration("time", writeDuration),
-		zap.Int("size(Byte)", length),
-		zap.Float64("speed(MiB/s)", float64(length)/1024.0/1024.0/writeDuration.Seconds()),
-	)
+	//writeDuration := time.Since(writeStartTime)
+	//metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
+	//metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
+	//	Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
+	//logutil.BgLogger().Info("write one file speed",
+	//	zap.Duration("time", writeDuration),
+	//	zap.Int("size(Byte)", length),
+	//	zap.Float64("speed(MiB/s)", float64(length)/1024.0/1024.0/writeDuration.Seconds()),
+	//)
 
 	w.lastSize += length
 	w.lastKeyNum++
