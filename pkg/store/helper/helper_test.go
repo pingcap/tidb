@@ -28,6 +28,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -101,6 +102,9 @@ func TestTiKVRegionsInfo(t *testing.T) {
 }
 
 func TestTiKVStoresStat(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip()
+	}
 	store := createMockStore(t)
 
 	h := helper.Helper{
