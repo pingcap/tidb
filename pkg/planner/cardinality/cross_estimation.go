@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 // SelectionFactor is the factor which is used to estimate the row count of selection.
@@ -265,14 +264,9 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		curCorr := float64(0)
 		for _, item := range histColl.ExtendedStats.Stats {
 			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
@@ -286,7 +280,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
@@ -299,14 +293,9 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		hist := histColl.GetCol(col.ID)
 		if hist == nil {
 			continue
@@ -317,7 +306,7 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
