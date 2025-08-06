@@ -1541,7 +1541,7 @@ func RemoveDupExprs(exprs []Expression) []Expression {
 	}
 	exists := make(map[string]struct{}, len(exprs))
 	return slices.DeleteFunc(exprs, func(expr Expression) bool {
-		key := string(expr.HashCode())
+		key := string(expr.CanonicalHashCode())
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			exists[key] = struct{}{}
 			return false
