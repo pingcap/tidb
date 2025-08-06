@@ -67,10 +67,10 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalHashAgg)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalAgg.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.BasePhysicalAgg.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
