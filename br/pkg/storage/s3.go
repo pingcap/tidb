@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
@@ -1174,9 +1175,11 @@ func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalF
 }
 
 type s3ObjectWriter struct {
-	wd  *io.PipeWriter
-	wg  *sync.WaitGroup
-	err error
+	wd       *io.PipeWriter
+	wg       *sync.WaitGroup
+	lastSize atomic.Int64
+	lastTime time.Time
+	err      error
 }
 
 // Write implement the io.Writer interface.
@@ -1190,6 +1193,23 @@ func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
 			zap.Duration("duration", dur),
 			zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
 		)
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter").
+			Observe(float64(size) / 1024.0 / 1024.0 / dur.Seconds())
+
+		s.lastSize.Add(int64(size))
+		d := time.Since(s.lastTime)
+		if d > 30*time.Second {
+			sz := s.lastSize.Load()
+			s.lastTime = time.Now()
+			s.lastSize.Store(0)
+			log.Info("s3ObjectWriter write",
+				zap.Int64("size", sz),
+				zap.Duration("duration", d),
+				zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
+			)
+			metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("s3ObjectWriter 30s").
+				Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
+		}
 	}()
 	return s.wd.Write(p)
 }
@@ -1225,7 +1245,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
 		}
-		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
+		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}, lastTime: time.Now()}
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.UploadWithContext(ctx, upParams)
