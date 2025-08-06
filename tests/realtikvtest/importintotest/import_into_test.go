@@ -1041,7 +1041,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	require.Eventually(s.T(), func() bool {
 		err := s.tk.QueryToErr("SELECT * FROM load_data.register_task;")
 		if err != nil {
-			require.ErrorContains(s.T(), err, "Table table_mode is in mode Import")
+			s.ErrorContains(err, "Table table_mode is in mode Import")
 			return false
 		}
 		return true
