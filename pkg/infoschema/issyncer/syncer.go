@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -74,6 +75,11 @@ type Syncer struct {
 	mdlCheckTableInfo *mdlCheckTableInfo
 	schemaValidator   validatorapi.Validator
 	loader            *Loader
+<<<<<<< HEAD
+=======
+	logger            *zap.Logger
+	crossKS           bool
+>>>>>>> 327a22d5ebf (ddl/issyncer: support cross keyspace scenario (#62831))
 
 	// below fields are set when running background routines
 	info              *infosync.InfoSyncer
@@ -88,7 +94,39 @@ func New(
 	schemaLease time.Duration,
 	sysSessionPool util.DestroyableSessionPool,
 ) *Syncer {
+<<<<<<< HEAD
 	do := &Syncer{
+=======
+	s := newSyncer(store, logutil.BgLogger(), schemaLease, sysSessionPool, isValidator)
+	s.loader = newLoader(store, infoCache, &s.deferFn)
+	return s
+}
+
+// NewCrossKSSyncer creates a new Syncer instance for cross keyspace.
+func NewCrossKSSyncer(
+	store kv.Storage,
+	infoCache *infoschema.InfoCache,
+	schemaLease time.Duration,
+	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
+	targetKS string,
+) *Syncer {
+	logger := logutil.BgLogger().With(zap.String("targetKS", targetKS))
+	s := newSyncer(store, logger, schemaLease, sysSessionPool, isValidator)
+	s.loader = NewLoaderForCrossKS(store, infoCache)
+	s.crossKS = true
+	return s
+}
+
+func newSyncer(
+	store kv.Storage,
+	logger *zap.Logger,
+	schemaLease time.Duration,
+	sysSessionPool util.DestroyableSessionPool,
+	isValidator validatorapi.Validator,
+) *Syncer {
+	s := &Syncer{
+>>>>>>> 327a22d5ebf (ddl/issyncer: support cross keyspace scenario (#62831))
 		store:          store,
 		schemaLease:    schemaLease,
 		sysSessionPool: sysSessionPool,
@@ -98,6 +136,7 @@ func New(
 			mu:   sync.Mutex{},
 			jobs: make(map[int64]*mdldef.JobMDL),
 		},
+<<<<<<< HEAD
 	}
 	do.schemaValidator = isvalidator.New(schemaLease)
 	mode := LoadModeAuto
@@ -110,6 +149,12 @@ func New(
 	}
 
 	return do
+=======
+		logger: logger,
+	}
+	s.schemaValidator = isValidator
+	return s
+>>>>>>> 327a22d5ebf (ddl/issyncer: support cross keyspace scenario (#62831))
 }
 
 // InitRequiredFields initializes some fields of the Syncer.
@@ -161,12 +206,30 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	s.mdlCheckTableInfo.jobs = make(map[int64]*mdldef.JobMDL, len(rows))
 	for i := range rows {
 		jobID := rows[i].GetInt64(0)
-
+		tableIDs := util.Str2Int64Map(rows[i].GetString(2))
+		if s.skipMDLCheck(tableIDs) {
+			continue
+		}
 		s.mdlCheckTableInfo.jobs[jobID] = &mdldef.JobMDL{
 			Ver:      rows[i].GetInt64(1),
-			TableIDs: util.Str2Int64Map(rows[i].GetString(2)),
+			TableIDs: tableIDs,
 		}
 	}
+}
+
+func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
+	if !s.crossKS {
+		return false
+	}
+
+	// for cross keyspace syncer, we only care about the system tables, so we can
+	// skip the MDL check for user tables.
+	for id := range tableIDs {
+		if metadef.IsReservedID(id) {
+			return false
+		}
+	}
+	return true
 }
 
 // MDLCheckLoop is a loop that checks the MDL locks periodically.

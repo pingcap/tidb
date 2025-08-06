@@ -57,12 +57,18 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+	crossKS  bool
+}
+
+// SetSchemaVersion sets the schema version of the InfoSchema.
+func (b *Builder) SetSchemaVersion(ver int64) {
+	b.schemaMetaVersion = ver
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
-	b.schemaMetaVersion = diff.Version
+	b.SetSchemaVersion(diff.Version)
 	switch diff.Type {
 	case model.ActionCreateSchema:
 		return nil, applyCreateSchema(b, m, diff)
@@ -999,6 +1005,10 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 }
 
 func (b *Builder) initVirtualTables(schemaVersion int64) error {
+	if b.crossKS {
+		// cross keyspace sessions are not allowed to access virtual tables.
+		return nil
+	}
 	// Initialize virtual tables.
 	for _, driver := range drivers {
 		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
@@ -1187,6 +1197,12 @@ func NewBuilder(r autoid.Requirement, schemaCacheSize uint64, factory func() (po
 // WithStore attaches the given store to builder.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
 	b.store = s
+	return b
+}
+
+// WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
+func (b *Builder) WithCrossKS(crossKS bool) *Builder {
+	b.crossKS = crossKS
 	return b
 }
 

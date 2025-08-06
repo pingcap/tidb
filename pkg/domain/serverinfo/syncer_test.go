@@ -26,7 +26,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -151,4 +154,31 @@ func (s *Syncer) ttlKeyExists(ctx context.Context) (bool, error) {
 		return false, errors.New("too many arguments in resp.Kvs")
 	}
 	return len(resp.Kvs) == 1, nil
+}
+
+func TestAssumedServerInfoSyncer(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	bak := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(bak)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = keyspace.System
+	})
+
+	// current ks
+	syncer := NewSyncer("1", func() uint64 { return 1 }, nil, nil)
+	info := syncer.GetLocalServerInfo()
+	require.False(t, info.IsAssumed())
+	require.Empty(t, info.AssumedKeyspace)
+	require.EqualValues(t, keyspace.System, info.Keyspace)
+
+	// cross ks
+	syncer = NewCrossKSSyncer("1", func() uint64 { return 1 }, nil, nil, "ks1")
+	info = syncer.GetLocalServerInfo()
+	require.True(t, info.IsAssumed())
+	require.Equal(t, "ks1", info.AssumedKeyspace)
+	require.EqualValues(t, keyspace.System, info.Keyspace)
 }

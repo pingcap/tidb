@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -340,6 +341,22 @@ func GetAllServerInfo(ctx context.Context) (map[string]*serverinfo.ServerInfo, e
 		return nil, err
 	}
 	return is.svrInfoSyncer.GetAllServerInfo(ctx)
+}
+
+// GetServersForISSync gets all servers related to syncing information schema.
+func GetServersForISSync(ctx context.Context, checkAssumedSvr bool) (map[string]*serverinfo.ServerInfo, error) {
+	svrs, err := GetAllServerInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if kerneltype.IsNextGen() && !checkAssumedSvr {
+		for k, svr := range svrs {
+			if svr.IsAssumed() {
+				delete(svrs, k)
+			}
+		}
+	}
+	return svrs, nil
 }
 
 // UpdateServerLabel updates the server label for global info syncer.

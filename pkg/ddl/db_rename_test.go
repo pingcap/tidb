@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -488,3 +489,32 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 		"6 5 t1 second null",
 		"8 7 t1 third null"))
 }
+<<<<<<< HEAD
+=======
+
+func TestShowRunningRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create database test2")
+	tk1.MustExec("create table t1 (a int, b int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
+		if job.State != model.JobStateSynced && job.Type == model.ActionRenameTable {
+			rs := tk2.MustQuery("admin show ddl jobs where state != 'synced'").Rows()
+			require.Len(t, rs, 1)
+			require.Equal(t, "test2", rs[0][1])
+			require.Equal(t, "t2", rs[0][2])
+
+			rs = tk2.MustQuery("select db_name, table_name from information_schema.ddl_jobs where job_type = 'rename table'").Rows()
+			require.Len(t, rs, 1)
+			require.Equal(t, "test2", rs[0][0])
+			require.Equal(t, "t2", rs[0][1])
+		}
+	})
+
+	tk1.MustExec("rename table test.t1 to test2.t2")
+}
+>>>>>>> 327a22d5ebf (ddl/issyncer: support cross keyspace scenario (#62831))
