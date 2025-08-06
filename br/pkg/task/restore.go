@@ -76,6 +76,7 @@ const (
 	flagGranularity              = "granularity"
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
+	flagFixCloudAdmin            = "fix-cloud-admin"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -259,6 +260,8 @@ type RestoreConfig struct {
 
 	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
 
+	FixCloudAdmin string `json:"fix-cloud-admin" toml:"fix-cloud-admin"`
+
 	// FullBackupStorage is used to  run `restore full` before `restore log`.
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
@@ -349,7 +352,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
 	flags.String(FlagKeyspaceName, "", "correspond to tidb config keyspace-name")
-
+	flags.String(flagFixCloudAdmin, "", "fix cloud admin")
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
@@ -430,6 +433,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.FastLoadSysTables, err = flags.GetBool(flagFastLoadSysTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.FixCloudAdmin, err = flags.GetString(flagFixCloudAdmin)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -886,6 +894,19 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+	if len(cfg.FixCloudAdmin) > 0 {
+		se, err := g.CreateSession(mgr.GetStorage())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := se.ExecuteInternal(c, fmt.Sprintf("alter user 'cloud_admin' identified by '%s';", cfg.FixCloudAdmin)); err != nil {
+			return errors.Trace(err)
+		}
+		if err := mgr.GetDomain().NotifyUpdateAllUsersPrivilege(); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
 	defer cfg.CloseCheckpointMetaManager()
 	defer func() {
 		if logTaskBackend == nil || restoreErr != nil || cfg.PiTRTableTracker == nil {
