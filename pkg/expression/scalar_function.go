@@ -41,10 +41,11 @@ type ScalarFunction struct {
 	FuncName ast.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType           *types.FieldType `plan-cache-clone:"shallow"`
-	Function          builtinFunc
-	hashcode          []byte
-	canonicalhashcode []byte
+	RetType              *types.FieldType `plan-cache-clone:"shallow"`
+	Function             builtinFunc
+	hashcode             []byte
+	canonicalhashcode    []byte
+	isConstantPropagated bool
 }
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.
@@ -349,9 +350,10 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 // Clone implements Expression interface.
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
-		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
-		Function: sf.Function.Clone(),
+		FuncName:             sf.FuncName,
+		RetType:              sf.RetType,
+		Function:             sf.Function.Clone(),
+		isConstantPropagated: sf.isConstantPropagated,
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
@@ -942,4 +944,14 @@ func (sf *ScalarFunction) MemoryUsage() (sum int64) {
 		sum += sf.Function.MemoryUsage()
 	}
 	return sum
+}
+
+// SetConstantPropagated is to set isConstantPropagated as true
+func (sf *ScalarFunction) SetConstantPropagated() {
+	sf.isConstantPropagated = true
+}
+
+// IsConstantPropagated get isConstantPropagated
+func (sf *ScalarFunction) IsConstantPropagated() bool {
+	return sf.isConstantPropagated
 }

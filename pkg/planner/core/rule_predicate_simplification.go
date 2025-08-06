@@ -492,6 +492,7 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 		return predicate
 	}
 	orFunc := predicate.(*expression.ScalarFunction)
+	isConstantPropagated := orFunc.IsConstantPropagated()
 	orList := expression.SplitDNFItems(orFunc)
 
 	dedupMap := make(map[string]struct{}, len(orList))
@@ -519,7 +520,11 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 			// 2-3. Otherwise, we remove it.
 		}
 	}
-	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
+	expr := expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
+	if e, ok := expr.(*expression.ScalarFunction); ok && isConstantPropagated {
+		e.SetConstantPropagated()
+	}
+	return expr
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

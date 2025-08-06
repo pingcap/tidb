@@ -206,11 +206,8 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
+	originPredicateLen := len(predicates)
 	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
-
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -267,11 +264,20 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 			AppendTableDualTraceStep(p, dual, tempCond, opt)
 			return ret, dual, nil
 		}
+		needCheckOther := len(tempCond) > originPredicateLen
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
 		p.OtherConditions = otherCond
+		if needCheckOther && len(p.OtherConditions) != 0 {
+			p.OtherConditions = slices.DeleteFunc(p.OtherConditions, func(expr expression.Expression) bool {
+				if e, ok := expr.(*expression.ScalarFunction); ok {
+					return e.IsConstantPropagated()
+				}
+				return false
+			})
+		}
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:

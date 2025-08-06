@@ -350,10 +350,16 @@ func (s *propConstSolver) propagateColumnEQ() {
 				cond := s.conditions[k]
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
+					if expr, ok := newExpr.(*ScalarFunction); ok {
+						expr.SetConstantPropagated()
+					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
+					if expr, ok := newExpr.(*ScalarFunction); ok {
+						expr.SetConstantPropagated()
+					}
 					s.conditions = append(s.conditions, newExpr)
 				}
 			}
@@ -782,11 +788,15 @@ func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) 
 func propagateConstantDNF(ctx exprctx.ExprContext, conds ...Expression) []Expression {
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
+			isConstantPropagated := dnf.IsConstantPropagated()
 			dnfItems := SplitDNFItems(cond)
 			for j, item := range dnfItems {
 				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, item)...)
 			}
 			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
+			if c, ok := conds[i].(*ScalarFunction); ok && isConstantPropagated {
+				c.SetConstantPropagated()
+			}
 		}
 	}
 	return conds
