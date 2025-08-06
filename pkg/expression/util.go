@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -209,6 +210,31 @@ func extractColumns(result map[int64]*Column, expr Expression, filter func(*Colu
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
 			extractColumns(result, arg, filter)
+		}
+	}
+}
+
+// ExtractColumnsSetFromExpressions is the same as ExtractColumnsFromExpressions
+// it use the FastIntSet to save the Unique ID.
+func ExtractColumnsSetFromExpressions(m *intset.FastIntSet, filter func(*Column) bool, exprs ...Expression) {
+	if len(exprs) == 0 {
+		return
+	}
+	intest.Assert(m != nil)
+	for _, expr := range exprs {
+		extractColumnsSet(m, expr, filter)
+	}
+}
+
+func extractColumnsSet(result *intset.FastIntSet, expr Expression, filter func(*Column) bool) {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result.Insert(int(v.UniqueID))
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractColumnsSet(result, arg, filter)
 		}
 	}
 }
