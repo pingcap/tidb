@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -502,6 +503,10 @@ func (p kvReaderProxy) close() error {
 type MergeKVIter struct {
 	iter    *mergeIter[*kvPair, kvReaderProxy]
 	memPool *membuf.Pool
+
+	lastTime   time.Time
+	lastSize   int
+	lastKeyNum int
 }
 
 // NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
@@ -560,6 +565,25 @@ func (i *MergeKVIter) Error() error {
 // Next moves the iterator to the next position. When it returns false, the iterator is not usable.
 func (i *MergeKVIter) Next() bool {
 	_, ok := i.iter.next()
+	i.lastSize += len(i.Key()) + len(i.Value())
+	i.lastKeyNum++
+	d := time.Since(i.lastTime)
+	if d > 2*time.Second {
+		sz := i.lastSize
+		keyNum := i.lastKeyNum
+
+		i.lastSize = 0
+		i.lastKeyNum = 0
+		i.lastTime = time.Now()
+		logutil.BgLogger().Info("merge iter read",
+			zap.Int("size", sz),
+			zap.Int("key_num", keyNum),
+			zap.Duration("duration", d),
+			zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
+		)
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("OneFileWriter read&sort").
+			Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
+	}
 	return ok
 }
 
