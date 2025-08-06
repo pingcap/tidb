@@ -1181,6 +1181,16 @@ type s3ObjectWriter struct {
 
 // Write implement the io.Writer interface.
 func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
+	t := time.Now()
+	size := len(p)
+	defer func() {
+		dur := time.Since(t)
+		log.Info("s3ObjectWriter write",
+			zap.Int("size", size),
+			zap.Duration("duration", dur),
+			zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
+		)
+	}()
 	return s.wd.Write(p)
 }
 
@@ -1228,13 +1238,13 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			s3Writer.wg.Done()
 		}()
 		uploader = s3Writer
+		log.Info("create s3ObjectWriter")
 	}
 	bufSize := WriteBufferSize
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
 	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
-	log.Info("create s3 uploader")
 	return uploaderWriter, nil
 }
 

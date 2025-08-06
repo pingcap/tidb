@@ -272,6 +272,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if w.closed {
 		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
+	t := time.Now()
 	err := w.closeImpl(ctx)
 	if err != nil {
 		return err
@@ -279,7 +280,9 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	w.logger.Info("close one file writer", zap.String("writerID", w.writerID),
 		zap.Uint64("totalCnt", w.totalCnt),
 		zap.Uint64("totalSize", w.totalSize),
-		zap.Int("recordedDupCnt", w.recordedDupCnt))
+		zap.Int("recordedDupCnt", w.recordedDupCnt),
+		zap.Duration("take", time.Since(t)),
+	)
 
 	var minKey, maxKey []byte
 	mStats := make([]MultipleFilesStat, 0, 1)
