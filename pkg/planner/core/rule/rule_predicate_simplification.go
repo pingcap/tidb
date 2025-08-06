@@ -525,7 +525,7 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 			newORList = append(newORList, expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...))
 		} else {
 			// 2. Otherwise, we check if it's a duplicate predicate by checking HashCode().
-			hashCode := string(orItem.CanonicalHashCode())
+			hashCode := string(orItem.HashCode())
 			// 2-1. If it's not a duplicate, we need to keep this predicate.
 			if _, ok := dedupMap[hashCode]; !ok {
 				dedupMap[hashCode] = struct{}{}
