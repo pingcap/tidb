@@ -325,3 +325,13 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
 		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`create table foo(a int, b int, c int, primary key(a));`)
+	tk.MustExec(`create table bar(a int, b int, c int, primary key(a));`)
+	tk.MustQuery(`explain select foo.a, foo.b, bar.c from foo join bar 
+    on foo.a=bar.a where (foo.a,foo.b) in ((1,2),(3,4));`).Check(testkit.Rows())
+}
