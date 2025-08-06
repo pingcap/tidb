@@ -56,7 +56,7 @@ var (
 	// AffectedRowsCounterReplace records the number of replace affected rows.
 	AffectedRowsCounterReplace prometheus.Counter
 
-	// AffectedRowsCounterReplace records the number of NT-DML affected rows.
+	// AffectedRowsCounterNTDML records the number of NT-DML affected rows.
 	AffectedRowsCounterNTDML prometheus.Counter
 
 	// NetworkTransmissionStats records the network transmission for queries

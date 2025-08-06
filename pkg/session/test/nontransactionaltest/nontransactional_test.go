@@ -446,12 +446,12 @@ func TestNonTransactionalMetrics(t *testing.T) {
 
 	runAndCheck := func(fn func()) {
 		checkMetrics := []checkMetric{
+			{metrics.AffectedRowsCounterNTDML, 100},
 			{metrics.AffectedRowsCounterInsert, 0},
 			{metrics.AffectedRowsCounterReplace, 0},
 			{metrics.AffectedRowsCounterDelete, 0},
 			{metrics.AffectedRowsCounterUpdate, 0},
-			{metrics.AffectedRowsCounterNTDML, 100},
-			{metrics.StmtNodeCounter.WithLabelValues("NTDml", "", "default"), 11}, // 1 Select + 10 Insert
+			{metrics.StmtNodeCounter.WithLabelValues("NTDml", "", "default"), 11}, // 1 Select + 10 split DMLs
 			{metrics.StmtNodeCounter.WithLabelValues("Insert", "", "default"), 0},
 			{metrics.StmtNodeCounter.WithLabelValues("Replace", "", "default"), 0},
 			{metrics.StmtNodeCounter.WithLabelValues("Delete", "", "default"), 0},
