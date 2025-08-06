@@ -2460,6 +2460,14 @@ func TestIssue28011(t *testing.T) {
 }
 
 func TestPessimisticAutoCommitTxn(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	
+	// false case
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	config.StoreGlobalConfig(&newCfg)
+
+	defer config.StoreGlobalConfig(originCfg)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2483,9 +2491,7 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	require.Regexp(t, ".*handle:\\[-1 1\\].*", explain)
 	require.NotRegexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
 
-	originCfg := config.GetGlobalConfig()
-	defer config.StoreGlobalConfig(originCfg)
-	newCfg := *originCfg
+	// true case
 	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
 	config.StoreGlobalConfig(&newCfg)
 
