@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -687,6 +688,8 @@ type copIterator struct {
 	req                  *kv.Request
 	concurrency          int
 	smallTaskConcurrency int
+	// asyncCopIterator ...
+	asyncCopIterator *asyncCopIterator
 	// liteWorker uses to send cop request without start new goroutine, it is only work when tasks count is 1, and used to improve the performance of small cop query.
 	liteWorker *liteCopIteratorWorker
 	finishCh   chan struct{}
@@ -877,6 +880,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint32) {
+	if it.req.StoreType == kv.TiKV && (len(it.tasks) < 5*(it.concurrency+it.smallTaskConcurrency) || intest.InTest) {
+		it.asyncCopIterator = newAsyncCopIterator(it)
+		it.asyncCopIterator.open(ctx)
+		return
+	}
 	if len(it.tasks) == 1 && tryCopLiteWorker != nil && tryCopLiteWorker.CompareAndSwap(0, 1) {
 		// For a query, only one `copIterator` can use `liteWorker`, otherwise it will affect the performance of multiple cop iterators executed concurrently,
 		// see more detail in TestQueryWithConcurrentSmallCop.
@@ -1109,7 +1117,14 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// Otherwise all responses are returned from a single channel.
 
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
-	if it.liteWorker != nil {
+	if it.asyncCopIterator != nil {
+		resp = it.asyncCopIterator.next(ctx)
+		if resp == nil {
+			it.actionOnExceed.close()
+			return nil, nil
+		}
+		memTrackerConsumeResp(it.memTracker, resp)
+	} else if it.liteWorker != nil {
 		resp = it.liteWorker.liteSendReq(ctx, it)
 		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
 		it.liteWorker.tryCopLiteWorker.CompareAndSwap(1, 0)
@@ -1194,7 +1209,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
-		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker.vars)
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
@@ -1269,7 +1284,7 @@ func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
 
 // Associate each region with an independent backoffer. In this way, when multiple regions are
 // unavailable, TiDB can execute very quickly without blocking
-func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) *Backoffer {
+func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, vars *tikv.Variables) *Backoffer {
 	bo, ok := backoffermap[task.region.GetID()]
 	if ok {
 		return bo
@@ -1280,7 +1295,7 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 			boMaxSleep = 2
 		}
 	})
-	newbo := backoff.NewBackofferWithVars(ctx, boMaxSleep, worker.vars)
+	newbo := backoff.NewBackofferWithVars(ctx, boMaxSleep, vars)
 	backoffermap[task.region.GetID()] = newbo
 	return newbo
 }
@@ -1302,7 +1317,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
 		curTask := remainTasks[0]
-		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		bo := chooseBackoffer(ctx, backoffermap, curTask, worker.vars)
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
@@ -1329,9 +1344,27 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}
 }
 
-// handleTaskOnce handles single copTask, successful results are send to channel.
-// If error happened, returns error. If region split or meet lock, returns the remain tasks.
-func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
+type copInput struct {
+	req *tikvrpc.Request
+	ops []tikv.StoreSelectorOption
+
+	startTime time.Time
+	timeout   time.Duration
+
+	cacheKey   []byte
+	cacheValue *coprCacheValue
+
+	runaway error
+}
+
+type copOutput struct {
+	copResp   *coprocessor.Response
+	rpcCtx    *tikv.RPCContext
+	storeAddr string
+	err       error
+}
+
+func (worker *copIteratorWorker) buildCopInput(bo *Backoffer, task *copTask) (in copInput) {
 	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
@@ -1354,7 +1387,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ConnectionAlias: worker.req.ConnAlias,
 	}
 
-	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
+	in.cacheKey, in.cacheValue = worker.buildCacheKey(task, &copReq)
 
 	replicaRead := worker.req.ReplicaRead
 	rgName := worker.req.ResourceGroupName
@@ -1385,9 +1418,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger.Build(req)
 	}
-	timeout := config.GetGlobalConfig().TiKVClient.CoprReqTimeout
+	in.timeout = config.GetGlobalConfig().TiKVClient.CoprReqTimeout
 	if task.tikvClientReadTimeout > 0 {
-		timeout = time.Duration(task.tikvClientReadTimeout) * time.Millisecond
+		in.timeout = time.Duration(task.tikvClientReadTimeout) * time.Millisecond
 	}
 	failpoint.Inject("sleepCoprRequest", func(v failpoint.Value) {
 		//nolint:durationcheck
@@ -1395,12 +1428,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	})
 
 	if worker.req.RunawayChecker != nil {
-		if runawayErr := worker.req.RunawayChecker.BeforeCopRequest(req); runawayErr != nil {
-			return nil, runawayErr
+		if in.runaway = worker.req.RunawayChecker.BeforeCopRequest(req); in.runaway != nil {
+			return
 		}
 	}
 	req.StoreTp = getEndPointType(task.storeType)
-	startTime := time.Now()
+	in.startTime = time.Now()
 	if worker.stats != nil && worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = tikv.NewRegionRequestRuntimeStats()
 	}
@@ -1421,9 +1454,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
-	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
-	err = derr.ToTiDBErr(err)
+	in.req, in.ops = req, ops
+	return
+}
+
+func (worker *copIteratorWorker) handleCopOutput(bo *Backoffer, task *copTask, in copInput, out copOutput) (*copTaskResult, error) {
+	err := derr.ToTiDBErr(out.err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
 	}
@@ -1431,37 +1467,55 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		if task.storeType == kv.TiDB {
 			return worker.handleTiDBSendReqErr(err, task)
 		}
-		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx)
+		worker.collectUnconsumedCopRuntimeStats(bo, out.rpcCtx)
 		return nil, errors.Trace(err)
 	}
 
 	// Set task.storeAddr field so its task.String() method have the store address information.
-	task.storeAddr = storeAddr
+	task.storeAddr = out.storeAddr
 
-	costTime := time.Since(startTime)
-	copResp := resp.Resp.(*coprocessor.Response)
+	costTime := time.Since(in.startTime)
 
 	if costTime > minLogCopTaskTime {
-		worker.logTimeCopTask(costTime, task, bo, copResp)
+		worker.logTimeCopTask(costTime, task, bo, out.copResp)
 	}
 
-	if copResp != nil {
-		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data) / 1024))
+	if out.copResp != nil {
+		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(out.storeAddr).Observe(float64(len(out.copResp.Data) / 1024))
 	}
 
 	var result *copTaskResult
 	if worker.req.Paging.Enable {
-		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopPagingResult(bo, out.rpcCtx, &copResponse{pbResp: out.copResp}, in.cacheKey, in.cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
-		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopResponse(bo, out.rpcCtx, &copResponse{pbResp: out.copResp}, in.cacheKey, in.cacheValue, task, costTime)
 	}
-	if req.ReadType != "" && result != nil {
+	if in.req.ReadType != "" && result != nil {
 		for _, remain := range result.remains {
-			remain.firstReadType = req.ReadType
+			remain.firstReadType = in.req.ReadType
 		}
 	}
 	return result, err
+}
+
+// handleTaskOnce handles single copTask, successful results are send to channel.
+// If error happened, returns error. If region split or meet lock, returns the remain tasks.
+func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
+	in := worker.buildCopInput(bo, task)
+	if in.runaway != nil {
+		return nil, in.runaway
+	}
+
+	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), in.req, task.region,
+		in.timeout, getEndPointType(task.storeType), task.storeAddr, in.ops...)
+
+	return worker.handleCopOutput(bo, task, in, copOutput{
+		copResp:   resp.Resp.(*coprocessor.Response),
+		rpcCtx:    rpcCtx,
+		storeAddr: storeAddr,
+		err:       err,
+	})
 }
 
 const (
