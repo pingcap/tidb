@@ -220,6 +220,7 @@ func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 			Observe(float64(bufferLen) / 1024.0 / 1024.0 / writeDuration.Seconds())
 		log.Info("bufferedWriter upload chunk speed",
 			zap.Duration("duration", writeDuration),
+			zap.Int("size(Byte)", bufferLen),
 			zap.Float64("speed(MiB/s)", float64(bufferLen)/1024.0/1024.0/writeDuration.Seconds()),
 		)
 	}
