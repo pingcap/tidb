@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -163,22 +162,17 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},
 		)
-		if common.IsRetryableError(err) {
-			return err
-		}
-		failpoint.Inject("errorWhenResetTableMode", func() {
-			failpoint.Return(errors.New("occur an error when reset table mode to normal"))
-		})
-		var err2 error
 		if kerneltype.IsClassic() {
+			failpoint.Inject("skipPostProcessAlterTableMode", func() {
+				failpoint.Return(err)
+			})
+			// log error instead of raise error to avoid user rerun task,
+			// clean up will alter table mode to normal finally.
 			err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
 			if err2 != nil {
 				callLog.Warn("alter table mode to normal failure", zap.Error(err2))
 			}
 		}
-		if err != nil {
-			return err
-		}
-		return err2
+		return err
 	})
 }

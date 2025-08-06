@@ -1348,9 +1348,8 @@ func (s *mockGCSSuite) TestTableMode() {
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
 
 	// Test import into clean up can alter table mode to Normal finally.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode", `return`)
-	err := s.tk.QueryToErr(loadDataSQL)
-	s.ErrorContains(err, "occur an error when reset table mode to normal")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode", `return`)
+	s.tk.MustExec(loadDataSQL)
 	require.Eventually(s.T(), func() bool {
 		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
 		if err != nil {
@@ -1360,7 +1359,7 @@ func (s *mockGCSSuite) TestTableMode() {
 		return true
 	}, 5*time.Second, 100*time.Millisecond)
 	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
-	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/errorWhenResetTableMode")
+	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode")
 
 	// Test import into post process will alter table mode to Normal.
 	wg := sync.WaitGroup{}
@@ -1403,7 +1402,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	getError := false
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
-			if err != nil && *errP == common.ErrWriteTooSlow {
+			if errP != nil && *errP == common.ErrWriteTooSlow {
 				getError = true
 				testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/executor/importer/retryableError")
 			}
@@ -1416,7 +1415,7 @@ func (s *mockGCSSuite) TestTableMode() {
 	// Test import into check table is empty get error.
 	s.tk.MustExec("truncate table table_mode")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
-	err = s.tk.QueryToErr(loadDataSQL)
+	err := s.tk.QueryToErr(loadDataSQL)
 	s.ErrorContains(err, "check is empty get error")
 	require.Eventually(s.T(), func() bool {
 		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
