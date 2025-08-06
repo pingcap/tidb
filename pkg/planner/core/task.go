@@ -2103,7 +2103,7 @@ func attach2Task4PhyscialHashAgg(pp base.PhysicalPlan, tasks ...base.Task) base.
 			attachPlan2Task(p, t)
 		}
 	} else if _, ok := t.(*MppTask); ok {
-		return p.attach2TaskForMpp(tasks...)
+		return attach2TaskForMpp(p, tasks...)
 	} else {
 		attachPlan2Task(p, t)
 	}

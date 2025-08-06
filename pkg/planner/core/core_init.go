@@ -117,7 +117,6 @@ func init() {
 	utilfuncp.GetPlanCostVer24PhysicalHashAgg = getPlanCostVer24PhysicalHashAgg
 
 	// for physical aggregation.
-	utilfuncp.InitForHash = initForHash
 	utilfuncp.InitForStream = initForStream
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow

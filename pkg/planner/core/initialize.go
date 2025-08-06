@@ -61,17 +61,6 @@ func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndex
 	return &p
 }
 
-func initForHash(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
-	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	baseAgg := pp.(*physicalop.BasePhysicalAgg)
-	p := &physicalop.PhysicalHashAgg{*baseAgg, ""}
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	p.SetSchema(schema)
-	return p
-}
-
 func initForStream(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
 	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
 	baseAgg := pp.(*physicalop.BasePhysicalAgg)
