@@ -272,7 +272,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	w.lastSize += length
 	w.lastKeyNum++
 	d := time.Since(w.lastTime)
-	if d > 100*time.Second {
+	if d > 60*time.Second {
 		sz := w.lastSize
 		keyNum := w.lastKeyNum
 

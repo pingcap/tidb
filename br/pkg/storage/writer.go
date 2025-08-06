@@ -3,16 +3,13 @@ package storage
 import (
 	"bytes"
 	"context"
-	"io"
-	"time"
-
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"io"
 )
 
 // CompressType represents the type of compression.
@@ -235,15 +232,15 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	}
 	b := u.buf.Bytes()
 	u.buf.Reset()
-	size := len(b)
-	t := time.Now()
+	//size := len(b)
+	//t := time.Now()
 	_, err := u.writer.Write(ctx, b)
-	dur := time.Since(t)
-	logutil.BgLogger().Info("bufferedWriter uploadChunk",
-		zap.Int("size(Byte)", size),
-		zap.Duration("duration", dur),
-		zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
-	)
+	//dur := time.Since(t)
+	//logutil.BgLogger().Info("bufferedWriter uploadChunk",
+	//	zap.Int("size(Byte)", size),
+	//	zap.Duration("duration", dur),
+	//	zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
+	//)
 	return errors.Trace(err)
 }
 

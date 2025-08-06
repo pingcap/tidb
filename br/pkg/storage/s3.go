@@ -1250,7 +1250,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
 		}
-		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}, lastTime: time.Now()}
+		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.UploadWithContext(ctx, upParams)
@@ -1263,7 +1263,6 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			s3Writer.wg.Done()
 		}()
 		uploader = s3Writer
-		log.Info("create s3ObjectWriter")
 	}
 	bufSize := WriteBufferSize
 	if option != nil && option.PartSize > 0 {

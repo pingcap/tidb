@@ -689,7 +689,6 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 	}()
 	w.rc.reset()
 	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
-	dur1 := time.Since(writeStartTime)
 
 	for _, pair := range w.kvLocations {
 		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
@@ -697,7 +696,6 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 			return "", "", "", err
 		}
 	}
-	dur2 := time.Since(writeStartTime) - dur1
 
 	kvStore.finish()
 	encodedStat := w.rc.encode()
@@ -706,7 +704,6 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 	if err != nil {
 		return "", "", "", err
 	}
-	dur3 := time.Since(writeStartTime) - dur1 - dur2
 	err = dataWriter.Close(ctx)
 	dataWriter = nil
 	if err != nil {
@@ -717,7 +714,6 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 	if err != nil {
 		return "", "", "", err
 	}
-	dur4 := time.Since(writeStartTime) - dur1 - dur2 - dur3
 
 	var dupPath string
 	if len(dupLocs) > 0 {
@@ -726,18 +722,12 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 			return "", "", "", err
 		}
 	}
-	dur5 := time.Since(writeStartTime) - dur1 - dur2 - dur3 - dur4
 	writeDuration := time.Since(writeStartTime)
 	logger.Info("flush sorted kv",
 		zap.Uint64("bytes", w.batchSize),
 		zap.Int("stat-size", statSize),
 		zap.Duration("write-time", writeDuration),
 		zap.String("write-speed(bytes/s)", getSpeed(w.batchSize, writeDuration.Seconds(), true)),
-		zap.Duration("dur1", dur1),
-		zap.Duration("dur2", dur2),
-		zap.Duration("dur3", dur3),
-		zap.Duration("dur4", dur4),
-		zap.Duration("dur5", dur5),
 	)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(writeDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / writeDuration.Seconds())
