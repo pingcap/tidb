@@ -392,7 +392,7 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 
 			if succ {
 				return &SyncSummary{
-					ServerCount: len(resp.Kvs),
+					ServerCount: len(updatedMap),
 				}, nil
 			}
 			time.Sleep(checkVersInterval)
@@ -417,34 +417,7 @@ func (s *etcdSyncer) waitVersionSyncedWithMDL(
 	// the 'latestVer' and there are no active sessions accessing tables related
 	// to the DDL job with old schema.
 	// updatedMap should be empty if all the servers get the metadata lock.
-	updatedMap := make(map[string]string)
-	instance2id := make(map[string]string)
-	var assumedSvrCount int
-	for _, info := range serverInfos {
-		instance := disttaskutil.GenerateExecID(info)
-		// if some node shutdown abnormally and start, we might see some
-		// instance with different id, we should use the latest one.
-		if id, ok := instance2id[instance]; ok {
-			if info.StartTimestamp > serverInfos[id].StartTimestamp {
-				// Replace it.
-				delete(updatedMap, id)
-				if serverInfos[id].IsAssumed() {
-					assumedSvrCount--
-				}
-				updatedMap[info.ID] = getSvrInfoForLog(info)
-				instance2id[instance] = info.ID
-				if info.IsAssumed() {
-					assumedSvrCount++
-				}
-			}
-		} else {
-			updatedMap[info.ID] = getSvrInfoForLog(info)
-			instance2id[instance] = info.ID
-			if info.IsAssumed() {
-				assumedSvrCount++
-			}
-		}
-	}
+	updatedMap, syncSum := calculateUpdatedMap(serverInfos)
 
 	notifyCh := make(chan struct{})
 	var unmatchedNodeInfo atomic.Pointer[string]
@@ -465,10 +438,7 @@ func (s *etcdSyncer) waitVersionSyncedWithMDL(
 	item := s.jobSchemaVerMatchOrSet(jobID, matchFn)
 	select {
 	case <-notifyCh:
-		return &SyncSummary{
-			ServerCount:        len(instance2id),
-			AssumedServerCount: assumedSvrCount,
-		}, true, nil
+		return syncSum, true, nil
 	case <-ctx.Done():
 		item.clearMatchFn()
 		return nil, false, errors.Trace(ctx.Err())
@@ -635,6 +605,41 @@ func (s *etcdSyncer) Close() {
 	err := s.removeSelfVersionPath()
 	if err != nil {
 		logutil.DDLLogger().Error("remove self version path failed", zap.Error(err))
+	}
+}
+
+func calculateUpdatedMap(serverInfos map[string]*serverinfo.ServerInfo) (map[string]string, *SyncSummary) {
+	updatedMap := make(map[string]string)
+	instance2id := make(map[string]string)
+	var assumedSvrCount int
+	for _, info := range serverInfos {
+		instance := disttaskutil.GenerateExecID(info)
+		// if some node shutdown abnormally and start, we might see some
+		// instance with different id, we should use the latest one.
+		if id, ok := instance2id[instance]; ok {
+			if info.StartTimestamp > serverInfos[id].StartTimestamp {
+				// Replace it.
+				delete(updatedMap, id)
+				if serverInfos[id].IsAssumed() {
+					assumedSvrCount--
+				}
+				updatedMap[info.ID] = getSvrInfoForLog(info)
+				instance2id[instance] = info.ID
+				if info.IsAssumed() {
+					assumedSvrCount++
+				}
+			}
+		} else {
+			updatedMap[info.ID] = getSvrInfoForLog(info)
+			instance2id[instance] = info.ID
+			if info.IsAssumed() {
+				assumedSvrCount++
+			}
+		}
+	}
+	return updatedMap, &SyncSummary{
+		ServerCount:        len(instance2id),
+		AssumedServerCount: assumedSvrCount,
 	}
 }
 
