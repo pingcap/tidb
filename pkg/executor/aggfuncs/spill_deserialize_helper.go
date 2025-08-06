@@ -15,6 +15,8 @@
 package aggfuncs
 
 import (
+	"bytes"
+
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	util "github.com/pingcap/tidb/pkg/util/serialization"
@@ -216,8 +218,13 @@ func (s *deserializeHelper) deserializePartialResult4SumFloat64(dst *partialResu
 func (s *deserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		s.pab.Reset(s.column, s.readRowIndex)
-		dst.valsBuf = util.DeserializeBytesBuffer(s.pab)
-		dst.buffer = util.DeserializeBytesBuffer(s.pab)
+		dst.valsBuf = &bytes.Buffer{}
+		hasBuffer := util.DeserializeBool(s.pab)
+		if hasBuffer {
+			dst.buffer = util.DeserializeBytesBuffer(s.pab)
+		} else {
+			dst.buffer = nil
+		}
 		s.readRowIndex++
 		return true
 	}

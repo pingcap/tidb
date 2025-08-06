@@ -135,7 +135,7 @@ func getTaskID(t *testing.T, jobID int64) int64 {
 	mgr, err := diststorage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
-	task, err := mgr.GetTaskByKeyWithHistory(ctx, fmt.Sprintf("ddl/backfill/%d", jobID))
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, ddl.TaskKey(jobID))
 	require.NoError(t, err)
 	return task.ID
 }
@@ -405,7 +405,10 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 
 	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
 		tk.MustExec("set session tidb_redact_log = on;")
+		// tidb_redact_log is actually a instance variable. We should avoid other sessions overwriting it.
+		tk.MustExec("set global tidb_redact_log = on;")
 		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+		tk.MustExec("set global tidb_redact_log = off;")
 		tk.MustExec("set session tidb_redact_log = off;")
 		testErrStep = proto.StepInit
 	}

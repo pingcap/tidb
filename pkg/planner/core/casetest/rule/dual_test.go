@@ -21,27 +21,27 @@ import (
 )
 
 func TestDual(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT,d INT);")
-	tk.MustQuery("explain select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
-		"TableDual_8 0.00 root  rows:0"))
-	tk.MustQuery("select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
-	tk.MustQuery("explain select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
-		"Projection_8 0.00 root  3->Column#3",
-		"└─TableDual_9 0.00 root  rows:0"))
-	tk.MustQuery("select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
-	tk.MustQuery("explain select * from t where d != null;").Check(testkit.Rows(
-		"TableDual_6 0.00 root  rows:0"))
-	tk.MustQuery("explain select * from t where d > null;").Check(testkit.Rows(
-		"TableDual_6 0.00 root  rows:0"))
-	tk.MustQuery("explain select * from t where d >= null;").Check(testkit.Rows(
-		"TableDual_6 0.00 root  rows:0"))
-	tk.MustQuery("explain select * from t where d < null;").Check(testkit.Rows(
-		"TableDual_6 0.00 root  rows:0"))
-	tk.MustQuery("explain select * from t where d <= null;").Check(testkit.Rows(
-		"TableDual_6 0.00 root  rows:0"))
-	tk.MustQuery("explain select * from t where d = null;").Check(testkit.Rows(
-		"TableDual_6 0.00 root  rows:0"))
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT,d INT);")
+		testKit.MustQuery("explain select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
+			"TableDual_9 0.00 root  rows:0"))
+		testKit.MustQuery("select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
+		testKit.MustQuery("explain select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
+			"Projection_9 0.00 root  3->Column#3",
+			"└─TableDual_11 0.00 root  rows:0"))
+		testKit.MustQuery("select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
+		testKit.MustQuery("explain select * from t where d != null;").Check(testkit.Rows(
+			"TableDual_7 0.00 root  rows:0"))
+		testKit.MustQuery("explain select * from t where d > null;").Check(testkit.Rows(
+			"TableDual_7 0.00 root  rows:0"))
+		testKit.MustQuery("explain select * from t where d >= null;").Check(testkit.Rows(
+			"TableDual_7 0.00 root  rows:0"))
+		testKit.MustQuery("explain select * from t where d < null;").Check(testkit.Rows(
+			"TableDual_7 0.00 root  rows:0"))
+		testKit.MustQuery("explain select * from t where d <= null;").Check(testkit.Rows(
+			"TableDual_7 0.00 root  rows:0"))
+		testKit.MustQuery("explain select * from t where d = null;").Check(testkit.Rows(
+			"TableDual_7 0.00 root  rows:0"))
+	})
 }

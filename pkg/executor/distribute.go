@@ -42,9 +42,9 @@ type DistributeTableExec struct {
 	tableInfo      *model.TableInfo
 	is             infoschema.InfoSchema
 	partitionNames []ast.CIStr
-	rule           ast.CIStr
-	engine         ast.CIStr
-	timeout        ast.CIStr
+	rule           string
+	engine         string
+	timeout        string
 
 	done      bool
 	keyRanges []*pdhttp.KeyRange
@@ -95,7 +95,7 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	for _, job := range jobs {
 		// PD will ensure all the alias of uncompleted job are different.
 		// PD return err if the some job alredy exist in the scheduler.
-		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() && job["status"] != "finished" {
+		if job["alias"] == alias && job["engine"] == e.engine && job["rule"] == e.rule && job["status"] != "finished" {
 			id := job["job-id"].(float64)
 			if id > jobID {
 				jobID = id
@@ -111,10 +111,10 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
 	input := make(map[string]any)
 	input["alias"] = e.getAlias()
-	input["engine"] = e.engine.String()
-	input["rule"] = e.rule.String()
-	if len(e.timeout.L) > 0 {
-		input["timeout"] = e.timeout.String()
+	input["engine"] = e.engine
+	input["rule"] = e.rule
+	if len(e.timeout) > 0 {
+		input["timeout"] = e.timeout
 	}
 	startKeys := make([]string, 0, len(e.keyRanges))
 	endKeys := make([]string, 0, len(e.keyRanges))

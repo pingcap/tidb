@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -457,17 +458,17 @@ func makeFailpointRes(t *testing.T, v any) string {
 	return fmt.Sprintf("return(`%s`)", string(bytes))
 }
 
-func getMockedServerInfo() map[string]*infosync.ServerInfo {
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+func getMockedServerInfo() map[string]*serverinfo.ServerInfo {
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:   "s1",
 				IP:   "127.0.0.1",
 				Port: 4000,
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:   "s2",
 				IP:   "127.0.0.2",
 				Port: 4000,

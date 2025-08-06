@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -118,19 +120,34 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		return nil, err
 	}
 	job := &backfillMeta.Job
-	tblInfo, err := getTblInfo(ctx, sch.d, job)
-	if err != nil {
-		return nil, err
-	}
 	logger.Info("on next subtasks batch")
 	storeWithPD := sch.d.store.(kv.StorageWithPD)
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
+		taskKS := task.Keyspace
+		store := sch.d.store
+		if taskKS != tidbconfig.GetGlobalKeyspaceName() {
+			taskMgr, err := diststorage.GetTaskManager()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+				store, err = se.GetSQLServer().GetKSStore(taskKS)
+				return err
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+		tblInfo, err := getTblInfo(ctx, store, job)
+		if err != nil {
+			return nil, err
+		}
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
+		return generateReadIndexPlan(ctx, sch.d, store, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
 	case proto.BackfillStepWriteAndIngest:
@@ -177,11 +194,11 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-func skipMergeSort(stats []external.MultipleFilesStat) bool {
+func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 // OnDone implements scheduler.Extension interface.
@@ -219,8 +236,8 @@ func (sch *LitBackfillScheduler) ModifyMeta(oldMeta []byte, modifies []proto.Mod
 	return json.Marshal(taskMeta)
 }
 
-func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
-	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+func getTblInfo(ctx context.Context, store kv.Storage, job *model.Job) (tblInfo *model.TableInfo, err error) {
+	err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		tblInfo, err = meta.NewMutator(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
@@ -239,6 +256,7 @@ const (
 func generateReadIndexPlan(
 	ctx context.Context,
 	d *ddl,
+	store kv.Storage,
 	tblInfo *model.TableInfo,
 	job *model.Job,
 	useCloud bool,
@@ -249,13 +267,14 @@ func generateReadIndexPlan(
 	if err != nil {
 		return nil, err
 	}
+	jobReorgCtx := d.jobContext(job.ID, job.ReorgMeta)
 	if tblInfo.Partition == nil {
-		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
+		return generatePlanForPhysicalTable(ctx, jobReorgCtx, store, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
 	}
 	defs := tblInfo.Partition.Definitions
 	for _, def := range defs {
 		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, nodeCnt, logger)
+		partMeta, err := generatePlanForPhysicalTable(ctx, jobReorgCtx, store, partTbl, job, useCloud, nodeCnt, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -266,19 +285,20 @@ func generateReadIndexPlan(
 
 func generatePlanForPhysicalTable(
 	ctx context.Context,
-	d *ddl,
+	reorgCtx *ReorgContext,
+	store kv.Storage,
 	tbl table.PhysicalTable,
 	job *model.Job,
 	useCloud bool,
 	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
-	ver, err := getValidCurrentVersion(d.store)
+	ver, err := getValidCurrentVersion(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.store, tbl, ver.Ver, job.Priority)
+	startKey, endKey, err := getTableRange(reorgCtx, store, tbl, ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
@@ -290,7 +310,7 @@ func generatePlanForPhysicalTable(
 	subTaskMetas := make([][]byte, 0, 4)
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
-		regionCache := d.store.(helper.Storage).GetRegionCache()
+		regionCache := store.(helper.Storage).GetRegionCache()
 		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
 			return false, err
@@ -324,7 +344,7 @@ func generatePlanForPhysicalTable(
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			// It should be different for each subtask to determine if there are duplicate entries.
-			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
+			importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
 			if err != nil {
 				return true, nil
 			}
@@ -589,7 +609,7 @@ func generateMergePlan(
 
 	allSkip := true
 	for _, multiStats := range multiStatsGroup {
-		if !skipMergeSort(multiStats) {
+		if !skipMergeSort(multiStats, task.Concurrency) {
 			allSkip = false
 			break
 		}

@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -108,7 +109,7 @@ func Str2Int64Map(str string) map[int64]struct{} {
 }
 
 // GenLogFields generate log fields.
-func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
+func GenLogFields(costTime time.Duration, info *sessmgr.ProcessInfo, needTruncateSQL bool) []zap.Field {
 	if info.RefCountOfStmtCtx != nil && !info.RefCountOfStmtCtx.TryIncrease() {
 		return nil
 	}

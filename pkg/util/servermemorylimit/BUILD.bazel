@@ -7,8 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/mysql",
+        "//pkg/session/sessmgr",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/sqlkiller",
@@ -26,8 +26,8 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/session/sessmgr",
         "//pkg/types",
-        "//pkg/util",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -128,7 +128,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	job := pq.tryCreateJob(is, stats, pruneMode, jobFactory, lockedTables)
 	return pq.pushWithoutLock(job)
 }
@@ -183,7 +183,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	partitionInfo := tableInfo.GetPartitionInfo()
 	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
@@ -336,7 +336,7 @@ func (pq *AnalysisPriorityQueue) handleExchangeTablePartitionEvent(
 	}
 
 	// For non-partitioned tables.
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	// Get the new table info after the exchange.
 	// Note: We should use the ID of the partitioned table to get the new table info after the exchange.
 	tblInfo, ok := pq.statsHandle.TableInfoByID(is, partInfo.Definitions[0].ID)

@@ -10,7 +10,7 @@ go_library(
         "//pkg/ddl",
         "//pkg/parser/terror",
         "//pkg/session",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/store",
         "//pkg/store/driver",
         "//pkg/util/logutil",

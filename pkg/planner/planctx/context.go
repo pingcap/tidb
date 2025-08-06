@@ -22,43 +22,50 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-// PlanContext is the context for building plan.
-type PlanContext interface {
+// Common represents the common API for plan context and session context.
+// Not sure how to name this interface, so it is named `Common` for now.
+type Common interface {
 	contextutil.ValueStoreContext
-	tablelock.TableLockReadContext
-	// GetSQLExecutor gets the SQLExecutor.
-	GetSQLExecutor() sqlexec.SQLExecutor
-	// GetRestrictedSQLExecutor gets the RestrictedSQLExecutor.
-	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
-	// GetExprCtx gets the expression context.
-	GetExprCtx() exprctx.ExprContext
-	// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
-	GetNullRejectCheckExprCtx() exprctx.ExprContext
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
-	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
-	// GetInfoSchema returns the current infoschema
+	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
+	// If you want to get the infoschema of the current transaction in SQL layer,
+	// use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().
+	// If you want to get the latest infoschema use `GetLatestInfoSchema`
 	GetInfoSchema() infoschema.MetaOnlyInfoSchema
-	// UpdateColStatsUsage updates the column stats usage.
-	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
+	// GetLatestInfoSchema returns the latest information schema.
+	// except schema of physical schema objects, the information schema returned
+	// also includes the temporary table definitions stored in session.
+	GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema
+	// GetLatestISWithoutSessExt is same as GetLatestInfoSchema, except that it
+	// does NOT include the temporary table definitions stored in session.
+	GetLatestISWithoutSessExt() infoschema.MetaOnlyInfoSchema
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
-	// GetSessionManager gets the session manager.
-	GetSessionManager() util.SessionManager
+	GetSessionManager() sessmgr.Manager
+	// GetSQLExecutor returns the sqlexec.SQLExecutor.
+	GetSQLExecutor() sqlexec.SQLExecutor
+	// GetRestrictedSQLExecutor returns the sqlexec.RestrictedSQLExecutor.
+	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
+	// GetExprCtx returns the expression context of the session.
+	GetExprCtx() exprctx.ExprContext
+	// GetRangerCtx returns the context used in `ranger` related functions
+	GetRangerCtx() *rangerctx.RangerContext
+	// GetBuildPBCtx gets the ctx used in `ToPB` of the current session
+	GetBuildPBCtx() *BuildPBContext
+	IsCrossKS() bool
+	// UpdateColStatsUsage updates the column stats usage.
+	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
@@ -66,12 +73,19 @@ type PlanContext interface {
 	Txn(active bool) (kv.Transaction, error)
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
+}
+
+// PlanContext is the context for building plan.
+type PlanContext interface {
+	Common
+	tablelock.TableLockReadContext
+	// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
+	GetNullRejectCheckExprCtx() exprctx.ExprContext
 	// AdviseTxnWarmup advises the txn to warm up.
 	AdviseTxnWarmup() error
-	// GetRangerCtx returns the context used in `ranger` functions
-	GetRangerCtx() *rangerctx.RangerContext
-	// GetBuildPBCtx returns the context used in `ToPB` method.
-	GetBuildPBCtx() *BuildPBContext
 	// SetReadonlyUserVarMap sets the readonly user variable map.
 	SetReadonlyUserVarMap(readonlyUserVars map[string]struct{})
 	// GetReadonlyUserVarMap gets the readonly user variable map.

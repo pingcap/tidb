@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -20,7 +20,7 @@ type Permission string
 
 // StrongConsistency is a marker interface that indicates the storage is strong consistent
 // over its `Read`, `Write` and `WalkDir` APIs.
-type StrongConsisency interface {
+type StrongConsistency interface {
 	MarkStrongConsistency()
 }
 
@@ -314,7 +314,7 @@ func ReadDataInRange(
 	defer func() {
 		err := rd.Close()
 		if err != nil {
-			log.FromContext(ctx).Warn("failed to close reader", zap.Error(err))
+			logutil.Logger(ctx).Warn("failed to close reader", zap.Error(err))
 		}
 	}()
 	return io.ReadFull(rd, p)

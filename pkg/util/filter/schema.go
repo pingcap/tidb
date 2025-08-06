@@ -17,39 +17,23 @@ package filter
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
 	// DMHeartbeatSchema is the heartbeat schema name
-	DMHeartbeatSchema = "DM_HEARTBEAT"
-	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = "INFORMATION_SCHEMA"
-	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = "PERFORMANCE_SCHEMA"
-	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = "METRICS_SCHEMA"
+	DMHeartbeatSchema = "dm_heartbeat"
 	// InspectionSchemaName is the `INSPECTION_SCHEMA` database name
-	InspectionSchemaName = "INSPECTION_SCHEMA"
-	// WorkloadSchemaName is the `WORKLOAD_SCHEMA` database name
-	WorkloadSchemaName = strings.ToUpper(mysql.WorkloadSchema)
+	InspectionSchemaName = "inspection_schema"
 )
 
 // IsSystemSchema checks whether schema is system schema or not.
 // case insensitive
 func IsSystemSchema(schema string) bool {
-	schema = strings.ToUpper(schema)
-	switch schema {
-	case DMHeartbeatSchema, // do not create table in it manually
-		"SYS",   // https://dev.mysql.com/doc/refman/8.0/en/sys-schema.html
-		"MYSQL", // the name of system database.
-		WorkloadSchemaName,
-		InformationSchemaName,
-		InspectionSchemaName,
-		PerformanceSchemaName,
-		MetricSchemaName:
-		return true
-	default:
-		return false
-	}
+	intest.AssertFunc(func() bool {
+		return schema == strings.ToLower(schema)
+	})
+	return schema == DMHeartbeatSchema || schema == InspectionSchemaName ||
+		metadef.IsMemOrSysDB(schema)
 }

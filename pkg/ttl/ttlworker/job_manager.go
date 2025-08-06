@@ -309,7 +309,7 @@ func (m *JobManager) onTimerTick(se session.Session, rt *ttlTimerRuntime, syncer
 		return
 	}
 
-	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := se.GetLatestInfoSchema().(infoschema.InfoSchema)
 	if is.SchemaMetaVersion() > lastSyncVer || sinceLastSync > 2*time.Minute {
 		// only sync timer when information schema version upgraded, or it has not been synced for more than 2 minutes.
 		syncer.SyncTimers(m.ctx, is)
@@ -1154,7 +1154,7 @@ GROUP BY
 		records[r.TableID] = r
 	}
 
-	isVer := se.GetDomainInfoSchema()
+	isVer := se.GetLatestInfoSchema()
 	is, ok := isVer.(infoschema.InfoSchema)
 	if !ok {
 		logutil.Logger(ctx).Error(fmt.Sprintf("failed to cast information schema for type: %v", isVer))
@@ -1253,7 +1253,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) (ok bool) {
 }
 
 func (a *managerJobAdapter) canSubmitJobWithSession(tableID, physicalID int64, se session.Session) (bool, error) {
-	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := se.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
 		return false, nil

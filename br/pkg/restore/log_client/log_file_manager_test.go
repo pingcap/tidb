@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -164,7 +165,7 @@ func (b *mockMetaBuilder) b(_ bool) (*storage.LocalStorage, string) {
 }
 
 func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	type Case struct {
 		items           []*backuppb.Metadata
 		startTS         uint64

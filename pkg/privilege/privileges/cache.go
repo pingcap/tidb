@@ -30,6 +30,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1641,13 +1642,13 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 			return true
 		}
 		// For metrics_schema, `PROCESS` can also work.
-		if record.Privileges&mysql.ProcessPriv > 0 && strings.EqualFold(db, util.MetricSchemaName.O) {
+		if record.Privileges&mysql.ProcessPriv > 0 && strings.EqualFold(db, metadef.MetricSchemaName.O) {
 			return true
 		}
 	}
 
 	// INFORMATION_SCHEMA is visible to all users.
-	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+	if strings.EqualFold(db, metadef.InformationSchemaName.O) {
 		return true
 	}
 

@@ -88,6 +88,20 @@ local newDash = dashboard.new(
 
 // Server row and its panels
 local serverRow = row.new(collapse=true, title='Server');
+local uptimeP = graphPanel.new(
+  title='Uptime',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='s',
+  description='TiDB uptime since the last restart.',
+)
+.addTarget(
+  prometheus.target(
+    'time() - process_start_time_seconds{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='{{instance}}',
+  )
+);
+
 local connectionP = graphPanel.new(
   title='Connection Count',
   datasource=myDS,
@@ -106,6 +120,52 @@ local connectionP = graphPanel.new(
   prometheus.target(
     'sum(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"})',
     legendFormat='total',
+  )
+);
+
+local cpuP = graphPanel.new(
+  title='CPU Usage',
+  datasource=myDS,
+  legend_rightSide=true,
+  description='TiDB CPU usage calculated with process CPU running seconds.',
+  format='percentunit',
+)
+.addTarget(
+  prometheus.target(
+    'rate(process_cpu_seconds_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}[1m])',
+    legendFormat='{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_maxprocs{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='quota-{{instance}}',
+  )
+);
+
+local memP = graphPanel.new(
+  title='Memory Usage',
+  datasource=myDS,
+  legend_rightSide=true,
+  description='TiDB process rss memory usage.TiDB heap memory size in use.',
+  format='bytes',
+)
+.addTarget(
+  prometheus.target(
+    'process_resident_memory_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='process-{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_memory_classes_heap_objects_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} + go_memory_classes_heap_unused_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='HeapInuse-{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_memory_quota_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='quota-{{instance}}',
   )
 );
 
@@ -386,7 +446,10 @@ local rightPanelPos = {x:panelW, y:0, w:panelW, h:panelH};
 newDash
 .addPanel(
   serverRow
-  .addPanel(connectionP, gridPos=leftPanelPos)
+  .addPanel(uptimeP, gridPos=leftPanelPos)
+  .addPanel(connectionP, gridPos=rightPanelPos)
+  .addPanel(cpuP, gridPos=leftPanelPos)
+  .addPanel(memP, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 )

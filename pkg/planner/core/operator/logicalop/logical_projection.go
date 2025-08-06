@@ -93,14 +93,14 @@ func (p *LogicalProjection) HashCode() []byte {
 }
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
-		_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-		return predicates, child
+		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+		return predicates, child, err
 	}
 	canBePushed, canNotBePushed := breakDownPredicates(p, predicates)
-	remained, child := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
-	return append(remained, canNotBePushed...), child
+	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	return append(remained, canNotBePushed...), child, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
@@ -148,8 +148,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
-	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
-	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
+	selfUsedCols := expression.ExtractColumnsFromExpressions(p.Exprs, nil)
 	var err error
 	p.Children()[0], err = p.Children()[0].PruneColumns(selfUsedCols, opt)
 	if err != nil {

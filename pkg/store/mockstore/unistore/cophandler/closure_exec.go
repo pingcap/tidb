@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -901,6 +902,9 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 		if c.ID != -1 {
 			restoredCols = append(restoredCols, c)
 		}
+	}
+	if kerneltype.IsNextGen() && len(key) > 4 && key[0] == 'x' {
+		key = key[4:] // remove the keyspace prefix
 	}
 	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
 	if err != nil {

@@ -307,6 +307,28 @@ type ASTArgs struct {
 	LinesInfo          *ast.LinesClause
 }
 
+// StepSummary records the number of data involved in each step.
+// The data stored might be inaccurate, such as the number of rows in encode step.
+type StepSummary struct {
+	Bytes  int64 `json:"input-bytes,omitempty"`
+	RowCnt int64 `json:"input-rows,omitempty"`
+}
+
+// Summary records the amount of data needed to be processed in each step of the import job.
+// And this information will be saved into tidb_import_jobs table after the job is finished.
+type Summary struct {
+	// EncodeSummary stores the bytes and rows needed to be processed in encode step.
+	// Same for other summaries.
+	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
+
+	MergeSummary StepSummary `json:"merge-summary,omitempty"`
+
+	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// ImportedRows is the number of rows imported into TiKV.
+	ImportedRows int64 `json:"row-count,omitempty"`
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {
@@ -595,11 +617,18 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
-	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+	p.MaxEngineSize = getDefMaxEngineSize()
 	p.CloudStorageURI = handle.GetCloudStorageURI(ctx, store)
 
 	v := defaultCharacterSet
 	p.Charset = &v
+}
+
+func getDefMaxEngineSize() config.ByteSize {
+	if kerneltype.IsNextGen() {
+		return config.DefaultBatchSize
+	}
+	return config.ByteSize(defaultMaxEngineSize)
 }
 
 func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
@@ -1497,7 +1526,7 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
@@ -1517,7 +1546,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		TiKVWorkerURL:               tidb.GetGlobalConfig().TiKVWorkerURL,
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
-		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
+		KeyspaceName:                keyspace,
 		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
 		BlockSize:                   config.DefaultBlockSize,
@@ -1538,12 +1567,6 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 		return DataSourceTypeQuery
 	}
 	return DataSourceTypeFile
-}
-
-// JobImportResult is the result of the job import.
-type JobImportResult struct {
-	Affected uint64
-	Warnings []contextutil.SQLWarn
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.

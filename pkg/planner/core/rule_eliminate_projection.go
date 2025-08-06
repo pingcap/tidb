@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
@@ -52,7 +53,7 @@ func canProjectionBeEliminatedLoose(p *logicalop.LogicalProjection) bool {
 
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
-func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
+func canProjectionBeEliminatedStrict(p *physicalop.PhysicalProjection) bool {
 	// This is due to the in-compatibility between TiFlash and TiDB:
 	// For TiDB, the output schema of final agg is all the aggregated functions and for
 	// TiFlash, the output schema of agg(TiFlash not aware of the aggregation mode) is
@@ -61,14 +62,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// the align the output schema. In the future, we can solve this in-compatibility by
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
+		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
 			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
+		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
 			if physicalAgg.IsFinalAgg() {
 				return false
 			}
@@ -107,12 +108,12 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 		return p
 	}
 
-	proj, isProj := p.(*PhysicalProjection)
+	proj, isProj := p.(*physicalop.PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}
 	child := p.Children()[0]
-	if childProj, ok := child.(*PhysicalProjection); ok {
+	if childProj, ok := child.(*physicalop.PhysicalProjection); ok {
 		// when current projection is an empty projection(schema pruned by column pruner), no need to reset child's schema
 		// TODO: avoid producing empty projection in column pruner.
 		if p.Schema().Len() != 0 {

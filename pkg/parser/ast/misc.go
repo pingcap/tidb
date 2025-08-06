@@ -216,6 +216,8 @@ type ExplainStmt struct {
 	Explore bool
 	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
 	SQLDigest string
+	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
+	PlanDigest string
 }
 
 // Restore implements Node interface.
@@ -247,6 +249,9 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Format)
 		ctx.WritePlain(" ")
+	}
+	if n.PlanDigest != "" {
+		ctx.WriteString(n.PlanDigest)
 	}
 	if n.Stmt != nil {
 		if err := n.Stmt.Restore(ctx); err != nil {

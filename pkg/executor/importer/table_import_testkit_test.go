@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -95,7 +96,7 @@ func TestImportFromSelectCleanup(t *testing.T) {
 				ID:   dbInfo.ID,
 			},
 		},
-		SelectPlan: &plannercore.PhysicalSelection{},
+		SelectPlan: &physicalop.PhysicalSelection{},
 	}.Init(tk.Session().GetPlanCtx()), table)
 	require.NoError(t, err)
 	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})

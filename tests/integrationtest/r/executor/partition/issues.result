@@ -321,8 +321,8 @@ insert into t values (9223372036854775807), (9223372036854775808), (922337203685
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:p2,p3	data:TableRangeScan_5
-└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+TableReader_7	2.00	root	partition:p2,p3	data:TableRangeScan_6
+└─TableRangeScan_6	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 col_51
 9223372036854775807
@@ -345,8 +345,8 @@ insert into t values (9223372036854775807), (-9223372036854775808);
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:all	data:TableFullScan_5
-└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+TableReader_7	2.00	root	partition:all	data:TableFullScan_6
+└─TableFullScan_6	2.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 col_51
 -9223372036854775808
@@ -361,8 +361,8 @@ insert into t values (9223372036854775807), (9223372036854775808), (922337203685
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:p2	data:TableRangeScan_5
-└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+TableReader_7	2.00	root	partition:p2	data:TableRangeScan_6
+└─TableRangeScan_6	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 col_51
 9223372036854775807
@@ -377,8 +377,8 @@ insert into t values (9223372036854775807), (-9223372036854775808);
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:all	data:TableFullScan_5
-└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+TableReader_7	2.00	root	partition:all	data:TableFullScan_6
+└─TableFullScan_6	2.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 col_51
 -9223372036854775808

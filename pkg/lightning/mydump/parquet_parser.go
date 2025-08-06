@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/xitongsys/parquet-go/parquet"
 	preader "github.com/xitongsys/parquet-go/reader"
 	"github.com/xitongsys/parquet-go/source"
@@ -239,7 +240,7 @@ func NewParquetParser(
 		Reader:         reader,
 		columns:        columns,
 		columnMetas:    columnMetas,
-		logger:         log.FromContext(ctx),
+		logger:         log.Wrap(logutil.Logger(ctx)),
 		readSeekCloser: wrapper,
 	}, nil
 }

@@ -22,7 +22,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/terror",
         "//pkg/session",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",

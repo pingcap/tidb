@@ -685,8 +685,8 @@ func TestVectorConstantExplain(t *testing.T) {
 	fmt.Println("++++")
 	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
 	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
-	require.True(t, strings.Contains(planTree, `	└─TableReader_5    	root     	10000  	data:TableFullScan_4`))
-	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
+	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
+	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
@@ -2097,7 +2097,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// CastTimeAsString pushed to TiKV but CastTimeAsDuration not pushed
 	rows = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE CAST(b AS CHAR) = '10:00:00';").Rows()
 	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(cast(test.t.b, var_string(5)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "eq(cast(test.t.b, var_string(10)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
 
 	rows = tk.MustQuery("explain format = 'brief' select * from test.t where hour(b) > 10").Rows()
 	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
@@ -2737,8 +2737,8 @@ func TestCompareBuiltin(t *testing.T) {
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval

@@ -376,7 +376,7 @@ func create2PKTTLTable(t *testing.T, tk *testkit.TestKit, name string, option st
 
 func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql string) *cache.PhysicalTable {
 	tk.MustExec(sql)
-	is, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
+	is, ok := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.True(t, ok)
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
 	require.NoError(t, err)

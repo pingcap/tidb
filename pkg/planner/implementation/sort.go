@@ -18,6 +18,7 @@ import (
 	"math"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 
@@ -27,21 +28,21 @@ type SortImpl struct {
 }
 
 // NewSortImpl creates a new sort Implementation.
-func NewSortImpl(sort *plannercore.PhysicalSort) *SortImpl {
+func NewSortImpl(sort *physicalop.PhysicalSort) *SortImpl {
 	return &SortImpl{baseImpl{plan: sort}}
 }
 
 // CalcCost calculates the cost of the sort Implementation.
 func (impl *SortImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	cnt := math.Min(children[0].GetPlan().StatsInfo().RowCount, impl.plan.GetChildReqProps(0).ExpectedCnt)
-	sort := impl.plan.(*plannercore.PhysicalSort)
+	sort := impl.plan.(*physicalop.PhysicalSort)
 	impl.cost = sort.GetCost(cnt, children[0].GetPlan().Schema()) + children[0].GetCost()
 	return impl.cost
 }
 
 // AttachChildren implements Implementation AttachChildren interface.
 func (impl *SortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
-	sort := impl.plan.(*plannercore.PhysicalSort)
+	sort := impl.plan.(*physicalop.PhysicalSort)
 	sort.SetChildren(children[0].GetPlan())
 	// When the Sort orderByItems contain ScalarFunction, we need
 	// to inject two Projections below and above the Sort.
@@ -60,6 +61,6 @@ func (*NominalSortImpl) AttachChildren(children ...memo.Implementation) memo.Imp
 }
 
 // NewNominalSortImpl creates a new NominalSort Implementation.
-func NewNominalSortImpl(sort *plannercore.NominalSort) *NominalSortImpl {
+func NewNominalSortImpl(sort *physicalop.NominalSort) *NominalSortImpl {
 	return &NominalSortImpl{baseImpl{plan: sort}}
 }

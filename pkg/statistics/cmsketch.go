@@ -217,28 +217,6 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-// setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
-func (c *CMSketch) setValue(h1, h2 uint64, count uint64) {
-	oriCount := c.queryHashValue(nil, h1, h2)
-	if c.considerDefVal(oriCount) {
-		// We should update c.defaultValue if we used c.defaultValue when getting the estimate count.
-		// This should make estimation better, remove this line if it does not work as expected.
-		c.defaultValue = uint64(float64(c.defaultValue)*0.95 + float64(c.defaultValue)*0.05)
-		if c.defaultValue == 0 {
-			// c.defaultValue never guess 0 since we are using a sampled data.
-			c.defaultValue = 1
-		}
-	}
-
-	c.count += count - oriCount
-	// let it overflow naturally
-	deltaCount := uint32(count) - uint32(oriCount)
-	for i := range c.table {
-		j := (h1 + h2*uint64(i)) % uint64(c.width)
-		c.table[i][j] = c.table[i][j] + deltaCount
-	}
-}
-
 // SubValue remove a value from the CMSketch.
 func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	c.count -= count
@@ -780,18 +758,6 @@ func (c *TopN) Equal(cc *TopN) bool {
 	return true
 }
 
-// RemoveVal remove the val from TopN if it exists.
-func (c *TopN) RemoveVal(val []byte) {
-	if c == nil {
-		return
-	}
-	pos := c.FindTopN(val)
-	if pos == -1 {
-		return
-	}
-	c.TopN = slices.Delete(c.TopN, pos, pos+1)
-}
-
 // MemoryUsage returns the total memory usage of a topn.
 func (c *TopN) MemoryUsage() (sum int64) {
 	if c == nil {
@@ -802,24 +768,6 @@ func (c *TopN) MemoryUsage() (sum int64) {
 		sum += 32 + int64(cap(meta.Encoded)) // 32 is size of byte array (24) + size of uint64 (8)
 	}
 	return
-}
-
-// queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
-// If such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
-	if c == nil || c.TopN == nil {
-		return false
-	}
-	idx := c.FindTopN(d)
-	if idx >= 0 {
-		if increase {
-			c.TopN[idx].Count += delta
-		} else {
-			c.TopN[idx].Count -= delta
-		}
-		return true
-	}
-	return false
 }
 
 // NewTopN creates the new TopN struct by the given size.

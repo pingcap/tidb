@@ -112,7 +112,7 @@ func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.
 	}()
 
 	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
-	_, _, err := core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
+	_, _, err := core.OptimizeAstNodeNoCache(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionc
 	}()
 
 	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
-	_, _, err := core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
+	_, _, err := core.OptimizeAstNodeNoCache(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 		stmtCtx.EnableOptimizeTrace = origin
 	}()
 	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
-	_, _, err = core.OptimizeAstNode(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
+	_, _, err = core.OptimizeAstNodeNoCache(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return err
 	}

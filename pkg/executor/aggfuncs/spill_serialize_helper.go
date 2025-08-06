@@ -131,8 +131,12 @@ func (s *SerializeHelper) serializePartialResult4SumFloat64(value partialResult4
 
 func (s *SerializeHelper) serializeBasePartialResult4GroupConcat(value basePartialResult4GroupConcat) []byte {
 	s.buf = s.buf[:0]
-	s.buf = util.SerializeBytesBuffer(value.valsBuf, s.buf)
-	s.buf = util.SerializeBytesBuffer(value.buffer, s.buf)
+	if value.buffer != nil {
+		s.buf = util.SerializeBool(true, s.buf)
+		s.buf = util.SerializeBytesBuffer(value.buffer, s.buf)
+	} else {
+		s.buf = util.SerializeBool(false, s.buf)
+	}
 	return s.buf
 }
 

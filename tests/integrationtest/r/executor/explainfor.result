@@ -533,12 +533,12 @@ CREATE TABLE t12(a INT, b INT);
 CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);
 EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;
 id	estRows	task	access object	operator info
-TableReader_7	10000.00	root		data:TableFullScan_6
-└─TableFullScan_6	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
+TableReader_8	10000.00	root		data:TableFullScan_7
+└─TableFullScan_7	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
 EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;
 id	estRows	task	access object	operator info
-TableReader_7	10000.00	root		data:TableFullScan_6
-└─TableFullScan_6	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
+TableReader_8	10000.00	root		data:TableFullScan_7
+└─TableFullScan_7	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
 drop table if exists t;

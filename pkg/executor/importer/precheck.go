@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const (
@@ -112,7 +112,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 	}
 	defer terror.Call(cli.Close)
 
-	pitrCli := streamhelper.NewMetaDataClient(cli.GetClient())
+	pitrCli := streamhelper.NewMetaDataClient(cli)
 	tasks, err := pitrCli.GetAllTasks(ctx)
 	if err != nil {
 		return err
@@ -125,7 +125,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli.GetClient())
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -171,7 +171,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 	return nil
 }
 
-func getEtcdClient() (*etcd.Client, error) {
+func getEtcdClient() (cli *clientv3.Client, err error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	tls, err := util.NewTLSConfig(
 		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
@@ -184,5 +184,10 @@ func getEtcdClient() (*etcd.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, "", tls)
+	return clientv3.New(clientv3.Config{
+		Endpoints:        ectdEndpoints,
+		DialTimeout:      etcdDialTimeout,
+		TLS:              tls,
+		AutoSyncInterval: 30 * time.Second,
+	})
 }

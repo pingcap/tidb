@@ -152,10 +152,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`)
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
 	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
@@ -173,7 +170,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, ver)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")

@@ -134,6 +134,33 @@ func TestScatterSequentiallyRetryCnt(t *testing.T) {
 	require.Equal(t, 7, backoffer.already)
 }
 
+// TestBatchScatterRegionsRetryCnt tests the retry count of BatchScatterRegions.
+func TestBatchScatterRegionsRetryCnt(t *testing.T) {
+	mockClient := NewMockPDClientForSplit()
+	mockClient.scatterRegions.failedCount = 7
+	client := pdClient{
+		needScatterVal: true,
+		client:         mockClient,
+	}
+	client.needScatterInit.Do(func() {})
+
+	ctx := context.Background()
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+}
+
 func TestScatterBackwardCompatibility(t *testing.T) {
 	mockClient := NewMockPDClientForSplit()
 	mockClient.scatterRegions.notImplemented = true

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -36,7 +37,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	tblInfo := &model.TableInfo{}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -53,11 +54,11 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	tableReader.SetSchema(schema)
 
 	// selection
-	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &physicalop.PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}
 	proj = proj.Init(ctx, stats, 0)
 	proj.SetSchema(schema)
 
@@ -70,7 +71,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 	}
 
 	// mock a union-scan and attach to task.
-	unionScan := &PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
+	unionScan := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan.Attach2Task(task)
 
 	// assert the child task's p is unchanged.
@@ -83,7 +84,7 @@ func TestPhysicalUnionScanAttach2Task(t *testing.T) {
 		p: proj,
 	}
 	// mock a union-scan and attach to task.
-	unionScan2 := &PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
+	unionScan2 := &physicalop.PhysicalUnionScan{Conditions: []expression.Expression{col, cst}}
 	unionScan2.Self = unionScan2
 	unionScan2.Attach2Task(task2)
 

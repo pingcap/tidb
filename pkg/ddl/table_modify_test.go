@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -126,7 +126,7 @@ func TestConcurrentLockTables(t *testing.T) {
 	tk2.MustExec("unlock tables")
 }
 
-func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1, se2 sessiontypes.Session, f func(t *testing.T, err1, err2 error)) {
+func testParallelExecSQL(t *testing.T, store kv.Storage, sql1, sql2 string, se1, se2 sessionapi.Session, f func(t *testing.T, err1, err2 error)) {
 	times := 0
 	ctx := context.Background()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {

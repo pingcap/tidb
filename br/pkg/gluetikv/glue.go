@@ -46,7 +46,7 @@ func (Glue) Open(path string, option pd.SecurityOption) (kv.Storage, error) {
 		conf.Security.ClusterSSLKey = option.KeyPath
 		config.StoreGlobalConfig(conf)
 	}
-	return driver.TiKVDriver{}.Open(path)
+	return (&driver.TiKVDriver{}).Open(path)
 }
 
 // OwnsStorage implements glue.Glue.

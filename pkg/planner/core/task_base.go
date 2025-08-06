@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/context"
@@ -105,9 +106,7 @@ func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type RootTask struct {
-	p       base.PhysicalPlan
-	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
-	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
+	p base.PhysicalPlan
 
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
@@ -125,16 +124,6 @@ func (t *RootTask) GetPlan() base.PhysicalPlan {
 // SetPlan sets the root task' plan.
 func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
-}
-
-// IsEmpty indicates whether root task is empty.
-func (t *RootTask) IsEmpty() bool {
-	return t.isEmpty
-}
-
-// SetEmpty set the root task as empty.
-func (t *RootTask) SetEmpty(x bool) {
-	t.isEmpty = x
 }
 
 // Copy implements Task interface.
@@ -299,10 +288,10 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if len(t.rootTaskConds) > 0 {
 		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
 		// so this Selection will be executed in TiDB.
-		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
+		_, isTableScan := t.p.(*physicalop.PhysicalTableScan)
+		_, isSelection := t.p.(*physicalop.PhysicalSelection)
 		if isSelection {
-			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
+			_, isTableScan = t.p.Children()[0].(*physicalop.PhysicalTableScan)
 		}
 		if !isTableScan {
 			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
@@ -316,8 +305,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
-		sel.fromDataSource = true
+		sel := physicalop.PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
+		sel.FromDataSource = true
 		sel.SetChildren(rt.GetPlan())
 		rt.SetPlan(sel)
 	}
@@ -361,7 +350,7 @@ type CopTask struct {
 	rootTaskConds []expression.Expression
 
 	// For table partition.
-	physPlanPartInfo *PhysPlanPartInfo
+	physPlanPartInfo *physicalop.PhysPlanPartInfo
 
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
@@ -475,7 +464,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		for len(tp.Children()) > 0 {
 			tp = tp.Children()[0]
 		}
-		ts := tp.(*PhysicalTableScan)
+		ts := tp.(*physicalop.PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
 		prevSchema := ts.Schema().Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
@@ -498,7 +487,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
@@ -518,7 +507,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		for len(tp.Children()) > 0 {
 			tp = tp.Children()[0]
 		}
-		ts := tp.(*PhysicalTableScan)
+		ts := tp.(*physicalop.PhysicalTableScan)
 		p := PhysicalTableReader{
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
@@ -540,7 +529,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}
 
 		if t.needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)

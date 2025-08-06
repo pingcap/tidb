@@ -47,6 +47,7 @@ const (
 	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
 	lockPrefix        = "v1/LOCK"
+	appendLockPrefix  = "v1/APPEND_LOCK"
 
 	SupportedMigVersion = pb.MigrationVersion_M2
 )
@@ -463,9 +464,9 @@ func (m MigrationExt) AddMigrationToTable(ctx context.Context, mig *pb.Migration
 // MigrationExt is an extension to the `ExternalStorage` type.
 // This added some support methods for the "migration" system of log backup.
 //
-// Migrations are idempontent batch modifications (adding a compaction, delete a file, etc..) to the backup files.
+// Migrations are idempotent batch modifications (adding a compaction, delete a file, etc..) to the backup files.
 // You may check the protocol buffer message `Migration` for more details.
-// Idempontence is important for migrations, as they may be executed multi times due to retry or racing.
+// Idempotence is important for migrations, as they may be executed multiple times due to retry or racing.
 //
 // The encoded migrations will be put in a folder in the external storage,
 // they are ordered by a series number.
@@ -473,7 +474,7 @@ func (m MigrationExt) AddMigrationToTable(ctx context.Context, mig *pb.Migration
 // Not all migrations can be applied to the storage then removed from the migration.
 // Small "additions" will be inlined into the migration, for example, a `Compaction`.
 // Small "deletions" will also be delayed, for example, deleting a span in a file.
-// Such operations will be save to a special migration, the first migration, named "BASE".
+// Such operations will be saved to a special migration, the first migration, named "BASE".
 //
 // A simple list of migrations (loaded by `Load()`):
 /*
@@ -592,7 +593,7 @@ func (NoHooks) StartHandlingMetaEdits([]*pb.MetaEdit)                           
 func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                      {}
 func (NoHooks) HandingMetaEditDone()                                               {}
 
-// MigrateionExtnsion installs the extension methods to an `ExternalStorage`.
+// MigrationExtension installs the extension methods to an `ExternalStorage`.
 func MigrationExtension(s storage.ExternalStorage) MigrationExt {
 	return MigrationExt{
 		s:      s,
@@ -601,7 +602,7 @@ func MigrationExtension(s storage.ExternalStorage) MigrationExt {
 	}
 }
 
-// Merge merges two migrations.
+// MergeMigrations merges two migrations.
 // The merged migration contains all operations from the two arguments.
 func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out := NewMigration()
@@ -650,7 +651,7 @@ type Migrations struct {
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
 func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (storage.RemoteLock, error) {
-	return storage.LockWith(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint)
+	return storage.LockWithRetry(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint)
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -762,12 +763,37 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 	return batchSelf.s.(*storage.Batched).ReadOnlyEffects()
 }
 
+// lockForAppend implements two-phase locking for append migration operations:
+// 1. Acquire read lock on main path (allows coexistence with restore)
+// 2. Acquire write lock on append path (prevents concurrent appends)
+func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
+	readLock, appendLock storage.RemoteLock, err error) {
+	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
+	readLock, err = storage.LockWithRetry(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)")
+	if err != nil {
+		return storage.RemoteLock{}, storage.RemoteLock{}, errors.Annotate(err,
+			"failed to acquire read lock for append operation")
+	}
+
+	// Phase 2: Acquire write lock on append path to prevent concurrent appends
+	appendLock, err = storage.LockWithRetry(ctx, storage.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)")
+	if err != nil {
+		// If append lock fails, release the read lock
+		readLock.UnlockOnCleanUp(ctx)
+		return storage.RemoteLock{}, storage.RemoteLock{}, errors.Annotate(err, "failed to acquire append lock")
+	}
+
+	return readLock, appendLock, nil
+}
+
 func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (int, error) {
-	lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
+	log.Info("appending migration, trying to acquire two-phase lock")
+	readLock, appendLock, err := m.lockForAppend(ctx, "AppendMigration")
 	if err != nil {
 		return 0, err
 	}
-	defer lock.UnlockOnCleanUp(ctx)
+	defer readLock.UnlockOnCleanUp(ctx)
+	defer appendLock.UnlockOnCleanUp(ctx)
 
 	migs, err := m.Load(ctx)
 	if err != nil {
@@ -856,7 +882,8 @@ func MMOptAppendPhantomMigration(migs ...pb.Migration) MergeAndMigrateToOpt {
 }
 
 // MergeAndMigrateTo will merge the migrations from BASE until the specified SN, then migrate to it.
-// Finally it writes the new BASE and remove stale migrations from the storage.
+// Finally, it writes the new BASE and remove stale migrations from the storage.
+// It's used by Stream Truncation.
 func (m MigrationExt) MergeAndMigrateTo(
 	ctx context.Context,
 	targetSpec int,
@@ -868,7 +895,8 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	if !config.skipLockingInTest {
-		lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
+		lock, err := storage.LockWithRetry(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix,
+			"StreamTruncation: MergeMigration")
 		if err != nil {
 			result.MigratedTo = MigratedTo{
 				Warnings: []error{
@@ -939,7 +967,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	for _, mig := range result.Source {
-		// Perhaps a phanom migration.
+		// Perhaps a phantom migration.
 		if len(mig.Path) > 0 {
 			err = m.s.DeleteFile(ctx, mig.Path)
 			if err != nil {
@@ -979,7 +1007,7 @@ func MTMaybeSkipTruncateLog(cond bool) migrateToOpt {
 
 // migrateTo migrates to a migration.
 // If encountered some error during executing some operation, the operation will be put
-// to the new BASE, which can be retryed then.
+// to the new BASE, which can be retried then.
 func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...migrateToOpt) MigratedTo {
 	opt := migToOpt{}
 	for _, o := range opts {
@@ -1670,12 +1698,4 @@ func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
 
 func nameOf(mig *pb.Migration, sn int) string {
 	return fmt.Sprintf("%08d_%016X.mgrt", sn, hashMigration(mig))
-}
-
-func isEmptyMigration(mig *pb.Migration) bool {
-	return len(mig.Compactions) == 0 &&
-		len(mig.EditMeta) == 0 &&
-		len(mig.IngestedSstPaths) == 0 &&
-		len(mig.DestructPrefix) == 0 &&
-		mig.TruncatedTo == 0
 }

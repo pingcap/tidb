@@ -175,3 +175,162 @@ HashAgg	5325.33	root		group by:Column#14, Column#15, funcs:firstrow(Column#14)->
     └─TableReader	3323.33	root		data:Selection
       └─Selection	3323.33	cop[tikv]		lt(planner__core__rule_constant_propagation.t.id, 3)
         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table t1(id int, value int);
+create table t2(id int, value int);
+INSERT INTO t1 (id, value) VALUES (10, 0),(20, 0),(30, 0);
+INSERT INTO t2 (id, value) VALUES (10, 100), (10, 200), (10, 300), (20, 400), (30, 500);
+explain format='brief' update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─Projection	80.00	root		planner__core__rule_constant_propagation.t1.id, planner__core__rule_constant_propagation.t1.value, planner__core__rule_constant_propagation.t1._tidb_rowid, ifnull(Column#7, 0)->Column#7
+  └─HashJoin	80.00	root		CARTESIAN left outer join, left side:TableReader
+    ├─HashAgg(Build)	8.00	root		group by:planner__core__rule_constant_propagation.t2.id, funcs:count(1)->Column#7
+    │ └─TableReader	10.00	root		data:Selection
+    │   └─Selection	10.00	cop[tikv]		eq(10, planner__core__rule_constant_propagation.t2.id)
+    │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10.00	root		data:Selection
+      └─Selection	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t1.id, 10)
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+select * from t1;
+id	value
+10	3
+20	0
+30	0
+select * from t2;
+id	value
+10	100
+10	200
+10	300
+20	400
+30	500
+drop table if exists t1, t2;
+CREATE TABLE t2 (
+k INT,
+b INT
+);
+CREATE TABLE t3 (
+k INT,
+b INT
+);
+INSERT INTO t2 (k, b) VALUES
+(1, 100),
+(2, NULL),
+(3, 300),
+(NULL, 400),
+(5, 500);
+INSERT INTO t3 (k, b) VALUES
+(1, 100),
+(2, NULL),
+(3, 300),
+(NULL, 400),
+(6, 600);
+explain select * from t2 where not exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
+id	estRows	task	access object	operator info
+HashJoin_16	8000.00	root		anti semi join, left side:TableReader_19, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b)], left cond:[eq(planner__core__rule_constant_propagation.t2.k, 1)]
+├─TableReader_22(Build)	10.00	root		data:Selection_21
+│ └─Selection_21	10.00	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k)
+│   └─TableFullScan_20	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableReader_19(Probe)	10000.00	root		data:TableFullScan_18
+  └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select * from t2 where exists (select 1 from t3 where t3.k = t2.k and t3.b = t2.b and t2.k = 1);
+id	estRows	task	access object	operator info
+HashJoin_17	7.99	root		semi join, left side:TableReader_21, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b)]
+├─TableReader_24(Build)	9.99	root		data:Selection_23
+│ └─Selection_23	9.99	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k), not(isnull(planner__core__rule_constant_propagation.t3.b))
+│   └─TableFullScan_22	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableReader_21(Probe)	9.99	root		data:Selection_20
+  └─Selection_20	9.99	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.k, 1), not(isnull(planner__core__rule_constant_propagation.t2.b))
+    └─TableFullScan_19	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+EXPLAIN SELECT * FROM t2
+WHERE NOT EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+id	estRows	task	access object	operator info
+HashJoin_17	8.00	root		anti semi join, left side:TableReader_21, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b)]
+├─TableReader_24(Build)	10.00	root		data:Selection_23
+│ └─Selection_23	10.00	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k)
+│   └─TableFullScan_22	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableReader_21(Probe)	10.00	root		data:Selection_20
+  └─Selection_20	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.k, 1)
+    └─TableFullScan_19	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+SELECT * FROM t2
+WHERE NOT EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+k	b
+EXPLAIN SELECT * FROM t2
+WHERE EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+id	estRows	task	access object	operator info
+HashJoin_17	7.99	root		semi join, left side:TableReader_21, equal:[eq(planner__core__rule_constant_propagation.t2.b, planner__core__rule_constant_propagation.t3.b)]
+├─TableReader_24(Build)	9.99	root		data:Selection_23
+│ └─Selection_23	9.99	cop[tikv]		eq(1, planner__core__rule_constant_propagation.t3.k), not(isnull(planner__core__rule_constant_propagation.t3.b))
+│   └─TableFullScan_22	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─TableReader_21(Probe)	9.99	root		data:Selection_20
+  └─Selection_20	9.99	cop[tikv]		eq(planner__core__rule_constant_propagation.t2.k, 1), not(isnull(planner__core__rule_constant_propagation.t2.b))
+    └─TableFullScan_19	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+SELECT * FROM t2
+WHERE NOT EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+k	b
+SELECT * FROM t2
+WHERE NOT EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
+);
+k	b
+2	NULL
+3	300
+NULL	400
+5	500
+DELETE FROM t3 WHERE k = 1 AND b = 100;
+SELECT * FROM t2
+WHERE EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+k	b
+SELECT * FROM t2
+WHERE NOT EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+k	b
+1	100
+SELECT * FROM t2
+WHERE EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b
+)
+AND t2.k = 1;
+k	b
+SELECT * FROM t2
+WHERE NOT EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
+);
+k	b
+1	100
+2	NULL
+3	300
+NULL	400
+5	500
+SELECT * FROM t2
+WHERE EXISTS (
+SELECT 1 FROM t3
+WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
+);
+k	b

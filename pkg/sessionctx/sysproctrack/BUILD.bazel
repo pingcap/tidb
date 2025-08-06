@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/sysproctrack",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/session/sessmgr",
         "//pkg/sessionctx/variable",
-        "//pkg/util",
     ],
 )

@@ -17,6 +17,7 @@ package timer_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/timer/api"
@@ -63,6 +65,11 @@ func TestMemTimerStore(t *testing.T) {
 	runTimerStoreWatchTest(t, store)
 }
 
+// createTimerTableSQL returns a SQL to create timer table
+func createTimerTableSQL(dbName, tableName string) string {
+	return strings.Replace(session.CreateTiDBTimersTable, "mysql.tidb_timers", fmt.Sprintf("`%s`.`%s`", dbName, tableName), 1)
+}
+
 func TestTableTimerStore(t *testing.T) {
 	timeutil.SetSystemTZ("Asia/Shanghai")
 	store, do := testkit.CreateMockStoreAndDomain(t)
@@ -70,7 +77,7 @@ func TestTableTimerStore(t *testing.T) {
 	dbName := "test"
 	tblName := "timerstore"
 	tk.MustExec("use test")
-	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
 
 	pool := &mockSessionPool{t: t, pool: do.AdvancedSysSessionPool()}
 	// test CURD
@@ -96,7 +103,7 @@ func TestTableTimerStore(t *testing.T) {
 
 	cli := testEtcdCluster.RandClient()
 	tk.MustExec("drop table " + tblName)
-	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
 	timerStore = tablestore.NewTableTimerStore(1, pool, dbName, tblName, cli)
 	defer timerStore.Close()
 	runTimerStoreWatchTest(t, timerStore)
@@ -811,7 +818,7 @@ func TestTableStoreManualTrigger(t *testing.T) {
 	dbName := "test"
 	tblName := "timerstore"
 	tk.MustExec("use test")
-	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
 
 	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), dbName, tblName, nil)
 	defer timerStore.Close()
@@ -900,7 +907,7 @@ func TestTimerStoreWithTimeZone(t *testing.T) {
 	dbName := "test"
 	tblName := "timerstore"
 	tk.MustExec("use test")
-	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
 	tk.MustExec("set @@time_zone = 'America/Los_Angeles'")
 
 	pool := &mockSessionPool{t: t, pool: do.AdvancedSysSessionPool()}

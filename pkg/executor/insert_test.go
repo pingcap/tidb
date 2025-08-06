@@ -721,3 +721,68 @@ func TestInsertLargeRow(t *testing.T) {
 	// since a row cannot span multiple arena blocks.
 	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "unistore lock entry too big")
 }
+
+func TestInsertDuplicateToGeneratedColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+		CREATE TABLE tmv (
+  			J1 json,
+			J2 json GENERATED ALWAYS AS (j1) VIRTUAL,
+  			UNIQUE KEY i1 ((cast(j1 as signed array))),
+  			KEY i2 ((cast(j2 as signed array))))`)
+	tk.MustExec("insert into tmv set j1 = '[1]'")
+	tk.MustExec("insert ignore into tmv set j1 = '[1]' on duplicate key update j1 = '[2]'")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table tmv;")
+	}
+
+	tk.MustExec(`
+		CREATE TABLE ttime (
+			id int primary key,
+			t1 datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			t2 datetime GENERATED ALWAYS AS (date_add(t1, interval 1 day)) VIRTUAL,
+			t3 datetime GENERATED ALWAYS AS (date_add(t2, interval 1 day)) VIRTUAL,
+			t4 datetime GENERATED ALWAYS AS (date_sub(t2, interval 10 MINUTE)) VIRTUAL,
+			UNIQUE KEY i1 (t1),
+			UNIQUE KEY i2 (t2),
+			UNIQUE KEY i3 (id, t3),
+			KEY i4 (t4))`)
+	tk.MustExec(`insert into ttime set id = 1, t1 = "2011-12-20 17:15:50"`)
+	tk.MustExec("insert into ttime set id = 1 on duplicate key update id = 2")
+	for _, enabled := range []bool{false, true} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_fast_table_check = %v", enabled))
+		tk.MustExec("admin check table ttime;")
+	}
+}
+
+func TestInsertNullIntoNotNullGenerated(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t3(
+		id int primary key,
+		c1 varchar(16) default null,
+		c2 varchar(16) GENERATED ALWAYS AS (concat(c1, c1)) VIRTUAL NOT NULL,
+		KEY idx (c2)
+	)`)
+	tk.ExecToErr(`insert into t3 set id = 2, c1 = null`)
+	tk.MustExec(`insert into t3(id, c1) values(1, "aaaa")`)
+	tk.MustExec(`insert ignore into t3 set id = 1, c1 = "bbbb" on duplicate key update id = 2, c1 = null`)
+
+	// The following behavior is strange, but it is compatible with MySQL.
+	// update is failed because c2 is null
+	tk.ExecToErr(`insert into t3 set id = 2, c1 = "cccc" on duplicate key update c1 = "dddd"`)
+
+	// But this row can't be deleted by c2 is null
+	tk.MustExec(`delete from t3 where c2 is null`)
+	rs := tk.MustQuery(`select * from t3`).Rows()
+	require.Len(t, rs, 1)
+
+	// We need to delete it by c2 = ""
+	tk.MustExec(`delete from t3 where c2 = ""`)
+	tk.MustQuery(`select * from t3`).Check(testkit.Rows())
+}

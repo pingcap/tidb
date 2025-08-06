@@ -46,7 +46,7 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-nativ
 > [!Tip]  
 > As part of our commitment to open source, we want to reward all GitHub users. In addition to the free tier, you can get up to $2000 in TiDB Cloud Serverless credits for your open-source contributions - [Claim here](https://ossinsight.io/open-source-heroes/?utm_source=ossinsight&utm_medium=referral&utm_campaign=plg_OSScontribution_credit_05).
 
-1. Start a TiDB Cluser
+1. Start a TiDB Cluster
 
     - **On Local Playground**. To start a local test cluster, please refer to the [TiDB quick start guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb#deploy-a-local-test-cluster?utm_source=github&utm_medium=tidb).
 
@@ -63,7 +63,7 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-nativ
 
 ## Need Help?
 
-- You can connect with TiDB users, ask questions, find answers, and help others on our community platforms: [Discord](https://discord.gg/KVRZBR2DrG?utm_source=github), Slack ([English](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb), [Japanese](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb)), [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb), TiDB Forum ([English](https://ask.pingcap.com/), [Chinese](https://asktug.com)), X [@PingCAP](https://twitter.com/PingCAP)
+- You can connect with TiDB users, ask questions, find answers, and help others on our community platforms: [Discord](https://discord.gg/KVRZBR2DrG?utm_source=github), Slack ([English](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb), [Japanese](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb)), [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb), [TiDB Chinese Forum](https://asktug.com), X [@PingCAP](https://twitter.com/PingCAP)
 
 - For filing bugs, suggesting improvements, or requesting new features, use [Github Issues](https://github.com/pingcap/tidb/issues) or join discussions on [Github Discussions](https://github.com/orgs/pingcap/discussions).
 
@@ -103,7 +103,7 @@ TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for deta
 
 ## See Also
 
-- [TiDB Online Playgroud](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme)
+- [TiDB Online Playground](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme)
 - TiDB Case Studies: [TiDB Customers](https://www.pingcap.com/customers/?utm_source=github&utm_medium=tidb), [TiDB 事例記事](https://pingcap.co.jp/case-study/?utm_source=github&utm_medium=tidb), [TiDB 中文用户案例](https://cn.pingcap.com/case/?utm_source=github&utm_medium=tidb)
 - [TiDB User Documentation](https://docs.pingcap.com/tidb/stable?utm_source=github&utm_medium=tidb)
 - [TiDB Design Docs](/docs/design)

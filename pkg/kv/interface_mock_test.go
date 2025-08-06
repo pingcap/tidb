@@ -279,6 +279,14 @@ func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
 
+func (s *mockStorage) GetClusterID() uint64 {
+	return 1
+}
+
+func (s *mockStorage) GetKeyspace() string {
+	return ""
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}

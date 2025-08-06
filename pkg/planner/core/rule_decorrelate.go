@@ -163,7 +163,7 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
 	// But this problem has affected tiflash CI.
 	// Simplify predicates from the LogicalSelection
-	simplifiedPredicates := applyPredicateSimplification(p.SCtx(), logicalSelection.Conditions)
+	simplifiedPredicates := applyPredicateSimplification(p.SCtx(), logicalSelection.Conditions, true)
 
 	// Determine if this is a "true selection"
 	trueSelection := false
@@ -227,14 +227,12 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, op
 		innerPlan := apply.Children()[1]
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 		if len(apply.CorCols) == 0 {
-			if !p.SCtx().GetSessionVars().EnableCascadesPlanner {
-				// If the inner plan is non-correlated, the apply will be simplified to join.
-				join := &apply.LogicalJoin
-				join.SetSelf(join)
-				join.SetTP(plancodec.TypeJoin)
-				p = join
-				appendApplySimplifiedTraceStep(apply, join, opt)
-			}
+			// If the inner plan is non-correlated, the apply will be simplified to join.
+			join := &apply.LogicalJoin
+			join.SetSelf(join)
+			join.SetTP(plancodec.TypeJoin)
+			p = join
+			appendApplySimplifiedTraceStep(apply, join, opt)
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
 		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {
