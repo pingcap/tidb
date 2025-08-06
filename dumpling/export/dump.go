@@ -355,8 +355,14 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		}
 		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics)
 		writer.rebuildConnFn = rebuildConnFn
-		writer.setFinishTableCallBack(func(_ Task) {
+		writer.setFinishTableCallBack(func(task Task) {
 			// this is called when a file is finished.
+			if _, ok := task.(*TaskTableData); ok {
+				failpoint.Inject("EnableLogProgress", func() {
+					time.Sleep(1 * time.Second)
+					tctx.L().Debug("EnableLogProgress, sleep 1s")
+				})
+			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
 			IncGauge(d.metrics.taskChannelCapacity)
