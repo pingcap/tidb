@@ -2430,7 +2430,7 @@ func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
-	// Replica only works for read-only statements.
+	// Replica read only works for read-only statements.
 	if !s.StmtCtx.IsReadOnly {
 		if s.StmtCtx.HasReplicaReadHint {
 			s.StmtCtx.AppendWarning(errors.New("Ignore replica read hint for non-read-only statement"))
