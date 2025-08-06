@@ -201,6 +201,30 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	}
 }
 
+// ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
+func ExtractAllColumnsFromExpressions(exprs []Expression, filter func(*Column) bool) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	result := make([]*Column, 0, 8)
+	for _, expr := range exprs {
+		result = extractColumnsSlices(result, expr, filter)
+	}
+	return result
+}
+
+// ExtractColumnsSetFromExpressions is the same as ExtractColumnsFromExpressions
+// it use the FastIntSet to save the Unique ID.
+func ExtractColumnsSetFromExpressions(m *intset.FastIntSet, filter func(*Column) bool, exprs ...Expression) {
+	if len(exprs) == 0 {
+		return
+	}
+	intest.Assert(m != nil)
+	for _, expr := range exprs {
+		extractColumnsSet(m, expr, filter)
+	}
+}
+
 func extractColumns(result map[int64]*Column, expr Expression, filter func(*Column) bool) {
 	switch v := expr.(type) {
 	case *Column:
@@ -214,16 +238,18 @@ func extractColumns(result map[int64]*Column, expr Expression, filter func(*Colu
 	}
 }
 
-// ExtractColumnsSetFromExpressions is the same as ExtractColumnsFromExpressions
-// it use the FastIntSet to save the Unique ID.
-func ExtractColumnsSetFromExpressions(m *intset.FastIntSet, filter func(*Column) bool, exprs ...Expression) {
-	if len(exprs) == 0 {
-		return
+func extractColumnsSlices(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		if filter == nil || filter(v) {
+			result = append(result, v)
+		}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsSlices(result, arg, filter)
+		}
 	}
-	intest.Assert(m != nil)
-	for _, expr := range exprs {
-		extractColumnsSet(m, expr, filter)
-	}
+	return result
 }
 
 func extractColumnsSet(result *intset.FastIntSet, expr Expression, filter func(*Column) bool) {
