@@ -205,7 +205,8 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 				return nil
 			}
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
-			//nolint:nogo
+			// FIXME: https://github.com/pingcap/tidb/issues/62861
+			// nolint
 			return pq.pushWithoutLock(job)
 		}
 		return nil
