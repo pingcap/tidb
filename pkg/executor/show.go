@@ -1765,7 +1765,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days'
+        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1840,6 +1840,9 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 			passwordLockTimeDays = " PASSWORD_LOCK_TIME " + passwordLockTimeDays
 		}
 	}
+
+	authData := rows[0].GetString(10)
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1856,7 +1859,6 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		require = privValue.RequireStr()
 	}
 
-	authData := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
 	authStr := ""
 	if !(authplugin == mysql.AuthSocket && authData == "") {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
@@ -1898,7 +1900,7 @@ func (e *ShowExec) fetchShowGrants() error {
 		if r.Hostname == "" {
 			r.Hostname = "%"
 		}
-		if !checker.FindEdge(e.Ctx(), r, e.User) {
+		if !checker.FindEdge(r, e.User) {
 			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(r.String(), e.User.String())
 		}
 	}

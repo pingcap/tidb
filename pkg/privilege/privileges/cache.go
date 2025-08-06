@@ -247,19 +247,23 @@ type defaultRoleRecord struct {
 
 // roleGraphEdgesTable is used to cache relationship between and role.
 type roleGraphEdgesTable struct {
-	roleList map[string]*auth.RoleIdentity
+	roleList map[auth.RoleIdentity]*auth.RoleIdentity
 }
 
 // Find method is used to find role from table
 func (g roleGraphEdgesTable) Find(user, host string) bool {
-	if host == "" {
-		host = "%"
-	}
-	key := user + "@" + host
 	if g.roleList == nil {
 		return false
 	}
+	key := auth.RoleIdentity{
+		Username: user,
+		Hostname: host,
+	}
 	_, ok := g.roleList[key]
+	if !ok && key.Hostname == "" {
+		key.Hostname = "%"
+		_, ok = g.roleList[key]
+	}
 	return ok
 }
 
@@ -296,7 +300,31 @@ type MySQLPrivilege struct {
 	// slice (p.DB) and a Map (p.DBMap).
 	immutable
 
+<<<<<<< HEAD
 	extended
+=======
+	user         bTree[itemUser]
+	db           bTree[itemDB]
+	tablesPriv   bTree[itemTablesPriv]
+	columnsPriv  bTree[itemColumnsPriv]
+	defaultRoles bTree[itemDefaultRole]
+
+	globalPriv  bTree[itemGlobalPriv]
+	dynamicPriv bTree[itemDynamicPriv]
+	roleGraph   map[auth.RoleIdentity]roleGraphEdgesTable
+}
+
+func newMySQLPrivilege() *MySQLPrivilege {
+	var p MySQLPrivilege
+	p.user = bTree[itemUser]{BTreeG: btree.NewG(8, compareItemUser)}
+	p.db = bTree[itemDB]{BTreeG: btree.NewG(8, compareItemDB)}
+	p.tablesPriv = bTree[itemTablesPriv]{BTreeG: btree.NewG(8, compareItemTablesPriv)}
+	p.columnsPriv = bTree[itemColumnsPriv]{BTreeG: btree.NewG(8, compareItemColumnsPriv)}
+	p.defaultRoles = bTree[itemDefaultRole]{BTreeG: btree.NewG(8, compareItemDefaultRole)}
+	p.globalPriv = bTree[itemGlobalPriv]{BTreeG: btree.NewG(8, compareItemGlobalPriv)}
+	p.dynamicPriv = bTree[itemDynamicPriv]{BTreeG: btree.NewG(8, compareItemDynamicPriv)}
+	return &p
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 }
 
 // FindAllUserEffectiveRoles is used to find all effective roles grant to this user.
@@ -322,7 +350,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 		if _, ok := visited[role.String()]; !ok {
 			visited[role.String()] = true
 			ret = append(ret, role)
-			key := role.Username + "@" + role.Hostname
+			key := *role
 			if edgeTable, ok := p.roleGraph[key]; ok {
 				for _, v := range edgeTable.roleList {
 					if _, ok := visited[v.String()]; !ok {
@@ -341,10 +369,18 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	rec := p.matchUser(user, host)
 	r := p.matchUser(role.Username, role.Hostname)
 	if rec != nil && r != nil {
-		key := rec.User + "@" + rec.Host
+		key := auth.RoleIdentity{
+			Username: rec.User,
+			Hostname: rec.Host,
+		}
 		return p.roleGraph[key].Find(role.Username, role.Hostname)
 	}
 	return false
+}
+
+func findRole(h *Handle, user string, host string, role *auth.RoleIdentity) bool {
+	mysqlPrivilege := h.Get()
+	return mysqlPrivilege.FindRole(user, host, role)
 }
 
 // LoadAll loads the tables from database to memory.
@@ -353,6 +389,9 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 	if err != nil {
 		logutil.BgLogger().Warn("load mysql.user fail", zap.Error(err))
 		return errLoadPrivilege.FastGen("mysql.user")
+	}
+	if l := p.user.Len(); l > 1024 {
+		logutil.BgLogger().Warn("load all called and user list is long, suggest enabling @@global.tidb_accelerate_user_creation_update", zap.Int("len", l))
 	}
 
 	err = p.LoadGlobalPrivTable(ctx)
@@ -412,37 +451,92 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) error {
 	err := p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow, userList...)
+=======
+func findUserAndAllRoles(userList []string, roleGraph map[auth.RoleIdentity]roleGraphEdgesTable) map[string]struct{} {
+	// Including the user list and also their roles
+	all := make(map[string]struct{}, len(userList))
+	queue := make([]string, 0, len(userList))
+
+	// Initialize the queue with the initial user list
+	for _, user := range userList {
+		all[user] = struct{}{}
+		queue = append(queue, user)
+	}
+
+	// Process the queue using BFS
+	for len(queue) > 0 {
+		user := queue[0]
+		queue = queue[1:]
+		for userHost, value := range roleGraph {
+			if userHost.Username == user {
+				for _, role := range value.roleList {
+					if _, ok := all[role.Username]; !ok {
+						all[role.Username] = struct{}{}
+						queue = append(queue, role.Username)
+					}
+				}
+			}
+		}
+	}
+	return all
+}
+
+func (p *MySQLPrivilege) loadSomeUsers(ctx sqlexec.SQLExecutor, userList map[string]struct{}) error {
+	err := loadTable(ctx, addUserFilterCondition(sqlLoadUserTable, userList), p.decodeUserTableRow(userList))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	err = p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow, userList...)
+=======
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadGlobalPrivTable, userList), p.decodeGlobalPrivTableRow(userList))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	err = p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow, userList...)
+=======
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadGlobalGrantsTable, userList), p.decodeGlobalGrantsTableRow(userList))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	err = p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow, userList...)
+=======
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadDBTable, userList), p.decodeDBTableRow(userList))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	err = p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow, userList...)
+=======
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadTablePrivTable, userList), p.decodeTablesPrivTableRow(userList))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	err = p.loadTable(ctx, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow, userList...)
+=======
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadDefaultRoles, userList), p.decodeDefaultRoleTableRow(userList))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	err = p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow, userList...)
 	if err != nil {
 		return errors.Trace(err)
@@ -450,6 +544,9 @@ func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ..
 
 	p.roleGraph = make(map[string]roleGraphEdgesTable)
 	err = p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+=======
+	err = loadTable(ctx, addUserFilterCondition(sqlLoadColumnsPrivTable, userList), p.decodeColumnsPrivTableRow(userList))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -457,6 +554,7 @@ func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ..
 	return nil
 }
 
+<<<<<<< HEAD
 func dedupSortedKeepLast[S ~[]E, E any](s S, eq func(a, b E) bool) S {
 	skip := 0
 	for i := 1; i < len(s); i++ {
@@ -525,6 +623,97 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.roleGraph = diff.roleGraph
 
 	return &ret
+=======
+// merge construct a new MySQLPrivilege by merging the data of the two objects.
+func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList map[string]struct{}) *MySQLPrivilege {
+	ret := newMySQLPrivilege()
+	user := p.user.Clone()
+	for u := range userList {
+		itm, ok := diff.user.Get(itemUser{username: u})
+		if !ok {
+			user.Delete(itemUser{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareUserRecord)
+			user.ReplaceOrInsert(itm)
+		}
+	}
+	ret.user.BTreeG = user
+
+	db := p.db.Clone()
+	for u := range userList {
+		itm, ok := diff.db.Get(itemDB{username: u})
+		if !ok {
+			db.Delete(itemDB{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareDBRecord)
+			db.ReplaceOrInsert(itm)
+		}
+	}
+	ret.db.BTreeG = db
+
+	tablesPriv := p.tablesPriv.Clone()
+	for u := range userList {
+		itm, ok := diff.tablesPriv.Get(itemTablesPriv{username: u})
+		if !ok {
+			tablesPriv.Delete(itemTablesPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareTablesPrivRecord)
+			tablesPriv.ReplaceOrInsert(itm)
+		}
+	}
+	ret.tablesPriv.BTreeG = tablesPriv
+
+	columnsPriv := p.columnsPriv.Clone()
+	for u := range userList {
+		itm, ok := diff.columnsPriv.Get(itemColumnsPriv{username: u})
+		if !ok {
+			columnsPriv.Delete(itemColumnsPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareColumnsPrivRecord)
+			columnsPriv.ReplaceOrInsert(itm)
+		}
+	}
+	ret.columnsPriv.BTreeG = columnsPriv
+
+	defaultRoles := p.defaultRoles.Clone()
+	for u := range userList {
+		itm, ok := diff.defaultRoles.Get(itemDefaultRole{username: u})
+		if !ok {
+			defaultRoles.Delete(itemDefaultRole{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareDefaultRoleRecord)
+			defaultRoles.ReplaceOrInsert(itm)
+		}
+	}
+	ret.defaultRoles.BTreeG = defaultRoles
+
+	dynamicPriv := p.dynamicPriv.Clone()
+	for u := range userList {
+		itm, ok := diff.dynamicPriv.Get(itemDynamicPriv{username: u})
+		if !ok {
+			dynamicPriv.Delete(itemDynamicPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareDynamicPrivRecord)
+			dynamicPriv.ReplaceOrInsert(itm)
+		}
+	}
+	ret.dynamicPriv.BTreeG = dynamicPriv
+
+	globalPriv := p.globalPriv.Clone()
+	for u := range userList {
+		itm, ok := diff.globalPriv.Get(itemGlobalPriv{username: u})
+		if !ok {
+			globalPriv.Delete(itemGlobalPriv{username: u})
+		} else {
+			slices.SortFunc(itm.data, compareGlobalPrivRecord)
+			globalPriv.ReplaceOrInsert(itm)
+		}
+	}
+	ret.globalPriv.BTreeG = globalPriv
+
+	ret.roleGraph = diff.roleGraph
+	return ret
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 }
 
 func noSuchTable(err error) bool {
@@ -538,9 +727,15 @@ func noSuchTable(err error) bool {
 }
 
 // LoadRoleGraph loads the mysql.role_edges table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadRoleGraph(ctx sqlexec.RestrictedSQLExecutor) error {
 	p.roleGraph = make(map[string]roleGraphEdgesTable)
 	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+=======
+func (p *MySQLPrivilege) LoadRoleGraph(exec sqlexec.SQLExecutor) error {
+	p.roleGraph = make(map[auth.RoleIdentity]roleGraphEdgesTable)
+	err := loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -548,8 +743,13 @@ func (p *MySQLPrivilege) LoadRoleGraph(ctx sqlexec.RestrictedSQLExecutor) error 
 }
 
 // LoadUserTable loads the mysql.user table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadUserTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	err := p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow)
+=======
+func (p *MySQLPrivilege) LoadUserTable(exec sqlexec.SQLExecutor) error {
+	err := loadTable(exec, sqlLoadUserTable, p.decodeUserTableRow(nil))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -594,6 +794,33 @@ func compareGlobalPrivRecord(x, y globalPrivRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
+<<<<<<< HEAD
+=======
+func compareDynamicPrivRecord(x, y dynamicPrivRecord) int {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
+func compareTablesPrivRecord(x, y tablesPrivRecord) int {
+	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if cmp != 0 {
+		return cmp
+	}
+	switch {
+	case x.DB > y.DB:
+		return 1
+	case x.DB < y.DB:
+		return -1
+	}
+	switch {
+	case x.TableName > y.TableName:
+		return 1
+	case x.TableName < y.TableName:
+		return -1
+	}
+	return 0
+}
+
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 	cmp := compareBaseRecord(&x.baseRecord, &y.baseRecord)
 	if cmp != 0 {
@@ -683,8 +910,13 @@ func (p *MySQLPrivilege) buildGlobalMap() {
 }
 
 // LoadGlobalPrivTable loads the mysql.global_priv table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	if err := p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow); err != nil {
+=======
+func (p *MySQLPrivilege) LoadGlobalPrivTable(exec sqlexec.SQLExecutor) error {
+	if err := loadTable(exec, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow(nil)); err != nil {
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 		return errors.Trace(err)
 	}
 	p.buildGlobalMap()
@@ -692,8 +924,13 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sqlexec.RestrictedSQLExecutor) 
 }
 
 // LoadGlobalGrantsTable loads the mysql.global_priv table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	if err := p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow); err != nil {
+=======
+func (p *MySQLPrivilege) LoadGlobalGrantsTable(exec sqlexec.SQLExecutor) error {
+	if err := loadTable(exec, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow(nil)); err != nil {
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 		return errors.Trace(err)
 	}
 	p.buildDynamicMap()
@@ -701,8 +938,13 @@ func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sqlexec.RestrictedSQLExecutor
 }
 
 // LoadDBTable loads the mysql.db table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadDBTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	err := p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow)
+=======
+func (p *MySQLPrivilege) LoadDBTable(exec sqlexec.SQLExecutor) error {
+	err := loadTable(exec, sqlLoadDBTable, p.decodeDBTableRow(nil))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return err
 	}
@@ -736,8 +978,13 @@ func (p *MySQLPrivilege) buildDynamicMap() {
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadTablesPrivTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	err := p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow)
+=======
+func (p *MySQLPrivilege) LoadTablesPrivTable(exec sqlexec.SQLExecutor) error {
+	err := loadTable(exec, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow(nil))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return err
 	}
@@ -754,6 +1001,7 @@ func (p *MySQLPrivilege) buildTablesPrivMap() {
 }
 
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sqlexec.RestrictedSQLExecutor) error {
 	return p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
 }
@@ -761,29 +1009,61 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sqlexec.RestrictedSQLExecutor)
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadDefaultRoles(ctx sqlexec.RestrictedSQLExecutor) error {
 	return p.loadTable(ctx, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow)
+=======
+func (p *MySQLPrivilege) LoadColumnsPrivTable(exec sqlexec.SQLExecutor) error {
+	err := loadTable(exec, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow(nil))
+	if err != nil {
+		return err
+	}
+	p.columnsPriv.Ascend(func(itm itemColumnsPriv) bool {
+		slices.SortFunc(itm.data, compareColumnsPrivRecord)
+		return true
+	})
+	return nil
 }
 
-func addUserFilterCondition(sql string, userList []string) string {
-	if len(userList) == 0 {
+// LoadDefaultRoles loads the mysql.columns_priv table from database.
+func (p *MySQLPrivilege) LoadDefaultRoles(exec sqlexec.SQLExecutor) error {
+	return loadTable(exec, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow(nil))
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
+}
+
+func addUserFilterCondition(sql string, userList map[string]struct{}) string {
+	if len(userList) == 0 || len(userList) > 1024 {
 		return sql
 	}
 	var b strings.Builder
 	b.WriteString(sql)
 	b.WriteString(" WHERE ")
-	for i, user := range userList {
-		if i > 0 {
+	first := true
+	for user := range userList {
+		if !first {
 			b.WriteString(" OR ")
+		} else {
+			first = false
 		}
 		fmt.Fprintf(&b, "USER = '%s'", sqlescape.EscapeString(user))
 	}
 	return b.String()
 }
 
+<<<<<<< HEAD
 func (p *immutable) loadTable(sctx sqlexec.RestrictedSQLExecutor, sql string,
 	decodeTableRow func(chunk.Row, []*resolve.ResultField) error, userList ...string) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sql = addUserFilterCondition(sql, userList)
 	rows, fs, err := sctx.ExecRestrictedSQL(ctx, nil, sql)
+=======
+// loadTable loads the table data by executing the sql and decoding the result data.
+// NOTE: the chunk Row passed to decodeTableRow function is reused, so decodeTableRow should clone when necessary.
+func loadTable(exec sqlexec.SQLExecutor, sql string,
+	decodeTableRow func(chunk.Row, []*resolve.ResultField) error) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	// Do not use sctx.ExecRestrictedSQL() here deliberately.
+	// The result set can be extremely large, so this streaming API is important to
+	// reduce memory cost.
+	rs, err := exec.ExecuteInternal(ctx, sql)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -840,6 +1120,7 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.Resu
 	}
 }
 
+<<<<<<< HEAD
 func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value UserRecord
 	for i, f := range fs {
@@ -869,61 +1150,102 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 			}
 			if emailBJ, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
 				email, err := emailBJ.Unquote()
+=======
+func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value UserRecord
+		for i, f := range fs {
+			switch {
+			case f.ColumnAsName.L == "authentication_string":
+				value.AuthenticationString = strings.Clone(row.GetString(i))
+			case f.ColumnAsName.L == "account_locked":
+				if row.GetEnum(i).String() == "Y" {
+					value.AccountLocked = true
+				}
+			case f.ColumnAsName.L == "plugin":
+				if row.GetString(i) != "" {
+					value.AuthPlugin = strings.Clone(row.GetString(i))
+				} else {
+					value.AuthPlugin = mysql.AuthNativePassword
+				}
+			case f.ColumnAsName.L == "token_issuer":
+				value.AuthTokenIssuer = strings.Clone(row.GetString(i))
+			case f.ColumnAsName.L == "user_attributes":
+				if row.IsNull(i) {
+					continue
+				}
+				bj := row.GetJSON(i)
+				pathExpr, err := types.ParseJSONPathExpr("$.metadata.email")
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 				if err != nil {
 					return err
 				}
-				value.Email = email
-			}
-			pathExpr, err = types.ParseJSONPathExpr("$.resource_group")
-			if err != nil {
-				return err
-			}
-			if resourceGroup, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
-				resourceGroup, err := resourceGroup.Unquote()
+				if emailBJ, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+					email, err := emailBJ.Unquote()
+					if err != nil {
+						return err
+					}
+					value.Email = strings.Clone(email)
+				}
+				pathExpr, err = types.ParseJSONPathExpr("$.resource_group")
 				if err != nil {
 					return err
 				}
-				value.ResourceGroup = resourceGroup
+				if resourceGroup, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+					resourceGroup, err := resourceGroup.Unquote()
+					if err != nil {
+						return err
+					}
+					value.ResourceGroup = strings.Clone(resourceGroup)
+				}
+				passwordLocking := PasswordLocking{}
+				if err := passwordLocking.ParseJSON(bj); err != nil {
+					return err
+				}
+				value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
+				value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
+				value.FailedLoginCount = passwordLocking.FailedLoginCount
+				value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
+				value.AutoAccountLocked = passwordLocking.AutoAccountLocked
+			case f.ColumnAsName.L == "password_expired":
+				if row.GetEnum(i).String() == "Y" {
+					value.PasswordExpired = true
+				}
+			case f.ColumnAsName.L == "password_last_changed":
+				t := row.GetTime(i)
+				gotime, err := t.GoTime(time.Local)
+				if err != nil {
+					return err
+				}
+				value.PasswordLastChanged = gotime
+			case f.ColumnAsName.L == "password_lifetime":
+				if row.IsNull(i) {
+					value.PasswordLifeTime = -1
+					continue
+				}
+				value.PasswordLifeTime = row.GetInt64(i)
+			case f.Column.GetType() == mysql.TypeEnum:
+				if row.GetEnum(i).String() != "Y" {
+					continue
+				}
+				priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
+				if !ok {
+					return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
+				}
+				value.Privileges |= priv
+			default:
+				value.assignUserOrHost(row, i, f)
 			}
-			passwordLocking := PasswordLocking{}
-			if err := passwordLocking.ParseJSON(bj); err != nil {
-				return err
-			}
-			value.FailedLoginAttempts = passwordLocking.FailedLoginAttempts
-			value.PasswordLockTimeDays = passwordLocking.PasswordLockTimeDays
-			value.FailedLoginCount = passwordLocking.FailedLoginCount
-			value.AutoLockedLastChanged = passwordLocking.AutoLockedLastChanged
-			value.AutoAccountLocked = passwordLocking.AutoAccountLocked
-		case f.ColumnAsName.L == "password_expired":
-			if row.GetEnum(i).String() == "Y" {
-				value.PasswordExpired = true
-			}
-		case f.ColumnAsName.L == "password_last_changed":
-			t := row.GetTime(i)
-			gotime, err := t.GoTime(time.Local)
-			if err != nil {
-				return err
-			}
-			value.PasswordLastChanged = gotime
-		case f.ColumnAsName.L == "password_lifetime":
-			if row.IsNull(i) {
-				value.PasswordLifeTime = -1
-				continue
-			}
-			value.PasswordLifeTime = row.GetInt64(i)
-		case f.Column.GetType() == mysql.TypeEnum:
-			if row.GetEnum(i).String() != "Y" {
-				continue
-			}
-			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
-			if !ok {
-				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
-			}
-			value.Privileges |= priv
-		default:
-			value.assignUserOrHost(row, i, f)
 		}
+		old, ok := p.user.Get(itemUser{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.user.ReplaceOrInsert(old)
+		return nil
 	}
+<<<<<<< HEAD
 	p.user = append(p.user, value)
 	return nil
 }
@@ -950,14 +1272,56 @@ func (p *immutable) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.Result
 						value.Priv.SANs, err = util.ParseAndCheckSAN(value.Priv.SAN)
 						if err != nil {
 							value.Broken = true
+=======
+}
+
+func (p *MySQLPrivilege) decodeGlobalPrivTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value globalPrivRecord
+		for i, f := range fs {
+			if f.ColumnAsName.L == "priv" {
+				privData := row.GetString(i)
+				if len(privData) > 0 {
+					var privValue GlobalPrivValue
+					err := json.Unmarshal(hack.Slice(privData), &privValue)
+					if err != nil {
+						logutil.BgLogger().Error("one user global priv data is broken, forbidden login until data be fixed",
+							zap.String("user", value.User), zap.String("host", value.Host))
+						value.Broken = true
+					} else {
+						value.Priv.SSLType = privValue.SSLType
+						value.Priv.SSLCipher = strings.Clone(privValue.SSLCipher)
+						value.Priv.X509Issuer = strings.Clone(privValue.X509Issuer)
+						value.Priv.X509Subject = strings.Clone(privValue.X509Subject)
+						value.Priv.SAN = strings.Clone(privValue.SAN)
+						if len(value.Priv.SAN) > 0 {
+							value.Priv.SANs, err = util.ParseAndCheckSAN(value.Priv.SAN)
+							if err != nil {
+								value.Broken = true
+							}
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 						}
 					}
 				}
+			} else {
+				value.assignUserOrHost(row, i, f)
 			}
-		} else {
-			value.assignUserOrHost(row, i, f)
 		}
+		if userList != nil {
+			if _, ok := userList[value.User]; !ok {
+				return nil
+			}
+		}
+
+		old, ok := p.globalPriv.Get(itemGlobalPriv{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.globalPriv.ReplaceOrInsert(old)
+		return nil
 	}
+<<<<<<< HEAD
 	p.globalPriv = append(p.globalPriv, value)
 	return nil
 }
@@ -972,8 +1336,41 @@ func (p *immutable) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve.Resu
 			value.GrantOption = row.GetEnum(i).String() == "Y"
 		default:
 			value.assignUserOrHost(row, i, f)
+=======
+}
+
+func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value dynamicPrivRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "priv":
+				// When all characters are upper, strings.ToUpper returns a reference instead of a new copy.
+				// so strings.Clone is required here.
+				tmp := strings.Clone(row.GetString(i))
+				value.PrivilegeName = strings.ToUpper(tmp)
+			case "with_grant_option":
+				value.GrantOption = row.GetEnum(i).String() == "Y"
+			default:
+				value.assignUserOrHost(row, i, f)
+			}
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 		}
+		if userList != nil {
+			if _, ok := userList[value.User]; !ok {
+				return nil
+			}
+		}
+
+		old, ok := p.dynamicPriv.Get(itemDynamicPriv{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.dynamicPriv.ReplaceOrInsert(old)
+		return nil
 	}
+<<<<<<< HEAD
 	p.dynamicPriv = append(p.dynamicPriv, value)
 	return nil
 }
@@ -988,16 +1385,46 @@ func (p *immutable) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) e
 		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
+=======
+}
+
+func (p *MySQLPrivilege) decodeDBTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value dbRecord
+		for i, f := range fs {
+			switch {
+			case f.ColumnAsName.L == "db":
+				value.DB = strings.Clone(row.GetString(i))
+				value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBinary(strings.ToUpper(value.DB), '\\')
+			case f.Column.GetType() == mysql.TypeEnum:
+				if row.GetEnum(i).String() != "Y" {
+					continue
+				}
+				priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
+				if !ok {
+					return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
+				}
+				value.Privileges |= priv
+			default:
+				value.assignUserOrHost(row, i, f)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 			}
-			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
-			if !ok {
-				return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
-			}
-			value.Privileges |= priv
-		default:
-			value.assignUserOrHost(row, i, f)
 		}
+		if userList != nil {
+			if _, ok := userList[value.User]; !ok {
+				return nil
+			}
+		}
+
+		old, ok := p.db.Get(itemDB{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.db.ReplaceOrInsert(old)
+		return nil
 	}
+<<<<<<< HEAD
 	p.db = append(p.db, value)
 	return nil
 }
@@ -1016,10 +1443,46 @@ func (p *immutable) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.Result
 			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
 		default:
 			value.assignUserOrHost(row, i, f)
+=======
+}
+
+func (p *MySQLPrivilege) decodeTablesPrivTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value tablesPrivRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "db":
+				value.DB = strings.Clone(row.GetString(i))
+			case "table_name":
+				value.TableName = strings.Clone(row.GetString(i))
+			case "table_priv":
+				value.TablePriv = decodeSetToPrivilege(row.GetSet(i))
+			case "column_priv":
+				value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
+			default:
+				value.assignUserOrHost(row, i, f)
+			}
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 		}
+		if userList != nil {
+			if _, ok := userList[value.User]; !ok {
+				return nil
+			}
+		}
+
+		old, ok := p.tablesPriv.Get(itemTablesPriv{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.tablesPriv.ReplaceOrInsert(old)
+		return nil
 	}
+<<<<<<< HEAD
 	p.tablesPriv = append(p.tablesPriv, value)
 	return nil
+=======
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 }
 
 func (p *immutable) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.ResultField) error {
@@ -1027,26 +1490,33 @@ func (p *immutable) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.ResultFiel
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
 		case "from_host":
-			fromHost = row.GetString(i)
+			fromHost = strings.Clone(row.GetString(i))
 		case "from_user":
-			fromUser = row.GetString(i)
+			fromUser = strings.Clone(row.GetString(i))
 		case "to_host":
-			toHost = row.GetString(i)
+			toHost = strings.Clone(row.GetString(i))
 		case "to_user":
-			toUser = row.GetString(i)
+			toUser = strings.Clone(row.GetString(i))
 		}
 	}
-	fromKey := fromUser + "@" + fromHost
-	toKey := toUser + "@" + toHost
+	fromKey := auth.RoleIdentity{
+		Username: fromUser,
+		Hostname: fromHost,
+	}
+	toKey := auth.RoleIdentity{
+		Username: toUser,
+		Hostname: toHost,
+	}
 	roleGraph, ok := p.roleGraph[toKey]
 	if !ok {
-		roleGraph = roleGraphEdgesTable{roleList: make(map[string]*auth.RoleIdentity)}
+		roleGraph = roleGraphEdgesTable{roleList: make(map[auth.RoleIdentity]*auth.RoleIdentity)}
 		p.roleGraph[toKey] = roleGraph
 	}
 	roleGraph.roleList[fromKey] = &auth.RoleIdentity{Username: fromUser, Hostname: fromHost}
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *immutable) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value defaultRoleRecord
 	for i, f := range fs {
@@ -1057,8 +1527,36 @@ func (p *immutable) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.Resul
 			value.DefaultRoleUser = row.GetString(i)
 		default:
 			value.assignUserOrHost(row, i, f)
+=======
+func (p *MySQLPrivilege) decodeDefaultRoleTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value defaultRoleRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "default_role_host":
+				value.DefaultRoleHost = strings.Clone(row.GetString(i))
+			case "default_role_user":
+				value.DefaultRoleUser = strings.Clone(row.GetString(i))
+			default:
+				value.assignUserOrHost(row, i, f)
+			}
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 		}
+		if userList != nil {
+			if _, ok := userList[value.User]; !ok {
+				return nil
+			}
+		}
+
+		old, ok := p.defaultRoles.Get(itemDefaultRole{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.defaultRoles.ReplaceOrInsert(old)
+		return nil
 	}
+<<<<<<< HEAD
 	p.defaultRoles = append(p.defaultRoles, value)
 	return nil
 }
@@ -1078,15 +1576,52 @@ func (p *immutable) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.Resul
 			value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
 			if err != nil {
 				return errors.Trace(err)
+=======
+}
+
+func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value columnsPrivRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "db":
+				value.DB = strings.Clone(row.GetString(i))
+			case "table_name":
+				value.TableName = strings.Clone(row.GetString(i))
+			case "column_name":
+				value.ColumnName = strings.Clone(row.GetString(i))
+			case "timestamp":
+				var err error
+				value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			case "column_priv":
+				value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
+			default:
+				value.assignUserOrHost(row, i, f)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 			}
-		case "column_priv":
-			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
-		default:
-			value.assignUserOrHost(row, i, f)
 		}
+		if userList != nil {
+			if _, ok := userList[value.User]; !ok {
+				return nil
+			}
+		}
+
+		old, ok := p.columnsPriv.Get(itemColumnsPriv{username: value.User})
+		if !ok {
+			old.username = value.User
+		}
+		old.data = append(old.data, value)
+		p.columnsPriv.ReplaceOrInsert(old)
+		return nil
 	}
+<<<<<<< HEAD
 	p.columnsPriv = append(p.columnsPriv, value)
 	return nil
+=======
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 }
 
 func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
@@ -1159,9 +1694,20 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 
 // matchIdentity finds an identity to match a user + host
 // using the correct rules according to MySQL.
+<<<<<<< HEAD
 func (p *MySQLPrivilege) matchIdentity(sctx sqlexec.RestrictedSQLExecutor, user, host string, skipNameResolve bool) *UserRecord {
 	for i := 0; i < len(p.user); i++ {
 		record := &p.user[i]
+=======
+func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) *UserRecord {
+	item, ok := p.user.Get(itemUser{username: user})
+	if !ok {
+		return nil
+	}
+
+	for i := range item.data {
+		record := &item.data[i]
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 		if record.match(user, host) {
 			return record
 		}
@@ -1181,8 +1727,13 @@ func (p *MySQLPrivilege) matchIdentity(sctx sqlexec.RestrictedSQLExecutor, user,
 			return nil
 		}
 		for _, addr := range addrs {
+<<<<<<< HEAD
 			for i := 0; i < len(p.user); i++ {
 				record := &p.user[i]
+=======
+			for i := range item.data {
+				record := &item.data[i]
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 				if record.match(user, addr) {
 					return record
 				}
@@ -1452,6 +2003,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 			return gs
 		}
 	}
+<<<<<<< HEAD
 	var g string
 	for _, record := range p.user {
 		if record.fullyMatch(user, host) {
@@ -1460,6 +2012,13 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
+=======
+
+	for _, r := range allRoles {
+		if userList, ok := p.user.Get(itemUser{username: r.Username}); ok {
+			for _, record := range userList.data {
+				if record.fullyMatch(r.Username, r.Hostname) {
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
 					hasGlobalGrant = true
 					currentPriv |= record.Privileges
 				}
@@ -1578,15 +2137,16 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.
-	graphKey := user + "@" + host
+	graphKey := auth.RoleIdentity{
+		Username: user,
+		Hostname: host,
+	}
 	edgeTable, ok := p.roleGraph[graphKey]
 	g = ""
 	if ok {
 		sortedRes := make([]string, 0, 10)
 		for k := range edgeTable.roleList {
-			role := strings.Split(k, "@")
-			roleName, roleHost := role[0], role[1]
-			tmp := fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
+			tmp := fmt.Sprintf("'%s'@'%s'", k.Username, k.Hostname)
 			sortedRes = append(sortedRes, tmp)
 		}
 		slices.Sort(sortedRes)
@@ -1803,7 +2363,10 @@ func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity
 }
 
 func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
-	key := user + "@" + host
+	key := auth.RoleIdentity{
+		Username: user,
+		Hostname: host,
+	}
 	edgeTable, ok := p.roleGraph[key]
 	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
 	if ok {
@@ -1832,9 +2395,14 @@ func NewHandle(sctx sqlexec.RestrictedSQLExecutor) *Handle {
 	return ret
 }
 
-// ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (h *Handle) ensureActiveUser(user string) error {
-	return nil
+func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
+	for {
+		old := h.Get()
+		swapped := h.priv.CompareAndSwap(old, old.merge(data, userList))
+		if swapped {
+			break
+		}
+	}
 }
 
 // Get the MySQLPrivilege for read.
@@ -1842,14 +2410,67 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
+<<<<<<< HEAD
 // Update loads all the privilege info from kv storage.
 func (h *Handle) Update() error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(h.sctx)
+=======
+// UpdateAll loads all the users' privilege info from kv storage.
+func (h *Handle) UpdateAll() error {
+	priv := newMySQLPrivilege()
+	res, err := h.sctx.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer h.sctx.Put(res)
+	exec := res.(sqlexec.SQLExecutor)
+
+	err = priv.LoadAll(exec)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
+	if err != nil {
+		return errors.Trace(err)
+	}
+<<<<<<< HEAD
+
+	h.priv.Store(&priv)
+=======
+	h.priv.Store(priv)
+>>>>>>> 1e916564459 (privilege: introduce 'partial update' for users and privileges cache (#62693))
+	return nil
+}
+
+// Update loads the privilege info from kv storage for the list of users.
+func (h *Handle) Update(userList []string) error {
+	if len(userList) > 100 {
+		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
+	}
+
+	return h.updateUsers(userList)
+}
+
+func (h *Handle) updateUsers(userList []string) error {
+	res, err := h.sctx.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer h.sctx.Put(res)
+	exec := res.(sqlexec.SQLExecutor)
+
+	p := newMySQLPrivilege()
+	// Load the full role edge table first.
+	p.roleGraph = make(map[auth.RoleIdentity]roleGraphEdgesTable)
+	err = loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Including the user and also their roles
+	userAndRoles := findUserAndAllRoles(userList, p.roleGraph)
+	err = p.loadSomeUsers(exec, userAndRoles)
 	if err != nil {
 		return err
 	}
-
-	h.priv.Store(&priv)
+	h.merge(p, userAndRoles)
 	return nil
 }
