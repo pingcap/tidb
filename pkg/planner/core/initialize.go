@@ -61,17 +61,6 @@ func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndex
 	return &p
 }
 
-func initForStream(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
-	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	baseAgg := pp.(*physicalop.BasePhysicalAgg)
-	p := &PhysicalStreamAgg{*baseAgg}
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	p.SetSchema(schema)
-	return p
-}
-
 // Init initializes PhysicalApply.
 func (p PhysicalApply) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalApply {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeApply, &p, offset)
@@ -154,7 +143,7 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 			case 1:
 				for _, plan := range p.TablePlans {
 					switch plan.(type) {
-					case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalTopN:
+					case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalTopN:
 						p.ReadReqType = BatchCop
 						return
 					}

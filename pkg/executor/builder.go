@@ -276,7 +276,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSelection(v)
 	case *physicalop.PhysicalHashAgg:
 		return b.buildHashAgg(v)
-	case *plannercore.PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		return b.buildStreamAgg(v)
 	case *physicalop.PhysicalProjection:
 		return b.buildProjection(v)
@@ -2117,7 +2117,7 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 	return e
 }
 
-func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.Executor {
+func (b *executorBuilder) buildStreamAgg(v *physicalop.PhysicalStreamAgg) exec.Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2125,7 +2125,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	return b.buildStreamAggFromChildExec(src, v)
 }
 
-func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v *plannercore.PhysicalStreamAgg) *aggregate.StreamAggExec {
+func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalStreamAgg) *aggregate.StreamAggExec {
 	exprCtx := b.ctx.GetExprCtx()
 	e := &aggregate.StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -4628,7 +4628,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildHashAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
-	case *plannercore.PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err

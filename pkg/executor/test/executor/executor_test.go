@@ -799,7 +799,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&plannercore.PhysicalIndexMergeReader{},
 		&plannercore.PhysicalApply{},
 		&physicalop.PhysicalHashAgg{},
-		&plannercore.PhysicalStreamAgg{},
+		&physicalop.PhysicalStreamAgg{},
 		&physicalop.PhysicalLimit{},
 		&physicalop.PhysicalSort{},
 		&physicalop.PhysicalTopN{},

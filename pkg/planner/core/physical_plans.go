@@ -68,7 +68,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashAgg{}
-	_ base.PhysicalPlan = &PhysicalStreamAgg{}
+	_ base.PhysicalPlan = &physicalop.PhysicalStreamAgg{}
 	_ base.PhysicalPlan = &PhysicalApply{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashJoin{}
@@ -318,7 +318,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalProjection:
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -1119,36 +1119,6 @@ func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
 // AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
 func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
-}
-
-// PhysicalStreamAgg is stream operator of aggregate.
-type PhysicalStreamAgg struct {
-	physicalop.BasePhysicalAgg
-}
-
-func (p *PhysicalStreamAgg) getPointer() *physicalop.BasePhysicalAgg {
-	return &p.BasePhysicalAgg
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalStreamAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalStreamAgg)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalAgg.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalAgg = *base
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalStreamAgg
-func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.BasePhysicalAgg.MemoryUsage()
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
