@@ -181,7 +181,7 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 }
 
 // GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
-// physcialTableID can be a table ID or partition ID.
+// physicalTableID can be a table ID or partition ID.
 // Note: this function may return nil if the table is not found in the cache.
 func (h *Handle) GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool) {
 	return h.getStatsByPhysicalID(physicalTableID, nil)
