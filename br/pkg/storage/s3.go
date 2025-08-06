@@ -1234,6 +1234,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		bufSize = int(option.PartSize)
 	}
 	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
+	log.Info("create s3 uploader")
 	return uploaderWriter, nil
 }
 

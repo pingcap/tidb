@@ -681,6 +681,7 @@ func (rs *KS3Storage) createUploader(ctx context.Context, name string) (External
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	log.Info("create ks3 uploader")
 	return &KS3Uploader{
 		svc:           rs.svc,
 		createOutput:  resp,

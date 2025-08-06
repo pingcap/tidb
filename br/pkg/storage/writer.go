@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"time"
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"go.uber.org/zap"
 )
 
@@ -205,11 +207,21 @@ func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 				continue
 			}
 		}
+		st := time.Now()
+		bufferLen := u.buf.Len()
 		_ = u.buf.Flush()
 		err := u.uploadChunk(ctx)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		writeDuration := time.Since(st)
+		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("bufferedWriter").Observe(writeDuration.Seconds())
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("bufferedWriter").
+			Observe(float64(bufferLen) / 1024.0 / 1024.0 / writeDuration.Seconds())
+		log.Info("bufferedWriter upload chunk speed",
+			zap.Duration("duration", writeDuration),
+			zap.Float64("speed(MiB/s)", float64(bufferLen)/1024.0/1024.0/writeDuration.Seconds()),
+		)
 	}
 	w, err := u.buf.Write(p)
 	bytesWritten += w
