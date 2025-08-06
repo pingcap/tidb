@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -85,7 +84,7 @@ var (
 	_ PhysicalJoin = &physicalop.PhysicalHashJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalIndexJoin{}
-	_ PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ PhysicalJoin = &physicalop.PhysicalIndexHashJoin{}
 	_ PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
@@ -927,43 +926,6 @@ func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
 	sum = p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.KeyOff2KeyOffOrderByIdx))*size.SizeOfInt +
 		int64(cap(p.CompareFuncs)+cap(p.OuterCompareFuncs))*size.SizeOfFunc + size.SizeOfBool*2
 	return
-}
-
-// PhysicalIndexHashJoin represents the plan of index look up hash join.
-type PhysicalIndexHashJoin struct {
-	physicalop.PhysicalIndexJoin
-	// KeepOuterOrder indicates whether keeping the output result order as the
-	// outer side.
-	KeepOuterOrder bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexHashJoin)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalJoin.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalJoin = *base
-	physicalIndexJoin, err := p.PhysicalIndexJoin.Clone(newCtx)
-	if err != nil {
-		return nil, err
-	}
-	indexJoin, ok := physicalIndexJoin.(*physicalop.PhysicalIndexJoin)
-	intest.Assert(ok)
-	cloned.PhysicalIndexJoin = *indexJoin
-	cloned.KeepOuterOrder = p.KeepOuterOrder
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexHashJoin
-func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.PhysicalIndexJoin.MemoryUsage() + size.SizeOfBool
 }
 
 // PhysicalExchangeReceiver accepts connection and receives data passively.

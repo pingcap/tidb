@@ -748,7 +748,7 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	case *PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
 	case *physicalop.PhysicalIndexJoin:
