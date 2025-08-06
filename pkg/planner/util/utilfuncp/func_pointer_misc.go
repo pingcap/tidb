@@ -359,7 +359,8 @@ var Attach2Task4PhysicalHashAgg func(pp base.PhysicalPlan, tasks ...base.Task) b
 var GetCost4PhysicalStreamAgg func(pp base.PhysicalPlan, inputRows float64, isRoot bool,
 	costFlag uint64) float64
 
-// GetPlanCostVer14PhysicalStreamAgg calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// GetPlanCostVer14PhysicalStreamAgg calculates the cost of the plan if it has not been
+// calculated yet and returns the cost.
 var GetPlanCostVer14PhysicalStreamAgg func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
