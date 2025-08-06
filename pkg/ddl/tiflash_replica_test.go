@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -409,6 +410,8 @@ func TestCreateTableWithLike2(t *testing.T) {
 }
 
 func TestTruncateTable2(t *testing.T) {
+	t.Logf("IsEmulatorGCEnable = %v", util.IsEmulatorGCEnable())
+	util.EmulatorGCEnable()
 	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -432,7 +435,7 @@ func TestTruncateTable2(t *testing.T) {
 	// Verify that the old table data has been deleted by background worker.
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
-	for range waitForCleanDataRound {
+	require.Eventually(t, func() bool {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)
@@ -448,12 +451,8 @@ func TestTruncateTable2(t *testing.T) {
 			return nil
 		})
 		require.NoError(t, err)
-		if !hasOldTableData {
-			break
-		}
-		time.Sleep(waitForCleanDataInterval)
-	}
-	require.False(t, hasOldTableData)
+		return !hasOldTableData
+	}, 30*time.Second, 100*time.Millisecond)
 
 	// Test for truncate table should clear the tiflash available status.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))

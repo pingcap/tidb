@@ -56,9 +56,9 @@ func TestColumnAdd(t *testing.T) {
 		dropCol         *table.Column
 	)
 	first := true
-	var jobID int64
+	var jobID atomic.Int64
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		jobID = job.ID
+		jobID.Store(job.ID)
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
@@ -79,7 +79,7 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
 	v := getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
+	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Drop column.
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
@@ -92,7 +92,7 @@ func TestColumnAdd(t *testing.T) {
 		if job.NotStarted() {
 			return
 		}
-		jobID = job.ID
+		jobID.Store(job.ID)
 		tbl := external.GetTableByName(t, internal, "test", "t")
 		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
@@ -103,12 +103,12 @@ func TestColumnAdd(t *testing.T) {
 	tk.MustExec("alter table t drop column c3")
 	v = getSchemaVer(t, tk.Session())
 	// Don't check column, so it's ok to use tb.
-	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
+	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Add column not default.
 	first = true
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		jobID = job.ID
+		jobID.Store(job.ID)
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
@@ -127,7 +127,7 @@ func TestColumnAdd(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add column c3 int")
-	testCheckJobDone(t, store, jobID, true)
+	testCheckJobDone(t, store, jobID.Load(), true)
 }
 
 func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
