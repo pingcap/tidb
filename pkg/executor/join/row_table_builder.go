@@ -42,6 +42,7 @@ type rowTableBuilder struct {
 	usedRows                  []int
 	hashValue                 []uint64
 	firstSegRowSizeHint       uint
+	prevSegRawDataSize        int
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
@@ -360,9 +361,12 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true, b.firstSegRowSizeHint)
 		// first check if current seg is full
 		if b.rowNumberInCurrentRowTableSeg[partIdx] >= maxRowTableSegmentSize || len(seg.rawData) >= maxRowTableSegmentByteSize {
+			b.prevSegRawDataSize = len(seg.rawData)
+
 			// finalize current seg and create a new seg
 			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partIdx, b, true)
 			seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerID, partIdx, true, b.firstSegRowSizeHint)
+			seg.rawData = make([]byte, 0, b.prevSegRawDataSize)
 		}
 		if hasValidKey {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
