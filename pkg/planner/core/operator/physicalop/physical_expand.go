@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -133,7 +132,7 @@ func (p *PhysicalExpand) explainInfoV2() string {
 	sb.WriteString("; schema: [")
 	colStrs := make([]string, 0, len(p.Schema().Columns))
 	for _, col := range p.Schema().Columns {
-		colStrs = append(colStrs, col.StringWithCtx(evalCtx, perrors.RedactLogDisable))
+		colStrs = append(colStrs, col.StringWithCtx(evalCtx, errors.RedactLogDisable))
 	}
 	sb.WriteString(strings.Join(colStrs, ","))
 	sb.WriteString("]")
@@ -151,10 +150,10 @@ func (p *PhysicalExpand) ExplainInfo() string {
 	str.WriteString(strconv.FormatInt(int64(len(p.GroupingSets)), 10))
 	if p.GroupingIDCol != nil {
 		str.WriteString(", groupingID:")
-		str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, perrors.RedactLogDisable))
+		str.WriteString(p.GroupingIDCol.StringWithCtx(ectx, errors.RedactLogDisable))
 		str.WriteString(", ")
 	}
-	str.WriteString(p.GroupingSets.StringWithCtx(ectx, perrors.RedactLogDisable))
+	str.WriteString(p.GroupingSets.StringWithCtx(ectx, errors.RedactLogDisable))
 	return str.String()
 }
 
