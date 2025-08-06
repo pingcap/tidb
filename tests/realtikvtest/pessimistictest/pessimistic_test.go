@@ -3390,21 +3390,6 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 func TestIssueBatchResolveLocks(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 
-	// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
-	// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
-	tkcfg := testkit.NewTestKit(t, store)
-	res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
-	if len(res) > 0 && res[0][3].(string) == "true" {
-		tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
-		tkcfg.MustQuery("show warnings").Check(testkit.Rows())
-		defer func() {
-			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
-		}()
-		time.Sleep(time.Second)
-	} else {
-		t.Log("skip disabling in-memory pessimistic lock, current config:", res)
-	}
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int primary key, v int)")
