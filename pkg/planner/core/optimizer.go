@@ -541,8 +541,8 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
 	var physicalAgg *physicalop.BasePhysicalAgg
 	switch x := plan.(type) {
-	case *PhysicalHashAgg:
-		physicalAgg = x.getPointer()
+	case *physicalop.PhysicalHashAgg:
+		physicalAgg = x.GetPointer()
 	case *PhysicalStreamAgg:
 		physicalAgg = x.getPointer()
 	default:
@@ -860,7 +860,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		// Todo: allow hash aggregation's output still benefits from fine grained shuffle
 		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*physicalop.BasePhysicalPlan{}}
 		aggHelper.plans = append(aggHelper.plans, &x.BasePhysicalPlan)

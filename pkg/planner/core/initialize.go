@@ -64,7 +64,7 @@ func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndex
 func initForHash(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
 	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
 	baseAgg := pp.(*physicalop.BasePhysicalAgg)
-	p := &PhysicalHashAgg{*baseAgg, ""}
+	p := &physicalop.PhysicalHashAgg{*baseAgg, ""}
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
@@ -165,7 +165,7 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 			case 1:
 				for _, plan := range p.TablePlans {
 					switch plan.(type) {
-					case *PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalTopN:
+					case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalTopN:
 						p.ReadReqType = BatchCop
 						return
 					}

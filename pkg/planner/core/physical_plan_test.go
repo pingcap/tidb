@@ -416,7 +416,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 	if p, ok := root.(*core.PhysicalTableReader); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
-			if agg, ok := baseAgg.(*core.PhysicalHashAgg); ok {
+			if agg, ok := baseAgg.(*physicalop.PhysicalHashAgg); ok {
 				for i, aggfunc := range agg.AggFuncs {
 					require.Equal(t, aggfunc.RetTp, agg.Schema().Columns[i].RetType)
 				}
