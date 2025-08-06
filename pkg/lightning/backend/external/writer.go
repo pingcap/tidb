@@ -722,6 +722,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 			return "", "", "", err
 		}
 	}
+
 	writeDuration := time.Since(writeStartTime)
 	logger.Info("flush sorted kv",
 		zap.Uint64("bytes", w.batchSize),
