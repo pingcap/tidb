@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1777,8 +1778,8 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 }
 
 // InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
-func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) error {
-	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema)
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string) error {
+	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, getEtcdClient, tblInfo, schema)
 	if err != nil {
 		return err
 	}

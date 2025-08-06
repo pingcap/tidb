@@ -20,6 +20,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,6 +50,10 @@ func (m *MockMetaServiceClient) MarkPartitionUploadFinished(ctx context.Context,
 func (m *MockMetaServiceClient) MarkTableUploadFinished(ctx context.Context, in *MarkTableUploadFinishedRequest, opts ...grpc.CallOption) (*MarkTableUploadFinishedResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*MarkTableUploadFinishedResponse), args.Error(1)
+}
+func (m *MockMetaServiceClient) GetShardLocalCacheInfo(ctx context.Context, in *GetShardLocalCacheRequest, opts ...grpc.CallOption) (*GetShardLocalCacheResponse, error) {
+	args := m.Called(ctx, in)
+	return args.Get(0).(*GetShardLocalCacheResponse), args.Error(1)
 }
 
 func newTestTiCIManagerCtx(mockClient MetaServiceClient) *ManagerCtx {
@@ -173,6 +178,40 @@ func TestMarkTableUploadFinished(t *testing.T) {
 		Once()
 	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
 	assert.Error(t, err)
+}
+
+func TestScanRanges(t *testing.T) {
+	mockClient := new(MockMetaServiceClient)
+	ctx := newTestTiCIManagerCtx(mockClient)
+	tableID, indexID := int64(1), int64(2)
+
+	keyRanges := []kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+		{StartKey: []byte("c"), EndKey: []byte("d")},
+	}
+
+	mockClient.
+		On("GetShardLocalCacheInfo", mock.Anything, mock.Anything).
+		Return(&GetShardLocalCacheResponse{
+			Status: 0,
+			ShardLocalCacheInfos: []*ShardLocalCacheInfo{
+				{Shard: &ShardManifestHeader{ShardId: 1, StartKey: []byte("a"), EndKey: []byte("b"), Epoch: 1}, LocalCacheAddrs: []string{"addr1"}},
+				{Shard: &ShardManifestHeader{ShardId: 2, StartKey: []byte("c"), EndKey: []byte("d"), Epoch: 1}, LocalCacheAddrs: []string{"addr2"}},
+			},
+		}, nil).
+		Once()
+
+	shardInfos, err := ctx.ScanRanges(context.Background(), tableID, indexID, keyRanges, 100)
+	assert.NoError(t, err)
+	assert.Len(t, shardInfos, 2)
+	assert.Equal(t, uint64(1), shardInfos[0].Shard.ShardId)
+	assert.Equal(t, []byte("a"), shardInfos[0].Shard.StartKey)
+	assert.Equal(t, []byte("b"), shardInfos[0].Shard.EndKey)
+	assert.Equal(t, []string{"addr1"}, shardInfos[0].LocalCacheAddrs)
+	assert.Equal(t, uint64(2), shardInfos[1].Shard.ShardId)
+	assert.Equal(t, []byte("c"), shardInfos[1].Shard.StartKey)
+	assert.Equal(t, []byte("d"), shardInfos[1].Shard.EndKey)
+	assert.Equal(t, []string{"addr2"}, shardInfos[1].LocalCacheAddrs)
 }
 
 func TestModelTableToTiCITableInfo(t *testing.T) {

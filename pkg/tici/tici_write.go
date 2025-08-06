@@ -327,7 +327,7 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, cou
 // of which engine is currently being written. Addressing this would require
 // significant changes to the import-into interface and should be considered
 // in longer-term architectural improvements.
-func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string) (*DataWriterGroup, error) {
+func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string) (*DataWriterGroup, error) {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
 	if len(fulltextIndexes) == 0 {
 		return nil, nil // No full-text indexes, no writers needed
@@ -349,7 +349,7 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 	if err != nil {
 		return nil, err
 	}
-	mgrCtx, err := NewTiCIManager(ctx, etcdClient.GetClient())
+	mgrCtx, err := NewManagerCtx(ctx, etcdClient.GetClient())
 	if err != nil {
 		return nil, err
 	}
