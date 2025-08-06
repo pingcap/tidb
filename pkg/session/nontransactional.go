@@ -467,11 +467,14 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	if len(stmts) != 1 {
 		return nil, errors.Errorf("Non-transactional DML, expecting 1 statement, but got %d", len(stmts))
 	}
-	if selectStmt, ok := stmts[0].(*ast.SelectStmt); !ok {
+
+	selectStmt, ok := stmts[0].(*ast.SelectStmt)
+	if !ok {
 		return nil, errors.Errorf("Non-transactional DML, selectSQL parsed to a non-select statement, type %T", stmts[0])
-	} else {
-		selectStmt.IsNontransactionalDML = true
 	}
+	// Mark the select statement as non-transactional DML.
+	selectStmt.IsNontransactionalDML = true
+
 	rs, err := se.ExecuteStmt(ctx, stmts[0])
 	se.GetSessionVars().SelectLimit = originalSelectLimit
 
