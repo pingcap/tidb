@@ -791,6 +791,8 @@ type PhysicalIndexScan struct {
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
 
 	StoreType kv.StoreType
+
+	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
 }
 
 // Clone implements op.PhysicalPlan interface.

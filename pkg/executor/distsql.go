@@ -596,7 +596,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	} else {
 		physicalID := getPhysicalTableID(e.table)
 		var kvRanges *kv.KeyRanges
-		if e.index.IsFulltextIndex() {
+		if e.index.IsFulltextIndexOnTiCI() {
 			kvRanges, err = distsql.FulltextIndexRangesToKVRanges(dctx, []int64{physicalID}, e.ranges)
 		} else {
 			if e.index.ID == -1 {
@@ -792,7 +792,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
 				SetAllowBatchCop(e.batchCop).
 				SetStoreType(e.storeType)
-			if e.index.IsFulltextIndex() {
+			if e.index.IsFulltextIndexOnTiCI() {
 				builder.SetPaging(false)
 				builder.SetFullText(true)
 				builder.FullTextInfo.TableID = e.table.Meta().ID

@@ -940,6 +940,12 @@ func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 
 // CreateFulltextIndex create fulltext index on TiCI.
 func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+	failpoint.Inject("MockCreateTiCIndexSuccess", func(val failpoint.Value) {
+		if x := val.(bool); x {
+			failpoint.Return(nil)
+		}
+		failpoint.Return(errors.New("mock create TiCI index failed"))
+	})
 	ticiManager, err := tici.NewTiCIManager(ctx, GetEtcdClient())
 	if err != nil {
 		return err

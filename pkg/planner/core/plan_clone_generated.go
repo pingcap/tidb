@@ -82,6 +82,9 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	}
 	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
 	copy(cloned.constColsByCond, op.constColsByCond)
+	if op.FtsQueryInfo != nil {
+		return nil, false
+	}
 	return cloned, true
 }
 
