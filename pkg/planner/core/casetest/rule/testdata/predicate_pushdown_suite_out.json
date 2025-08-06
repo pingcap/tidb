@@ -38,6 +38,16 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select foo.a, foo.b, bar.c from foo join bar on foo.a=bar.a where (foo.a,foo.b) in ((1,2),(3,4));",
+        "Plan": [
+          "MergeJoin 1.25 root  inner join, left key:test.foo.a, right key:test.bar.a",
+          "├─Batch_Point_Get(Build) 2.00 root table:bar handle:[1 3], keep order:true, desc:false",
+          "└─Selection(Probe) 1.00 root  or(and(eq(test.foo.a, 1), eq(test.foo.b, 2)), and(eq(test.foo.a, 3), eq(test.foo.b, 4))), or(eq(test.foo.b, 2), eq(test.foo.b, 4))",
+          "  └─Batch_Point_Get 2.00 root table:foo handle:[1 3], keep order:true, desc:false"
+        ],
+        "Warning": null
       }
     ]
   }
