@@ -346,7 +346,8 @@ var Attach2Task4PhysicalIndexHashJoin func(pp base.PhysicalPlan, tasks ...base.T
 var GetCost4PhysicalHashAgg func(pp base.PhysicalPlan, inputRows float64, isRoot, isMPP bool,
 	costFlag uint64) float64
 
-// GetPlanCostVer14PhysicalHashAgg calculates the cost of the plan if it has not been calculated yet and returns the cost.
+// GetPlanCostVer14PhysicalHashAgg calculates the cost of the plan if it has not been
+// calculated yet and returns the cost.
 var GetPlanCostVer14PhysicalHashAgg func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
