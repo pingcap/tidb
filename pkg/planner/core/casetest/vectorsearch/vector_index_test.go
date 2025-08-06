@@ -52,7 +52,9 @@ func TestVectorIndexProtobufMatch(t *testing.T) {
 
 func TestTiFlashANNIndex(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
 	tk := testkit.NewTestKit(t, store)
+
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
 	defer func() {
@@ -115,7 +117,9 @@ func TestTiFlashANNIndex(t *testing.T) {
 
 func TestANNIndexNormalizedPlan(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
 	tk := testkit.NewTestKit(t, store)
+
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
 	defer func() {
@@ -214,7 +218,9 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 
 func TestANNInexWithSimpleCBO(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
 	tk := testkit.NewTestKit(t, store)
+
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
 	defer func() {
@@ -245,7 +251,9 @@ func TestANNInexWithSimpleCBO(t *testing.T) {
 
 func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
 	tk := testkit.NewTestKit(t, store)
+
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
 	defer func() {
