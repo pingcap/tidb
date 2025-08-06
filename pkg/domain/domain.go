@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -127,7 +128,9 @@ var (
 )
 
 const (
-	indexUsageGCDuration = 30 * time.Minute
+	indexUsageGCDuration  = 30 * time.Minute
+	systemSessionPoolSize = 200
+	dxfSessionPoolSize    = 100
 )
 
 // NewMockDomain is only used for test
@@ -162,6 +165,7 @@ type Domain struct {
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
 	// Deprecated: Use `advancedSysSessionPool` instead.
 	sysSessionPool util.DestroyableSessionPool
+	dxfSessionPool util.DestroyableSessionPool
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
@@ -508,6 +512,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
+	do.dxfSessionPool.Close()
 	do.advancedSysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
@@ -546,31 +551,10 @@ func NewDomainWithEtcdClient(
 	etcdClient *clientv3.Client,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
-	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store: store,
-		exit:  make(chan struct{}),
-		sysSessionPool: util.NewSessionPool(
-			capacity, factory,
-			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				infosync.StoreInternalSession(r)
-			},
-			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				intest.AssertFunc(func() bool {
-					txn, _ := sctx.Txn(false)
-					return txn == nil || !txn.Valid()
-				})
-				infosync.DeleteInternalSession(r)
-			},
-			func(r pools.Resource) {
-				intest.Assert(r != nil)
-				infosync.DeleteInternalSession(r)
-			},
-		),
+		store:             store,
+		exit:              make(chan struct{}),
+		sysSessionPool:    createInternelSessionPool(systemSessionPoolSize, factory),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
@@ -579,7 +563,7 @@ func NewDomainWithEtcdClient(
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
 	}
 
-	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
+	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
 		r, err := factory()
 		if err != nil {
 			return nil, err
@@ -611,7 +595,34 @@ func NewDomainWithEtcdClient(
 	do.initDomainSysVars()
 
 	do.crossKSSessMgr = crossks.NewManager()
+	if kerneltype.IsClassic() || keyspace.IsRunningOnSystem() {
+		do.dxfSessionPool = createInternelSessionPool(dxfSessionPoolSize, factory)
+	}
 	return do
+}
+
+func createInternelSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
+	return util.NewSessionPool(
+		capacity, factory,
+		func(r pools.Resource) {
+			_, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			infosync.StoreInternalSession(r)
+		},
+		func(r pools.Resource) {
+			sctx, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			intest.AssertFunc(func() bool {
+				txn, _ := sctx.Txn(false)
+				return txn == nil || !txn.Valid()
+			})
+			infosync.DeleteInternalSession(r)
+		},
+		func(r pools.Resource) {
+			intest.Assert(r != nil)
+			infosync.DeleteInternalSession(r)
+		},
+	)
 }
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
@@ -1042,7 +1053,7 @@ func (do *Domain) InitDistTaskLoop() error {
 		}
 	})
 
-	taskManager := storage.NewTaskManager(do.sysSessionPool)
+	taskManager := storage.NewTaskManager(do.dxfSessionPool)
 	storage.SetTaskManager(taskManager)
 
 	if keyspace.IsRunningOnUser() {
