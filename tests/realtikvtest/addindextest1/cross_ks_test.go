@@ -47,6 +47,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	require.NoError(t, err)
 	taskKey := ddl.TaskKey(int64(jobID))
 
+<<<<<<< HEAD
 	// job to user keyspace, task to system keyspace
 	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
 	taskQuerySQL := fmt.Sprintf(`select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key='%s'
@@ -54,4 +55,54 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	sysKSTk.MustQuery(taskQuerySQL).Check(testkit.Rows("1"))
 	// reverse check
 	tk.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
+=======
+	t.Run("submit add index sql on user keyspace", func(t *testing.T) {
+		userStore := realtikvtest.CreateMockStoreAndSetup(t,
+			realtikvtest.WithKeyspaceName("keyspace1"))
+		tk := testkit.NewTestKit(t, userStore)
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int, b int);")
+		tk.MustExec("insert into t values (1, 2);")
+
+		var ch = make(chan struct{})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSubmitDXFTask", func() {
+			close(ch)
+		})
+		go func() {
+			tk.Exec("alter table t add index idx_a (a);")
+		}()
+		<-ch
+		t.Log("global task submitted")
+	})
+
+	t.Run("run add index worker at system keyspace", func(t *testing.T) {
+		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithRetainData())
+		tk := testkit.NewTestKit(t, systemStore)
+		tk.MustExec("use test")
+		// The table in system keyspace is different from the one in user keyspace.
+		tk.MustExec("create table t (a int, b int);")
+
+		rs := tk.MustQuery("select * from mysql.tidb_global_task order by id desc").Rows()
+		require.Greater(t, len(rs), 0)
+
+		taskID, err := strconv.Atoi(rs[0][0].(string))
+		require.NoError(t, err)
+		ctx := kv.WithInternalSourceType(context.Background(), "realtikvtest")
+		err = handle.WaitTaskDoneOrPaused(ctx, int64(taskID))
+		require.NoError(t, err)
+	})
+
+	t.Run("check ddl state at user keyspace", func(t *testing.T) {
+		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithKeyspaceName("keyspace1"), realtikvtest.WithRetainData())
+		tk := testkit.NewTestKit(t, systemStore)
+		var jobState string
+		require.Eventuallyf(t, func() bool {
+			rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
+			jobState = rs[0][11].(string)
+			return jobState == model.JobStateSynced.String()
+		}, 10*time.Second, 200*time.Millisecond, "job state should be done")
+		tk.MustExec("use test")
+		tk.MustExec("admin check table t;")
+	})
+>>>>>>> 6f38f974a3c (tests: fix realtikv test for next-gen (#62701))
 }

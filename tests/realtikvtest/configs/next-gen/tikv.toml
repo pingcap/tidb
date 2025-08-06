@@ -11,9 +11,10 @@ s3-secret-key = "minioadmin"
 s3-bucket = "next-gen-test"
 s3-region = "local"
 
-[kvengine]
-remote-coprocessor-addr = "http://127.0.0.1:19000/coprocessor"
-remote-coprocessor-min-blocks-size = 32768                     # 32MB by default
+# Disable remote coprocessor otherwise analyze table will report "other error: empty string" error.
+# [kvengine]
+# remote-coprocessor-addr = "http://127.0.0.1:19000/coprocessor"
+# remote-coprocessor-min-blocks-size = 32768                     # 32MB by default
 
 [ia]
 enabled = true
