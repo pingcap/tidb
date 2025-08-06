@@ -226,7 +226,7 @@ func (s *Syncer) MDLCheckLoop(ctx context.Context) {
 			return
 		}
 
-		if !vardef.EnableMDL.Load() {
+		if !vardef.IsMDLEnabled() {
 			continue
 		}
 
