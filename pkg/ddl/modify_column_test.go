@@ -607,21 +607,23 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 	insertOnce := sync.Once{}
 	tk2 := testkit.NewTestKit(t, store)
 	tk3 := testkit.NewTestKit(t, store)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
+	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
 		deleteOnce.Do(func() {
 			go func() {
 				tk2.MustExec("use test")
 				tk2.MustExec("delete from t where id = 1;")
 			}()
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/afterLoadSchemaDiffs", func(int64) {
+			err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/domain/afterLoadSchemaDiffs", func(int64) {
 				insertOnce.Do(func() {
 					tk3.MustExec("use test")
 					tk3.MustExec("insert into t (val0, val1, padding) values (4, 4, 'd');")
 				})
 			})
+			require.NoError(t, err)
 			<-conflictCh
 		})
 	})
+	require.NoError(t, err)
 	tk.MustExec("alter table t modify column val0 int not null;")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(

@@ -359,12 +359,8 @@ func buildColumnInfo(colID int64, col columnInfo) *model.ColumnInfo {
 	fieldType.SetFlag(col.flag)
 	fieldType.SetElems(col.enumElems)
 	return &model.ColumnInfo{
-<<<<<<< HEAD
-		Name:         model.NewCIStr(col.name),
-=======
 		ID:           colID,
-		Name:         ast.NewCIStr(col.name),
->>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
+		Name:         model.NewCIStr(col.name),
 		FieldType:    fieldType,
 		State:        model.StatePublic,
 		DefaultValue: col.deflt,
