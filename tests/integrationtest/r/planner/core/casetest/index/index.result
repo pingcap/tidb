@@ -763,7 +763,7 @@ id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
 └─TableReader	1.00	root		data:Limit
   └─Limit	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true
+    └─TableFullScan	1.02	cop[tikv]	table:t1	keep order:true
 select * from t1 order by a, b limit 1;
 a	b	c	d
 1	111	1.1000000000	11

@@ -83,6 +83,7 @@ go_test(
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
+        "//pkg/session",
         "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",

@@ -87,9 +87,7 @@ func (sm *Manager) clearSchedulers() {
 func (sm *Manager) getSchedulers() []Scheduler {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	res := make([]Scheduler, len(sm.mu.schedulers))
-	copy(res, sm.mu.schedulers)
-	return res
+	return slices.Clone(sm.mu.schedulers)
 }
 
 // Manager manage a bunch of schedulers.

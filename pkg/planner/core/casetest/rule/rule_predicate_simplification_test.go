@@ -65,6 +65,7 @@ func TestPredicateSimplification(tt *testing.T) {
   col_44 json DEFAULT NULL,
   col_45 date DEFAULT '2010-01-29',
   col_46 char(221) COLLATE gbk_bin DEFAULT NULL,
+  col_47 timestamp,
   UNIQUE KEY idx_15 (col_41,col_39,col_38)
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin`)
 		// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.

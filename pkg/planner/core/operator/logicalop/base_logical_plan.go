@@ -146,7 +146,7 @@ func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, 
 	if err != nil {
 		return nil, p.self, err
 	}
-	addSelection(p.self, newChild, rest, 0, opt)
+	AddSelection(p.self, newChild, rest, 0, opt)
 	return nil, p.self, nil
 }
 

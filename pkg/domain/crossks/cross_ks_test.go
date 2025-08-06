@@ -26,11 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -125,5 +127,53 @@ func TestManager(t *testing.T) {
 		// SYSTEM keyspace should not have any import jobs
 		sysTK := testkit.NewTestKit(t, sysKSStore)
 		sysTK.MustQuery("select count(1) from mysql.tidb_import_jobs").Check(testkit.Rows("0"))
+	})
+
+	t.Run("check cross keyspace session are recorded in coordinator and contains related tables", func(t *testing.T) {
+		storeMap := make(map[string]kv.Storage, 2)
+		storeMap[keyspace.System] = sysKSStore
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
+			func(fnP *func(string) (store kv.Storage, err error)) {
+				*fnP = func(ks string) (store kv.Storage, err error) {
+					return storeMap[ks], nil
+				}
+			},
+		)
+		userKS := "ksmdl"
+		userKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, userKS)
+		storeMap[userKS] = userKSStore
+
+		// must switch back to SYSTEM keyspace before creating a cross keyspace session
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = keyspace.System
+		})
+
+		pool, err := sysKSDom.GetKSSessPool(userKS)
+		require.NoError(t, err)
+
+		crossKSMgr := sysKSDom.GetCrossKSMgr()
+		sessMgr, ok := crossKSMgr.Get(userKS)
+		require.True(t, ok)
+		coordinator := sessMgr.Coordinator()
+		require.Zero(t, coordinator.InternalSessionCount())
+
+		mgr := storage.NewTaskManager(pool)
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+		require.NoError(t, mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			exec := se.GetSQLExecutor()
+			_, err2 := sqlexec.ExecSQL(ctx, exec, "select count(1) from mysql.tidb_import_jobs")
+			require.NoError(t, err2)
+			var tableIDCount int
+			se.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value any) bool {
+				require.Equal(t, metadef.TiDBImportJobsTableID, key.(int64))
+				tableIDCount++
+				return true
+			})
+			require.EqualValues(t, 1, tableIDCount)
+			require.True(t, coordinator.ContainsInternalSession(se))
+			require.EqualValues(t, 1, coordinator.InternalSessionCount())
+			return nil
+		}))
+		require.Zero(t, coordinator.InternalSessionCount())
 	})
 }

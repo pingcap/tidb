@@ -652,18 +652,19 @@ type LockedMigrations struct {
 	ReadLock storage.RemoteLock
 }
 
-func (rc *LogClient) GetMigrations(ctx context.Context) (*LockedMigrations, error) {
+func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
 	ext := stream.MigrationExtension(rc.storage)
+	readLock, err := ext.GetReadLock(ctx, "restore stream")
+	if err != nil {
+		return nil, err
+	}
+
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	ms := migs.ListAll()
-	readLock, err := ext.GetReadLock(ctx, "restore stream")
-	if err != nil {
-		return nil, err
-	}
 
 	lms := &LockedMigrations{
 		Migs:     ms,
@@ -1924,18 +1925,18 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		if len(tableIDsSet) > 0 {
 			// handle table deletions
 			for tableID := range tableIDsSet {
-				args := &model.RefreshMetaArgs{
-					SchemaID: dbID,
-					TableID:  tableID,
-				}
-
-				// Get table and database names for logging
 				var dbName, tableName string
 				if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
 					dbName = dbReplace.Name
 					if tableReplace, ok := dbReplace.TableMap[tableID]; ok {
 						tableName = tableReplace.Name
 					}
+				}
+				args := &model.RefreshMetaArgs{
+					SchemaID:      dbID,
+					TableID:       tableID,
+					InvolvedDB:    dbName,
+					InvolvedTable: tableName,
 				}
 
 				log.Info("refreshing deleted table meta",
@@ -1955,15 +1956,16 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 
 	// Then, delete databases if needed
 	for dbID := range deletedTablesMap {
-		args := &model.RefreshMetaArgs{
-			SchemaID: dbID,
-			TableID:  0, // 0 for database-only refresh
-		}
-
 		// Get database name for logging
 		var dbName string
 		if dbReplace, ok := schemasReplace.DbReplaceMap[dbID]; ok {
 			dbName = dbReplace.Name
+		}
+		args := &model.RefreshMetaArgs{
+			SchemaID:      dbID,
+			TableID:       0, // 0 for database-only refresh
+			InvolvedDB:    dbName,
+			InvolvedTable: model.InvolvingAll,
 		}
 
 		log.Info("refreshing potential deleted database meta",
@@ -1993,8 +1995,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 		}
 
 		args := &model.RefreshMetaArgs{
-			SchemaID: dbReplace.DbID,
-			TableID:  0, // tableID = 0 for database-only refresh
+			SchemaID:      dbReplace.DbID,
+			TableID:       0, // tableID = 0 for database-only refresh
+			InvolvedDB:    dbReplace.Name,
+			InvolvedTable: model.InvolvingAll,
 		}
 		log.Info("refreshing database-only meta",
 			zap.Int64("schemaID", dbReplace.DbID),
@@ -2025,8 +2029,10 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 				}
 
 				args := &model.RefreshMetaArgs{
-					SchemaID: dbReplace.DbID,
-					TableID:  tableReplace.TableID,
+					SchemaID:      dbReplace.DbID,
+					TableID:       tableReplace.TableID,
+					InvolvedDB:    dbReplace.Name,
+					InvolvedTable: tableReplace.Name,
 				}
 				log.Info("refreshing regular table meta",
 					zap.Int64("schemaID", dbReplace.DbID),

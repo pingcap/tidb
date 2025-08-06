@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statisticsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
@@ -68,7 +68,7 @@ type TestKit struct {
 	assert  *assert.Assertions
 	t       testing.TB
 	store   kv.Storage
-	session sessiontypes.Session
+	session sessionapi.Session
 	alloc   chunk.Allocator
 }
 
@@ -96,7 +96,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		if ok {
 			mockSm.mu.Lock()
 			if mockSm.Conn == nil {
-				mockSm.Conn = make(map[uint64]sessiontypes.Session)
+				mockSm.Conn = make(map[uint64]sessionapi.Session)
 			}
 			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session
 			mockSm.mu.Unlock()
@@ -108,7 +108,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 }
 
 // NewTestKitWithSession returns a new *TestKit.
-func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Session) *TestKit {
+func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessionapi.Session) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -127,14 +127,14 @@ func (tk *TestKit) RefreshSession() {
 }
 
 // SetSession set the session of testkit
-func (tk *TestKit) SetSession(session sessiontypes.Session) {
+func (tk *TestKit) SetSession(session sessionapi.Session) {
 	tk.session = session
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
 
 // Session return the session associated with the testkit
-func (tk *TestKit) Session() sessiontypes.Session {
+func (tk *TestKit) Session() sessionapi.Session {
 	return tk.session
 }
 
@@ -468,7 +468,7 @@ func (tk *TestKit) MustExecToErr(sql string, args ...any) {
 }
 
 // NewSession creates a new session environment for test.
-func NewSession(t testing.TB, store kv.Storage) sessiontypes.Session {
+func NewSession(t testing.TB, store kv.Storage) sessionapi.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())

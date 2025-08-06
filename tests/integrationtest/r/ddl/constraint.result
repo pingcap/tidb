@@ -840,3 +840,9 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists t;
 set @@global.tidb_enable_check_constraint = 0;
+set @@global.tidb_enable_check_constraint = 1;
+use test;
+drop table if exists t1;
+create table t1(a timestamp, constraint check((a = FROM_UNIXTIME(1))));
+insert into t1 values(FROM_UNIXTIME(1));
+set @@global.tidb_enable_check_constraint = 0;

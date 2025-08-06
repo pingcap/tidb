@@ -43,7 +43,7 @@ dev: checklist check integrationtest gogenerate br_unit_test test_part_parser_de
 # Install the check tools.
 .PHONY: check-setup
 check-setup: ## Install development and checking tools
-check-setup:tools/bin/revive 
+check-setup:tools/bin/revive
 
 .PHONY: precheck
 precheck: ## Run pre-commit checks
@@ -51,7 +51,7 @@ precheck: fmt bazel_prepare
 
 .PHONY: check
 check: ## Run comprehensive code quality checks
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license 
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
 
 .PHONY: fmt
 fmt: ## Format Go code using gofmt
@@ -126,7 +126,7 @@ clean: failpoint-disable ## Clean build artifacts and test binaries
 # Split tests for CI to run `make test` in parallel.
 .PHONY: test
 test: ## Run all tests (split into parts for parallel execution)
-test: test_part_1 test_part_2 
+test: test_part_1 test_part_2
 	@>&2 echo "Great, all tests passed."
 
 .PHONY: test_part_1
@@ -272,9 +272,9 @@ enterprise-server: ## Build TiDB server with enterprise features
 .PHONY: server_check
 server_check:
 ifeq ($(TARGET), "")
-	$(GOBUILD_NO_TAGS) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags deadlock,enableassert -o bin/tidb-server ./cmd/tidb-server
+	$(GOBUILD_NO_TAGS) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags=$(CHECK_BUILD_TAGS) -o bin/tidb-server ./cmd/tidb-server
 else
-	$(GOBUILD_NO_TAGS) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags deadlock,enableassert -o '$(TARGET)' ./cmd/tidb-server
+	$(GOBUILD_NO_TAGS) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags=$(CHECK_BUILD_TAGS) -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 .PHONY: linux
@@ -653,21 +653,21 @@ check-bazel-prepare:
 .PHONY: bazel_test
 bazel_test: failpoint-enable bazel_prepare ## Run all tests using Bazel
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
-		--define gotags=deadlock,intest \
+		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_coverage_test
 bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
-		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
-		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,ddlargsv1 \
+		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 

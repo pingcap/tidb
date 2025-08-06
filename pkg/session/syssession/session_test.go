@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/mock"
@@ -74,7 +74,7 @@ type mockPreparedFuture struct {
 
 type mockSessionContext struct {
 	sessionctx.Context
-	util.SessionManager
+	sessmgr.Manager
 	mock.Mock
 }
 

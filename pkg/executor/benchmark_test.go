@@ -62,7 +62,7 @@ var (
 
 func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) exec.Executor {
-	plan := new(core.PhysicalHashAgg)
+	plan := new(physicalop.PhysicalHashAgg)
 	plan.AggFuncs = aggFuncs
 	plan.GroupByItems = groupItems
 	plan.SetSchema(schema)
@@ -102,13 +102,13 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 
 	var (
 		plan     base.PhysicalPlan
-		splitter core.PartitionSplitterType = core.PartitionHashSplitterType
+		splitter physicalop.PartitionSplitterType = physicalop.PartitionHashSplitterType
 	)
 	if concurrency > 1 {
 		if dataSourceSorted {
-			splitter = core.PartitionRangeSplitterType
+			splitter = physicalop.PartitionRangeSplitterType
 		}
-		plan = core.PhysicalShuffle{
+		plan = physicalop.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tails:        []base.PhysicalPlan{tail},
 			DataSources:  []base.PhysicalPlan{src},
@@ -282,7 +282,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 
 func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
-	win := new(core.PhysicalWindow)
+	win := new(physicalop.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
 	winSchema := schema.Clone()
 	for i := range funcs {
@@ -341,11 +341,11 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			byItems = append(byItems, item.Col)
 		}
 
-		plan = core.PhysicalShuffle{
+		plan = physicalop.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tails:        []base.PhysicalPlan{tail},
 			DataSources:  []base.PhysicalPlan{src},
-			SplitterType: core.PartitionHashSplitterType,
+			SplitterType: physicalop.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx.GetPlanCtx(), nil, 0)
 		plan.SetChildren(win)

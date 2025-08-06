@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -52,9 +52,9 @@ func NewServerMemoryLimitHandle(exitCh chan struct{}) *Handle {
 	return &Handle{exitCh: exitCh}
 }
 
-// SetSessionManager sets the SessionManager which is used to fetching the info
+// SetSessionManager sets the Manager which is used to fetching the info
 // of all active sessions.
-func (smqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
+func (smqh *Handle) SetSessionManager(sm sessmgr.Manager) *Handle {
 	smqh.sm.Store(sm)
 	return smqh
 }
@@ -68,7 +68,7 @@ func (smqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
-	sm := smqh.sm.Load().(util.SessionManager)
+	sm := smqh.sm.Load().(sessmgr.Manager)
 	sessionToBeKilled := &sessionToBeKilled{}
 	for {
 		select {
@@ -99,7 +99,7 @@ func (s *sessionToBeKilled) reset() {
 	s.lastLogTime = time.Time{}
 }
 
-func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
+func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
 			if info.Time == s.sqlStartTime {
@@ -211,7 +211,7 @@ func (m *memoryOpsHistoryManager) init() {
 	m.offsets = 0
 }
 
-func (m *memoryOpsHistoryManager) recordOne(info *util.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
+func (m *memoryOpsHistoryManager) recordOne(info *sessmgr.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(info.ToRow(time.UTC)...)}

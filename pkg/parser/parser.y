@@ -4105,6 +4105,12 @@ DefaultValueExpr:
 |	SignedLiteral
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
+|	'(' Identifier ')'
+	{
+		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
+			Name: ast.NewCIStr($2),
+		}}
+	}
 |	'(' SignedLiteral ')'
 	{
 		$$ = $2
@@ -12269,10 +12275,6 @@ ShowTargetFilterable:
 |	"IMPORT" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
-	}
-|	"PLAN" "FOR" stringLit
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQLOrDigest: $3}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{

@@ -15,5 +15,6 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/core/rule/util",
         "//pkg/planner/util/optimizetrace",
+        "//pkg/util/zeropool",
     ],
 )

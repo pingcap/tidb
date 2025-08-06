@@ -506,6 +506,12 @@ id
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+execute stmt2 using @doma;
+id
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
 execute stmt using @doma;
 id
 1

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
@@ -30,7 +31,9 @@ var (
 // IsSystemSchema checks whether schema is system schema or not.
 // case insensitive
 func IsSystemSchema(schema string) bool {
-	schema = strings.ToLower(schema)
+	intest.AssertFunc(func() bool {
+		return schema == strings.ToLower(schema)
+	})
 	return schema == DMHeartbeatSchema || schema == InspectionSchemaName ||
 		metadef.IsMemOrSysDB(schema)
 }

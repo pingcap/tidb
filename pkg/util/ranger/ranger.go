@@ -163,10 +163,9 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 	}
 	casted, err := point.value.ConvertTo(sctx.TypeCtx, newTp)
 	if err != nil {
-		if sctx.InPreparedPlanBuilding {
-			// skip plan cache in this case for safety.
-			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
-		}
+		// skip plan cache in this case for safety.
+		sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
+
 		//revive:disable:empty-block
 		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year

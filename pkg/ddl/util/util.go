@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -186,21 +186,9 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	return errors.Trace(err)
 }
 
-// LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
-func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
-	// close issue #21391
-	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return loadGlobalVars(ctx, sctx, []string{vardef.TiDBDDLReorgWorkerCount, vardef.TiDBDDLReorgBatchSize, vardef.TiDBRowFormatVersion})
-}
-
-// LoadDDLVars loads ddl variable from mysql.global_variables.
-func LoadDDLVars(ctx sessionctx.Context) error {
-	return loadGlobalVars(context.Background(), ctx, []string{vardef.TiDBDDLErrorCountLimit})
-}
-
-// loadGlobalVars loads global variable from mysql.global_variables.
-func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+// LoadGlobalVars loads global variable from mysql.global_variables.
+func LoadGlobalVars(sctx sessionctx.Context, varNames ...string) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	e := sctx.GetRestrictedSQLExecutor()
 	var buf strings.Builder
 	buf.WriteString(loadGlobalVarsSQL)
@@ -220,6 +208,7 @@ func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varValue := row.GetString(1)
+		//nolint:forbidigo
 		if err = sctx.GetSessionVars().SetSystemVarWithoutValidation(varName, varValue); err != nil {
 			return err
 		}
@@ -426,6 +415,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 	}
 
 	defer terror.Call(rs.Close)
+	//nolint:forbidigo
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, sctx.GetSessionVars().MaxChunkSize)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -447,6 +437,13 @@ func FolderNotEmpty(path string) bool {
 
 // GenKeyExistsErr builds a ErrKeyExists error.
 func GenKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model.TableInfo) error {
+	if len(key) > 4 && key[0] == 'x' {
+		// Start with 'x' means it contains the keyspace prefix. For details, see
+		// https://github.com/tikv/client-go/blob/1a0daf3ee77f560debe0a386e760f2ae7164b6a5/internal/apicodec/codec_v2.go#L27
+		if len(keyspace.GetKeyspaceNameBySettings()) > 0 {
+			key = key[4:] // remove the keyspace prefix.
+		}
+	}
 	indexName := fmt.Sprintf("%s.%s", tblInfo.Name.String(), idxInfo.Name.String())
 	valueStr, err := tables.GenIndexValueFromIndex(key, value, tblInfo, idxInfo)
 	if err != nil {

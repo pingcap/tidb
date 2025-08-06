@@ -30,7 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -331,7 +332,7 @@ func TestIndexJoin31494(t *testing.T) {
 	tk.MustExec(insertStr)
 	tk.MustExec("analyze table t2")
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
@@ -600,9 +601,9 @@ func TestIssue42662(t *testing.T) {
 	tk.Session().GetSessionVars().MemTracker.IsRootTrackerOfSess = true
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	}
-	sm.Conn = make(map[uint64]sessiontypes.Session)
+	sm.Conn = make(map[uint64]sessionapi.Session)
 	sm.Conn[tk.Session().GetSessionVars().ConnectionID] = tk.Session()
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()

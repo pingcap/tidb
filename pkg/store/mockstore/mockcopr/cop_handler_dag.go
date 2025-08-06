@@ -83,7 +83,7 @@ func (h coprHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	}
 
 	var execDetails []*execDetail
-	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+	if dagReq.GetCollectExecutionSummaries() {
 		execDetails = e.ExecDetails()
 	}
 
@@ -445,8 +445,7 @@ type evalContext struct {
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
-	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
-	copy(e.columnInfos, cols)
+	e.columnInfos = slices.Clone(cols)
 
 	e.colIDs = make(map[int64]int, len(e.columnInfos))
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))

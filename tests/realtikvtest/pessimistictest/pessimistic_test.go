@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -2458,29 +2459,6 @@ func TestIssue28011(t *testing.T) {
 	}
 }
 
-func createTable(part bool, columnNames []string, columnTypes []string) string {
-	var str string
-	str = "create table t("
-	if part {
-		str = "create table t_part("
-	}
-	first := true
-	for i, colName := range columnNames {
-		if first {
-			first = false
-		} else {
-			str += ","
-		}
-		str += fmt.Sprintf("%s %s", colName, columnTypes[i])
-	}
-	str += ", primary key(c_int, c_str)"
-	str += ")"
-	if part {
-		str += "partition by hash(c_int) partitions 8"
-	}
-	return str
-}
-
 func TestPessimisticAutoCommitTxn(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -3063,6 +3041,9 @@ func mustLocked(t *testing.T, store kv.Storage, stmt string) {
 }
 
 func TestFairLockingBasic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3153,6 +3134,9 @@ func TestFairLockingBasic(t *testing.T) {
 }
 
 func TestFairLockingInsert(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3188,6 +3172,9 @@ func TestFairLockingInsert(t *testing.T) {
 }
 
 func TestFairLockingLockWithConflictIdempotency(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3215,6 +3202,9 @@ func TestFairLockingLockWithConflictIdempotency(t *testing.T) {
 }
 
 func TestFairLockingRetry(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3347,6 +3337,9 @@ func TestIssue40114(t *testing.T) {
 }
 
 func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
@@ -3397,21 +3390,19 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 func TestIssueBatchResolveLocks(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 
-	if *realtikvtest.WithRealTiKV {
-		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
-		// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
-		tkcfg := testkit.NewTestKit(t, store)
-		res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
-		if len(res) > 0 && res[0][3].(string) == "true" {
-			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
-			tkcfg.MustQuery("show warnings").Check(testkit.Rows())
-			defer func() {
-				tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
-			}()
-			time.Sleep(time.Second)
-		} else {
-			t.Log("skip disabling in-memory pessimistic lock, current config:", res)
-		}
+	// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
+	// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
+	tkcfg := testkit.NewTestKit(t, store)
+	res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
+	if len(res) > 0 && res[0][3].(string) == "true" {
+		tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
+		tkcfg.MustQuery("show warnings").Check(testkit.Rows())
+		defer func() {
+			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
+		}()
+		time.Sleep(time.Second)
+	} else {
+		t.Log("skip disabling in-memory pessimistic lock, current config:", res)
 	}
 
 	tk := testkit.NewTestKit(t, store)

@@ -25,7 +25,7 @@ id	estRows	task	access object	operator info
 Limit_13	1.00	root		offset:0, count:1
 └─TableReader_23	1.00	root		data:Limit_22
   └─Limit_22	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan_21	1.00	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
+    └─TableRangeScan_21	34.32	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
 create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1;
 explain select * from t where a > 0 limit 1;
 id	estRows	task	access object	operator info

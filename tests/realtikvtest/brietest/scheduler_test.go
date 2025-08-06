@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -313,12 +313,11 @@ func TestLogRestoreFineGrainedSchedulerPausing(t *testing.T) {
 	rulesChan := make(chan []SchedulerRule, 1)
 
 	// Enable failpoint with callback that checks PD scheduler status
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused", func() {
 		t.Log("Failpoint triggered - checking PD scheduler rules")
 		finalRules := checkSchedulerPausingBehavior(t, baselineKeyRanges)
 		rulesChan <- finalRules
-	}))
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/log-restore-scheduler-paused")
+	})
 
 	// Run filtered restore
 	t.Log("Starting filtered restore...")

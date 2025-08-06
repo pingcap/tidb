@@ -11,6 +11,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
+        "//pkg/session/sessmgr",
         "//pkg/testkit",
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",

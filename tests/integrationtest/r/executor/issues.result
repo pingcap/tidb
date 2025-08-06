@@ -934,7 +934,7 @@ id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_12	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 └─TableReader_22	100.00	<actRows>	root	NULL	max_distsql_concurrency: 1	NULL	<memory>	<disk>
   └─Limit_21	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
-    └─TableFullScan_20	100.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
+    └─TableFullScan_20	101.56	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from t order by id limit 100000;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_12	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
@@ -986,7 +986,7 @@ id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_12	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 └─TableReader_22	100.00	<actRows>	root	partition:all	max_distsql_concurrency: 1	NULL	<memory>	<disk>
   └─Limit_21	100.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
-    └─TableFullScan_20	100.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
+    └─TableFullScan_20	101.56	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from pt order by id limit 100000;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_12	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
@@ -1037,6 +1037,9 @@ NULL
 SELECT IS_IPV6(NULL + INTERVAL 1 DAY);
 IS_IPV6(NULL + INTERVAL 1 DAY)
 NULL
+CREATE TABLE test_62458 (c1 INT, c2 VARCHAR(255)) PARTITION BY LIST (c1) (PARTITION p1 VALUES IN (1, 2, 3), PARTITION p2 VALUES IN (4, 5, 6));
+CREATE UNIQUE INDEX i ON test_62458 (c1);
+DELETE FROM test_62458 PARTITION (p1) WHERE c1 = 15;
 CREATE TABLE test_62457 (c INT) PARTITION BY RANGE (c) (PARTITION p VALUES LESS THAN (10));
 ALTER TABLE test_62457 ADD COLUMN c2 INT AS (JSON_EXTRACT(c, '$.number')) VIRTUAL;
 Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_extract; a JSON string or JSON type is required.

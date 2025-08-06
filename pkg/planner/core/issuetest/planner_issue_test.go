@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ func TestIssue43461(t *testing.T) {
 	require.True(t, ok)
 
 	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
-	ts := idxLookUpPlan.TablePlans[0].(*core.PhysicalTableScan)
+	ts := idxLookUpPlan.TablePlans[0].(*physicalop.PhysicalTableScan)
 
 	require.NotEqual(t, is.Columns, ts.Columns)
 }
@@ -290,4 +291,37 @@ func TestIssue61303VirtualGenerateColumnSubstitute(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1(id int default 1, c0 char(10) , c1 char(10) AS (c0) VIRTUAL NOT NULL UNIQUE);")
 	tk.MustExec("insert ignore into t1(c0) values (null);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
+}
+
+func TestJoinReorderWithAddSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`create table t0(vkey integer, c3 varchar(0));`)
+	tk.MustExec(`create table t1(vkey integer, c10 integer);`)
+	tk.MustExec(`create table t2(c12 integer, c13 integer, c14 varchar(0), c15 double);`)
+	tk.MustExec(`create table t3(vkey varchar(0), c20 integer);`)
+	tk.MustQuery(`explain select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);`).Check(testkit.Rows(
+		`Projection_34 0.00 root  0->Column#26`,
+		`└─HashJoin_50 0.00 root  inner join, equal:[eq(Column#27, Column#28)]`,
+		`  ├─HashJoin_71(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]`,
+		`  │ ├─Selection_72(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)`,
+		`  │ │ └─HashJoin_82 0.00 root  left outer join, left side:HashJoin_97, equal:[eq(test.t3.c20, test.t1.vkey)]`,
+		`  │ │   ├─HashJoin_97(Build) 0.00 root  inner join, equal:[eq(test.t0.vkey, test.t2.c13)]`,
+		`  │ │   │ ├─TableDual_107(Build) 0.00 root  rows:0`,
+		`  │ │   │ └─TableReader_106(Probe) 9990.00 root  data:Selection_105`,
+		`  │ │   │   └─Selection_105 9990.00 cop[tikv]  not(isnull(test.t2.c13))`,
+		`  │ │   │     └─TableFullScan_104 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+		`  │ │   └─HashJoin_115(Probe) 9990.00 root  CARTESIAN left outer join, left side:TableReader_119`,
+		`  │ │     ├─TableDual_120(Build) 0.00 root  rows:0`,
+		`  │ │     └─TableReader_119(Probe) 9990.00 root  data:Selection_118`,
+		`  │ │       └─Selection_118 9990.00 cop[tikv]  not(isnull(test.t1.vkey))`,
+		`  │ │         └─TableFullScan_117 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
+		`  │ └─Projection_126(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#27`,
+		`  │   └─TableReader_130 9990.00 root  data:Selection_129`,
+		`  │     └─Selection_129 9990.00 cop[tikv]  not(isnull(test.t2.c14))`,
+		`  │       └─TableFullScan_128 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+		`  └─Projection_133(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#28`,
+		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
+		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
