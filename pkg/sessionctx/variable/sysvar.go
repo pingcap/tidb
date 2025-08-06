@@ -3554,6 +3554,12 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(DefTiDBAccelerateUserCreationUpdate), Type: TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			AccelerateUserCreationUpdate.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 	{
 		Scope:    ScopeGlobal,
 		Name:     TiDBAdvancerCheckPointLagLimit,

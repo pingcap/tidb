@@ -1029,6 +1029,9 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
+	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 )
 
 // TiDB vars that have only global scope
@@ -1644,6 +1647,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
@@ -1771,8 +1775,9 @@ var (
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
-	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
 
 	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)

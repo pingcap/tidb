@@ -235,7 +235,7 @@ func TestAuthPlugin(t *testing.T) {
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 2)
 	p.AssertCalled(t, "ValidateAuthString", "encodedpassword")
-	p.AssertNumberOfCalls(t, "ValidateAuthString", 4)
+	p.AssertNumberOfCalls(t, "ValidateAuthString", 3)
 
 	// Change password should work using ALTER USER statement.
 	tk.MustExec("alter user 'u2'@'localhost' identified with 'authentication_test_plugin' by 'anotherrawpassword'")
