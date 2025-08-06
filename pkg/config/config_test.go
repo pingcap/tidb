@@ -30,6 +30,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -919,6 +920,9 @@ grpc-keepalive-timeout = 0.01
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
+	if kerneltype.IsNextGen() {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	}
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.

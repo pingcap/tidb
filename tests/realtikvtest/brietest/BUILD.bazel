@@ -33,6 +33,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/printer",
         "//pkg/util/table-filter",
