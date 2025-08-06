@@ -652,7 +652,7 @@ func TestTLSAuto(t *testing.T) {
 	cfg.Port = cli.Port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
-	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
+	cfg.Security.RSAKeySize = 1024 // Reduces unittest runtime
 	tidbserver.RunInGoTestChan = make(chan struct{})
 	err := os.MkdirAll(cfg.TempStoragePath, 0700)
 	require.NoError(t, err)
