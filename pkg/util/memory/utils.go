@@ -26,6 +26,7 @@ const (
 	kilo     = 1000
 )
 
+// list with cache to avoid the cost of allocating and deallocating list elements.
 type wrapList[V any] struct {
 	end  wrapListElement
 	base list.List
@@ -209,11 +210,6 @@ func nextPow2(n uint64) uint64 {
 	n |= n >> 32
 	n++
 	return n
-}
-
-func roundSize(sz int64, poolAllocationSize int64) int64 {
-	chunks := (sz + poolAllocationSize - 1) / poolAllocationSize
-	return chunks * poolAllocationSize
 }
 
 func calcRatio(x, y int64) (zMilli int64) {

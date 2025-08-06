@@ -327,8 +327,8 @@ func (e *rootPoolEntry) notRunning() bool {
 }
 
 type entryMap struct {
-	quotaShards  [maxArbitrationPriority][]*entryQuotaShard
-	contextCache struct { // cache for traversing all entries concurrently
+	quotaShards  [maxArbitrationPriority][]*entryQuotaShard // entries order by priority, quota
+	contextCache struct {                                   // cache for traversing all entries concurrently
 		sync.Map // map[uint64]*rootPoolEntry
 		num      atomic.Int64
 	}
@@ -525,53 +525,55 @@ type holder64Bytes struct{ _ [64]byte }
 // MemArbitrator represents the main structure aka `mem-arbitrator`
 type MemArbitrator struct {
 	execMu struct {
-		startTime    time.Time
-		blockedState blockedState
+		startTime    time.Time          // start time of each round
+		blockedState blockedState       // blocked state during arbitration
 		mode         ArbitratorWorkMode // work mode of each round
 	}
-	actions   MemArbitratorActions
-	controlMu struct {
+	actions   MemArbitratorActions // actions interfaces
+	controlMu struct {             // control the async work process
 		finishCh chan struct{}
 		sync.Mutex
 		running bool
 	}
-	debug           struct{ now func() time.Time }
-	privilegedEntry *rootPoolEntry
-	underKill       mapEntryWithMem
-	underCancel     mapEntryWithMem
-	notifer         Notifer
-	cleanupMu       struct {
+	debug           struct{ now func() time.Time } // mock time.Now
+	privilegedEntry *rootPoolEntry                 // entry with privilege will always be satisfied first
+	underKill       mapEntryWithMem                // entries under `KILL` operation
+	underCancel     mapEntryWithMem                // entries under `CANCEL` operation
+	notifer         Notifer                        // wake up the async work process
+	cleanupMu       struct {                       // cleanup the state of the entry
 		fifoTasks wrapList[*rootPoolEntry]
 		sync.Mutex
 	}
 	tasks struct {
-		fifoByPriority [maxArbitrationPriority]wrapList[*rootPoolEntry]
-		fifoTasks      wrapList[*rootPoolEntry]
-		fifoWaitAverse wrapList[*rootPoolEntry]
-		waitingAlloc   atomic.Int64
+		fifoByPriority [maxArbitrationPriority]wrapList[*rootPoolEntry] // tasks by priority
+		fifoTasks      wrapList[*rootPoolEntry]                         // all tasks in FIFO order
+		fifoWaitAverse wrapList[*rootPoolEntry]                         // tasks with wait-averse property
+		waitingAlloc   atomic.Int64                                     // total waiting allocation size
 		sync.Mutex
 	}
 	digestProfileCache struct {
 		shards     []digestProfileShard
 		shardsMask uint64
 		num        atomic.Int64
-		limit      int64
+		limit      int64 // max number of digest profiles; shrink to limit/2 when num > limit;
 	}
-	entryMap  entryMap
-	awaitFree struct {
+	entryMap  entryMap // sharded hash map & ordered quota map
+	awaitFree struct { // await-free pool
 		pool   *ResourcePool
-		budget struct {
+		budget struct { // fixed size budget shards
 			shards   []TrackedConcurrentBudget
 			sizeMask uint64
 		}
-		lastQuotaUsage       memPoolQuotaUsage
+		lastQuotaUsage       memPoolQuotaUsage // tracked heap memory usage & quota usage
 		lastShrinkUtimeMilli atomic.Int64
 	}
-	heapController heapController
-	poolAllocStats struct {
+
+	heapController heapController // monitor runtime mem stats; resolve mem issues; record mem profiles;
+
+	poolAllocStats struct { // statistics of root pool allocation
 		sync.RWMutex
 		PoolAllocProfile
-		mediumQuota atomic.Int64
+		mediumQuota atomic.Int64 // medium (max quota usage of root pool)
 		timedMap    [2 + defRedundancy]struct {
 			sync.RWMutex
 			statisticsTimedMapElement
@@ -579,53 +581,53 @@ type MemArbitrator struct {
 		lastUpdateUtimeMilli atomic.Int64
 	}
 
-	buffer buffer // only works under `ArbitratorModePriority`
+	buffer buffer // reserved buffer quota which only works under priority mode
 
 	mu struct {
 		sync.Mutex
 		_         holder64Bytes
-		allocated int64 // allocated mem quota
-		released  uint64
-		lastGC    uint64 // released mem quota at last GC point
+		allocated int64  // allocated mem quota
+		released  uint64 // total released mem quota
+		lastGC    uint64 // total released mem quota at last GC point
 		_         holder64Bytes
-		limit     int64 // hard limit of mem quota
+		limit     int64 // hard limit of mem quota which is same as the server limit
 		threshold struct {
-			risk    int64
-			oomRisk int64
+			risk    int64 // threshold of mem risk
+			oomRisk int64 // threshold of oom risk
 		}
 		softLimit struct {
 			mode      SoftLimitMode
 			size      int64
 			specified struct {
-				size int64
-				rate int64
+				size  int64
+				ratio int64 // ratio of soft-limit to hard-limit
 			}
 		}
 	}
-	execMetrics execMetricsCounter
+	execMetrics execMetricsCounter // execution metrics
 	avoidance   struct {
-		size        atomic.Int64
-		heapTracked struct {
+		size        atomic.Int64 // size of quota cannot be allocated
+		heapTracked struct {     // tracked heap memory usage
 			atomic.Int64
 			lastUpdateUtimeMilli atomic.Int64
 		}
-		memMagnif struct {
+		memMagnif struct { // memory pressure magnification factor: ratio of runtime memory usage to quota usage
 			sync.Mutex
 			ratio atomic.Int64
 		}
-		kickOutIdx uint64
+		awaitFreeBudgetKickOutIdx uint64 // round-robin index to clean await-free pool budget when quota is insufficient
 	}
-	tickTask struct {
+	tickTask struct { // periodic task
 		sync.Mutex
 		lastTickUtimeMilli atomic.Int64
 	}
-	UnixTimeSec int64
+	UnixTimeSec int64 // approximate unix time in seconds
 	rootPoolNum atomic.Int64
 	mode        ArbitratorWorkMode
 }
 
 type buffer struct {
-	size       atomic.Int64
+	size       atomic.Int64 // approximate max quota usage of root pool
 	quotaLimit atomic.Int64
 	timedMap   [2 + defRedundancy]struct {
 		sync.RWMutex
@@ -1411,7 +1413,7 @@ func (m *MemArbitrator) doAdjustSoftLimit() {
 		if m.mu.softLimit.specified.size > 0 {
 			m.mu.softLimit.size = min(m.mu.softLimit.specified.size, m.mu.limit)
 		} else {
-			m.mu.softLimit.size = min(multiRatio(m.mu.limit, m.mu.softLimit.specified.rate), m.mu.limit)
+			m.mu.softLimit.size = min(multiRatio(m.mu.limit, m.mu.softLimit.specified.ratio), m.mu.limit)
 		}
 	} else {
 		m.mu.softLimit.size = m.mu.threshold.oomRisk
@@ -1419,13 +1421,13 @@ func (m *MemArbitrator) doAdjustSoftLimit() {
 }
 
 // SetSoftLimit sets the soft limit of the mem-arbitrator
-func (m *MemArbitrator) SetSoftLimit(softLimit int64, sortLimitRate float64, mode SoftLimitMode) {
+func (m *MemArbitrator) SetSoftLimit(softLimit int64, sortLimitRatio float64, mode SoftLimitMode) {
 	m.mu.Lock()
 
 	m.mu.softLimit.mode = mode
 	if mode == SoftLimitModeSpecified {
 		m.mu.softLimit.specified.size = softLimit
-		m.mu.softLimit.specified.rate = intoRatio(sortLimitRate)
+		m.mu.softLimit.specified.ratio = intoRatio(sortLimitRatio)
 	}
 	m.doAdjustSoftLimit()
 
@@ -2267,7 +2269,7 @@ func (m *MemArbitrator) updateAvoidSize() {
 		reclaimed := int64(0)
 		poolReleased := int64(0)
 		for i := range len(m.awaitFree.budget.shards) {
-			idx := (m.avoidance.kickOutIdx + uint64(i) + 1) & m.awaitFree.budget.sizeMask
+			idx := (m.avoidance.awaitFreeBudgetKickOutIdx + uint64(i) + 1) & m.awaitFree.budget.sizeMask
 			b := &m.awaitFree.budget.shards[idx]
 			if b.Capacity.Load() > 0 && b.TryLock() {
 				x := delta - reclaimed
@@ -2278,7 +2280,7 @@ func (m *MemArbitrator) updateAvoidSize() {
 			}
 
 			if reclaimed >= delta {
-				m.avoidance.kickOutIdx = idx
+				m.avoidance.awaitFreeBudgetKickOutIdx = idx
 				break
 			}
 		}

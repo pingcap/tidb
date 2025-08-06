@@ -16,7 +16,6 @@ package memory
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"sync/atomic"
 )
@@ -31,24 +30,23 @@ const DefMaxUnusedBlocks int64 = 10
 
 // ResourcePool manages a set of resource quota
 type ResourcePool struct {
-	actions  PoolActions
-	parentMu struct{ prevChildren, nextChildren *ResourcePool }
-	name     string
+	actions  PoolActions                                        // actions to be taken when the pool meets certain conditions
+	parentMu struct{ prevChildren, nextChildren *ResourcePool } // accessable by parent pool only
+	name     string                                             // name of pool
 	mu       struct {
-		headChildren *ResourcePool
-		budget       Budget
-		allocated    int64
-		maxAllocated int64
-		numChildren  int
+		headChildren *ResourcePool // head of the children pools chain
+		budget       Budget        // budget of the resource quota
+		allocated    int64         // allocated bytes of the resource quota
+		maxAllocated int64         // maximum allocated bytes
+		numChildren  int           // number of children pools
 		sync.Mutex
 		stopped bool
 	}
-	uid      uint64
-	reserved int64 // quota from other sources
-	limit    int64
-
-	allocAlignSize  int64
-	maxUnusedBlocks int64 // max unused-blocks*alloc-align size before shrinking budget
+	uid             uint64 // unique ID of the resource pool: uid <= 0 indicates that it is a internal pool
+	reserved        int64  // quota from other sources
+	limit           int64  // limit of the resource quota
+	allocAlignSize  int64  // each allocation size must be a multiple of it
+	maxUnusedBlocks int64  // max unused-blocks*alloc-align size before shrinking budget
 }
 
 // NoteActionState wraps the arguments of a note action
@@ -132,7 +130,7 @@ func NewResourcePoolDefault(
 	return NewResourcePool(
 		newPoolUID(),
 		name,
-		math.MaxInt64,
+		0,
 		allocAlignSize,
 		DefMaxUnusedBlocks,
 		PoolActions{},
@@ -156,7 +154,7 @@ func NewResourcePool(
 		allocAlignSize = DefPoolAllocAlignSize
 	}
 	if limit <= 0 {
-		limit = math.MaxInt64
+		limit = DefMaxLimit
 	}
 	m := &ResourcePool{
 		name:            name,
@@ -164,7 +162,7 @@ func NewResourcePool(
 		limit:           limit,
 		allocAlignSize:  allocAlignSize,
 		actions:         actions,
-		maxUnusedBlocks: 10,
+		maxUnusedBlocks: maxUnusedBlocks,
 	}
 	return m
 }
@@ -610,7 +608,11 @@ func (p *ResourcePool) increaseBudget(request int64) error {
 }
 
 func (p *ResourcePool) roundSize(sz int64) int64 {
-	return roundSize(sz, p.allocAlignSize)
+	alignSize := p.allocAlignSize
+	if alignSize <= 1 {
+		return sz
+	}
+	return (sz + alignSize - 1) / alignSize * alignSize
 }
 
 func (p *ResourcePool) releaseBudget() {

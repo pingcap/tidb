@@ -477,7 +477,7 @@ func BenchmarkWrapList(b *testing.B) {
 	data := wrapList[int64]{}
 	data.init()
 	pushCnt, popCnt := 0, 0
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		if (i % 200) >= 100 {
 			data.popFront()
 			popCnt++
@@ -492,7 +492,7 @@ func BenchmarkWrapList(b *testing.B) {
 func BenchmarkList(b *testing.B) {
 	data := list.New()
 	pushCnt, popCnt := 0, 0
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		if (i % 200) >= 100 {
 			data.Remove(data.Front())
 			popCnt++
@@ -1138,7 +1138,7 @@ func TestMemArbitrator(t *testing.T) {
 		uid1 := pool1.UID()
 		pb1 := pool1.CreateBudget()
 		{ // no out-of-memory-action
-			require.Equal(t, pool1.limit, int64(math.MaxInt64))
+			require.Equal(t, pool1.limit, DefMaxLimit)
 			require.Equal(t, pool1.mu.budget.Used(), int64(0))
 			require.Equal(t, pool1.mu.budget.Capacity(), int64(0))
 			require.True(t, pool1.mu.budget.Pool() == nil)
@@ -1460,7 +1460,7 @@ func TestMemArbitrator(t *testing.T) {
 		m.SetSoftLimit(0, sortLimitRate, SoftLimitModeSpecified) // specified rate of limit
 		require.True(t, m.mu.softLimit.specified.size == 0)
 		require.True(t, m.mu.softLimit.mode == SoftLimitModeSpecified)
-		require.True(t, m.mu.softLimit.specified.rate == int64(sortLimitRate*1000))
+		require.True(t, m.mu.softLimit.specified.ratio == int64(sortLimitRate*1000))
 		require.Equal(t, m.mu.softLimit.size, int64(sortLimitRate*float64(m.mu.limit)))
 		require.True(t, m.SetLimit(200))
 		require.Equal(t, m.mu.softLimit.size, int64(sortLimitRate*200))
@@ -2590,7 +2590,7 @@ func TestBasicUtils(t *testing.T) {
 	require.Equal(t, getQuotaShard(baseQuotaUnit*4, defPoolQuotaShards), 3)
 	require.Equal(t, getQuotaShard(baseQuotaUnit*(1<<(defPoolQuotaShards-2))-1, defPoolQuotaShards), defPoolQuotaShards-2)
 	require.Equal(t, getQuotaShard(baseQuotaUnit*(1<<(defPoolQuotaShards-2)), defPoolQuotaShards), defPoolQuotaShards-1)
-	require.Equal(t, getQuotaShard(math.MaxInt64, defPoolQuotaShards), defPoolQuotaShards-1)
+	require.Equal(t, getQuotaShard(1<<63-1, defPoolQuotaShards), defPoolQuotaShards-1)
 
 	{
 		ch1 := make(chan struct{})
