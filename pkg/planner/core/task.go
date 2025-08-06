@@ -2173,8 +2173,10 @@ func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
 	return ta
 }
 
-// Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalSequence) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalSequence implements PhysicalSequence.Attach2Task.
+func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalSequence)
+
 	for _, t := range tasks {
 		_, isMpp := t.(*MppTask)
 		if !isMpp {

@@ -81,6 +81,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableSample{}
+	_ base.PhysicalPlan = &physicalop.PhysicalSequence{}
 
 	_ PhysicalJoin = &physicalop.PhysicalHashJoin{}
 	_ PhysicalJoin = &physicalop.PhysicalMergeJoin{}
@@ -1510,53 +1511,4 @@ func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *op
 	op.AppendCandidate(candidate)
 	pp.AppendChildCandidate(op)
 	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
-}
-
-// PhysicalSequence is the physical representation of LogicalSequence. Used to mark the CTE producers in the plan tree.
-type PhysicalSequence struct {
-	physicalop.PhysicalSchemaProducer
-}
-
-// MemoryUsage returns the memory usage of the PhysicalSequence.
-func (p *PhysicalSequence) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage()
-
-	return
-}
-
-// ExplainID overrides the ExplainID.
-func (p *PhysicalSequence) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
-		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
-			return p.TP()
-		}
-		return p.TP() + "_" + strconv.Itoa(p.ID())
-	})
-}
-
-// ExplainInfo overrides the ExplainInfo.
-func (*PhysicalSequence) ExplainInfo() string {
-	res := "Sequence Node"
-	return res
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalSequence) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalSequence)
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	return cloned, nil
-}
-
-// Schema returns its last child(which is the main query tree)'s schema.
-func (p *PhysicalSequence) Schema() *expression.Schema {
-	return p.Children()[len(p.Children())-1].Schema()
 }

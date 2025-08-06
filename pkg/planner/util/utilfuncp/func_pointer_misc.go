@@ -373,3 +373,6 @@ var DoOptimize func(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error)
+
+// Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
+var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task

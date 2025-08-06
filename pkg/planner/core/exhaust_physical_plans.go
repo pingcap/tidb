@@ -3942,7 +3942,7 @@ func exhaustPhysicalPlans4LogicalSequence(super base.LogicalPlan, prop *property
 			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
 		childReqs = append(childReqs, propChoice[1])
-		seq := PhysicalSequence{}.Init(ls.SCtx(), ls.StatsInfo(), ls.QueryBlockOffset(), childReqs...)
+		seq := physicalop.PhysicalSequence{}.Init(ls.SCtx(), ls.StatsInfo(), ls.QueryBlockOffset(), childReqs...)
 		seq.SetSchema(seqSchema)
 		seqs = append(seqs, seq)
 	}
