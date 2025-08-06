@@ -33,8 +33,9 @@ func randomPlanCacheKey() string {
 }
 
 func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
-	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &PhysicalTableScan{}, &physicalop.PhysicalTableDual{}, &PhysicalTableReader{},
-		&PhysicalTableScan{}, &physicalop.PhysicalIndexJoin{}, &PhysicalIndexHashJoin{}, &PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
+	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &physicalop.PhysicalTableScan{}, &physicalop.PhysicalTableDual{}, &PhysicalTableReader{},
+		&physicalop.PhysicalTableScan{}, &physicalop.PhysicalIndexJoin{}, &physicalop.PhysicalIndexHashJoin{},
+		&PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
 		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &physicalop.PhysicalLimit{}}
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &PlanCacheValue{
@@ -388,7 +389,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 		require.Equal(t, lru.MemoryUsage(), res)
 	}
 	// evict
-	p := &PhysicalTableScan{}
+	p := &physicalop.PhysicalTableScan{}
 	k := "key-3"
 	v := &PlanCacheValue{Plan: p}
 	opts := pTypes

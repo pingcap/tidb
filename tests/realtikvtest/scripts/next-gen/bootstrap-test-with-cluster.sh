@@ -95,12 +95,16 @@ function cleanup() {
         killall -9 -q tikv-worker || true
         killall -9 -q tikv-server || true
         killall -9 -q pd-server || true
+        killall -9 -q minio || true
     else
         # Linux: supports -r for regex
         killall -9 -r -q tikv-worker || true
         killall -9 -r -q tikv-server || true
         killall -9 -r -q pd-server || true
+        killall -9 -r -q minio || true
     fi
+
+    make failpoint-disable
 }
 
 exit_code=0

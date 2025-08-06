@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -294,6 +295,9 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 }
 
 func (e *indexScanExec) Process(key, value []byte) error {
+	if kerneltype.IsNextGen() && len(key) > 4 && key[0] == 'x' {
+		key = key[4:] // remove the keyspace prefix
+	}
 	values, err := tablecodec.DecodeIndexKV(key, value, e.numIdxCols, e.hdlStatus, e.colInfos)
 	if err != nil {
 		return err
