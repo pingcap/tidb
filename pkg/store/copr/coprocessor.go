@@ -880,7 +880,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint32) {
-	if it.req.StoreType == kv.TiKV && (len(it.tasks) < 5*(it.concurrency+it.smallTaskConcurrency) || intest.InTest) {
+	disableAsyncCop := false
+	failpoint.Inject("disableAsyncCop", func() { disableAsyncCop = true })
+	if !disableAsyncCop && it.req.StoreType == kv.TiKV && (len(it.tasks) < 5*(it.concurrency+it.smallTaskConcurrency) || intest.InTest) {
 		it.asyncCopIterator = newAsyncCopIterator(it)
 		it.asyncCopIterator.open(ctx)
 		return
