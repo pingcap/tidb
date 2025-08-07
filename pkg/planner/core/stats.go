@@ -143,14 +143,12 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 			return nil, false, err
 		}
 	}
-	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
-	// when ds.PossibleAccessPaths are pruned.
-	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
 	// after heuristic pruning, the new path are stored into ds.PossibleAccessPaths.
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
 		return nil, false, err
 	}
+	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
 
 	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
@@ -239,8 +237,9 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	statsInfo := ds.StatsInfo()
+	if statsInfo != nil && (path.CountAfterAccess+cost.ToleranceFactor) < statsInfo.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(statsInfo.RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	if path.IndexFilters != nil {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
@@ -251,7 +250,12 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		if isIm {
 			path.CountAfterIndex = path.CountAfterAccess * selectivity
 		} else {
-			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
+			statsInfo := ds.StatsInfo()
+			if statsInfo != nil {
+				path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, statsInfo.RowCount)
+			} else {
+				path.CountAfterIndex = path.CountAfterAccess * selectivity
+			}
 		}
 	} else {
 		path.CountAfterIndex = path.CountAfterAccess
@@ -339,8 +343,9 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	statsInfo := ds.StatsInfo()
+	if statsInfo != nil && (path.CountAfterAccess+cost.ToleranceFactor) < statsInfo.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(statsInfo.RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return err
 }
@@ -348,8 +353,10 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.Ranges = ranger.FullNotNullRange()
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	if path.Index != nil {
+		path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+		path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	}
 	if len(conds) == 0 {
 		return nil
 	}
@@ -378,8 +385,9 @@ func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.Acces
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
-	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
-		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	statsInfo := ds.StatsInfo()
+	if statsInfo != nil && (path.CountAfterAccess+cost.ToleranceFactor) < statsInfo.RowCount && !isIm {
+		path.CountAfterAccess = math.Min(statsInfo.RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
 	}
 	return nil
 }
