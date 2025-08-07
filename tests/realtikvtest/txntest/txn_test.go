@@ -643,7 +643,7 @@ func TestSelectForUpdateWriteConflict(t *testing.T) {
 	// Act
 	// T1 uses "select for update" to lock key (creates lock-type mutation)
 	tk1.MustExec("begin optimistic")
-	tk1.MustExec("select * from t where id = 1 for update")
+	tk1.MustQuery("select * from t where id = 1 for update")
 
 	// T2 starts optimistic transaction and tries to modify the same key
 	tk2.MustExec("begin optimistic")
