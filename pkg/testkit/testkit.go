@@ -160,6 +160,16 @@ func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...
 	}
 }
 
+// MustQueryInternal query uses ExecuteInternal and returns result rows.
+func (tk *TestKit) MustQueryInternal(sql string, args ...any) *Result {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	rs, err := tk.session.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(rs, comment)
+	return tk.ResultSetToResultWithCtx(ctx, rs, comment)
+}
+
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...any) *Result {

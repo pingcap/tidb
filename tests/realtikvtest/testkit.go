@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -102,6 +103,10 @@ func RunTestMain(m *testing.M) {
 type realtikvStoreOption struct {
 	retainData bool
 	keyspace   string
+	// only used when keyspace is not SYSTEM, in that case, the SYSTEM store will
+	// be closed together with its domain, we don't want close twice as the storage
+	// driver will cache store.
+	keepSystemStore bool
 }
 
 // RealTiKVStoreOption is the config option for creating a real TiKV store.
@@ -118,6 +123,13 @@ func WithRetainData() RealTiKVStoreOption {
 func WithKeyspaceName(name string) RealTiKVStoreOption {
 	return func(opt *realtikvStoreOption) {
 		opt.keyspace = name
+	}
+}
+
+// WithKeepSystemStore allows the store to keep the SYSTEM keyspace store
+func WithKeepSystemStore(keep bool) RealTiKVStoreOption {
+	return func(opt *realtikvStoreOption) {
+		opt.keepSystemStore = keep
 	}
 }
 
@@ -168,6 +180,9 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		conf.KeyspaceName = ks
 		conf.Store = config.StoreTypeTiKV
 	})
+	if ks == keyspace.System {
+		UpdateTiDBConfig()
+	}
 	store, err = d.Open(path)
 	require.NoError(t, err)
 	if kerneltype.IsNextGen() && ks != keyspace.System {
@@ -175,9 +190,11 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		sysStore, err := d.Open(sysPath)
 		require.NoError(t, err)
 		kvstore.SetSystemStorage(sysStore)
-		t.Cleanup(func() {
-			require.NoError(t, sysStore.Close())
-		})
+		if !option.keepSystemStore {
+			t.Cleanup(func() {
+				require.NoError(t, sysStore.Close())
+			})
+		}
 	}
 	require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 	dom, err = session.BootstrapSession(store)
@@ -209,10 +226,23 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 
 	t.Cleanup(func() {
 		dom.Close()
-		ddl.CloseOwnerManager()
+		ddl.CloseOwnerManager(store)
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
 		view.Stop()
 	})
 	return store, dom
+}
+
+// UpdateTiDBConfig updates the TiDB configuration for the real TiKV test.
+func UpdateTiDBConfig() {
+	// need a real PD
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+		if kerneltype.IsNextGen() {
+			conf.TiKVWorkerURL = "localhost:19000"
+			conf.KeyspaceName = keyspace.System
+			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
+		}
+	})
 }

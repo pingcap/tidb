@@ -1006,7 +1006,7 @@ func setupTracing() error {
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
-	ddl.CloseOwnerManager()
+	ddl.CloseOwnerManager(storage)
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
