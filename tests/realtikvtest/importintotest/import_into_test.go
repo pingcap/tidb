@@ -1038,7 +1038,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
-	s.checkMode(s.tk, "SELECT * FROM register_task", "register_task", true)
+	s.checkMode(s.tk, "SELECT * FROM load_data.register_task", "register_task", true)
 
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)
