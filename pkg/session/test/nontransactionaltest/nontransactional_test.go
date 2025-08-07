@@ -444,14 +444,34 @@ func TestNonTransactionalMetrics(t *testing.T) {
 		return counters
 	}
 
-	runAndCheck := func(fn func()) {
+	runAndCheck := func(tp string, fn func()) {
+		var (
+			affectedRowsCounter prometheus.Counter
+			stmtNodeCounter     prometheus.Counter
+		)
+		switch tp {
+		case "insert":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLInsert
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Insert", "", "default")
+		case "replace":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLReplace
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Replace", "", "default")
+		case "delete":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLDelete
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Delete", "", "default")
+		case "update":
+			affectedRowsCounter = metrics.AffectedRowsCounterNTDMLUpdate
+			stmtNodeCounter = metrics.StmtNodeCounter.WithLabelValues("NTDML-Update", "", "default")
+		default:
+			require.Fail(t, "Unknown type of DML", tp)
+		}
 		checkMetrics := []checkMetric{
-			{metrics.AffectedRowsCounterNTDML, 100},
+			{affectedRowsCounter, 100},
+			{stmtNodeCounter, 11}, // 1 Select + 10 split DMLs
 			{metrics.AffectedRowsCounterInsert, 0},
 			{metrics.AffectedRowsCounterReplace, 0},
 			{metrics.AffectedRowsCounterDelete, 0},
 			{metrics.AffectedRowsCounterUpdate, 0},
-			{metrics.StmtNodeCounter.WithLabelValues("NTDml", "", "default"), 11}, // 1 Select + 10 split DMLs
 			{metrics.StmtNodeCounter.WithLabelValues("Insert", "", "default"), 0},
 			{metrics.StmtNodeCounter.WithLabelValues("Replace", "", "default"), 0},
 			{metrics.StmtNodeCounter.WithLabelValues("Delete", "", "default"), 0},
@@ -476,16 +496,16 @@ func TestNonTransactionalMetrics(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
 	}
-	runAndCheck(func() {
+	runAndCheck("insert", func() {
 		tk.MustExec("BATCH LIMIT 10 INSERT INTO t2 SELECT * FROM t1")
 	})
-	runAndCheck(func() {
+	runAndCheck("update", func() {
 		tk.MustExec("BATCH LIMIT 10 UPDATE t2 SET a = a + 1")
 	})
-	runAndCheck(func() {
+	runAndCheck("delete", func() {
 		tk.MustExec("BATCH LIMIT 10 DELETE FROM t2")
 	})
-	runAndCheck(func() {
+	runAndCheck("replace", func() {
 		tk.MustExec("BATCH LIMIT 10 REPLACE INTO t2 SELECT * FROM t1")
 	})
 }

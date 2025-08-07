@@ -1191,8 +1191,8 @@ type SelectStmt struct {
 	With  *WithClause
 	// AsViewSchema indicates if this stmt provides the schema for the view. It is only used when creating the view
 	AsViewSchema bool
-	// If `IsNontransactionalDML` is true, this is a sub statement of non-transactional DML statement.
-	IsNontransactionalDML bool
+	// If `IsNontransactionalDML` is not nil, this is a sub statement of non-transactional DML statement.
+	NontransactionalDMLType *string
 }
 
 func (*SelectStmt) resultSet() {}
