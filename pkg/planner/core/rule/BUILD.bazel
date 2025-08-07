@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "rule",
     srcs = [
+        "join_reorder.go",
         "logical_rules.go",
         "rule_build_key_info.go",
         "rule_constant_propagation.go",
@@ -13,8 +14,32 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/rule/util",
         "//pkg/planner/util/optimizetrace",
         "//pkg/util/zeropool",
+    ],
+)
+
+go_test(
+    name = "rule_test",
+    srcs = [
+        "join_reorder_test.go",
+        "join_reorder_integration_test.go",
+    ],
+    embed = [":rule"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/rule/util",
+        "//pkg/planner/util/optimizetrace",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/types",
+        "//pkg/util/testbridge",
+        "@com_github_stretchr_testify//require",
     ],
 )

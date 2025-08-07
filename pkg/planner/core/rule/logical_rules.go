@@ -46,6 +46,11 @@ const (
 	FlagResolveExpand
 )
 
+// NewJoinReorderRule creates a new join reorder rule
+func NewJoinReorderRule() LogicalOptRule {
+	return &JoinReorderRule{}
+}
+
 func setPredicatePushDownFlag(u uint64) uint64 {
 	u |= FlagPredicatePushDown
 	return u
