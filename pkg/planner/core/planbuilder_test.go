@@ -368,7 +368,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
-	streamAgg := &physicalop.PhysicalStreamAgg{physicalop.BasePhysicalAgg{
+	streamAgg := &physicalop.PhysicalStreamAgg{BasePhysicalAgg: physicalop.BasePhysicalAgg{
 		AggFuncs:     aggDescs,
 		GroupByItems: []expression.Expression{col, cst},
 	}}
