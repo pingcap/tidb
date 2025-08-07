@@ -251,7 +251,6 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 		return err
 	}
 	if resp.Status != 0 {
-		logutil.BgLogger().Error("drop full text index failed", zap.Int64("table ID", req.TableId), zap.Int64("index ID", req.IndexId), zap.String("errorMessage", resp.ErrorMessage))
 		return errors.New(resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("drop full text index success", zap.Int64("index ID", req.TableId), zap.Int64("index ID", req.IndexId))
