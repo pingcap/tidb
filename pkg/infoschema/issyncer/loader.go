@@ -65,7 +65,7 @@ const (
 	//  - v1: when vardef.SchemaCacheSize is 0, we will load all matched info
 	//    schema objects into memory eagerly.
 	//  - v2: when vardef.SchemaCacheSize is greater than 0, we will load only
-	//    names/IDS and some special tableInfo into memory immediately, and will
+	//    names/IDs and some special tableInfo into memory immediately, and will
 	//    load other info schema objects lazily when they are accessed.
 	//    we will also try to restrict the memory usage of the info schema below
 	//    vardef.SchemaCacheSize.

@@ -389,11 +389,11 @@ func waitVersionSynced(
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	sum, err := jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
 	if err != nil {
-		logger.Info("wait latest schema version encounter error",
+		logger.Info("wait schema version synced encounter error",
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
 		return err
 	}
-	logger.Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
+	logger.Info("wait schema version synced success",
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()), zap.Stringer("summary", sum))
 	return nil
