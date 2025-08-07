@@ -244,7 +244,7 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.New("meta service client is nil")
+		return errors.Wrap(t.err, "meta service client is nil")
 	}
 	resp, err := t.metaServiceClient.DropIndex(ctx, req)
 	if err != nil {
