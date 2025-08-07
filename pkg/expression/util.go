@@ -1540,23 +1540,8 @@ func RemoveDupExprs(exprs []Expression) []Expression {
 		return exprs
 	}
 	exists := make(map[string]struct{}, len(exprs))
-	if len(exprs) == 2 {
-		count := 0
-		for _, expr := range exprs {
-			if e, ok := expr.(*ScalarFunction); ok {
-				if e.FuncName.L == ast.UnaryNot {
-					count++
-				}
-			}
-		}
-		if count == 2 {
-			fmt.Println("wwz")
-		}
-	}
-
 	return slices.DeleteFunc(exprs, func(expr Expression) bool {
 		key := string(expr.CanonicalHashCode())
-		logutil.BgLogger().Info("fuck", zap.String("key", key), zap.String("express", expr.StringWithCtx(nil, errors.RedactLogDisable)))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			exists[key] = struct{}{}
 			return false
