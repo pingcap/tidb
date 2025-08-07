@@ -2437,6 +2437,9 @@ func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 		}
 		return kv.ReplicaReadLeader
 	}
+	if s.StmtCtx.RCCheckTS || s.RcWriteCheckTS {
+		return kv.ReplicaReadLeader
+	}
 	if s.StmtCtx.HasReplicaReadHint {
 		return kv.ReplicaReadType(s.StmtCtx.ReplicaRead)
 	}
