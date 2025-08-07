@@ -156,7 +156,7 @@ func (s *BaseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 	return s.createJoin(lChild, rChild, nil, nil, nil, nil, 0) // 0 = InnerJoin
 }
 
-// createJoin is a factory function that creates joins without importing logicalop directly
+// createJoin is a factory function that creates joins
 // This will be overridden by the actual implementation in the rule package
 func (s *BaseSingleGroupJoinOrderSolver) createJoin(
 	lChild, rChild base.LogicalPlan,
@@ -167,6 +167,15 @@ func (s *BaseSingleGroupJoinOrderSolver) createJoin(
 	// Default implementation - return left child as fallback
 	// The actual implementation should be provided by the rule package
 	return lChild
+}
+
+// SetJoinFactory sets the join factory function
+func (s *BaseSingleGroupJoinOrderSolver) SetJoinFactory(factory func(
+	lChild, rChild base.LogicalPlan,
+	eqEdges []*expression.ScalarFunction,
+	otherConds, leftConds, rightConds []expression.Expression,
+	joinType int) base.LogicalPlan) {
+	s.createJoin = factory
 }  
   
 // BaseNodeCumCost calculates the cumulative cost of a node  

@@ -31,12 +31,6 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
-// LogicalJoin is a simplified version to avoid import cycle
-type LogicalJoin struct {
-	JoinType int
-	// Add other fields as needed
-}
-
 // JoinGroupResult represents the result of extracting a join group
 type JoinGroupResult struct {
 	Group              []base.LogicalPlan
