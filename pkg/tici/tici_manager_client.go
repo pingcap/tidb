@@ -20,9 +20,12 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -213,15 +216,15 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+		return dbterror.ErrInvalidDDLJob.FastGenWithCause(errors.Wrap(t.err, "meta service client is nil"))
 	}
 	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
 	if err != nil {
-		return err
+		return dbterror.ErrInvalidDDLJob.FastGenWithCause(err)
 	}
 	if resp.Status != 0 {
 		logutil.BgLogger().Error("create fulltext index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
-		return nil
+		return dbterror.ErrInvalidDDLJob.FastGenWithCause(resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("create fulltext index success", zap.String("indexID", resp.IndexId))
 	return nil
@@ -241,15 +244,15 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+		return dbterror.ErrInvalidDDLJob.FastGenWithCause("meta service client is nil")
 	}
 	resp, err := t.metaServiceClient.DropIndex(ctx, req)
 	if err != nil {
-		return err
+		return dbterror.ErrInvalidDDLJob.FastGenWithCause(err)
 	}
 	if resp.Status != 0 {
 		logutil.BgLogger().Error("drop full text index failed", zap.Int64("table ID", req.TableId), zap.Int64("index ID", req.IndexId), zap.String("errorMessage", resp.ErrorMessage))
-		return nil
+		return dbterror.ErrInvalidDDLJob.FastGenWithCause(resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("drop full text index success", zap.Int64("index ID", req.TableId), zap.Int64("index ID", req.IndexId))
 	return nil
@@ -571,4 +574,37 @@ func ModelPrimaryKeyToTiCIIndexInfo(
 		Columns:   pkColumns,
 		IsUnique:  pkIndex.Unique,
 	}
+}
+
+// CreateFulltextIndex create fulltext index on TiCI.
+func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+	failpoint.Inject("MockCreateTiCIIndexSuccess", func(val failpoint.Value) {
+		if x := val.(bool); x {
+			failpoint.Return(nil)
+		}
+		failpoint.Return(dbterror.ErrInvalidDDLJob.FastGenByArgs(errors.New("mock create TiCI index failed")))
+
+	})
+	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	if err != nil {
+		return err
+	}
+	defer ticiManager.Close()
+	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
+}
+
+// DropFullTextIndex drop fulltext index on TiCI.
+func DropFullTextIndex(ctx context.Context, tableID int64, indexID int64) error {
+	failpoint.Inject("MockDropTiCIIndexSuccess", func(val failpoint.Value) {
+		if x := val.(bool); x {
+			failpoint.Return(nil)
+		}
+		failpoint.Return(dbterror.ErrInvalidDDLJob.FastGenByArgs(errors.New("mock drop TiCI index failed")))
+	})
+	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
+	if err != nil {
+		return err
+	}
+	defer ticiManager.Close()
+	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }
