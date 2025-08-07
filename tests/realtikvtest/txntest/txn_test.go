@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -626,4 +627,89 @@ func TestLockKeysInDML(t *testing.T) {
 	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
+
+func TestIssue62775(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testForSetup := func(createTable string, prepare string, query string, expectedData [][]any) {
+		tk.MustExec(createTable)
+		defer tk.MustExec("drop table if exists t")
+		tk.MustExec(prepare)
+
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
+
+		s, err := session.CreateSession4Test(store)
+		// Simulate session initializations of GC worker
+		s.GetSessionVars().CommonGlobalLoaded = true
+		s.GetSessionVars().InRestrictedSQL = true
+		require.NoError(t, err)
+		// The problem occurs in internal session.
+		s.SetConnectionID(0)
+		_, err = s.ExecuteInternal(ctx, "use test")
+		require.NoError(t, err)
+		recordSet, err := s.ExecuteInternal(ctx, query)
+		require.NoError(t, err)
+		require.NotNil(t, recordSet)
+		rs := tk.ResultSetToResultWithCtx(ctx, recordSet, "failed to drain record set after query")
+		rs.Check(expectedData)
+	}
+
+	// The following sub-cases covers the combination of:
+	// * Primary key:
+	//   * int (PKIsHandle == true)
+	//   * varchar, clustered (PKIsHandle == false; IsCommonHandle == ture)
+	//   * varchar, non-clustered
+	// * Query:
+	//   * Columns without parentheses
+	//   * Columns with parentheses (affects the expression type)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10)`,
+		`select v from t where id = 1 for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key clustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select v from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key nonclustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select v from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10)`,
+		`select (v) from t where id = 1 for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key clustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select (v) from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id varchar(64) primary key nonclustered, v int)`,
+		`insert into t values ("a", 10)`,
+		`select (v) from t where id = "a" for update`,
+		testkit.Rows("10"),
+	)
 }
