@@ -1367,7 +1367,8 @@ type copOutput struct {
 func (worker *copIteratorWorker) buildCopInput(bo *Backoffer, task *copTask) (in copInput) {
 	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
+			in.runaway = errors.New("mock handleTaskOnce error")
+			failpoint.Return()
 		}
 	})
 
