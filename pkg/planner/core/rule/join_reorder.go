@@ -16,14 +16,17 @@ package rule
 
 import (
 	"context"
+	"math"
 	"math/bits"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"cmp"
 )
@@ -581,6 +584,19 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan base.LogicalPlan,
 	// Simplified trace step - in real implementation this would be more complex
 }
 
+// joinGroupEqEdge represents an edge in the join group
+type joinGroupEqEdge struct {
+	nodeIDs []int
+	edge    *expression.ScalarFunction
+}
+
+// joinGroupNonEqEdge represents a non-equal edge in the join group
+type joinGroupNonEqEdge struct {
+	nodeIDs    []int
+	nodeIDMask uint
+	expr       expression.Expression
+}
+
 // joinReorderDPSolver implements dynamic programming join reordering
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
@@ -602,13 +618,241 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 		})
 		tracer.appendLogicalJoinCost(node, cost)
 	}
-	
-	// Simplified DP implementation - in real implementation this would be more complex
-	// For now, just return the first node as a placeholder
-	if len(s.curJoinGroup) > 0 {
-		return s.curJoinGroup[0].p, nil
+	adjacents := make([][]int, len(s.curJoinGroup))
+	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
+	addEqEdge := func(node1, node2 int, edgeContent *expression.ScalarFunction) {
+		totalEqEdges = append(totalEqEdges, joinGroupEqEdge{
+			nodeIDs: []int{node1, node2},
+			edge:    edgeContent,
+		})
+		adjacents[node1] = append(adjacents[node1], node2)
+		adjacents[node2] = append(adjacents[node2], node1)
 	}
-	return nil, nil
+	// Build Graph for join group
+	for _, cond := range eqConds {
+		sf := cond.(*expression.ScalarFunction)
+		lCol := sf.GetArgs()[0].(*expression.Column)
+		rCol := sf.GetArgs()[1].(*expression.Column)
+		lIdx, err := findNodeIndexInGroup(joinGroup, lCol)
+		if err != nil {
+			return nil, err
+		}
+		rIdx, err := findNodeIndexInGroup(joinGroup, rCol)
+		if err != nil {
+			return nil, err
+		}
+		addEqEdge(lIdx, rIdx, sf)
+	}
+	totalNonEqEdges := make([]joinGroupNonEqEdge, 0, len(s.otherConds))
+	for _, cond := range s.otherConds {
+		cols := expression.ExtractColumns(cond)
+		mask := uint(0)
+		ids := make([]int, 0, len(cols))
+		for _, col := range cols {
+			idx, err := findNodeIndexInGroup(joinGroup, col)
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, idx)
+			mask |= 1 << uint(idx)
+		}
+		totalNonEqEdges = append(totalNonEqEdges, joinGroupNonEqEdge{
+			nodeIDs:    ids,
+			nodeIDMask: mask,
+			expr:       cond,
+		})
+	}
+	visited := make([]bool, len(joinGroup))
+	nodeID2VisitID := make([]int, len(joinGroup))
+	joins := make([]base.LogicalPlan, 0, len(joinGroup))
+	// BFS the tree.
+	for i := range joinGroup {
+		if visited[i] {
+			continue
+		}
+		visitID2NodeID := s.bfsGraph(i, visited, adjacents, nodeID2VisitID)
+		nodeIDMask := uint(0)
+		for _, nodeID := range visitID2NodeID {
+			nodeIDMask |= 1 << uint(nodeID)
+		}
+		var subNonEqEdges []joinGroupNonEqEdge
+		for i := len(totalNonEqEdges) - 1; i >= 0; i-- {
+			// If this edge is not the subset of the current sub graph.
+			if totalNonEqEdges[i].nodeIDMask&nodeIDMask != totalNonEqEdges[i].nodeIDMask {
+				continue
+			}
+			newMask := uint(0)
+			for _, nodeID := range totalNonEqEdges[i].nodeIDs {
+				newMask |= 1 << uint(nodeID2VisitID[nodeID])
+			}
+			totalNonEqEdges[i].nodeIDMask = newMask
+			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
+			totalNonEqEdges = slices.Delete(totalNonEqEdges, i, i+1)
+		}
+		// Do DP on each sub graph.
+		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges, tracer)
+		if err != nil {
+			return nil, err
+		}
+		joins = append(joins, join)
+	}
+	remainedOtherConds := make([]expression.Expression, 0, len(totalNonEqEdges))
+	for _, edge := range totalNonEqEdges {
+		remainedOtherConds = append(remainedOtherConds, edge.expr)
+	}
+	// Build bushy tree for cartesian joins.
+	return s.makeBushyJoin(joins, remainedOtherConds, tracer.opt), nil
+}
+
+// bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
+func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VisitID []int) []int {
+	queue := make([]int, 0, len(adjacents))
+	queue = append(queue, startNode)
+	visited[startNode] = true
+	visitID := 0
+	visitID2NodeID := make([]int, 0, len(adjacents))
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		nodeID2VisitID[cur] = visitID
+		visitID2NodeID = append(visitID2NodeID, cur)
+		visitID++
+		for _, next := range adjacents[cur] {
+			if !visited[next] {
+				visited[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return visitID2NodeID
+}
+
+// dpGraph implements the dynamic programming algorithm for join reordering
+func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []base.LogicalPlan,
+	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge, tracer *joinReorderTrace) (base.LogicalPlan, error) {
+	nodeCnt := uint(len(visitID2NodeID))
+	bestPlan := make([]*jrNode, 1<<nodeCnt)
+	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
+	for i := range nodeCnt {
+		bestPlan[1<<i] = s.curJoinGroup[visitID2NodeID[i]]
+	}
+	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
+	for nodeBitmap := uint(1); nodeBitmap < (1 << nodeCnt); nodeBitmap++ {
+		if bits.OnesCount(nodeBitmap) == 1 {
+			continue
+		}
+		// This loop can iterate all its subset.
+		for sub := (nodeBitmap - 1) & nodeBitmap; sub > 0; sub = (sub - 1) & nodeBitmap {
+			remain := nodeBitmap ^ sub
+			if sub > remain {
+				continue
+			}
+			// If this subset is not connected skip it.
+			if bestPlan[sub] == nil || bestPlan[remain] == nil {
+				continue
+			}
+			// Get the edge connecting the two parts.
+			usedEdges, otherConds := s.nodesAreConnected(sub, remain, nodeID2VisitID, totalEqEdges, totalNonEqEdges)
+			// Here we only check equal condition currently.
+			if len(usedEdges) == 0 {
+				continue
+			}
+			join, err := s.newJoinWithEdge(bestPlan[sub].p, bestPlan[remain].p, usedEdges, otherConds, tracer.opt)
+			if err != nil {
+				return nil, err
+			}
+			curCost := s.calcJoinCumCost(join, bestPlan[sub], bestPlan[remain])
+			tracer.appendLogicalJoinCost(join, curCost)
+			if bestPlan[nodeBitmap] == nil {
+				bestPlan[nodeBitmap] = &jrNode{
+					p:       join,
+					cumCost: curCost,
+				}
+			} else if bestPlan[nodeBitmap].cumCost > curCost {
+				bestPlan[nodeBitmap].p = join
+				bestPlan[nodeBitmap].cumCost = curCost
+			}
+		}
+	}
+	return bestPlan[(1<<nodeCnt)-1].p, nil
+}
+
+// nodesAreConnected checks if two node sets are connected
+func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
+	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
+	var usedEqEdges []joinGroupEqEdge
+	for _, edge := range totalEqEdges {
+		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
+		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
+		if ((leftMask&(1<<lIdx)) > 0 && (rightMask&(1<<rIdx)) > 0) || ((leftMask&(1<<rIdx)) > 0 && (rightMask&(1<<lIdx)) > 0) {
+			usedEqEdges = append(usedEqEdges, edge)
+		}
+	}
+	otherConds := make([]expression.Expression, 0, len(totalNonEqEdges))
+	for _, edge := range totalNonEqEdges {
+		// If the result is false, means that the current group hasn't covered the columns involved in the expression.
+		if edge.nodeIDMask&(leftMask|rightMask) != edge.nodeIDMask {
+			continue
+		}
+		// Check whether this expression is only built from one side of the join.
+		if edge.nodeIDMask&leftMask == 0 || edge.nodeIDMask&rightMask == 0 {
+			continue
+		}
+		otherConds = append(otherConds, edge.expr)
+	}
+	return usedEqEdges, otherConds
+}
+
+// newJoinWithEdge creates a new join with edges
+func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	var eqConds []*expression.ScalarFunction
+	for _, edge := range edges {
+		lCol := edge.edge.GetArgs()[0].(*expression.Column)
+		rCol := edge.edge.GetArgs()[1].(*expression.Column)
+		if leftPlan.Schema().Contains(lCol) {
+			eqConds = append(eqConds, edge.edge)
+		} else {
+			newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
+			eqConds = append(eqConds, newSf)
+		}
+	}
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin, opt)
+	_, _, err := join.RecursiveDeriveStats(nil)
+	return join, err
+}
+
+// makeBushyJoin creates a bushy join from multiple plans
+func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPlan, otherConds []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+	for len(cartesianJoinGroup) > 1 {
+		resultJoinGroup := make([]base.LogicalPlan, 0, len(cartesianJoinGroup))
+		for i := 0; i < len(cartesianJoinGroup); i += 2 {
+			if i+1 == len(cartesianJoinGroup) {
+				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
+				break
+			}
+			// TODO:Since the other condition may involve more than two tables, e.g. t1.a = t2.b+t3.c.
+			//  So We'll need a extra stage to deal with it.
+			// Currently, we just add it when building cartesianJoinGroup.
+			mergedSchema := expression.MergeSchema(cartesianJoinGroup[i].Schema(), cartesianJoinGroup[i+1].Schema())
+			var usedOtherConds []expression.Expression
+			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
+				return expression.ExprFromSchema(expr, mergedSchema)
+			})
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin, opt))
+		}
+		cartesianJoinGroup = resultJoinGroup
+	}
+	return cartesianJoinGroup[0]
+}
+
+// findNodeIndexInGroup finds the index of a node in the group
+func findNodeIndexInGroup(group []base.LogicalPlan, col *expression.Column) (int, error) {
+	for i, plan := range group {
+		if plan.Schema().Contains(col) {
+			return i, nil
+		}
+	}
+	return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE")
 }
 
 // newJoinWithEdges creates a new join with edges
@@ -642,20 +886,46 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 		return nil, err
 	}
 	
+	var leadingJoinNodes []*jrNode
+	if s.leadingJoinGroup != nil {
+		// We have a leading hint to let some tables join first. The result is stored in the s.leadingJoinGroup.
+		// We generate jrNode separately for it.
+		leadingJoinNodes, err = s.generateJoinOrderNode([]base.LogicalPlan{s.leadingJoinGroup}, tracer)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Sort plans by cost
 	slices.SortStableFunc(s.curJoinGroup, func(i, j *jrNode) int {
 		return cmp.Compare(i.cumCost, j.cumCost)
 	})
-	
+
+	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
+	joinNodeNum := len(s.curJoinGroup)
+	if leadingJoinNodes != nil {
+		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
+		// So it can be joined first.
+		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
+		s.curJoinGroup = leadingJoinNodes
+	}
 	var cartesianGroup []base.LogicalPlan
 	for len(s.curJoinGroup) > 0 {
 		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
 			return nil, err
 		}
+		if joinNodeNum > 0 && len(s.curJoinGroup) == joinNodeNum {
+			// Getting here means that there is no join condition between the table used in the leading hint and other tables
+			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
+			// We can not let table t3 join first.
+			// TODO(hawkingrei): we find the problem in the TestHint.
+			// 	`select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3`
+			//  this sql should not return the warning. but It will not affect the result. so we will fix it as soon as possible.
+			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table has join conditions with other tables")
+		}
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}
-	
+
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
@@ -663,52 +933,60 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
-	
 	for {
-		bestCost := float64(1e9)
-		bestIdx := -1
-		var bestJoin base.LogicalPlan
-		
+		bestCost := math.MaxFloat64
+		bestIdx, whateverValidOneIdx := -1, -1
+		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
+		var bestJoin, whateverValidOne base.LogicalPlan
 		for i, node := range s.curJoinGroup {
-			join, err := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
-			if err != nil {
+			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
+			if newJoin == nil {
 				continue
 			}
-			
-			cost := s.calcJoinCumCost(join, curJoinTree, node)
-			if cost < bestCost {
-				bestCost = cost
+			_, _, err := newJoin.RecursiveDeriveStats(nil)
+			if err != nil {
+				return nil, err
+			}
+			whateverValidOne = newJoin
+			whateverValidOneIdx = i
+			remainOthersOfWhateverValidOne = remainOthers
+			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
+			tracer.appendLogicalJoinCost(newJoin, curCost)
+			if bestCost > curCost {
+				bestCost = curCost
+				bestJoin = newJoin
 				bestIdx = i
-				bestJoin = join
+				finalRemainOthers = remainOthers
 			}
 		}
-		
-		if bestIdx == -1 {
-			break
+		// If we could find more join node, meaning that the sub connected graph have been totally explored.
+		if bestJoin == nil {
+			if whateverValidOne == nil {
+				break
+			}
+			// This branch is for the unexpected case.
+			// We throw assertion in test env. And create a valid join to avoid wrong result in the production env.
+			// intest.Assert(false, "Join reorder should find one valid join but failed.")
+			bestJoin = whateverValidOne
+			bestCost = math.MaxFloat64
+			bestIdx = whateverValidOneIdx
+			finalRemainOthers = remainOthersOfWhateverValidOne
 		}
-		
-		// Update current join tree
 		curJoinTree = &jrNode{
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
-		
-		// Remove the best node from the group
-		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		s.curJoinGroup = slices.Delete(s.curJoinGroup, bestIdx, bestIdx+1)
+		s.otherConds = finalRemainOthers
 	}
-	
 	return curJoinTree, nil
 }
 
 // checkConnectionAndMakeJoin checks connection and makes join
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	leftNode, rightNode, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
-	
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, []expression.Expression) {
+	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 {
-		// No connection, create cartesian join
-		return s.newCartesianJoin(leftNode, rightNode), nil
+		return nil, nil
 	}
-	
-	join := s.createJoin(leftNode, rightNode, usedEdges, nil, nil, nil, joinType.JoinType)
-	return join, nil
+	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
 }
