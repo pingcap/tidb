@@ -175,7 +175,7 @@ func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 		return txnScope
 	}
 
-	if p.sctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
+	if p.sctx.GetSessionVars().GetReplicaReadUnadjusted().IsClosestRead() {
 		// If closest read is set, we should use the scope where instance located.
 		return config.GetTxnScopeFromConfig()
 	}
