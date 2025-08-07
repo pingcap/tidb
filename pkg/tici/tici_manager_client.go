@@ -50,6 +50,10 @@ const MetaServiceEelectionKey = "/tici/metaservice/election"
 
 // NewManagerCtx creates a new TiCI manager.
 func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
+	if client == nil {
+		logutil.BgLogger().Error("meta service client is nil")
+		return nil, errors.New("meta service client is nil")
+	}
 	addr, err := getMetaServiceLeaderAddress(ctx, client)
 	if err != nil {
 		return nil, err
@@ -585,7 +589,7 @@ func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInf
 	})
 	ticiManager, err := NewManagerCtx(ctx, infosync.GetEtcdClient())
 	if err != nil {
-		return err
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
 	defer ticiManager.Close()
 	return ticiManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
