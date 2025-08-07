@@ -3059,7 +3059,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		canUseCache = false
 	}
 
-	apply := PhysicalApply{
+	apply := physicalop.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
 		CanUseCache:      canUseCache,

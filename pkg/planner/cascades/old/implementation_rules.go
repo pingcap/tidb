@@ -558,7 +558,7 @@ func (*ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (
 func (*ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*logicalop.LogicalApply)
 	join := plannercore.GetHashJoin(nil, la, reqProp)
-	physicalApply := plannercore.PhysicalApply{
+	physicalApply := physicalop.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
 	}.Init(
