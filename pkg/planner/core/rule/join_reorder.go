@@ -17,7 +17,9 @@ package rule
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
@@ -58,15 +60,14 @@ func (r *JoinReorderRule) Name() string {
 
 // containsReorderableJoins checks if the plan contains joins that can be reordered
 func (r *JoinReorderRule) containsReorderableJoins(p base.LogicalPlan) bool {
-	// Check if this is a join by looking for join-related methods or properties
-	// For now, we'll check if the plan has children and assume it might be a join
-	if len(p.Children()) >= 2 {
+	switch p.(type) {
+	case *logicalop.LogicalJoin:
 		return true
-	}
-	
-	for _, child := range p.Children() {
-		if r.containsReorderableJoins(child) {
-			return true
+	default:
+		for _, child := range p.Children() {
+			if r.containsReorderableJoins(child) {
+				return true
+			}
 		}
 	}
 	return false
@@ -114,7 +115,31 @@ func (s *JoinReOrderSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 
 // replaceJoinGroup replaces the original join group with the optimized one
 func (s *JoinReOrderSolver) replaceJoinGroup(p base.LogicalPlan, group *util.JoinGroupResult, newJoin base.LogicalPlan) base.LogicalPlan {
-	// Implementation for replacing join group in the plan tree
-	// This would involve traversing the plan tree and replacing the identified group
-	return p // Simplified for brevity
+	// Check if schema has changed and add projection if necessary
+	originalSchema := p.Schema()
+	schemaChanged := false
+	
+	if len(newJoin.Schema().Columns) != len(originalSchema.Columns) {
+		schemaChanged = true
+	} else {
+		for i, col := range newJoin.Schema().Columns {
+			if !col.EqualColumn(originalSchema.Columns[i]) {
+				schemaChanged = true
+				break
+			}
+		}
+	}
+	
+	if schemaChanged {
+		// Create a projection to maintain the original schema
+		proj := &logicalop.LogicalProjection{
+			Exprs: expression.Column2Exprs(originalSchema.Columns),
+		}
+		proj.Init(newJoin.SCtx(), newJoin.QueryBlockOffset())
+		proj.SetSchema(originalSchema.Clone())
+		proj.SetChildren(newJoin)
+		return proj
+	}
+	
+	return newJoin
 }
