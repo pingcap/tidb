@@ -61,7 +61,7 @@ func canProjectionBeEliminatedStrict(p *physicalop.PhysicalProjection) bool {
 	// mode aggregation that need to be running in TiFlash, always add an extra Project
 	// the align the output schema. In the future, we can solve this in-compatibility by
 	// passing down the aggregation mode to TiFlash.
-	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
+	if physicalAgg, ok := p.Children()[0].(*physicalop.PhysicalHashAgg); ok {
 		if physicalAgg.MppRunMode == physicalop.Mpp1Phase || physicalAgg.MppRunMode == physicalop.Mpp2Phase || physicalAgg.MppRunMode == physicalop.MppScalar {
 			if physicalAgg.IsFinalAgg() {
 				return false

@@ -47,7 +47,7 @@ type ShowImpl struct {
 }
 
 // NewShowImpl creates a new ShowImpl.
-func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
+func NewShowImpl(show *physicalop.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
 
@@ -92,7 +92,7 @@ type TiDBHashAggImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiDBHashAggImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	hashAgg := agg.plan.(*physicalop.PhysicalHashAgg)
 	selfCost := hashAgg.GetCost(children[0].GetPlan().StatsInfo().RowCount, true, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
@@ -100,13 +100,13 @@ func (agg *TiDBHashAggImpl) CalcCost(_ float64, children ...memo.Implementation)
 
 // AttachChildren implements Implementation AttachChildren interface.
 func (agg *TiDBHashAggImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
-	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	hashAgg := agg.plan.(*physicalop.PhysicalHashAgg)
 	hashAgg.SetChildren(children[0].GetPlan())
 	return agg
 }
 
 // NewTiDBHashAggImpl creates a new TiDBHashAggImpl.
-func NewTiDBHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiDBHashAggImpl {
+func NewTiDBHashAggImpl(agg *physicalop.PhysicalHashAgg) *TiDBHashAggImpl {
 	return &TiDBHashAggImpl{baseImpl{plan: agg}}
 }
 
@@ -117,14 +117,14 @@ type TiKVHashAggImpl struct {
 
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiKVHashAggImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
-	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
+	hashAgg := agg.plan.(*physicalop.PhysicalHashAgg)
 	selfCost := hashAgg.GetCost(children[0].GetPlan().StatsInfo().RowCount, false, false, 0)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }
 
 // NewTiKVHashAggImpl creates a new TiKVHashAggImpl.
-func NewTiKVHashAggImpl(agg *plannercore.PhysicalHashAgg) *TiKVHashAggImpl {
+func NewTiKVHashAggImpl(agg *physicalop.PhysicalHashAgg) *TiKVHashAggImpl {
 	return &TiKVHashAggImpl{baseImpl{plan: agg}}
 }
 

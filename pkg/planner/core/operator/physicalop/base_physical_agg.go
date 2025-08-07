@@ -72,7 +72,12 @@ func (p BasePhysicalAgg) Init(ctx base.PlanContext, stats *property.StatsInfo, o
 
 // InitForHash initializes BasePhysicalAgg for hash aggregation.
 func (p *BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForHash(p, ctx, stats, offset, schema, props...)
+	hashAgg := &PhysicalHashAgg{*p, ""}
+	hashAgg.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, hashAgg, offset)
+	hashAgg.SetChildrenReqProps(props)
+	hashAgg.SetStats(stats)
+	hashAgg.SetSchema(schema)
+	return hashAgg
 }
 
 // InitForStream initializes BasePhysicalAgg for stream aggregation.
@@ -516,7 +521,7 @@ func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDe
 	pushDownCtx := util.GetPushDownCtx(sctx)
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
-		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
+		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args...) {
 			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
 			ret = false
 			break

@@ -17,6 +17,8 @@ package physicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -91,4 +93,74 @@ func (s *PhysicalSchemaProducer) CloneWithSelf(newCtx base.PlanContext, newSelf 
 		BasePhysicalPlan: *base,
 		schema:           s.Schema().Clone(),
 	}, nil
+}
+
+//******************************** Simple Schema Producer *********************************
+
+// SimpleSchemaProducer stores the schema for the base plans who can produce schema directly.
+type SimpleSchemaProducer struct {
+	schema *expression.Schema
+	names  types.NameSlice `plan-cache-clone:"shallow"`
+	baseimpl.Plan
+}
+
+// CloneSelfForPlanCache implements the base.Plan interface.
+// SimpleSchemaProducer can't override the CloneForPlanCache, otherwise, Execute doesn't impl the plan interface.
+// As before, SimpleSchemaProducer will always inherit the embedded Plan's CloneForPlanCache.
+func (s *SimpleSchemaProducer) CloneSelfForPlanCache(newCtx base.PlanContext) *SimpleSchemaProducer {
+	cloned := new(SimpleSchemaProducer)
+	cloned.Plan = *s.Plan.CloneWithNewCtx(newCtx)
+	cloned.schema = s.schema
+	cloned.names = s.names
+	return cloned
+}
+
+// OutputNames returns the outputting names of each column.
+func (s *SimpleSchemaProducer) OutputNames() types.NameSlice {
+	return s.names
+}
+
+// SetOutputNames sets the outputting name by the given slice.
+func (s *SimpleSchemaProducer) SetOutputNames(names types.NameSlice) {
+	s.names = names
+}
+
+// Schema implements the Plan.Schema interface.
+func (s *SimpleSchemaProducer) Schema() *expression.Schema {
+	if s.schema == nil {
+		s.schema = expression.NewSchema()
+	}
+	return s.schema
+}
+
+// SetSchema implements the Plan.SetSchema interface.
+func (s *SimpleSchemaProducer) SetSchema(schema *expression.Schema) {
+	s.schema = schema
+}
+
+// SetSchemaAndNames sets the schema and names for the plan.
+func (s *SimpleSchemaProducer) SetSchemaAndNames(schema *expression.Schema, names types.NameSlice) {
+	s.schema = schema
+	s.names = names
+}
+
+// MemoryUsage return the memory usage of SimpleSchemaProducer
+func (s *SimpleSchemaProducer) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
+
+	sum = size.SizeOfPointer + size.SizeOfSlice + int64(cap(s.names))*size.SizeOfPointer + s.Plan.MemoryUsage()
+	if s.schema != nil {
+		sum += s.schema.MemoryUsage()
+	}
+	for _, name := range s.names {
+		sum += name.MemoryUsage()
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
+func (*SimpleSchemaProducer) ResolveIndices() (err error) {
+	return
 }

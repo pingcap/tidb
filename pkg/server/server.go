@@ -1141,6 +1141,13 @@ func (s *Server) ContainsInternalSession(se any) bool {
 	return ok
 }
 
+// InternalSessionCount implements sessionmgr.InfoSchemaCoordinator interface.
+func (s *Server) InternalSessionCount() int {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	return len(s.internalSessions)
+}
+
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) DeleteInternalSession(se any) {
@@ -1203,8 +1210,9 @@ func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 		s.printMDLLogTime = time.Now()
 	}
 	for _, client := range s.clients {
-		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, jobs, printLog)
+		se := client.ctx.Session
+		if se != nil {
+			variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, printLog)
 		}
 	}
 }

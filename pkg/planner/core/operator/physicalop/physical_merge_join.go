@@ -315,7 +315,7 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := new(strings.Builder)
 	buffer.WriteString(p.JoinType.String())
-	ExplainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
 			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))

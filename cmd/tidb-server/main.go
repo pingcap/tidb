@@ -812,11 +812,11 @@ func setGlobalVars() {
 			zap.String("lease", schemaLeaseDuration.String()))
 		schemaLeaseDuration = config.DefSchemaLease
 	}
-	session.SetSchemaLease(schemaLeaseDuration)
+	vardef.SetSchemaLease(schemaLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
-	session.SetStatsLease(statsLeaseDuration)
+	vardef.SetStatsLease(statsLeaseDuration)
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
-	session.SetPlanReplayerGCLease(planReplayerGCLease)
+	vardef.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	if cfg.SplitTable {

@@ -116,9 +116,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "CheckTable"
 	case *PhysicalIndexScan:
 		str = fmt.Sprintf("Index(%s.%s)%v", x.Table.Name.L, x.Index.Name.L, x.Ranges)
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -174,7 +174,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "MaxOneRow"
 	case *logicalop.LogicalLimit, *physicalop.PhysicalLimit:
 		str = "Limit"
-	case *PhysicalLock, *logicalop.LogicalLock:
+	case *physicalop.PhysicalLock, *logicalop.LogicalLock:
 		str = "Lock"
 	case *ShowDDL:
 		str = "ShowDDL"
@@ -183,12 +183,12 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		if pl := in.(*logicalop.LogicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
-	case *PhysicalShow:
+	case *physicalop.PhysicalShow:
 		str = "Show"
-		if pl := in.(*PhysicalShow); pl.Extractor != nil {
+		if pl := in.(*physicalop.PhysicalShow); pl.Extractor != nil {
 			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
-	case *logicalop.LogicalShowDDLJobs, *PhysicalShowDDLJobs:
+	case *logicalop.LogicalShowDDLJobs, *physicalop.PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"
 	case *logicalop.LogicalSort, *physicalop.PhysicalSort:
 		str = "Sort"
@@ -247,7 +247,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *logicalop.LogicalTableDual, *physicalop.PhysicalTableDual:
 		str = "Dual"
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		str = "HashAgg"
 	case *PhysicalStreamAgg:
 		str = "StreamAgg"
@@ -301,7 +301,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -345,9 +345,9 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *physicalop.PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
-	case *PhysicalShuffle:
+	case *physicalop.PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
-	case *PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
 	case *PointGetPlan:
 		str = "PointGet("
