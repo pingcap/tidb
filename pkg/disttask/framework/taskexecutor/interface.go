@@ -58,6 +58,12 @@ type TaskTable interface {
 	// node from running to pending.
 	// see subtask state machine for more detail.
 	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.SubtaskBase) error
+
+	// UpdateSubtaskCheckpoint updates the subtask's checkpoint.
+	UpdateSubtaskCheckpoint(ctx context.Context, subtaskID int64, checkpoint any) error
+
+	// GetSubtaskCheckpoint gets the subtask's checkpoint.
+	GetSubtaskCheckpoint(ctx context.Context, subtaskID int64) (string, error)
 }
 
 // TaskExecutor is the executor for a task.
