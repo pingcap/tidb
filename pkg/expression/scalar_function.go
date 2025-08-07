@@ -682,6 +682,12 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 				for _, argCode := range childArgsHashCode {
 					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 				}
+			default:
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+				// use the origin arg hash code.
+				for _, argCode := range argsHashCode {
+					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+				}
 			}
 		}
 	default:
