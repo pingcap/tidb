@@ -1476,8 +1476,10 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeRenameIndexV1(job)
 	case ActionAddIndex:
 		err = a.decodeAddIndexV1(job)
-	case ActionAddColumnarIndex, ActionAddFullTextIndex:
+	case ActionAddColumnarIndex:
 		err = a.decodeAddColumnarIndexV1(job)
+	case ActionAddFullTextIndex:
+		err = a.decodeAddFullTextIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1581,6 +1583,28 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 		FuncExpr:                funcExpr,
 		IsColumnar:              true,
 		ColumnarIndexType:       columnarIndexType,
+	}}
+	return nil
+}
+
+func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
+	var (
+		indexName              ast.CIStr
+		indexPartSpecification *ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+		funcExpr               string
+	)
+
+	if err := job.decodeArgs(
+		&indexName, &indexPartSpecification, &indexOption, &funcExpr); err != nil {
+		return errors.Trace(err)
+	}
+
+	a.IndexArgs = []*IndexArg{{
+		IndexName:               indexName,
+		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexOption:             indexOption,
+		FuncExpr:                funcExpr,
 	}}
 	return nil
 }
