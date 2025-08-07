@@ -1403,7 +1403,8 @@ func (s *mockGCSSuite) TestTableMode() {
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
 
-	// Test import into check table is not empty after alter table mode to Import.
+	// Test import into check table is not empty between precheck and
+	// alter table mode to Import.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
 	err = s.tk.QueryToErr(loadDataSQL)
 	s.ErrorContains(err, "PreCheck failed: target table is not empty")
