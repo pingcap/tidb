@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -555,6 +554,7 @@ func NewDomainWithEtcdClient(
 		store:             store,
 		exit:              make(chan struct{}),
 		sysSessionPool:    createInternelSessionPool(systemSessionPoolSize, factory),
+		dxfSessionPool:    createInternelSessionPool(dxfSessionPoolSize, factory),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
@@ -595,9 +595,6 @@ func NewDomainWithEtcdClient(
 	do.initDomainSysVars()
 
 	do.crossKSSessMgr = crossks.NewManager()
-	if kerneltype.IsClassic() || keyspace.IsRunningOnSystem() {
-		do.dxfSessionPool = createInternelSessionPool(dxfSessionPoolSize, factory)
-	}
 	return do
 }
 
