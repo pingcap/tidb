@@ -3656,8 +3656,7 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 	if s.StmtCtx.ForShareLockEnabledByNoop {
 		return false
 	}
-	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
-		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
+	if !s.IsAutocommit() || s.InTxn() {
 		return true
 	}
 	return false

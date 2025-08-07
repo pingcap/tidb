@@ -2461,7 +2461,7 @@ func TestIssue28011(t *testing.T) {
 
 func TestPessimisticAutoCommitTxn(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
-	
+
 	// false case
 	newCfg := *originCfg
 	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(false)
