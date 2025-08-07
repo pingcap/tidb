@@ -233,7 +233,7 @@ func (v *validator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs
 		// is true, we need to check by schema delta.
 		// When switch MDL from on to off, the needCheckSchemaByDelta is false,
 		// and EnableMDL is also false, so we still need to check by schema delta.
-		if needCheckSchemaByDelta || !vardef.EnableMDL.Load() {
+		if needCheckSchemaByDelta || !vardef.IsMDLEnabled() {
 			changed := v.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
 			if changed {
 				return nil, validatorapi.ResultFail

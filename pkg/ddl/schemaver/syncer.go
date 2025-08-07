@@ -299,7 +299,7 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 	ver := strconv.FormatInt(version, 10)
 	var err error
 	var path string
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		// If jobID is 0, it doesn't need to put into etcd `DDLAllSchemaVersionsByJob` key.
 		if jobID == 0 {
 			return nil
@@ -342,7 +342,7 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 // WaitVersionSynced implements Syncer.WaitVersionSynced interface.
 func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, checkAssumedSvr bool) (*SyncSummary, error) {
 	startTime := time.Now()
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		time.Sleep(CheckVersFirstWaitTime)
 	}
 	notMatchVerCnt := 0
@@ -362,7 +362,7 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 			return nil, errors.Trace(err)
 		}
 
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			res, synced, err := s.waitVersionSyncedWithMDL(ctx, jobID, latestVer, checkAssumedSvr)
 			if err != nil {
 				return nil, err

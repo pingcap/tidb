@@ -376,13 +376,13 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &PhysicalHashAgg{
+	hashAgg := &physicalop.PhysicalHashAgg{
 		BasePhysicalAgg: physicalop.BasePhysicalAgg{
 			AggFuncs:     aggDescs,
 			GroupByItems: []expression.Expression{col, cst},
 		},
 	}
-	hashAgg = hashAgg.InitForHash(ctx, stats, 0, schema).(*PhysicalHashAgg)
+	hashAgg = hashAgg.InitForHash(ctx, stats, 0, schema).(*physicalop.PhysicalHashAgg)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 
 	// hash join

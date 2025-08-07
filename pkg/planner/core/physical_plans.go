@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -68,7 +67,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalIndexReader{}
 	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
-	_ base.PhysicalPlan = &PhysicalHashAgg{}
+	_ base.PhysicalPlan = &physicalop.PhysicalHashAgg{}
 	_ base.PhysicalPlan = &PhysicalStreamAgg{}
 	_ base.PhysicalPlan = &PhysicalApply{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
@@ -319,7 +318,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalProjection:
+		case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -1120,58 +1119,6 @@ func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
 // AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
 func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
-}
-
-// PhysicalHashAgg is hash operator of aggregate.
-type PhysicalHashAgg struct {
-	physicalop.BasePhysicalAgg
-	tiflashPreAggMode string
-}
-
-func (p *PhysicalHashAgg) getPointer() *physicalop.BasePhysicalAgg {
-	return &p.BasePhysicalAgg
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalHashAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalHashAgg)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalAgg.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalAgg = *base
-	cloned.tiflashPreAggMode = p.tiflashPreAggMode
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalHashAgg
-func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.BasePhysicalAgg.MemoryUsage()
-}
-
-// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
-func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
-	newGbyItems := make([]expression.Expression, len(la.GroupByItems))
-	copy(newGbyItems, la.GroupByItems)
-	newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
-	// There's some places that rewrites the aggFunc in-place.
-	// I clone it first.
-	// It needs a well refactor to make sure that the physical optimize should not change the things of logical plan.
-	// It's bad for cascades
-	for i, aggFunc := range la.AggFuncs {
-		newAggFuncs[i] = aggFunc.Clone()
-	}
-	agg := &physicalop.BasePhysicalAgg{
-		GroupByItems: newGbyItems,
-		AggFuncs:     newAggFuncs,
-	}
-	hashAgg := agg.InitForHash(la.SCtx(), newStats, la.QueryBlockOffset(), nil, prop)
-	return hashAgg.(*PhysicalHashAgg)
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
