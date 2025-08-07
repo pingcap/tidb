@@ -247,7 +247,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("TopN(%v,%d,%d)", util.StringifyByItemsWithCtx(ectx, x.ByItems), x.Offset, x.Count)
 	case *logicalop.LogicalTableDual, *physicalop.PhysicalTableDual:
 		str = "Dual"
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		str = "HashAgg"
 	case *PhysicalStreamAgg:
 		str = "StreamAgg"
@@ -301,7 +301,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.InnerJoinKeys[i]
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]

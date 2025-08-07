@@ -541,8 +541,9 @@ func getPlanCostVer14PhysicalIndexJoin(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
+// getCost4PhysicalIndexHashJoin computes the cost of index merge join operator and its children.
+func getCost4PhysicalIndexHashJoin(pp base.PhysicalPlan, outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
+	p := pp.(*physicalop.PhysicalIndexHashJoin)
 	var cpuCost float64
 	sessVars := p.SCtx().GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
@@ -604,8 +605,9 @@ func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost
 	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexHashJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer1PhysicalIndexHashJoin calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer1PhysicalIndexHashJoin(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalIndexHashJoin)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -978,8 +980,9 @@ func (p *PhysicalStreamAgg) GetPlanCostVer1(taskType property.TaskType, option *
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of hash aggregation considering CPU/memory.
-func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFlag uint64) float64 {
+// getCost4PhysicalHashAgg computes the cost of hash aggregation considering CPU/memory.
+func getCost4PhysicalHashAgg(pp base.PhysicalPlan, inputRows float64, isRoot, isMPP bool, costFlag uint64) float64 {
+	p := pp.(*physicalop.PhysicalHashAgg)
 	cardinality := getCardinality(p, costFlag)
 	numDistinctFunc := p.NumDistinctFunc()
 	aggFuncFactor := p.GetAggFuncCostFactor(isMPP)
@@ -987,7 +990,7 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 	sessVars := p.SCtx().GetSessionVars()
 	if isRoot {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
-		divisor, con := p.cpuCostDivisor(numDistinctFunc > 0)
+		divisor, con := p.CPUCostDivisor(numDistinctFunc > 0)
 		if divisor > 0 {
 			cpuCost /= divisor
 			// Cost of additional goroutines.
@@ -1003,8 +1006,9 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 	return cpuCost + memoryCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalHashAgg) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalHashAgg calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalHashAgg(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalHashAgg)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -1017,11 +1021,11 @@ func (p *PhysicalHashAgg) GetPlanCostVer1(taskType property.TaskType, option *op
 	statsCnt := getCardinality(p.Children()[0], costFlag)
 	switch taskType {
 	case property.RootTaskType:
-		p.PlanCost += p.GetCost(statsCnt, true, false, costFlag)
+		p.PlanCost += getCost4PhysicalHashAgg(p, statsCnt, true, false, costFlag)
 	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
-		p.PlanCost += p.GetCost(statsCnt, false, false, costFlag)
+		p.PlanCost += getCost4PhysicalHashAgg(p, statsCnt, false, false, costFlag)
 	case property.MppTaskType:
-		p.PlanCost += p.GetCost(statsCnt, false, true, costFlag)
+		p.PlanCost += getCost4PhysicalHashAgg(p, statsCnt, false, true, costFlag)
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}

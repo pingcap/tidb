@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	mysql "github.com/pingcap/tidb/pkg/errno"
@@ -1159,6 +1160,9 @@ func TestMDLEnable2Disable(t *testing.T) {
 }
 
 func TestSwitchMDL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
@@ -1177,6 +1181,19 @@ func TestSwitchMDL(t *testing.T) {
 
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
 	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock OFF"))
+}
+
+func TestSetMDLInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only run in nextgen")
+	}
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_enable_metadata_lock=0"),
+		"setting tidb_enable_metadata_lock is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_enable_metadata_lock=1"),
+		"setting tidb_enable_metadata_lock is not supported in the next generation of TiDB")
 }
 
 func TestMDLViewItself(t *testing.T) {

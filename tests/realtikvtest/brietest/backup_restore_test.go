@@ -28,10 +28,6 @@ import (
 )
 
 func initTestKit(t *testing.T) *testkit.TestKit {
-	if !*realtikvtest.WithRealTiKV {
-		t.Skip("only run BR SQL integration test with tikv store")
-	}
-
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	cfg := config.GetGlobalConfig()

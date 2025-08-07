@@ -748,7 +748,7 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	case *PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
 	case *physicalop.PhysicalIndexJoin:
@@ -3083,7 +3083,7 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		// Disable keep order property for sample table path.
 		return base.InvalidTask, nil
 	}
-	p := PhysicalTableSample{
+	p := physicalop.PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
 		TableInfo:       ds.Table,
 		PhysicalTableID: ds.PhysicalTableID,
@@ -3475,7 +3475,7 @@ func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) e
 		return err
 	}
 	if ds.SampleInfo != nil && !t.Invalid() {
-		if _, ok := t.Plan().(*PhysicalTableSample); !ok {
+		if _, ok := t.Plan().(*physicalop.PhysicalTableSample); !ok {
 			return expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
 		}
 	}

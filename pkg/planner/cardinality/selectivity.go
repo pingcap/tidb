@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"cmp"
+	"maps"
 	"math"
 	"math/bits"
 	"slices"
@@ -116,7 +117,7 @@ func Selectivity(
 		ret *= sel
 	}
 
-	extractedCols := expression.ExtractColumnsFromExpressions(remainedExprs, nil)
+	extractedCols := slices.Collect(maps.Values(expression.ExtractColumnsMapFromExpressions(nil, remainedExprs...)))
 	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
@@ -389,7 +390,7 @@ OUTER:
 	// Try to cover remaining string matching functions by evaluating the expressions with TopN to estimate.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
 		for i, scalarCond := range notCoveredStrMatch {
-			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
+			ok, sel, err := GetSelectivityByFilter(ctx, coll, scalarCond)
 			if err != nil {
 				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -404,7 +405,7 @@ OUTER:
 			}
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
-			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
+			ok, sel, err := GetSelectivityByFilter(ctx, coll, scalarCond)
 			if err != nil {
 				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -512,11 +513,11 @@ func CalcTotalSelectivityForMVIdxPath(
 					break
 				}
 			}
-			cols := expression.ExtractColumnsFromExpressions(
-				path.AccessConds,
+			cols := expression.ExtractColumnsMapFromExpressions(
 				func(column *expression.Column) bool {
 					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
 				},
+				path.AccessConds...,
 			)
 			// If we can't find the virtual column from the access conditions, it's the case 2.
 			if len(cols) == 0 {
@@ -897,22 +898,26 @@ func getMaskAndSelectivityForMVIndex(
 
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
-func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters []expression.Expression) (ok bool, selectivity float64, err error) {
+func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
 	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
-	if slices.ContainsFunc(filters, expression.IsMutableEffectsExpr) {
+	if expression.IsMutableEffectsExpr(filters) {
 		return false, 0, nil
 	}
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil
 	}
-	cols := expression.ExtractColumnsFromExpressions(filters, nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, filters)
 	if len(cols) != 1 {
 		return false, 0, nil
 	}
-	col := cols[0]
+	var col *expression.Column
+	for _, c := range cols {
+		col = c
+		break
+	}
 	tp := col.RetType
 	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
 		return false, 0, nil
@@ -981,7 +986,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 			}
 			c.AppendDatum(0, &val)
 		}
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(c), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -998,7 +1003,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(hist.Bounds), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -1032,7 +1037,7 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	c.Reset()
 	c.AppendNull(0)
 	selected = selected[:0]
-	selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+	selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(c), selected)
 	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
 	} else {

@@ -270,11 +270,11 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpJoin(v)
 	case *plannercore.PhysicalIndexMergeJoin:
 		return b.buildIndexLookUpMergeJoin(v)
-	case *plannercore.PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		return b.buildIndexNestedLoopHashJoin(v)
 	case *physicalop.PhysicalSelection:
 		return b.buildSelection(v)
-	case *plannercore.PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		return b.buildHashAgg(v)
 	case *plannercore.PhysicalStreamAgg:
 		return b.buildStreamAgg(v)
@@ -292,7 +292,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
 		return b.buildTableReader(v)
-	case *plannercore.PhysicalTableSample:
+	case *physicalop.PhysicalTableSample:
 		return b.buildTableSample(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
@@ -2032,7 +2032,7 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	return e
 }
 
-func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Executor {
+func (b *executorBuilder) buildHashAgg(v *physicalop.PhysicalHashAgg) exec.Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2040,7 +2040,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Exec
 	return b.buildHashAggFromChildExec(src, v)
 }
 
-func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *plannercore.PhysicalHashAgg) *aggregate.HashAggExec {
+func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalHashAgg) *aggregate.HashAggExec {
 	sessionVars := b.ctx.GetSessionVars()
 	e := &aggregate.HashAggExec{
 		BaseExecutor:    exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -3711,7 +3711,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	return e
 }
 
-func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIndexHashJoin) exec.Executor {
+func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *physicalop.PhysicalIndexHashJoin) exec.Executor {
 	joinExec := b.buildIndexLookUpJoin(&(v.PhysicalIndexJoin))
 	if b.err != nil {
 		return nil
@@ -4620,7 +4620,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		}
 		err = exec.open(ctx)
 		return exec, err
-	case *plannercore.PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -5727,7 +5727,7 @@ func (*emptySampler) finished() bool {
 	return true
 }
 
-func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+func (b *executorBuilder) buildTableSample(v *physicalop.PhysicalTableSample) *TableSampleExecutor {
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err

@@ -179,7 +179,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
 			Indexes:  indexs,
 		})
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: ast.NewCIStr(h.HintHashAgg),
@@ -289,7 +289,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		if hint != nil {
 			res = append(res, hint)
 		}
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		hint := genJoinMethodHintForSinglePhysicalJoin(
 			p.SCtx(),
 			h.HintINLHJ,
@@ -519,7 +519,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 		}
 		return &is.DBName, &is.Table.Name
 	case *physicalop.PhysicalSort, *physicalop.PhysicalSelection, *physicalop.PhysicalUnionScan, *physicalop.PhysicalProjection,
-		*PhysicalHashAgg, *PhysicalStreamAgg:
+		*physicalop.PhysicalHashAgg, *PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}
 	return nil, nil

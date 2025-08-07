@@ -242,7 +242,7 @@ func testCachedPlanClone(t *testing.T, tk1, tk2 *testkit.TestKit, prep, set, exe
 			".ctx", ".AccessCondition", ".FilterCondition", ".Conditions", ".Exprs", ".IndexConstants",
 			"*collate", ".IdxCols", ".OutputColumns", ".EqualConditions", ".OuterHashKeys", ".InnerHashKeys",
 			".HandleParams", ".IndexValueParams", ".Insert.Lists", ".accessCols", ".PhysicalSchemaProducer.schema",
-			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".baseSchemaProducer.schema",
+			".PruningConds", ".PlanPartInfo.Columns", ".PlanPartInfo.ColumnNames", ".SimpleSchemaProducer.schema",
 			".pkIsHandleCol", "JoinKeys", ".OtherConditions", ".ExtraHandleCol", ".PointGetPlan.HandleConstant"))
 	})
 	if isDML {
