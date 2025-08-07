@@ -1489,12 +1489,7 @@ func doReorgWorkForCreateIndex(
 		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
-		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
-			if MockDMLExecutionStateBeforeMerge != nil {
-				MockDMLExecutionStateBeforeMerge()
-			}
-		})
-		failpoint.InjectCall("BeforeBackfillMerge")
+		failpoint.InjectCall("beforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
@@ -1598,13 +1593,7 @@ func runReorgJobAndHandleErr(
 		elements = append(elements, &meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey})
 	}
 
-	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) && allIndexInfos[0].BackfillState == model.BackfillStateMerging &&
-			MockDMLExecutionStateMerging != nil {
-			MockDMLExecutionStateMerging()
-		}
-	})
+	failpoint.InjectCall("beforeRunReorgJobAndHandleErr", allIndexInfos)
 
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -1653,11 +1642,8 @@ func runReorgJobAndHandleErr(
 		}
 		return false, ver, errors.Trace(err)
 	}
-	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
-		if MockDMLExecutionStateBeforeImport != nil {
-			MockDMLExecutionStateBeforeImport()
-		}
-	})
+
+	failpoint.InjectCall("afterRunReorgJobAndHandleErr")
 	return true, ver, nil
 }
 
@@ -2491,15 +2477,6 @@ var MockDMLExecution func()
 
 // MockDMLExecutionMerging is only used for test.
 var MockDMLExecutionMerging func()
-
-// MockDMLExecutionStateMerging is only used for test.
-var MockDMLExecutionStateMerging func()
-
-// MockDMLExecutionStateBeforeImport is only used for test.
-var MockDMLExecutionStateBeforeImport func()
-
-// MockDMLExecutionStateBeforeMerge is only used for test.
-var MockDMLExecutionStateBeforeMerge func()
 
 func (w *worker) addPhysicalTableIndex(
 	ctx context.Context,
