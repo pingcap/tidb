@@ -128,6 +128,16 @@ func TestAllViewHintType(t *testing.T) {
 	})
 }
 
+func TestJoinHintCompatibility2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int not null, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t2(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("create table t3(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustQuery(`explain format = 'brief' select /*+ leading(t3), hash_join(t1) */ * from t1 join t2 join t3 where t1.a = t2.a and t2.b = t3.b;`)
+}
+
 func TestJoinHintCompatibility(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
