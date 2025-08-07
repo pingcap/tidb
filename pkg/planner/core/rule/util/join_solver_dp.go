@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -29,7 +28,7 @@ import (
 type DPJoinOrderSolver struct {
 	*BaseSingleGroupJoinOrderSolver
 	curJoinGroup []*JRNode
-	newJoin      func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan
+	newJoin      func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType int) base.LogicalPlan
 }
 
 // JRNode represents a join reorder node
@@ -303,7 +302,7 @@ func (s *DPJoinOrderSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan
 			eqConds = append(eqConds, newSf)
 		}
 	}
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, 0) // 0 = InnerJoin
 	_, _, err := join.RecursiveDeriveStats(nil)
 	return join, err
 }
@@ -323,7 +322,7 @@ func (s *DPJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPlan,
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, 0)) // 0 = InnerJoin
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

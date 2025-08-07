@@ -17,7 +17,6 @@ package util
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
 // GreedyJoinOrderSolver implements greedy join order optimization
@@ -151,7 +150,7 @@ func (s *GreedyJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalP
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoinWithEdges(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin))
+			resultJoinGroup = append(resultJoinGroup, s.newJoinWithEdges(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, 0)) // 0 = InnerJoin
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

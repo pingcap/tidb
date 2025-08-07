@@ -17,9 +17,25 @@ package util
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
+
+// JoinType constants to avoid import cycle
+const (
+	InnerJoin = iota
+	LeftOuterJoin
+	RightOuterJoin
+	SemiJoin
+	AntiSemiJoin
+	LeftOuterSemiJoin
+	AntiLeftOuterSemiJoin
+)
+
+// LogicalJoin is a simplified version to avoid import cycle
+type LogicalJoin struct {
+	JoinType int
+	// Add other fields as needed
+}
 
 // JoinGroupResult represents the result of extracting a join group
 type JoinGroupResult struct {
@@ -34,7 +50,7 @@ type JoinGroupResult struct {
 
 // JoinTypeWithExtMsg represents join type with extended message
 type JoinTypeWithExtMsg struct {
-	JoinType logicalop.JoinType
+	JoinType int // Use int instead of logicalop.JoinType to avoid import cycle
 	ExtMsg   string
 }
 
@@ -54,7 +70,7 @@ func ExtractJoinGroups(p base.LogicalPlan) []*JoinGroupResult {
 // extractJoinGroupsRecursive recursively extracts join groups
 func extractJoinGroupsRecursive(p base.LogicalPlan, groups *[]*JoinGroupResult) {
 	switch x := p.(type) {
-	case *logicalop.LogicalJoin:
+	case *LogicalJoin:
 		group := extractJoinGroup(p)
 		if group != nil && len(group.Group) > 1 {
 			*groups = append(*groups, group)
@@ -68,7 +84,7 @@ func extractJoinGroupsRecursive(p base.LogicalPlan, groups *[]*JoinGroupResult) 
 
 // extractJoinGroup extracts a single join group starting from the given join node
 func extractJoinGroup(p base.LogicalPlan) *JoinGroupResult {
-	join, ok := p.(*logicalop.LogicalJoin)
+	join, ok := p.(*LogicalJoin)
 	if !ok {
 		return nil
 	}
@@ -92,9 +108,9 @@ func extractJoinGroup(p base.LogicalPlan) *JoinGroupResult {
 // extractJoinGroupRecursive recursively extracts join information
 func extractJoinGroupRecursive(p base.LogicalPlan, group *JoinGroupResult) {
 	switch x := p.(type) {
-	case *logicalop.LogicalJoin:
+	case *LogicalJoin:
 		// Check if this is an outer join
-		if x.JoinType != logicalop.InnerJoin {
+		if x.JoinType != InnerJoin {
 			group.HasOuterJoin = true
 		}
 

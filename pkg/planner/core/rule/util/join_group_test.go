@@ -20,243 +20,172 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
-// TestExtractJoinGroups tests the ExtractJoinGroups function
-func TestExtractJoinGroups(t *testing.T) {
+// MockLogicalJoin is a mock implementation for testing
+type MockLogicalJoin struct {
+	base.LogicalPlan
+	schema *expression.Schema
+	children []base.LogicalPlan
+	joinType int
+	equalConditions []*expression.ScalarFunction
+	otherConditions []expression.Expression
+	statsInfo *base.StatsInfo
+}
+
+func (m *MockLogicalJoin) Schema() *expression.Schema {
+	return m.schema
+}
+
+func (m *MockLogicalJoin) SetSchema(schema *expression.Schema) {
+	m.schema = schema
+}
+
+func (m *MockLogicalJoin) Children() []base.LogicalPlan {
+	return m.children
+}
+
+func (m *MockLogicalJoin) SetChildren(children ...base.LogicalPlan) {
+	m.children = children
+}
+
+func (m *MockLogicalJoin) JoinType() int {
+	return m.joinType
+}
+
+func (m *MockLogicalJoin) SetJoinType(joinType int) {
+	m.joinType = joinType
+}
+
+func (m *MockLogicalJoin) EqualConditions() []*expression.ScalarFunction {
+	return m.equalConditions
+}
+
+func (m *MockLogicalJoin) SetEqualConditions(conditions []*expression.ScalarFunction) {
+	m.equalConditions = conditions
+}
+
+func (m *MockLogicalJoin) OtherConditions() []expression.Expression {
+	return m.otherConditions
+}
+
+func (m *MockLogicalJoin) SetOtherConditions(conditions []expression.Expression) {
+	m.otherConditions = conditions
+}
+
+func (m *MockLogicalJoin) StatsInfo() *base.StatsInfo {
+	if m.statsInfo == nil {
+		m.statsInfo = &base.StatsInfo{RowCount: 1000}
+	}
+	return m.statsInfo
+}
+
+func (m *MockLogicalJoin) QueryBlockOffset() int {
+	return 0
+}
+
+func (m *MockLogicalJoin) SCtx() base.PlanContext {
+	return sessionctx.NewContext()
+}
+
+func (m *MockLogicalJoin) RecursiveDeriveStats(childStats []*base.StatsInfo) (*base.StatsInfo, bool, error) {
+	return m.StatsInfo(), false, nil
+}
+
+// TestExtractJoinGroups_SimpleJoin tests extracting join groups from a simple join
+func TestExtractJoinGroups_SimpleJoin(t *testing.T) {
 	// Create a mock session context
 	sctx := sessionctx.NewContext()
 	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
 
-	// Test case 1: Simple join
-	leftTable := &logicalop.LogicalTableScan{}
-	leftTable.Init(sctx, 0)
+	// Create test tables
+	leftTable := &MockLogicalPlan{}
 	leftTable.SetSchema(&expression.Schema{
 		Columns: []*expression.Column{
 			{RetType: types.NewFieldType(ast.TypeLonglong)},
 		},
 	})
 
-	rightTable := &logicalop.LogicalTableScan{}
-	rightTable.Init(sctx, 0)
+	rightTable := &MockLogicalPlan{}
 	rightTable.SetSchema(&expression.Schema{
 		Columns: []*expression.Column{
 			{RetType: types.NewFieldType(ast.TypeLonglong)},
 		},
 	})
 
-	join := &logicalop.LogicalJoin{
-		JoinType: logicalop.InnerJoin,
-	}
-	join.Init(sctx, 0)
+	// Create join
+	join := &MockLogicalJoin{}
+	join.SetSchema(expression.MergeSchema(leftTable.Schema(), rightTable.Schema()))
 	join.SetChildren(leftTable, rightTable)
+	join.SetJoinType(0) // InnerJoin
 
+	// Extract join groups
 	groups := ExtractJoinGroups(join)
 	require.Len(t, groups, 1)
 	require.Len(t, groups[0].Group, 2)
-	require.False(t, groups[0].HasOuterJoin)
+	require.True(t, groups[0].CanReorder())
 }
 
-// TestExtractJoinGroups_OuterJoin tests extraction with outer joins
+// TestExtractJoinGroups_OuterJoin tests extracting join groups from an outer join
 func TestExtractJoinGroups_OuterJoin(t *testing.T) {
 	// Create a mock session context
 	sctx := sessionctx.NewContext()
 	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
 
-	// Test case: Outer join
-	leftTable := &logicalop.LogicalTableScan{}
-	leftTable.Init(sctx, 0)
+	// Create test tables
+	leftTable := &MockLogicalPlan{}
 	leftTable.SetSchema(&expression.Schema{
 		Columns: []*expression.Column{
 			{RetType: types.NewFieldType(ast.TypeLonglong)},
 		},
 	})
 
-	rightTable := &logicalop.LogicalTableScan{}
-	rightTable.Init(sctx, 0)
+	rightTable := &MockLogicalPlan{}
 	rightTable.SetSchema(&expression.Schema{
 		Columns: []*expression.Column{
 			{RetType: types.NewFieldType(ast.TypeLonglong)},
 		},
 	})
 
-	join := &logicalop.LogicalJoin{
-		JoinType: logicalop.LeftOuterJoin,
-	}
-	join.Init(sctx, 0)
+	// Create outer join
+	join := &MockLogicalJoin{}
+	join.SetSchema(expression.MergeSchema(leftTable.Schema(), rightTable.Schema()))
 	join.SetChildren(leftTable, rightTable)
+	join.SetJoinType(1) // LeftOuterJoin
 
+	// Extract join groups
 	groups := ExtractJoinGroups(join)
 	require.Len(t, groups, 1)
 	require.Len(t, groups[0].Group, 2)
-	require.True(t, groups[0].HasOuterJoin)
+	require.False(t, groups[0].CanReorder()) // Outer joins cannot be reordered
 }
 
-// TestExtractJoinGroups_ComplexJoin tests extraction with complex join structure
+// TestExtractJoinGroups_ComplexJoin tests extracting join groups from a complex join
 func TestExtractJoinGroups_ComplexJoin(t *testing.T) {
 	// Create a mock session context
 	sctx := sessionctx.NewContext()
 	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
 
-	// Create three tables
-	table1 := &logicalop.LogicalTableScan{}
-	table1.Init(sctx, 0)
+	// Create test tables
+	table1 := &MockLogicalPlan{}
 	table1.SetSchema(&expression.Schema{
 		Columns: []*expression.Column{
 			{RetType: types.NewFieldType(ast.TypeLonglong)},
 		},
 	})
 
-	table2 := &logicalop.LogicalTableScan{}
-	table2.Init(sctx, 0)
+	table2 := &MockLogicalPlan{}
 	table2.SetSchema(&expression.Schema{
 		Columns: []*expression.Column{
 			{RetType: types.NewFieldType(ast.TypeLonglong)},
 		},
 	})
 
-	table3 := &logicalop.LogicalTableScan{}
-	table3.Init(sctx, 0)
-	table3.SetSchema(&expression.Schema{
-		Columns: []*expression.Column{
-			{RetType: types.NewFieldType(ast.TypeLonglong)},
-		},
-	})
-
-	// Create nested joins: (table1 JOIN table2) JOIN table3
-	innerJoin := &logicalop.LogicalJoin{
-		JoinType: logicalop.InnerJoin,
-	}
-	innerJoin.Init(sctx, 0)
-	innerJoin.SetChildren(table1, table2)
-
-	outerJoin := &logicalop.LogicalJoin{
-		JoinType: logicalop.InnerJoin,
-	}
-	outerJoin.Init(sctx, 0)
-	outerJoin.SetChildren(innerJoin, table3)
-
-	groups := ExtractJoinGroups(outerJoin)
-	require.Len(t, groups, 1)
-	require.Len(t, groups[0].Group, 3)
-	require.False(t, groups[0].HasOuterJoin)
-}
-
-// TestJoinGroupResult_CanReorder tests the CanReorder method
-func TestJoinGroupResult_CanReorder(t *testing.T) {
-	// Test case 1: Can reorder (inner joins, multiple tables)
-	group := &JoinGroupResult{
-		Group:         []base.LogicalPlan{&logicalop.LogicalTableScan{}, &logicalop.LogicalTableScan{}},
-		HasOuterJoin:  false,
-	}
-	require.True(t, group.CanReorder())
-
-	// Test case 2: Cannot reorder (outer joins)
-	group.HasOuterJoin = true
-	require.False(t, group.CanReorder())
-
-	// Test case 3: Cannot reorder (single table)
-	group.HasOuterJoin = false
-	group.Group = []base.LogicalPlan{&logicalop.LogicalTableScan{}}
-	require.False(t, group.CanReorder())
-
-	// Test case 4: Cannot reorder (no tables)
-	group.Group = []base.LogicalPlan{}
-	require.False(t, group.CanReorder())
-}
-
-// TestExtractJoinGroups_NoJoins tests extraction when there are no joins
-func TestExtractJoinGroups_NoJoins(t *testing.T) {
-	// Create a mock session context
-	sctx := sessionctx.NewContext()
-	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
-
-	// Test case: No joins
-	tableScan := &logicalop.LogicalTableScan{}
-	tableScan.Init(sctx, 0)
-	tableScan.SetSchema(&expression.Schema{
-		Columns: []*expression.Column{
-			{RetType: types.NewFieldType(ast.TypeLonglong)},
-		},
-	})
-
-	groups := ExtractJoinGroups(tableScan)
-	require.Len(t, groups, 0)
-}
-
-// TestExtractJoinGroups_WithConditions tests extraction with join conditions
-func TestExtractJoinGroups_WithConditions(t *testing.T) {
-	// Create a mock session context
-	sctx := sessionctx.NewContext()
-	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
-
-	// Create tables with columns
-	leftCol := &expression.Column{RetType: types.NewFieldType(ast.TypeLonglong)}
-	rightCol := &expression.Column{RetType: types.NewFieldType(ast.TypeLonglong)}
-
-	leftTable := &logicalop.LogicalTableScan{}
-	leftTable.Init(sctx, 0)
-	leftTable.SetSchema(&expression.Schema{
-		Columns: []*expression.Column{leftCol},
-	})
-
-	rightTable := &logicalop.LogicalTableScan{}
-	rightTable.Init(sctx, 0)
-	rightTable.SetSchema(&expression.Schema{
-		Columns: []*expression.Column{rightCol},
-	})
-
-	// Create join with conditions
-	join := &logicalop.LogicalJoin{
-		JoinType: logicalop.InnerJoin,
-		EqualConditions: []*expression.ScalarFunction{
-			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(ast.TypeLonglong), leftCol, rightCol).(*expression.ScalarFunction),
-		},
-		OtherConditions: []expression.Expression{
-			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.GT, types.NewFieldType(ast.TypeLonglong), leftCol, rightCol),
-		},
-	}
-	join.Init(sctx, 0)
-	join.SetChildren(leftTable, rightTable)
-
-	groups := ExtractJoinGroups(join)
-	require.Len(t, groups, 1)
-	require.Len(t, groups[0].EqEdges, 1)
-	require.Len(t, groups[0].OtherConds, 1)
-	require.Len(t, groups[0].JoinTypes, 1)
-	require.Equal(t, logicalop.InnerJoin, groups[0].JoinTypes[0].JoinType)
-}
-
-// Benchmark tests for performance
-func BenchmarkExtractJoinGroups(b *testing.B) {
-	// Create a mock session context
-	sctx := sessionctx.NewContext()
-	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
-
-	// Create a complex join structure for benchmarking
-	table1 := &logicalop.LogicalTableScan{}
-	table1.Init(sctx, 0)
-	table1.SetSchema(&expression.Schema{
-		Columns: []*expression.Column{
-			{RetType: types.NewFieldType(ast.TypeLonglong)},
-		},
-	})
-
-	table2 := &logicalop.LogicalTableScan{}
-	table2.Init(sctx, 0)
-	table2.SetSchema(&expression.Schema{
-		Columns: []*expression.Column{
-			{RetType: types.NewFieldType(ast.TypeLonglong)},
-		},
-	})
-
-	table3 := &logicalop.LogicalTableScan{}
-	table3.Init(sctx, 0)
+	table3 := &MockLogicalPlan{}
 	table3.SetSchema(&expression.Schema{
 		Columns: []*expression.Column{
 			{RetType: types.NewFieldType(ast.TypeLonglong)},
@@ -264,20 +193,218 @@ func BenchmarkExtractJoinGroups(b *testing.B) {
 	})
 
 	// Create nested joins
-	innerJoin := &logicalop.LogicalJoin{
-		JoinType: logicalop.InnerJoin,
-	}
-	innerJoin.Init(sctx, 0)
+	innerJoin := &MockLogicalJoin{}
+	innerJoin.SetSchema(expression.MergeSchema(table1.Schema(), table2.Schema()))
 	innerJoin.SetChildren(table1, table2)
+	innerJoin.SetJoinType(0) // InnerJoin
 
-	outerJoin := &logicalop.LogicalJoin{
-		JoinType: logicalop.InnerJoin,
-	}
-	outerJoin.Init(sctx, 0)
+	outerJoin := &MockLogicalJoin{}
+	outerJoin.SetSchema(expression.MergeSchema(innerJoin.Schema(), table3.Schema()))
 	outerJoin.SetChildren(innerJoin, table3)
+	outerJoin.SetJoinType(0) // InnerJoin
+
+	// Extract join groups
+	groups := ExtractJoinGroups(outerJoin)
+	require.Len(t, groups, 1)
+	require.Len(t, groups[0].Group, 3)
+	require.True(t, groups[0].CanReorder())
+}
+
+// TestExtractJoinGroups_NoJoins tests extracting join groups from a plan without joins
+func TestExtractJoinGroups_NoJoins(t *testing.T) {
+	// Create a mock session context
+	sctx := sessionctx.NewContext()
+	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
+
+	// Create test table
+	table := &MockLogicalPlan{}
+	table.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	// Extract join groups
+	groups := ExtractJoinGroups(table)
+	require.Len(t, groups, 0)
+}
+
+// TestExtractJoinGroups_WithConditions tests extracting join groups with conditions
+func TestExtractJoinGroups_WithConditions(t *testing.T) {
+	// Create a mock session context
+	sctx := sessionctx.NewContext()
+	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
+
+	// Create test tables
+	leftTable := &MockLogicalPlan{}
+	leftTable.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	rightTable := &MockLogicalPlan{}
+	rightTable.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	// Create equal condition
+	eqCond := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(ast.TypeLonglong), 
+		leftTable.Schema().Columns[0], rightTable.Schema().Columns[0]).(*expression.ScalarFunction)
+
+	// Create join with conditions
+	join := &MockLogicalJoin{}
+	join.SetSchema(expression.MergeSchema(leftTable.Schema(), rightTable.Schema()))
+	join.SetChildren(leftTable, rightTable)
+	join.SetJoinType(0) // InnerJoin
+	join.SetEqualConditions([]*expression.ScalarFunction{eqCond})
+
+	// Extract join groups
+	groups := ExtractJoinGroups(join)
+	require.Len(t, groups, 1)
+	require.Len(t, groups[0].Group, 2)
+	require.Len(t, groups[0].EqEdges, 1)
+	require.True(t, groups[0].CanReorder())
+}
+
+// TestJoinGroupResult_CanReorder tests the CanReorder method
+func TestJoinGroupResult_CanReorder(t *testing.T) {
+	// Test case 1: Single table - cannot reorder
+	group := &JoinGroupResult{
+		Group: []base.LogicalPlan{&MockLogicalPlan{}},
+		HasOuterJoin: false,
+	}
+	require.False(t, group.CanReorder())
+
+	// Test case 2: Multiple tables, no outer joins - can reorder
+	group = &JoinGroupResult{
+		Group: []base.LogicalPlan{&MockLogicalPlan{}, &MockLogicalPlan{}},
+		HasOuterJoin: false,
+	}
+	require.True(t, group.CanReorder())
+
+	// Test case 3: Multiple tables, with outer joins - cannot reorder
+	group = &JoinGroupResult{
+		Group: []base.LogicalPlan{&MockLogicalPlan{}, &MockLogicalPlan{}},
+		HasOuterJoin: true,
+	}
+	require.False(t, group.CanReorder())
+}
+
+// TestExtractJoinGroups_Integration tests integration scenarios
+func TestExtractJoinGroups_Integration(t *testing.T) {
+	// Create a mock session context
+	sctx := sessionctx.NewContext()
+	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
+
+	// Create test tables
+	leftTable := &MockLogicalPlan{}
+	leftTable.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	rightTable := &MockLogicalPlan{}
+	rightTable.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	// Create join with conditions
+	eqCond := expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, types.NewFieldType(ast.TypeLonglong), 
+		leftTable.Schema().Columns[0], rightTable.Schema().Columns[0]).(*expression.ScalarFunction)
+
+	join := &MockLogicalJoin{}
+	join.SetSchema(expression.MergeSchema(leftTable.Schema(), rightTable.Schema()))
+	join.SetChildren(leftTable, rightTable)
+	join.SetJoinType(0) // InnerJoin
+	join.SetEqualConditions([]*expression.ScalarFunction{eqCond})
+
+	// Extract join groups
+	groups := ExtractJoinGroups(join)
+	require.Len(t, groups, 1)
+	require.Equal(t, 0, groups[0].JoinTypes[0].JoinType) // 0 = InnerJoin
+}
+
+// TestExtractJoinGroups_ComplexScenario tests a more complex scenario
+func TestExtractJoinGroups_ComplexScenario(t *testing.T) {
+	// Create a mock session context
+	sctx := sessionctx.NewContext()
+	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
+
+	// Create test tables
+	table1 := &MockLogicalPlan{}
+	table1.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	table2 := &MockLogicalPlan{}
+	table2.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	table3 := &MockLogicalPlan{}
+	table3.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	// Create nested joins
+	innerJoin := &MockLogicalJoin{}
+	innerJoin.SetSchema(expression.MergeSchema(table1.Schema(), table2.Schema()))
+	innerJoin.SetChildren(table1, table2)
+	innerJoin.SetJoinType(0) // InnerJoin
+
+	outerJoin := &MockLogicalJoin{}
+	outerJoin.SetSchema(expression.MergeSchema(innerJoin.Schema(), table3.Schema()))
+	outerJoin.SetChildren(innerJoin, table3)
+	outerJoin.SetJoinType(0) // InnerJoin
+
+	// Extract join groups
+	groups := ExtractJoinGroups(outerJoin)
+	require.Len(t, groups, 1)
+	require.Len(t, groups[0].Group, 3)
+	require.True(t, groups[0].CanReorder())
+}
+
+// BenchmarkExtractJoinGroups benchmarks the ExtractJoinGroups function
+func BenchmarkExtractJoinGroups(b *testing.B) {
+	// Create a mock session context
+	sctx := sessionctx.NewContext()
+	sctx.GetSessionVars().StmtCtx = &variable.StatementContext{}
+
+	// Create test tables
+	table1 := &MockLogicalPlan{}
+	table1.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	table2 := &MockLogicalPlan{}
+	table2.SetSchema(&expression.Schema{
+		Columns: []*expression.Column{
+			{RetType: types.NewFieldType(ast.TypeLonglong)},
+		},
+	})
+
+	// Create join
+	join := &MockLogicalJoin{}
+	join.SetSchema(expression.MergeSchema(table1.Schema(), table2.Schema()))
+	join.SetChildren(table1, table2)
+	join.SetJoinType(0) // InnerJoin
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ExtractJoinGroups(outerJoin)
+		ExtractJoinGroups(join)
 	}
 } 

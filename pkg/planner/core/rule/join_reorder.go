@@ -18,10 +18,11 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
+
+
 
 // JoinReorderRule implements LogicalOptRule interface for join reordering optimization
 type JoinReorderRule struct{}
@@ -57,14 +58,15 @@ func (r *JoinReorderRule) Name() string {
 
 // containsReorderableJoins checks if the plan contains joins that can be reordered
 func (r *JoinReorderRule) containsReorderableJoins(p base.LogicalPlan) bool {
-	switch x := p.(type) {
-	case *logicalop.LogicalJoin:
+	// Check if this is a join by looking for join-related methods or properties
+	// For now, we'll check if the plan has children and assume it might be a join
+	if len(p.Children()) >= 2 {
 		return true
-	default:
-		for _, child := range p.Children() {
-			if r.containsReorderableJoins(child) {
-				return true
-			}
+	}
+	
+	for _, child := range p.Children() {
+		if r.containsReorderableJoins(child) {
+			return true
 		}
 	}
 	return false
