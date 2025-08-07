@@ -40,7 +40,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
-        "//pkg/util/testbridge",
+
         "@com_github_stretchr_testify//require",
     ],
 )

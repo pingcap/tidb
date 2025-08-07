@@ -39,7 +39,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/types",
-        "//pkg/util/testbridge",
+
         "@com_github_stretchr_testify//require",
     ],
 )
