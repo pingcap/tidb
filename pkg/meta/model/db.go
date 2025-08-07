@@ -35,6 +35,12 @@ type DBInfo struct {
 	ReadOnly           bool             `json:"read_only"`
 }
 
+// ReadOnly returns true if the DB is read-only.
+// TODO: replace by DBInfo.ReadOnly
+func (db *DBInfo) ReadOnly() bool {
+	return false
+}
+
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
