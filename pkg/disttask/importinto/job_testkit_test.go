@@ -96,7 +96,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		taskMgr := storage.NewTaskManager(getPoolFn(currKSStore))
 		storage.SetTaskManager(taskMgr)
 		sysKSTaskMgr := taskMgr
-		if keyspace.IsRunningOnUser() {
+		if kv.IsUserKS(currKSStore) {
 			sysKSTaskMgr = storage.NewTaskManager(getPoolFn(sysKSStore))
 			storage.SetDXFSvcTaskMgr(sysKSTaskMgr)
 		}

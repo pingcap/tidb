@@ -594,7 +594,7 @@ func NewDomainWithEtcdClient(
 	)
 	do.initDomainSysVars()
 
-	do.crossKSSessMgr = crossks.NewManager()
+	do.crossKSSessMgr = crossks.NewManager(do.store)
 	return do
 }
 

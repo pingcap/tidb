@@ -20,7 +20,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -43,13 +42,16 @@ const crossKSSessPoolSize = 5
 // Manager manages all cross keyspace sessions.
 type Manager struct {
 	mu sync.RWMutex
+	// the store of current instance
+	store kv.Storage
 	// keyspace name -> session manager
 	sessMgrs map[string]*SessionManager
 }
 
 // NewManager creates a new cross keyspace session manager.
-func NewManager() *Manager {
+func NewManager(store kv.Storage) *Manager {
 	return &Manager{
+		store:    store,
 		sessMgrs: make(map[string]*SessionManager),
 	}
 }
@@ -76,7 +78,7 @@ func (m *Manager) GetOrCreate(
 	// corrupt user data, and it's harder to diagnose those issues, so we use
 	// runtime check instead of intest.Assert here, in case some code path are not
 	// covered by tests.
-	if kerneltype.IsClassic() || config.GetGlobalKeyspaceName() == ks {
+	if kerneltype.IsClassic() || m.store.GetKeyspace() == ks {
 		return nil, errors.New("cross keyspace session manager is not available in classic kernel or current keyspace")
 	}
 	if mgr, ok := m.Get(ks); ok {

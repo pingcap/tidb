@@ -145,3 +145,16 @@ func TestIsUserKS(t *testing.T) {
 		assert.False(t, IsUserKS(store))
 	}
 }
+
+func TestIsSystemKS(t *testing.T) {
+	if kerneltype.IsClassic() {
+		store := &keyspaceGetterStore{}
+		assert.False(t, IsSystemKS(store))
+	} else {
+		store := &keyspaceGetterStore{ks: "user"}
+		assert.False(t, IsSystemKS(store))
+
+		store.ks = keyspace.System
+		assert.True(t, IsSystemKS(store))
+	}
+}

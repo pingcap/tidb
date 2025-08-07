@@ -91,3 +91,8 @@ func WalkMemBuffer(memBuf Retriever, f func(k Key, v []byte) error) error {
 func IsUserKS(store Storage) bool {
 	return kerneltype.IsNextGen() && store.GetKeyspace() != keyspace.System
 }
+
+// IsSystemKS checks if the store is running on the SYSTEM keyspace.
+func IsSystemKS(store Storage) bool {
+	return kerneltype.IsNextGen() && store.GetKeyspace() == keyspace.System
+}
