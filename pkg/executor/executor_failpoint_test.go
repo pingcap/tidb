@@ -242,6 +242,9 @@ func TestKillTableReader(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(retry))
 	}()
+	// async api does not check the above failpoint for the first async request, so disable async-cop.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/disableAsyncCop", `return`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/disableAsyncCop")
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
