@@ -1341,24 +1341,21 @@ func (s *mockGCSSuite) TestTableMode() {
 		},
 		Content: content,
 	})
-	s.prepareAndUseDB("import_into")
-	createTableSQL := "create table import_into.table_mode (id int primary key, fk int);"
+	dbName := "import_into"
+	s.prepareAndUseDB(dbName)
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2.MustExec("use " + dbName)
+	createTableSQL := "create table table_mode (id int primary key, fk int);"
 	s.tk.MustExec(createTableSQL)
-	loadDataSQL := fmt.Sprintf(`IMPORT INTO import_into.table_mode
+	loadDataSQL := fmt.Sprintf(`IMPORT INTO table_mode
 		FROM 'gs://table-mode-test/data.csv?endpoint=%s'`, gcsEndpoint)
+	query := "SELECT * FROM table_mode"
 
 	// Test import into clean up can alter table mode to Normal finally.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode", `return`)
 	s.tk.MustExec(loadDataSQL)
-	require.Eventually(s.T(), func() bool {
-		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
-		if err != nil {
-			s.ErrorContains(err, "Table table_mode is in mode Import")
-			return false
-		}
-		return true
-	}, 5*time.Second, 100*time.Millisecond)
-	s.tk.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows("1 1", "2 2"), 5*time.Second, 100*time.Millisecond)
+	s.checkMode(s.tk, query, "table_mode", true)
+	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode")
 
 	// Test import into post process will alter table mode to Normal.
@@ -1374,25 +1371,10 @@ func (s *mockGCSSuite) TestTableMode() {
 	}()
 	go func() {
 		defer wg.Done()
-		tk2 := testkit.NewTestKit(s.T(), s.store)
 		// Make sure table mode is Import.
-		require.Eventually(s.T(), func() bool {
-			err := tk2.QueryToErr("SELECT * FROM import_into.table_mode;")
-			if err != nil {
-				s.ErrorContains(err, "Table table_mode is in mode Import")
-				return true
-			}
-			return false
-		}, 10*time.Second, 100*time.Millisecond)
-		require.Eventually(s.T(), func() bool {
-			err := tk2.QueryToErr("SELECT * FROM import_into.table_mode;")
-			if err != nil {
-				s.ErrorContains(err, "Table table_mode is in mode Import")
-				return false
-			}
-			return true
-		}, 10*time.Second, 100*time.Millisecond)
-		tk2.MustQuery("SELECT * FROM import_into.table_mode;").Check(testkit.Rows([]string{"1 1", "2 2"}...))
+		s.checkMode(tk2, query, "table_mode", false)
+		s.checkMode(tk2, query, "table_mode", true)
+		tk2.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
 	}()
 	wg.Wait()
 
@@ -1409,7 +1391,7 @@ func (s *mockGCSSuite) TestTableMode() {
 		},
 	)
 	s.tk.MustQuery(loadDataSQL)
-	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
+	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
 	require.True(s.T(), getError)
 
 	// Test import into check table is empty get error.
@@ -1417,30 +1399,16 @@ func (s *mockGCSSuite) TestTableMode() {
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
 	err := s.tk.QueryToErr(loadDataSQL)
 	s.ErrorContains(err, "check is empty get error")
-	require.Eventually(s.T(), func() bool {
-		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
-		if err != nil {
-			s.ErrorContains(err, "Table table_mode is in mode Import")
-			return false
-		}
-		return true
-	}, 10*time.Second, 100*time.Millisecond)
+	s.checkMode(s.tk, query, "table_mode", true)
 	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
 
-	// Test import into check table is not empty before alter table mode to Import.
+	// Test import into check table is not empty after alter table mode to Import.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("notEmpty")`)
 	err = s.tk.QueryToErr(loadDataSQL)
 	s.ErrorContains(err, "PreCheck failed: target table is not empty")
-	require.Eventually(s.T(), func() bool {
-		err := s.tk.QueryToErr("SELECT * FROM import_into.table_mode;")
-		if err != nil {
-			s.ErrorContains(err, "Table table_mode is in mode Import")
-			return false
-		}
-		return true
-	}, 10*time.Second, 100*time.Millisecond)
-	s.tk.MustQuery("SELECT * FROM table_mode;").Sort().Check(testkit.Rows([]string{}...))
+	s.checkMode(s.tk, query, "table_mode", true)
+	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty")
 
 	// Test admin repair table can reset table mode to normal.
@@ -1456,18 +1424,10 @@ func (s *mockGCSSuite) TestTableMode() {
 	}()
 	go func() {
 		defer wg.Done()
-		tk2 := testkit.NewTestKit(s.T(), s.store)
 		// Make sure table mode is Import.
-		require.Eventually(s.T(), func() bool {
-			err := tk2.QueryToErr("SELECT * FROM import_into.table_mode;")
-			if err != nil {
-				s.ErrorContains(err, "Table table_mode is in mode Import")
-				return true
-			}
-			return false
-		}, 10*time.Second, 100*time.Millisecond)
-		s.adminRepairTable("import_into", "table_mode", createTableSQL)
-		tk2.EventuallyMustQueryAndCheck("SELECT * FROM import_into.table_mode;", nil, testkit.Rows([]string{"1 1", "2 2"}...), 10*time.Second, 100*time.Millisecond)
+		s.checkMode(tk2, query, "table_mode", false)
+		s.adminRepairTable(dbName, "table_mode", createTableSQL)
+		tk2.EventuallyMustQueryAndCheck(query, nil, testkit.Rows([]string{"1 1", "2 2"}...), 10*time.Second, 100*time.Millisecond)
 	}()
 	wg.Wait()
 }
@@ -1482,4 +1442,15 @@ func (s *mockGCSSuite) adminRepairTable(db, table, createTableSQL string) {
 	s.NoError(err)
 	domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tableInfo.Meta())
 	s.tk.MustExec("admin repair table " + table + " " + createTableSQL)
+}
+
+func (s *mockGCSSuite) checkMode(tk *testkit.TestKit, sql, tableName string, expect bool) {
+	require.Eventually(s.T(), func() bool {
+		err := tk.QueryToErr(sql)
+		if err != nil {
+			s.ErrorContains(err, "Table "+tableName+" is in mode Import")
+			return !expect
+		}
+		return expect
+	}, 10*time.Second, 100*time.Millisecond)
 }
