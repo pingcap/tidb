@@ -1932,7 +1932,7 @@ func filterRestoreFiles(
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
-		if !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
+		if !loadStatsPhysical && !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
 			continue
 		}
 		dbMap[db.Info.ID] = db
