@@ -1346,12 +1346,13 @@ func (s *mockGCSSuite) TestTableMode() {
 
 	// Test import into clean up can alter table mode to Normal finally.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode", `return`)
-	s.tk.MustExec(loadDataSQL)
+	s.tk.MustQuery(loadDataSQL)
 	s.checkMode(s.tk, query, "table_mode", true)
 	s.tk.MustQuery(query).Check(testkit.Rows([]string{"1 1", "2 2"}...))
 	testfailpoint.Disable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/skipPostProcessAlterTableMode")
 
 	// Test import into post process will alter table mode to Normal.
+	s.tk.MustExec("truncate table table_mode")
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -1360,7 +1361,7 @@ func (s *mockGCSSuite) TestTableMode() {
 			wg.Done()
 		}()
 		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return")
-		s.tk.MustExec(loadDataSQL)
+		s.tk.MustQuery(loadDataSQL)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1414,7 +1415,7 @@ func (s *mockGCSSuite) TestTableMode() {
 			wg.Done()
 		}()
 		testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforePostProcess", "return")
-		s.tk.MustExec(loadDataSQL)
+		s.tk.MustQuery(loadDataSQL)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1440,7 +1441,7 @@ func (s *mockGCSSuite) adminRepairTable(db, table, createTableSQL string) {
 
 func (s *mockGCSSuite) checkMode(tk *testkit.TestKit, sql, tableName string, expect bool) {
 	require.Eventually(s.T(), func() bool {
-		err := tk.QueryToErr(sql)
+		err := tk.ExecToErr(sql)
 		if err != nil {
 			s.ErrorContains(err, "Table "+tableName+" is in mode Import")
 			return !expect
