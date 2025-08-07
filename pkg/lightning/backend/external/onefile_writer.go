@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"time"
@@ -285,7 +286,8 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 			zap.Int("keyNum", keyNum),
 			zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
 		)
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("OneFileWriter 10s").
+		label := fmt.Sprintf("OFW-%s", w.writerID[:8])
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues(label).
 			Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
 	}
 	return nil
