@@ -75,9 +75,10 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop index v_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add vector index v_idx_3((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	{"alter table t drop index v_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add vector index v_idx_4((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
 	// Drop full text index
-	{"alter table t drop index fts_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add fulltext index fts_idx_2(ctxt)"}},
-	{"alter table t drop index fts_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add fulltext index fts_idx_3(ctxt)"}},
-	{"alter table t drop index fts_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add fulltext index fts_idx_4(ctxt)"}},
+	// TODO: enable test after support mock TiCI
+	// {"alter table t drop index fts_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add fulltext index fts_idx_2(ctxt)"}},
+	// {"alter table t drop index fts_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add fulltext index fts_idx_3(ctxt)"}},
+	// {"alter table t drop index fts_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add fulltext index fts_idx_4(ctxt)"}},
 	// Add vector index
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateNone, true, false, nil},
 	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateDeleteOnly, true, true, nil},
