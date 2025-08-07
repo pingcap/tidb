@@ -1854,18 +1854,16 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 
 		if isColumnarIndex {
-			if isFullTextIndex {
-				// Send sync schema notification to TiCI.
-				for _, indexID := range indexIDs {
-					if err := tici.DropFullTextIndex(jobCtx.stepCtx, tblInfo.ID, indexID); err != nil {
-						logutil.DDLLogger().Warn("run drop column index but droping index on TiCI failed", zap.Error(err))
-						return ver, errors.Trace(err)
-					}
-				}
-			} else {
-				// Send sync schema notification to TiFlash.
-				if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
-					logutil.DDLLogger().Warn("run drop column index but syncing TiFlash schema failed", zap.Error(err))
+			// Send sync schema notification to TiFlash.
+			if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("run drop column index but syncing TiFlash schema failed", zap.Error(err))
+			}
+		}
+		if isFullTextIndex {
+			// Drop full text index on TiCI.
+			for _, indexID := range indexIDs {
+				if err := tici.DropFullTextIndex(jobCtx.stepCtx, tblInfo.ID, indexID); err != nil {
+					logutil.DDLLogger().Warn("run drop column index but droping index on TiCI failed", zap.Error(err))
 				}
 			}
 		}

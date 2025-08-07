@@ -266,12 +266,12 @@ func TestFTSIndexSyntax(t *testing.T) {
 	tk.MustExec("alter table t1 drop index FTSIdx")
 	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title, body) WITH PARSER STANDARD;")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`,`body`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx2(title, body) WITH PARSER ngram;", "fulltext index 'FTSIdx' already exist on column title")
 	tk.MustExec("alter table t1 drop index FTSIdx")
 	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx(title, body) WITH PARSER invalidParser;", "Unsupported parser 'invalidParser'")
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(false)`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(false)`)
-	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title, body) WITH PARSER ngram;")
+	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx(title, body) WITH PARSER ngram;", "mock create TiCI index failed")
 }
 
 func TestVectorLong(t *testing.T) {
