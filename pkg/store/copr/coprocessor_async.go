@@ -206,11 +206,11 @@ func (it *asyncCopIterator) startAsyncTask(ctx context.Context, t *asyncCopTask)
 				onResult.Invoke(nil, util.GetRecoverError(r))
 			}
 		}()
-		out := copOutput{
-			copResp:   resp.Resp.(*coprocessor.Response),
-			rpcCtx:    &tikv.RPCContext{Addr: resp.Addr},
-			storeAddr: resp.Addr,
-			err:       err,
+		out := copOutput{err: err}
+		if resp != nil {
+			out.copResp = resp.Resp.(*coprocessor.Response)
+			out.rpcCtx = &tikv.RPCContext{Addr: resp.Addr}
+			out.storeAddr = resp.Addr
 		}
 		if isSyncCapable(out.copResp) {
 			onResult.Invoke(worker.handleCopOutput(bo, task, in, out))

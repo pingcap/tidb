@@ -1510,13 +1510,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), in.req, task.region,
 		in.timeout, getEndPointType(task.storeType), task.storeAddr, in.ops...)
-
-	return worker.handleCopOutput(bo, task, in, copOutput{
-		copResp:   resp.Resp.(*coprocessor.Response),
+	out := copOutput{
 		rpcCtx:    rpcCtx,
 		storeAddr: storeAddr,
 		err:       err,
-	})
+	}
+	if resp != nil {
+		out.copResp = resp.Resp.(*coprocessor.Response)
+	}
+
+	return worker.handleCopOutput(bo, task, in, out)
 }
 
 const (
