@@ -1032,3 +1032,39 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, cpuCount, cpuCount)
 	return err
 }
+
+// UpdateSubtaskCheckpoint updates the checkpoint of a subtask.
+func (mgr *TaskManager) UpdateSubtaskCheckpoint(ctx context.Context, subtaskID int64, checkpoint any) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
+
+	data, err := json.Marshal(checkpoint)
+	if err != nil {
+		return err
+	}
+	checkpointJSON := string(data)
+
+	_, err = mgr.ExecuteSQLWithNewSession(ctx,
+		`UPDATE mysql.tidb_background_subtask SET checkpoint = %? WHERE id = %?`,
+		checkpointJSON, subtaskID)
+	return err
+}
+
+// GetSubtaskCheckpoint gets the checkpoint of a subtask.
+func (mgr *TaskManager) GetSubtaskCheckpoint(ctx context.Context, subtaskID int64) (string, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return "", err
+	}
+
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"SELECT checkpoint FROM mysql.tidb_background_subtask WHERE id = %?", subtaskID)
+	if err != nil {
+		return "", err
+	}
+	if len(rs) == 0 || rs[0].IsNull(0) {
+		return "", nil
+	}
+
+	return rs[0].GetString(0), nil
+}

@@ -60,9 +60,17 @@ type BackendCtxBuilder struct {
 	etcdClient *clientv3.Client
 	importTS   uint64
 
+	// For normal checkpoint manager
 	sessPool   *sess.Pool
 	physicalID int64
-	checkDup   bool
+
+	// For distributed task checkpoint manager
+	subtaskID   int64
+	updateFunc  func(context.Context, int64, any) error
+	getFunc     func(context.Context, int64) (string, error)
+	useDistTask bool
+
+	checkDup bool
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
@@ -79,6 +87,21 @@ func (b *BackendCtxBuilder) WithCheckpointManagerParam(
 ) *BackendCtxBuilder {
 	b.sessPool = sessPool
 	b.physicalID = physicalID
+	return b
+}
+
+// WithDistTaskCheckpointManagerParam is used by DXF distributed task mode.
+func (b *BackendCtxBuilder) WithDistTaskCheckpointManagerParam(
+	subtaskID int64,
+	physicalID int64,
+	updateFunc func(context.Context, int64, any) error,
+	getFunc func(context.Context, int64) (string, error),
+) *BackendCtxBuilder {
+	b.subtaskID = subtaskID
+	b.physicalID = physicalID
+	b.updateFunc = updateFunc
+	b.getFunc = getFunc
+	b.useDistTask = true
 	return b
 }
 
@@ -110,13 +133,38 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	var cpMgr *CheckpointManager
-	if b.sessPool != nil {
-		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
-		if err != nil {
-			logutil.Logger(ctx).Warn("create checkpoint manager failed",
-				zap.Int64("jobID", job.ID),
-				zap.Error(err))
-			return nil, err
+
+	// Create checkpoint manager based on the configuration
+	if b.useDistTask {
+		// Use distributed task checkpoint manager
+		if b.updateFunc != nil || b.getFunc != nil {
+			cpMgr, err = NewCheckpointManagerForDistTask(
+				ctx,
+				b.subtaskID,
+				b.physicalID,
+				jobSortPath,
+				pdCli,
+				b.updateFunc,
+				b.getFunc,
+			)
+			if err != nil {
+				logutil.Logger(ctx).Warn("create distributed task checkpoint manager failed",
+					zap.Int64("jobID", job.ID),
+					zap.Int64("subtaskID", b.subtaskID),
+					zap.Error(err))
+				return nil, err
+			}
+		}
+	} else {
+		// Use normal checkpoint manager
+		if b.sessPool != nil {
+			cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
+			if err != nil {
+				logutil.Logger(ctx).Warn("create checkpoint manager failed",
+					zap.Int64("jobID", job.ID),
+					zap.Error(err))
+				return nil, err
+			}
 		}
 	}
 
