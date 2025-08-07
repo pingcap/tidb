@@ -716,8 +716,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, params []expression.Expression,
 				args[i] = types.NewDecimalDatum(nil)
 			} else {
 				var dec types.MyDecimal
-				err = sc.HandleTruncate(dec.FromString(v))
-				if err != nil {
+				if err := sc.HandleTruncate(dec.FromString(v)); err != nil && err != types.ErrTruncated {
 					return err
 				}
 				args[i] = types.NewDecimalDatum(&dec)
