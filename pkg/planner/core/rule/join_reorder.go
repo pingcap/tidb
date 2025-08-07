@@ -102,7 +102,7 @@ func (s *JoinReOrderSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 }
 
 // replaceJoinGroup replaces the original join group with the optimized one
-func (s *JoinReOrderSolver) replaceJoinGroup(p base.LogicalPlan, group *util.JoinGroupResult, newJoin base.LogicalPlan) base.LogicalPlan {
+func (s *JoinReOrderSolver) replaceJoinGroup(p base.LogicalPlan, group *JoinGroupResult, newJoin base.LogicalPlan) base.LogicalPlan {
 	// Check if schema has changed and add projection if necessary
 	originalSchema := p.Schema()
 	schemaChanged := false
@@ -161,15 +161,38 @@ func (s *JoinReOrderSolver) createJoin(
 	return join
 }
 
+// JoinGroupResult represents the result of extracting a join group
+type JoinGroupResult struct {
+	Group              []base.LogicalPlan
+	EqEdges            []*expression.ScalarFunction
+	OtherConds         []expression.Expression
+	JoinTypes          []*JoinTypeWithExtMsg
+	JoinOrderHintInfo  []*h.PlanHints
+	JoinMethodHintInfo map[int]*JoinMethodHint
+	HasOuterJoin       bool
+}
+
+// JoinTypeWithExtMsg represents join type with extended message
+type JoinTypeWithExtMsg struct {
+	JoinType int
+	ExtMsg   string
+}
+
+// JoinMethodHint represents join method hint information
+type JoinMethodHint struct {
+	Method string
+	Tables []string
+}
+
 // extractJoinGroups extracts all join groups from the given plan
-func (s *JoinReOrderSolver) extractJoinGroups(p base.LogicalPlan) []*util.JoinGroupResult {
-	var groups []*util.JoinGroupResult
+func (s *JoinReOrderSolver) extractJoinGroups(p base.LogicalPlan) []*JoinGroupResult {
+	var groups []*JoinGroupResult
 	s.extractJoinGroupsRecursive(p, &groups)
 	return groups
 }
 
 // extractJoinGroupsRecursive recursively extracts join groups
-func (s *JoinReOrderSolver) extractJoinGroupsRecursive(p base.LogicalPlan, groups *[]*util.JoinGroupResult) {
+func (s *JoinReOrderSolver) extractJoinGroupsRecursive(p base.LogicalPlan, groups *[]*JoinGroupResult) {
 	switch x := p.(type) {
 	case *logicalop.LogicalJoin:
 		group := s.extractJoinGroup(p)
@@ -184,19 +207,19 @@ func (s *JoinReOrderSolver) extractJoinGroupsRecursive(p base.LogicalPlan, group
 }
 
 // extractJoinGroup extracts a single join group starting from the given join node
-func (s *JoinReOrderSolver) extractJoinGroup(p base.LogicalPlan) *util.JoinGroupResult {
+func (s *JoinReOrderSolver) extractJoinGroup(p base.LogicalPlan) *JoinGroupResult {
 	join, ok := p.(*logicalop.LogicalJoin)
 	if !ok {
 		return nil
 	}
 
-	group := &util.JoinGroupResult{
+	group := &JoinGroupResult{
 		Group:              make([]base.LogicalPlan, 0),
 		EqEdges:            make([]*expression.ScalarFunction, 0),
 		OtherConds:         make([]expression.Expression, 0),
-		JoinTypes:          make([]*util.JoinTypeWithExtMsg, 0),
+		JoinTypes:          make([]*JoinTypeWithExtMsg, 0),
 		JoinOrderHintInfo:  make([]*h.PlanHints, 0),
-		JoinMethodHintInfo: make(map[int]*util.JoinMethodHint),
+		JoinMethodHintInfo: make(map[int]*JoinMethodHint),
 		HasOuterJoin:       false,
 	}
 
@@ -205,7 +228,7 @@ func (s *JoinReOrderSolver) extractJoinGroup(p base.LogicalPlan) *util.JoinGroup
 }
 
 // extractJoinGroupRecursive recursively extracts join information
-func (s *JoinReOrderSolver) extractJoinGroupRecursive(p base.LogicalPlan, group *util.JoinGroupResult) {
+func (s *JoinReOrderSolver) extractJoinGroupRecursive(p base.LogicalPlan, group *JoinGroupResult) {
 	switch x := p.(type) {
 	case *logicalop.LogicalJoin:
 		// Check if this is an outer join
@@ -214,7 +237,7 @@ func (s *JoinReOrderSolver) extractJoinGroupRecursive(p base.LogicalPlan, group 
 		}
 
 		// Add join type information
-		joinType := &util.JoinTypeWithExtMsg{
+		joinType := &JoinTypeWithExtMsg{
 			JoinType: int(x.JoinType),
 			ExtMsg:   "",
 		}
