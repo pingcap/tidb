@@ -111,23 +111,3 @@ func TestIsRunningOnUser(t *testing.T) {
 		require.False(t, IsRunningOnUser())
 	}
 }
-
-func TestIsRunningOnSystem(t *testing.T) {
-	if kerneltype.IsClassic() {
-		require.False(t, IsRunningOnSystem())
-	} else {
-		bak := *config.GetGlobalConfig()
-		t.Cleanup(func() {
-			config.StoreGlobalConfig(&bak)
-		})
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = System
-		})
-		require.True(t, IsRunningOnSystem())
-
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = "aa"
-		})
-		require.False(t, IsRunningOnSystem())
-	}
-}

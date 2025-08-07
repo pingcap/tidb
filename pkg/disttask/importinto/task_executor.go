@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -660,7 +659,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
 	store := e.store
-	if keyspace.IsRunningOnSystem() && task.Keyspace != tidbconfig.GetGlobalKeyspaceName() {
+	if e.store.GetKeyspace() != task.Keyspace {
 		taskMgr, err := dxfstorage.GetTaskManager()
 		if err != nil {
 			return nil, errors.Trace(err)

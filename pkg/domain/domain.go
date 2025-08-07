@@ -818,7 +818,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
-	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
+	if kv.IsUserKS(do.store) && startMode == ddl.Normal {
 		if err = do.loadSysKSInfoSchema(); err != nil {
 			return err
 		}
@@ -1053,7 +1053,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	taskManager := storage.NewTaskManager(do.dxfSessionPool)
 	storage.SetTaskManager(taskManager)
 
-	if keyspace.IsRunningOnUser() {
+	if kv.IsUserKS(do.store) {
 		sp, err := do.GetKSSessPool(keyspace.System)
 		if err != nil {
 			return err

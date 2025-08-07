@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -120,4 +122,26 @@ func (s *mockMap) Delete(k Key) error {
 		}
 	}
 	return nil
+}
+
+type keyspaceGetterStore struct {
+	Storage
+	ks string
+}
+
+func (s *keyspaceGetterStore) GetKeyspace() string {
+	return s.ks
+}
+
+func TestIsUserKS(t *testing.T) {
+	if kerneltype.IsClassic() {
+		store := &keyspaceGetterStore{}
+		assert.False(t, IsUserKS(store))
+	} else {
+		store := &keyspaceGetterStore{ks: "user"}
+		assert.True(t, IsUserKS(store))
+
+		store.ks = keyspace.System
+		assert.False(t, IsUserKS(store))
+	}
 }
