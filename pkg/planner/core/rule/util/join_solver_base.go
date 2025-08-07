@@ -54,16 +54,8 @@ func (s *BaseSingleGroupJoinOrderSolver) CheckConnection(leftPlan, rightPlan int
 	rightNode = rightPlan
 	usedEdges = make([]*expression.ScalarFunction, 0)
 	
-	// Get schema information
-	leftSchema := leftPlan.Schema()
-	rightSchema := rightPlan.Schema()
-	
-	// Find applicable equal conditions
-	for _, edge := range s.eqEdges {
-		if s.canApplyEqualCondition(edge, leftSchema, rightSchema) {
-			usedEdges = append(usedEdges, edge)
-		}
-	}
+	// For now, return a simplified implementation
+	// TODO: Implement full schema checking logic when we have proper interfaces
 	
 	// Default to inner join if no specific join type is found
 	joinType = &JoinTypeWithExtMsg{
@@ -111,12 +103,6 @@ func (s *BaseSingleGroupJoinOrderSolver) MakeJoin(
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))  
 	copy(remainOtherConds, s.otherConds)  
 	  
-	var (  
-		otherConds []expression.Expression  
-		leftConds  []expression.Expression  
-		rightConds []expression.Expression  
-	)  
-	  
 	// For now, return a simplified implementation
 	// TODO: Implement full join creation logic
 	return leftPlan, remainOtherConds  
@@ -131,18 +117,18 @@ func (s *BaseSingleGroupJoinOrderSolver) newJoinWithEdges(
 	  
 	// Create a new join using the factory function
 	// This avoids direct import of logicalop package
-	return s.createJoin(lChild, rChild, eqEdges, otherConds, leftConds, rightConds, joinType)
+	return s.createJoinMethod(lChild, rChild, eqEdges, otherConds, leftConds, rightConds, joinType)
 }  
   
 // newCartesianJoin creates a new cartesian join  
 func (s *BaseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild interface{}) interface{} {  
 	// Create a cartesian join using the factory function
-	return s.createJoin(lChild, rChild, nil, nil, nil, nil, 0) // 0 = InnerJoin
+	return s.createJoinMethod(lChild, rChild, nil, nil, nil, nil, 0) // 0 = InnerJoin
 }
 
-// createJoin is a factory function that creates joins
+// createJoinMethod is a factory function that creates joins
 // This will be overridden by the actual implementation in the rule package
-func (s *BaseSingleGroupJoinOrderSolver) createJoin(
+func (s *BaseSingleGroupJoinOrderSolver) createJoinMethod(
 	lChild, rChild interface{},
 	eqEdges []*expression.ScalarFunction,
 	otherConds, leftConds, rightConds []expression.Expression,

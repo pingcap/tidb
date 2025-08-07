@@ -20,11 +20,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
-
-
 
 // JoinReorderRule implements LogicalOptRule interface for join reordering optimization
 type JoinReorderRule struct{}
@@ -82,8 +81,11 @@ type JoinReOrderSolver struct {
 func (s *JoinReOrderSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 
+	// Create extractor for join group extraction
+	extractor := &LogicalJoinExtractor{}
+
 	// Extract join groups from the plan
-	joinGroups := s.extractJoinGroups(p)
+	joinGroups := util.ExtractJoinGroups(p, extractor)
 
 	for _, group := range joinGroups {
 		if len(group.Group) <= 1 {
@@ -101,8 +103,89 @@ func (s *JoinReOrderSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 	return p, planChanged, nil
 }
 
+// LogicalJoinExtractor implements util.JoinGroupExtractor for LogicalJoin
+type LogicalJoinExtractor struct{}
+
+// IsJoin checks if the plan is a LogicalJoin
+func (e *LogicalJoinExtractor) IsJoin(p base.LogicalPlan) bool {
+	_, ok := p.(*logicalop.LogicalJoin)
+	return ok
+}
+
+// GetJoinType returns the join type as an integer
+func (e *LogicalJoinExtractor) GetJoinType(p base.LogicalPlan) int {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return int(join.JoinType)
+	}
+	return 0 // Default to InnerJoin
+}
+
+// GetEqualConditions returns the equal conditions
+func (e *LogicalJoinExtractor) GetEqualConditions(p base.LogicalPlan) []*expression.ScalarFunction {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.EqualConditions
+	}
+	return nil
+}
+
+// GetOtherConditions returns the other conditions
+func (e *LogicalJoinExtractor) GetOtherConditions(p base.LogicalPlan) []expression.Expression {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.OtherConditions
+	}
+	return nil
+}
+
+// GetLeftConditions returns the left conditions
+func (e *LogicalJoinExtractor) GetLeftConditions(p base.LogicalPlan) []expression.Expression {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.LeftConditions
+	}
+	return nil
+}
+
+// GetRightConditions returns the right conditions
+func (e *LogicalJoinExtractor) GetRightConditions(p base.LogicalPlan) []expression.Expression {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.RightConditions
+	}
+	return nil
+}
+
+// GetHintInfo returns the hint information
+func (e *LogicalJoinExtractor) GetHintInfo(p base.LogicalPlan) *h.PlanHints {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.HintInfo
+	}
+	return nil
+}
+
+// GetPreferJoinType returns the preferred join type
+func (e *LogicalJoinExtractor) GetPreferJoinType(p base.LogicalPlan) uint {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.PreferJoinType
+	}
+	return 0
+}
+
+// GetStraightJoin returns whether it's a straight join
+func (e *LogicalJoinExtractor) GetStraightJoin(p base.LogicalPlan) bool {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.StraightJoin
+	}
+	return false
+}
+
+// GetPreferJoinOrder returns whether to prefer join order
+func (e *LogicalJoinExtractor) GetPreferJoinOrder(p base.LogicalPlan) bool {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		return join.PreferJoinOrder
+	}
+	return false
+}
+
 // replaceJoinGroup replaces the original join group with the optimized one
-func (s *JoinReOrderSolver) replaceJoinGroup(p base.LogicalPlan, group *JoinGroupResult, newJoin base.LogicalPlan) base.LogicalPlan {
+func (s *JoinReOrderSolver) replaceJoinGroup(p base.LogicalPlan, group *util.JoinGroupResult, newJoin base.LogicalPlan) base.LogicalPlan {
 	// Check if schema has changed and add projection if necessary
 	originalSchema := p.Schema()
 	schemaChanged := false
@@ -159,104 +242,4 @@ func (s *JoinReOrderSolver) createJoin(
 	join.RightConditions = rightConds
 	
 	return join
-}
-
-// JoinGroupResult represents the result of extracting a join group
-type JoinGroupResult struct {
-	Group              []base.LogicalPlan
-	EqEdges            []*expression.ScalarFunction
-	OtherConds         []expression.Expression
-	JoinTypes          []*JoinTypeWithExtMsg
-	JoinOrderHintInfo  []*h.PlanHints
-	JoinMethodHintInfo map[int]*JoinMethodHint
-	HasOuterJoin       bool
-}
-
-// JoinTypeWithExtMsg represents join type with extended message
-type JoinTypeWithExtMsg struct {
-	JoinType int
-	ExtMsg   string
-}
-
-// JoinMethodHint represents join method hint information
-type JoinMethodHint struct {
-	Method string
-	Tables []string
-}
-
-// extractJoinGroups extracts all join groups from the given plan
-func (s *JoinReOrderSolver) extractJoinGroups(p base.LogicalPlan) []*JoinGroupResult {
-	var groups []*JoinGroupResult
-	s.extractJoinGroupsRecursive(p, &groups)
-	return groups
-}
-
-// extractJoinGroupsRecursive recursively extracts join groups
-func (s *JoinReOrderSolver) extractJoinGroupsRecursive(p base.LogicalPlan, groups *[]*JoinGroupResult) {
-	switch x := p.(type) {
-	case *logicalop.LogicalJoin:
-		group := s.extractJoinGroup(p)
-		if group != nil && len(group.Group) > 1 {
-			*groups = append(*groups, group)
-		}
-	default:
-		for _, child := range p.Children() {
-			s.extractJoinGroupsRecursive(child, groups)
-		}
-	}
-}
-
-// extractJoinGroup extracts a single join group starting from the given join node
-func (s *JoinReOrderSolver) extractJoinGroup(p base.LogicalPlan) *JoinGroupResult {
-	join, ok := p.(*logicalop.LogicalJoin)
-	if !ok {
-		return nil
-	}
-
-	group := &JoinGroupResult{
-		Group:              make([]base.LogicalPlan, 0),
-		EqEdges:            make([]*expression.ScalarFunction, 0),
-		OtherConds:         make([]expression.Expression, 0),
-		JoinTypes:          make([]*JoinTypeWithExtMsg, 0),
-		JoinOrderHintInfo:  make([]*h.PlanHints, 0),
-		JoinMethodHintInfo: make(map[int]*JoinMethodHint),
-		HasOuterJoin:       false,
-	}
-
-	s.extractJoinGroupRecursive(p, group)
-	return group
-}
-
-// extractJoinGroupRecursive recursively extracts join information
-func (s *JoinReOrderSolver) extractJoinGroupRecursive(p base.LogicalPlan, group *JoinGroupResult) {
-	switch x := p.(type) {
-	case *logicalop.LogicalJoin:
-		// Check if this is an outer join
-		if x.JoinType != logicalop.InnerJoin {
-			group.HasOuterJoin = true
-		}
-
-		// Add join type information
-		joinType := &JoinTypeWithExtMsg{
-			JoinType: int(x.JoinType),
-			ExtMsg:   "",
-		}
-		group.JoinTypes = append(group.JoinTypes, joinType)
-
-		// Extract equal conditions and other conditions
-		for _, cond := range x.EqualConditions {
-			group.EqEdges = append(group.EqEdges, cond)
-		}
-		for _, cond := range x.OtherConditions {
-			group.OtherConds = append(group.OtherConds, cond)
-		}
-
-		// Recursively process children
-		s.extractJoinGroupRecursive(x.Children()[0], group)
-		s.extractJoinGroupRecursive(x.Children()[1], group)
-
-	default:
-		// This is a leaf node (table or other operator)
-		group.Group = append(group.Group, p)
-	}
 }

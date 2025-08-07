@@ -20,18 +20,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
-// JoinType constants to avoid import cycle
-const (
-	InnerJoin = iota
-	LeftOuterJoin
-	RightOuterJoin
-	SemiJoin
-	AntiSemiJoin
-	LeftOuterSemiJoin
-	AntiLeftOuterSemiJoin
-)
-
-// JoinGroupResult represents the result of extracting a join group
+// JoinGroupResult represents a group of tables that can be joined together
 type JoinGroupResult struct {
 	Group              []base.LogicalPlan
 	EqEdges            []*expression.ScalarFunction
@@ -42,7 +31,7 @@ type JoinGroupResult struct {
 	HasOuterJoin       bool
 }
 
-// JoinTypeWithExtMsg represents join type with extended message
+// JoinTypeWithExtMsg represents join type with additional message
 type JoinTypeWithExtMsg struct {
 	JoinType int // Use int instead of logicalop.JoinType to avoid import cycle
 	ExtMsg   string
@@ -54,32 +43,44 @@ type JoinMethodHint struct {
 	Tables []string
 }
 
-// ExtractJoinGroups extracts all join groups from the given plan
-func ExtractJoinGroups(p base.LogicalPlan) []*JoinGroupResult {
+// JoinGroupExtractor interface for extracting join groups
+type JoinGroupExtractor interface {
+	IsJoin(p base.LogicalPlan) bool
+	GetJoinType(p base.LogicalPlan) int
+	GetEqualConditions(p base.LogicalPlan) []*expression.ScalarFunction
+	GetOtherConditions(p base.LogicalPlan) []expression.Expression
+	GetLeftConditions(p base.LogicalPlan) []expression.Expression
+	GetRightConditions(p base.LogicalPlan) []expression.Expression
+	GetHintInfo(p base.LogicalPlan) *h.PlanHints
+	GetPreferJoinType(p base.LogicalPlan) uint
+	GetStraightJoin(p base.LogicalPlan) bool
+	GetPreferJoinOrder(p base.LogicalPlan) bool
+}
+
+// ExtractJoinGroups extracts all join groups from the given plan using the provided extractor
+func ExtractJoinGroups(p base.LogicalPlan, extractor JoinGroupExtractor) []*JoinGroupResult {
 	var groups []*JoinGroupResult
-	extractJoinGroupsRecursive(p, &groups)
+	extractJoinGroupsRecursive(p, &groups, extractor)
 	return groups
 }
 
 // extractJoinGroupsRecursive recursively extracts join groups
-func extractJoinGroupsRecursive(p base.LogicalPlan, groups *[]*JoinGroupResult) {
-	switch x := p.(type) {
-	case *LogicalJoin:
-		group := extractJoinGroup(p)
+func extractJoinGroupsRecursive(p base.LogicalPlan, groups *[]*JoinGroupResult, extractor JoinGroupExtractor) {
+	if extractor.IsJoin(p) {
+		group := extractJoinGroup(p, extractor)
 		if group != nil && len(group.Group) > 1 {
 			*groups = append(*groups, group)
 		}
-	default:
+	} else {
 		for _, child := range p.Children() {
-			extractJoinGroupsRecursive(child, groups)
+			extractJoinGroupsRecursive(child, groups, extractor)
 		}
 	}
 }
 
 // extractJoinGroup extracts a single join group starting from the given join node
-func extractJoinGroup(p base.LogicalPlan) *JoinGroupResult {
-	join, ok := p.(*LogicalJoin)
-	if !ok {
+func extractJoinGroup(p base.LogicalPlan, extractor JoinGroupExtractor) *JoinGroupResult {
+	if !extractor.IsJoin(p) {
 		return nil
 	}
 
@@ -94,40 +95,41 @@ func extractJoinGroup(p base.LogicalPlan) *JoinGroupResult {
 	}
 
 	// Extract join group recursively
-	extractJoinGroupRecursive(join, group)
+	extractJoinGroupRecursive(p, group, extractor)
 
 	return group
 }
 
 // extractJoinGroupRecursive recursively extracts join information
-func extractJoinGroupRecursive(p base.LogicalPlan, group *JoinGroupResult) {
-	switch x := p.(type) {
-	case *LogicalJoin:
+func extractJoinGroupRecursive(p base.LogicalPlan, group *JoinGroupResult, extractor JoinGroupExtractor) {
+	if extractor.IsJoin(p) {
 		// Check if this is an outer join
-		if x.JoinType != InnerJoin {
+		joinType := extractor.GetJoinType(p)
+		if joinType != 0 { // 0 = InnerJoin
 			group.HasOuterJoin = true
 		}
 
 		// Add join type information
-		joinType := &JoinTypeWithExtMsg{
-			JoinType: x.JoinType,
+		joinTypeWithExt := &JoinTypeWithExtMsg{
+			JoinType: joinType,
 			ExtMsg:   "",
 		}
-		group.JoinTypes = append(group.JoinTypes, joinType)
+		group.JoinTypes = append(group.JoinTypes, joinTypeWithExt)
 
 		// Extract equal conditions and other conditions
-		for _, cond := range x.EqualConditions {
-			group.EqEdges = append(group.EqEdges, cond)
-		}
-		for _, cond := range x.OtherConditions {
-			group.OtherConds = append(group.OtherConds, cond)
-		}
+		eqConds := extractor.GetEqualConditions(p)
+		otherConds := extractor.GetOtherConditions(p)
+		
+		group.EqEdges = append(group.EqEdges, eqConds...)
+		group.OtherConds = append(group.OtherConds, otherConds...)
 
 		// Recursively process children
-		extractJoinGroupRecursive(x.Children()[0], group)
-		extractJoinGroupRecursive(x.Children()[1], group)
-
-	default:
+		children := p.Children()
+		if len(children) >= 2 {
+			extractJoinGroupRecursive(children[0], group, extractor)
+			extractJoinGroupRecursive(children[1], group, extractor)
+		}
+	} else {
 		// This is a leaf node (table or other operator)
 		group.Group = append(group.Group, p)
 	}
