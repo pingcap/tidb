@@ -72,14 +72,7 @@ func (s *mockGCSSuite) TestResolutionFailTheTask() {
 		return t.State == proto.TaskStateReverted
 	})
 	s.NoError(err)
-	require.Eventually(s.T(), func() bool {
-		err := s.tk.ExecToErr("SELECT * FROM t;")
-		if err != nil {
-			require.ErrorContains(s.T(), err, "Table t is in mode Import")
-			return false
-		}
-		return true
-	}, 5*time.Second, 100*time.Millisecond)
+	s.checkMode(s.tk, "SELECT * FROM t", "t", true)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
@@ -90,14 +83,7 @@ func (s *mockGCSSuite) TestResolutionCancelTheTask() {
 		return t.State == proto.TaskStateReverted
 	})
 	s.NoError(err)
-	require.Eventually(s.T(), func() bool {
-		err := s.tk.ExecToErr("SELECT * FROM t;")
-		if err != nil {
-			require.ErrorContains(s.T(), err, "Table t is in mode Import")
-			return false
-		}
-		return true
-	}, 5*time.Second, 100*time.Millisecond)
+	s.checkMode(s.tk, "SELECT * FROM t", "t", true)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
@@ -111,4 +97,15 @@ func (s *mockGCSSuite) TestResolutionSuccessAfterManualChangeData() {
 	s.tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='running' where id=%d", task.ID))
 	s.NoError(handle.WaitTaskDoneOrPaused(ctx, task.ID))
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+}
+
+func (s *mockGCSSuite) checkMode(tk *testkit.TestKit, sql, tableName string, expect bool) {
+	require.Eventually(s.T(), func() bool {
+		err := tk.QueryToErr(sql)
+		if err != nil {
+			s.ErrorContains(err, "Table "+tableName+" is in mode Import")
+			return !expect
+		}
+		return expect
+	}, 10*time.Second, 100*time.Millisecond)
 }

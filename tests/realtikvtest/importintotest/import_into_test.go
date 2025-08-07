@@ -1038,14 +1038,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	err := s.tk.QueryToErr(sql)
 	s.Error(err)
 	s.Greater(unregisterTime, registerTime)
-	require.Eventually(s.T(), func() bool {
-		err := s.tk.QueryToErr("SELECT * FROM load_data.register_task;")
-		if err != nil {
-			s.ErrorContains(err, "Table table_mode is in mode Import")
-			return false
-		}
-		return true
-	}, 10*time.Second, 100*time.Millisecond)
+	s.checkMode(s.tk, "SELECT * FROM register_task", "register_task", true)
 
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)
