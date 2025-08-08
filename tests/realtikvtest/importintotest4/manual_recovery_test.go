@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -70,6 +72,7 @@ func (s *mockGCSSuite) TestResolutionFailTheTask() {
 		return t.State == proto.TaskStateReverted
 	})
 	s.NoError(err)
+	s.checkMode(s.tk, "SELECT * FROM t", "t", true)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
@@ -80,6 +83,7 @@ func (s *mockGCSSuite) TestResolutionCancelTheTask() {
 		return t.State == proto.TaskStateReverted
 	})
 	s.NoError(err)
+	s.checkMode(s.tk, "SELECT * FROM t", "t", true)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
@@ -93,4 +97,15 @@ func (s *mockGCSSuite) TestResolutionSuccessAfterManualChangeData() {
 	s.tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='running' where id=%d", task.ID))
 	s.NoError(handle.WaitTaskDoneOrPaused(ctx, task.ID))
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+}
+
+func (s *mockGCSSuite) checkMode(tk *testkit.TestKit, sql, tableName string, expect bool) {
+	require.Eventually(s.T(), func() bool {
+		err := tk.QueryToErr(sql)
+		if err != nil {
+			s.ErrorContains(err, "Table "+tableName+" is in mode Import")
+			return !expect
+		}
+		return expect
+	}, 10*time.Second, 100*time.Millisecond)
 }
