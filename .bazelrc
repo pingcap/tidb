@@ -9,7 +9,6 @@ build --announce_rc
 build --experimental_guard_against_concurrent_changes
 build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolution
 build:ci --color=yes
-build:ci --remote_download_minimal
 build:ci --experimental_remote_cache_compression
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp
 build:release --config=ci
@@ -17,6 +16,7 @@ build:race --config=ci
 build:race --@io_bazel_rules_go//go/config:race --test_env=GORACE=halt_on_error=1 --test_sharding_strategy=disabled
 test --test_output=errors --test_summary=detailed
 test:ci --color=yes
+test:ci --remote_download_minimal
 test:ci --verbose_failures --test_verbose_timeout_warnings
 test:ci --test_env=GO_TEST_WRAP_TESTV=1
 test:ci --experimental_ui_max_stdouterr_bytes=268435456
