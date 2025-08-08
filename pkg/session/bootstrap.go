@@ -729,6 +729,7 @@ const (
 		table_name VARCHAR(64) NOT NULL,
 		table_id bigint(64) NOT NULL,
 		created_by VARCHAR(300) NOT NULL,
+		group_key VARCHAR(256) NOT NULL DEFAULT "",
 		parameters text NOT NULL,
 		source_file_size bigint(64) NOT NULL,
 		status VARCHAR(64) NOT NULL,
@@ -737,6 +738,7 @@ const (
 		error_message TEXT DEFAULT NULL,
 		PRIMARY KEY (id),
 		KEY (created_by),
+		KEY idx_group_key(group_key),
 		KEY (status));`
 
 	// CreateTiDBPITRIDMapTable is a table that records the id map from upstream to downstream for PITR.

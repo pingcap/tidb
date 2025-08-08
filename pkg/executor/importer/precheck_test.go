@@ -87,10 +87,10 @@ func TestCheckRequirements(t *testing.T) {
 	}
 
 	// create a dummy job
-	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", "", &importer.ImportParameters{}, 0)
 	require.NoError(t, err)
 	// there is active job on the target table already
-	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", "", &importer.ImportParameters{}, 0)
 	require.NoError(t, err)
 	err = c.CheckRequirements(ctx, conn)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
