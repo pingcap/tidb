@@ -372,6 +372,23 @@ var GetPlanCostVer24PhysicalStreamAgg func(pp base.PhysicalPlan, taskType proper
 // Attach2Task4PhysicalStreamAgg implements PhysicalPlan interface.
 var Attach2Task4PhysicalStreamAgg func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// Attach2Task4PhysicalApply implements PhysicalPlan interface for PhysicalApply
+var Attach2Task4PhysicalApply func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetCost4PhysicalApply computes the cost of apply operator.
+var GetCost4PhysicalApply func(pp base.PhysicalPlan, lCount, rCount, lCost, rCost float64) float64
+
+// GetPlanCostVer14PhysicalApply calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalApply func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
+// probe-cost = probe-child-cost * build-rows
+var GetPlanCostVer24PhysicalApply func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.

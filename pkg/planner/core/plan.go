@@ -211,7 +211,7 @@ func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) floa
 	res := float64(1)
 	for _, pp := range probeParents {
 		switch pp.(type) {
-		case *PhysicalApply, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+		case *physicalop.PhysicalApply, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outer := pp.Children()[1-join.GetInnerChildIdx()]
 				res *= outer.StatsInfo().RowCount
@@ -225,7 +225,8 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 	res := int64(1)
 	for _, pp := range pps {
 		switch pp.(type) {
-		case *PhysicalApply, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+		case *physicalop.PhysicalApply, *physicalop.PhysicalIndexHashJoin,
+			*PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
 			if join, ok := pp.(interface{ GetInnerChildIdx() int }); ok {
 				outerChildID := pp.Children()[1-join.GetInnerChildIdx()].ID()
 				actRows := int64(1)

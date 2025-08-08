@@ -284,7 +284,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildMemTable(v)
 	case *physicalop.PhysicalTableDual:
 		return b.buildTableDual(v)
-	case *plannercore.PhysicalApply:
+	case *physicalop.PhysicalApply:
 		return b.buildApply(v)
 	case *physicalop.PhysicalMaxOneRow:
 		return b.buildMaxOneRow(v)
@@ -2644,7 +2644,7 @@ func (b *executorBuilder) buildTopN(v *physicalop.PhysicalTopN) exec.Executor {
 	return t
 }
 
-func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor {
+func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor {
 	var (
 		innerPlan base.PhysicalPlan
 		outerPlan base.PhysicalPlan
