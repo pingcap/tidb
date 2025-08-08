@@ -627,7 +627,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage, session *concurrency.Se
 	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
-		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue {
+		if info.StmtCtx != nil && info.StmtCtx.IsDDLJobInQueue.Load() {
 			// Ignore DDL sessions.
 			continue
 		}
