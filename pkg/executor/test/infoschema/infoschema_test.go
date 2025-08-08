@@ -991,7 +991,7 @@ func TestIndexUsageWithData(t *testing.T) {
 	insertDataAndScanToT := func(indexName string) {
 		// insert 1000 rows
 		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
-		tk.MustExec("ANALYZE TABLE t")
+		tk.MustExec("ANALYZE TABLE t all columns")
 
 		// full scan
 		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
