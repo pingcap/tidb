@@ -3713,6 +3713,8 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
+	ctx = WithEnableMVIndexScan(ctx)
+	vars := b.ctx.GetSessionVars()
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -3762,7 +3764,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
 			} else if !b.buildingRecursivePartForCTE {
 				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
-				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+				vars.StmtCtx.SetHintWarning(
 					"Hint merge() is inapplicable. " +
 						"Please check whether the hint is used in the right place, " +
 						"you should use this hint inside the CTE.")

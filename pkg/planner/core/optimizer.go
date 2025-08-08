@@ -403,13 +403,6 @@ func DoOptimize(
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
 
-	// For MV-Index scan, we need to disable some rules, because we'll have SQL like:
-	//     select /*+ force_index(mvi) */ pk, _V$_i1_1 from t group by pk;
-	if GetEnableMVIndexScan(ctx) {
-		flag &= ^rule.FlagEliminateAgg
-		flag &= ^rule.FlagPushDownAgg
-	}
-
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }

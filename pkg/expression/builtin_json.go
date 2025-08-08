@@ -95,6 +95,9 @@ var (
 	_ builtinFunc = &builtinJSONValidOthersSig{}
 )
 
+// JSONCrc32Mod is the modulus used in JSON_SUM_CRC32 to avoid overflow.
+const JSONCrc32Mod = 1024
+
 type jsonTypeFunctionClass struct {
 	baseFunctionClass
 }
@@ -218,20 +221,22 @@ func (c *jsonSumCRC32FunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("calculating json_sum_crc32 on array of char/binary BLOBs with unspecified length")
 	}
 
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, types.NewFieldType(mysql.TypeLonglong))
 	if err != nil {
 		return nil, err
 	}
-	sig = &builtinJSONSumCRC32Sig{bf}
+	sig = &builtinJSONSumCRC32Sig{bf, c.tp.ArrayType()}
 	return sig, nil
 }
 
 type builtinJSONSumCRC32Sig struct {
 	baseBuiltinFunc
+
+	arrayTp *types.FieldType
 }
 
 func (b *builtinJSONSumCRC32Sig) Clone() builtinFunc {
-	newSig := &builtinJSONSumCRC32Sig{}
+	newSig := &builtinJSONSumCRC32Sig{arrayTp: b.arrayTp}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -246,7 +251,7 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 		return 0, false, ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
 	}
 
-	ft := b.tp.ArrayType()
+	ft := b.arrayTp
 	f := convertJSON2String(ft.EvalType())
 	if f == nil {
 		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
@@ -268,7 +273,7 @@ func (b *builtinJSONSumCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (res in
 
 	var sum int64
 	for k := range s {
-		sum += k
+		sum += k % JSONCrc32Mod
 	}
 	return sum, false, err
 }
