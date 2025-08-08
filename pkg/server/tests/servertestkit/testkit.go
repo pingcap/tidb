@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	srv "github.com/pingcap/tidb/pkg/server"
@@ -30,8 +31,10 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -94,7 +97,10 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	require.NoError(t, err)
 	ddlLeaseDuration, err := parseDuration(cfg.Lease)
 	require.NoError(t, err)
-	session.SetSchemaLease(ddlLeaseDuration)
+	vardef.SetSchemaLease(ddlLeaseDuration)
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
 	ts.Domain, err = session.BootstrapSession(ts.Store)
 	require.NoError(t, err)
 	ts.Tidbdrv = srv.NewTiDBDriver(ts.Store)

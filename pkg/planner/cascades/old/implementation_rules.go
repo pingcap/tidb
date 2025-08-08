@@ -199,7 +199,7 @@ func (*ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 func (*ImplTableScan) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	logicalScan := expr.ExprNode.(*logicalop.LogicalTableScan)
-	ts := plannercore.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
+	ts := physicalop.GetPhysicalScan4LogicalTableScan(logicalScan, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt))
 	if !reqProp.IsSortItemEmpty() {
 		ts.KeepOrder = true
 		ts.Desc = reqProp.SortItems[0].Desc
@@ -249,7 +249,7 @@ func (*ImplShow) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty)
 	// struct. So that we don't need to create a new PhysicalShow object, which
 	// can help us to reduce the gc pressure of golang runtime and improve the
 	// overall performance.
-	showPhys := plannercore.PhysicalShow{
+	showPhys := physicalop.PhysicalShow{
 		ShowContents: show.ShowContents,
 		Extractor:    show.Extractor,
 	}.Init(show.SCtx())
@@ -328,7 +328,7 @@ func (*ImplHashAgg) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*logicalop.LogicalAggregation)
-	hashAgg := plannercore.NewPhysicalHashAgg(
+	hashAgg := physicalop.NewPhysicalHashAgg(
 		la,
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
@@ -438,7 +438,7 @@ func getImplForHashJoin(expr *memo.GroupExpr, prop *property.PhysicalProperty, i
 		expCntScale := prop.ExpectedCnt / stats.RowCount
 		chReqProps[1-innerIdx].ExpectedCnt = expr.Children[1-innerIdx].Prop.Stats.RowCount * expCntScale
 	}
-	hashJoin := plannercore.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	hashJoin := physicalop.NewPhysicalHashJoin(join, innerIdx, useOuterToBuild, stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(expr.Group.Prop.Schema)
 	return impl.NewHashJoinImpl(hashJoin)
 }
@@ -510,10 +510,10 @@ func (*ImplMergeJoin) Match(_ *memo.GroupExpr, _ *property.PhysicalProperty) (ma
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplMergeJoin) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*logicalop.LogicalJoin)
-	physicalMergeJoins := plannercore.GetMergeJoin(join, reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
+	physicalMergeJoins := physicalop.GetMergeJoin(join, reqProp, expr.Schema(), expr.Group.Prop.Stats, expr.Children[0].Prop.Stats, expr.Children[1].Prop.Stats)
 	mergeJoinImpls := make([]memo.Implementation, 0, len(physicalMergeJoins))
 	for _, physicalPlan := range physicalMergeJoins {
-		physicalMergeJoin := physicalPlan.(*plannercore.PhysicalMergeJoin)
+		physicalMergeJoin := physicalPlan.(*physicalop.PhysicalMergeJoin)
 		mergeJoinImpls = append(mergeJoinImpls, impl.NewMergeJoinImpl(physicalMergeJoin))
 	}
 	return mergeJoinImpls, nil
@@ -611,7 +611,7 @@ func (*ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
-	physicalWindow := plannercore.PhysicalWindow{
+	physicalWindow := physicalop.PhysicalWindow{
 		WindowFuncDescs: lw.WindowFuncDescs,
 		PartitionBy:     lw.PartitionBy,
 		OrderBy:         lw.OrderBy,

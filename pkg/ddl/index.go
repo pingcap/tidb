@@ -180,7 +180,7 @@ func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(colName.Column.Name)
 		}
 		// Virtual columns cannot be used in primary key.
-		if lastCol.IsGenerated() && !lastCol.GeneratedStored {
+		if lastCol.IsVirtualGenerated() {
 			if lastCol.Hidden {
 				return nil, dbterror.ErrFunctionalIndexPrimaryKey
 			}
@@ -2013,24 +2013,31 @@ func newAddIndexTxnWorker(
 	decodeColMap map[int64]decoder.Column,
 	t table.PhysicalTable,
 	bfCtx *backfillCtx,
-	jobID int64,
+	job *model.Job,
 	elements []*meta.Element,
-	eleTypeKey []byte,
+	currElement *meta.Element,
 ) (*addIndexTxnWorker, error) {
-	if !bytes.Equal(eleTypeKey, meta.IndexElementKey) {
+	if !bytes.Equal(currElement.TypeKey, meta.IndexElementKey) {
 		logutil.DDLLogger().Error("Element type for addIndexTxnWorker incorrect",
-			zap.Int64("job ID", jobID), zap.ByteString("element type", eleTypeKey), zap.Int64("element ID", elements[0].ID))
-		return nil, errors.Errorf("element type is not index, typeKey: %v", eleTypeKey)
+			zap.Int64("job ID", job.ID), zap.ByteString("element type", currElement.TypeKey), zap.Int64("element ID", elements[0].ID))
+		return nil, errors.Errorf("element type is not index, typeKey: %v", currElement.TypeKey)
 	}
 
 	allIndexes := make([]table.Index, 0, len(elements))
-	for _, elem := range elements {
-		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
-			continue
-		}
-		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+	if job.Type == model.ActionModifyColumn {
+		// For modify column with indexes, we only need to add the index one by one.
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, currElement.ID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 		allIndexes = append(allIndexes, index)
+	} else {
+		for _, elem := range elements {
+			if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+				continue
+			}
+			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+			index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+			allIndexes = append(allIndexes, index)
+		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
@@ -2462,6 +2469,7 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 		if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.InjectCall("addIndexTxnWorkerBackfillData", len(idxRecords))
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++

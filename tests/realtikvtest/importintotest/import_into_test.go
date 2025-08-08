@@ -1058,7 +1058,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 			s.ErrorContains(err, "Table register_task is in mode Import")
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
-				resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+				resp, err2 := client.Get(context.Background(), etcdKey)
 				s.NoError(err2)
 				return len(resp.Kvs) == 1
 			}, maxWaitTime, 300*time.Millisecond)
@@ -1075,7 +1075,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 
 	// the task should be unregistered
-	resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+	resp, err2 := client.Get(context.Background(), etcdKey)
 	s.NoError(err2)
 	s.Len(resp.Kvs, 0)
 }

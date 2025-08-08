@@ -1387,22 +1387,20 @@ func TestIssues49377Plan(t *testing.T) {
 }
 
 func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL     string
-			Plan    []string
-			Warning []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tbl_15;")
-	tk.MustExec(`create table tbl_15 (col_89 text (473) collate utf8mb4_bin ,
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		var (
+			input  []string
+			output []struct {
+				SQL     string
+				Plan    []string
+				Warning []string
+			}
+		)
+		planSuiteData := GetPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists tbl_15;")
+		testKit.MustExec(`create table tbl_15 (col_89 text (473) collate utf8mb4_bin ,
 					col_90 timestamp default '1976-04-03' ,
 					col_91 tinyint unsigned not null ,
 					col_92 tinyint ,
@@ -1412,8 +1410,8 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 					col_96 int unsigned not null default 2532480521 ,
 					col_97 char (168) default '') partition by hash (col_91) partitions 4;`)
 
-	tk.MustExec("drop table if exists tbl_16;")
-	tk.MustExec(`create table tbl_16 (col_98 text (246) not null ,
+		testKit.MustExec("drop table if exists tbl_16;")
+		testKit.MustExec(`create table tbl_16 (col_98 text (246) not null ,
 					col_99 decimal (30 ,19) ,
 					col_100 mediumint unsigned ,
 					col_101 text (410) collate utf8mb4_bin ,
@@ -1424,28 +1422,28 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 					col_106 text (9) not null,primary key (col_100, col_98(5), col_103),
 					unique key idx_23 (col_100, col_106 (3), col_101 (3))) partition by hash (col_100) partitions 2;`)
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = true
-	})
-	defer config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = false
-	})
-
-	dom := domain.GetDomain(tk.Session())
-	testkit.SetTiFlashReplica(t, dom, "test", "tbl_15")
-	testkit.SetTiFlashReplica(t, dom, "test", "tbl_16")
-
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
-	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
-
-	for i, ts := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.DisaggregatedTiFlash = true
 		})
-		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-	}
+		defer config.UpdateGlobal(func(conf *config.Config) {
+			conf.DisaggregatedTiFlash = false
+		})
+
+		testkit.SetTiFlashReplica(t, dom, "test", "tbl_15")
+		testkit.SetTiFlashReplica(t, dom, "test", "tbl_16")
+
+		testKit.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+		testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
+		testKit.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
+
+		for i, ts := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = ts
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + ts).Rows())
+			})
+			testKit.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		}
+	})
 }
 
 func TestPointgetIndexChoosen(t *testing.T) {

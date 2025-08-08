@@ -174,7 +174,7 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// job 4 is matched using WaitVersionSynced
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 	serverInfos := map[string]*serverinfo.ServerInfo{"aa": {StaticInfo: serverinfo.StaticInfo{ID: "aa", IP: "test", Port: 4000}}}
 	bytes, err := json.Marshal(serverInfos)
 	require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms))
 	_, err = etcdCli.Put(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa", "333")
 	require.NoError(t, err)
-	require.NoError(t, s.WaitVersionSynced(ctx, 4, 333))
+	require.NoError(t, s.WaitVersionSynced(ctx, 4, 333, false))
 	_, err = etcdCli.Delete(ctx, util.DDLAllSchemaVersionsByJob+"/4/aa")
 	require.NoError(t, err)
 
