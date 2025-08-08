@@ -1190,7 +1190,7 @@ func TestIndexUsageWithData(t *testing.T) {
 	checkIndexUsage := func(startQuery time.Time, endQuery time.Time) {
 		require.Eventually(t, func() bool {
 			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
-
+			logutil.BgLogger().Info("check index usage", zap.Any("rows", rows))
 			if len(rows) != 1 {
 				return false
 			}
@@ -1206,7 +1206,7 @@ func TestIndexUsageWithData(t *testing.T) {
 			}
 
 			return true
-		}, 5*time.Second, 100*time.Millisecond)
+		}, 5*time.Second, 500*time.Millisecond)
 	}
 
 	t.Run("test index usage with normal index", func(t *testing.T) {
