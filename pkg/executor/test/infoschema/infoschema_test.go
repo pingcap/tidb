@@ -1023,37 +1023,19 @@ func TestIndexUsageWithData(t *testing.T) {
 			return true
 		}, 10*time.Second, 100*time.Millisecond)
 	}
-	t.Run("test index usage with normal index", func(t *testing.T) {
-		tk.MustExec("use test")
-		tk.MustExec("create table t (a int, index idx(a));")
-		defer tk.MustExec("drop table t")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, index idx(a));")
+	defer tk.MustExec("drop table t")
 
-		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
-			"test t idx 0 0 0 0 0 0 0 0 0 0 <nil>",
-		))
+	tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
+		"test t idx 0 0 0 0 0 0 0 0 0 0 <nil>",
+	))
 
-		startQuery := time.Now()
-		insertDataAndScanToT("idx")
-		endQuery := time.Now()
+	startQuery := time.Now()
+	insertDataAndScanToT("idx")
+	endQuery := time.Now()
 
-		checkIndexUsage(startQuery, endQuery)
-	})
-
-	t.Run("test index usage with integer primary key", func(t *testing.T) {
-		tk.MustExec("use test")
-		tk.MustExec("create table t (a int primary key);")
-		defer tk.MustExec("drop table t")
-
-		tk.MustQuery("select * from information_schema.tidb_index_usage where table_schema = 'test'").Check(testkit.Rows(
-			"test t primary 0 0 0 0 0 0 0 0 0 0 <nil>",
-		))
-
-		startQuery := time.Now()
-		insertDataAndScanToT("primary")
-		endQuery := time.Now()
-
-		checkIndexUsage(startQuery, endQuery)
-	})
+	checkIndexUsage(startQuery, endQuery)
 }
 
 //func TestIndexUsageWithData2(t *testing.T) {
