@@ -55,28 +55,28 @@ func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
 func (*PhysicalApply) PhysicalJoinImplement() bool { return false }
 
 // Clone implements op.PhysicalPlan interface.
-func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+func (p *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalApply)
 	cloned.SetSCtx(newCtx)
-	base, err := la.PhysicalHashJoin.Clone(newCtx)
+	base, err := p.PhysicalHashJoin.Clone(newCtx)
 	if err != nil {
 		return nil, err
 	}
 	hj := base.(*PhysicalHashJoin)
 	cloned.PhysicalHashJoin = *hj
-	cloned.CanUseCache = la.CanUseCache
-	cloned.Concurrency = la.Concurrency
-	for _, col := range la.OuterSchema {
+	cloned.CanUseCache = p.CanUseCache
+	cloned.Concurrency = p.Concurrency
+	for _, col := range p.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
 	}
 	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
+func (p *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := p.PhysicalHashJoin.ExtractCorrelatedCols()
 	return slices.DeleteFunc(corCols, func(col *expression.CorrelatedColumn) bool {
-		return la.Children()[0].Schema().Contains(&col.Column)
+		return p.Children()[0].Schema().Contains(&col.Column)
 	})
 }
 
