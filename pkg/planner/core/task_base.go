@@ -273,7 +273,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	tryExpandVirtualColumn(t.p)
 	sender := physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
-	}.Init(ctx, t.p.StatsInfo(), 0)
+	}.Init(ctx, t.p.StatsInfo())
 	sender.SetChildren(t.p)
 
 	p := PhysicalTableReader{
