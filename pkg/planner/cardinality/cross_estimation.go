@@ -147,7 +147,7 @@ func crossEstimateIndexRowCount(sctx planctx.PlanContext,
 func crossEstimateRowCount(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo,
 	path *util.AccessPath, conds []expression.Expression, col *expression.Column,
-	corr, expectedCnt float64, desc bool) (float64, bool, float64) {
+	corr, expectedCnt float64, desc bool) (scanCount float64, errResult bool, corrReturn float64) {
 	// If the scan is not full range scan, we cannot use histogram of other columns for estimation, because
 	// the histogram reflects value distribution in the whole table level.
 	if col == nil || len(path.AccessConds) > 0 {
@@ -170,7 +170,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}
-	rangeCounts, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
+	rangeCounts, _, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -180,46 +180,46 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
+		rangeCount, _, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr
 	}
-	scanCount := rangeCount + expectedCnt - count
+	scanCount = rangeCount + expectedCnt - count
 	if len(remained) > 0 {
 		scanCount = scanCount / SelectionFactor
 	}
 	scanCount = min(scanCount, path.CountAfterAccess)
-	return scanCount, true, 0
+	return scanCount, true, corr
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, float64, bool) {
+func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) (returnCount []float64, corrCount, minCount float64, returnErr bool) {
 	var err error
-	var count, corrCount float64
+	var count float64
 	rangeCounts := make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.GetIdx(idxID)
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
-			count, corrCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
+			count, corrCount, minCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
 			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
 			count, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
 		}
 		if err != nil {
-			return nil, 0, false
+			return nil, 0, 0, false
 		}
 		rangeCounts[i] = count
 	}
-	return rangeCounts, corrCount, true
+	return rangeCounts, corrCount, minCount, true
 }
 
 // convertRangeFromExpectedCnt builds new ranges used to estimate row count we need to scan in table scan before finding specified
