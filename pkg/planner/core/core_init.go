@@ -53,18 +53,100 @@ func init() {
 	utilfuncp.ExhaustPhysicalPlans4LogicalAggregation = exhaustPhysicalPlans4LogicalAggregation
 	utilfuncp.ExhaustPhysicalPlans4LogicalPartitionUnionAll = exhaustPhysicalPlans4LogicalPartitionUnionAll
 
+	// for physical operators.
 	utilfuncp.GetActualProbeCntFromProbeParents = getActualProbeCntFromProbeParents
 	utilfuncp.GetEstimatedProbeCntFromProbeParents = getEstimatedProbeCntFromProbeParents
+	// for physical sort.
+	utilfuncp.ToPB4PhysicalSort = toPB4PhysicalSort
+	utilfuncp.GetCost4PhysicalSort = getCost4PhysicalSort
+	utilfuncp.ResolveIndicesForSort = resolveIndicesForSort
+	utilfuncp.Attach2Task4PhysicalSort = attach2Task4PhysicalSort
+	utilfuncp.GetPlanCostVer14PhysicalSort = getPlanCostVer14PhysicalSort
+	utilfuncp.GetPlanCostVer24PhysicalSort = getPlanCostVer24PhysicalSort
+	// for nominal sort.
+	utilfuncp.Attach2Task4NominalSort = attach2Task4NominalSort
+	// for physical union all.
+	utilfuncp.Attach2Task4PhysicalUnionAll = attach2Task4PhysicalUnionAll
+	utilfuncp.GetPlanCostVer14PhysicalUnionAll = getPlanCostVer14PhysicalUnionAll
+	utilfuncp.GetPlanCostVer24PhysicalUnionAll = getPlanCostVer24PhysicalUnionAll
+	// for physical limit.
+	utilfuncp.ResolveIndices4PhysicalLimit = resolveIndices4PhysicalLimit
+	utilfuncp.Attach2Task4PhysicalLimit = attach2Task4PhysicalLimit
+	// for physical topN.
+	utilfuncp.GetPlanCostVer14PhysicalTopN = getPlanCostVer14PhysicalTopN
+	utilfuncp.GetPlanCostVer24PhysicalTopN = getPlanCostVer24PhysicalTopN
+	utilfuncp.Attach2Task4PhysicalTopN = attach2Task4PhysicalTopN
+	utilfuncp.ResolveIndices4PhysicalTopN = resolveIndices4PhysicalTopN
+	// for physical selection.
+	utilfuncp.Attach2Task4PhysicalSelection = attach2Task4PhysicalSelection
+	utilfuncp.ResolveIndices4PhysicalSelection = resolveIndices4PhysicalSelection
+	utilfuncp.GetPlanCostVer24PhysicalSelection = getPlanCostVer24PhysicalSelection
+	utilfuncp.GetPlanCostVer14PhysicalSelection = getPlanCostVer14PhysicalSelection
+	// for physical union scan.
+	utilfuncp.Attach2Task4PhysicalUnionScan = attach2Task4PhysicalUnionScan
+	utilfuncp.ResolveIndices4PhysicalUnionScan = resolveIndices4PhysicalUnionScan
+	// for physical projection.
+	utilfuncp.GetCost4PhysicalProjection = getCost4PhysicalProjection
+	utilfuncp.Attach2Task4PhysicalProjection = attach2Task4PhysicalProjection
+	utilfuncp.GetPlanCostVer14PhysicalProjection = getPlanCostVer14PhysicalProjection
+	utilfuncp.GetPlanCostVer24PhysicalProjection = getPlanCostVer24PhysicalProjection
+	utilfuncp.ResolveIndices4PhysicalProjection = resolveIndices4PhysicalProjection
+	// for physical index join
+	utilfuncp.GetCost4PhysicalIndexJoin = getCost4PhysicalIndexJoin
+	utilfuncp.GetPlanCostVer14PhysicalIndexJoin = getPlanCostVer14PhysicalIndexJoin
+	utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin = getIndexJoinCostVer24PhysicalIndexJoin
+	utilfuncp.Attach2Task4PhysicalIndexJoin = attach2Task4PhysicalIndexJoin
+	// for physical merge join
+	utilfuncp.GetCost4PhysicalMergeJoin = getCost4PhysicalMergeJoin
+	utilfuncp.Attach2Task4PhysicalMergeJoin = attach2Task4PhysicalMergeJoin
+	utilfuncp.GetPlanCostVer14PhysicalMergeJoin = getPlanCostVer14PhysicalMergeJoin
+	utilfuncp.GetPlanCostVer24PhysicalMergeJoin = getPlanCostVer24PhysicalMergeJoin
+	// for physical hash join
+	utilfuncp.GetCost4PhysicalHashJoin = getCost4PhysicalHashJoin
+	utilfuncp.GetPlanCostVer14PhysicalHashJoin = getPlanCostVer14PhysicalHashJoin
+	utilfuncp.Attach2Task4PhysicalHashJoin = attach2Task4PhysicalHashJoin
+	utilfuncp.GetPlanCostVer24PhysicalHashJoin = getPlanCostVer24PhysicalHashJoin
+	// for physical index hash join
+	utilfuncp.GetCost4PhysicalIndexHashJoin = getCost4PhysicalIndexHashJoin
+	utilfuncp.GetPlanCostVer1PhysicalIndexHashJoin = getPlanCostVer1PhysicalIndexHashJoin
+	utilfuncp.Attach2Task4PhysicalIndexHashJoin = attach2Task4PhysicalIndexHashJoin
+	// for physical hash agg
+	utilfuncp.GetCost4PhysicalHashAgg = getCost4PhysicalHashAgg
+	utilfuncp.Attach2Task4PhysicalHashAgg = attach2Task4PhysicalHashAgg
+	utilfuncp.GetPlanCostVer14PhysicalHashAgg = getPlanCostVer14PhysicalHashAgg
+	utilfuncp.GetPlanCostVer24PhysicalHashAgg = getPlanCostVer24PhysicalHashAgg
+	// for physical apply
+	utilfuncp.Attach2Task4PhysicalApply = attach2Task4PhysicalApply
+	utilfuncp.GetCost4PhysicalApply = getCost4PhysicalApply
+	utilfuncp.GetPlanCostVer14PhysicalApply = getPlanCostVer14PhysicalApply
+	utilfuncp.GetPlanCostVer24PhysicalApply = getPlanCostVer24PhysicalApply
+	// for physical aggregation.
+	utilfuncp.InitForStream = initForStream
+	// for physical window
+	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
+	// for physical sequence
+	utilfuncp.Attach2Task4PhysicalSequence = attach2Task4PhysicalSequence
+	// for physical PhysicalTableScan
+	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
+	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan
 
 	utilfuncp.DoOptimize = doOptimize
+	utilfuncp.GetPlanCost = getPlanCost
 	utilfuncp.IsSingleScan = isSingleScan
 	utilfuncp.WindowIsTopN = windowIsTopN
 	utilfuncp.AttachPlan2Task = attachPlan2Task
+	utilfuncp.GetTaskPlanCost = getTaskPlanCost
+	utilfuncp.CompareTaskCost = compareTaskCost
+
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource
 	utilfuncp.ApplyPredicateSimplification = applyPredicateSimplification
 	utilfuncp.DeriveStats4LogicalIndexScan = deriveStats4LogicalIndexScan
 	utilfuncp.DeriveStats4LogicalTableScan = deriveStats4LogicalTableScan
+	utilfuncp.CloneExpressionsForPlanCache = cloneExpressionsForPlanCache
+	utilfuncp.CloneColumnsForPlanCache = cloneColumnsForPlanCache
+	utilfuncp.CloneConstantsForPlanCache = cloneConstantsForPlanCache
+	utilfuncp.CloneScalarFunctionsForPlanCache = cloneScalarFunctionsForPlanCache
 
 	// For mv index init.
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID

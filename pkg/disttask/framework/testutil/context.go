@@ -306,8 +306,7 @@ func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
 	if len(c.mu.nodes) == 0 {
 		return nil
 	}
-	cloneSlice := make([]*tidbNode, len(c.mu.nodes))
-	copy(cloneSlice, c.mu.nodes)
+	cloneSlice := slices.Clone(c.mu.nodes)
 	rand.Shuffle(len(cloneSlice), func(i, j int) {
 		cloneSlice[i], cloneSlice[j] = cloneSlice[j], cloneSlice[i]
 	})

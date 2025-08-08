@@ -1079,10 +1079,11 @@ AAAAAAAAAAAA5gm5Mg==
 		{"distribute table t1 partition(p0)", false, ""},
 		{"distribute table t1 partition(p0,p1)", false, ""},
 		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
-		{"distribute table t1 rule = `leader-scatter` engine = tikv", true, "DISTRIBUTE TABLE `t1` RULE = `leader-scatter` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0,p1) rule = `learner-scatter` engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `learner-scatter` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0) rule = `peer-scatter` engine = tiflash", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `peer-scatter` ENGINE = `tiflash`"},
-		{"distribute table t1 partition(p0) rule = `peer-scatter` engine = tiflash timeout = 30m", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `peer-scatter` ENGINE = `tiflash` TIMEOUT = `30m`"},
+		{"distribute table t1 rule = 'leader-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 rule = \"leader-scatter\" engine = \"tikv\"", true, "DISTRIBUTE TABLE `t1` RULE = 'leader-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0,p1) rule = 'learner-scatter' engine = 'tikv'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = 'learner-scatter' ENGINE = 'tikv'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash'"},
+		{"distribute table t1 partition(p0) rule = 'peer-scatter' engine = 'tiflash' timeout = '30m'", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = 'peer-scatter' ENGINE = 'tiflash' TIMEOUT = '30m'"},
 
 		// for show distribution job(s)
 		{"show distribution jobs 1", false, ""},
@@ -3030,6 +3031,9 @@ func TestDDL(t *testing.T) {
 		{"create table t (i int default (0))", true, "CREATE TABLE `t` (`i` INT DEFAULT 0)"},
 		{"create table t (i int default (-1))", true, "CREATE TABLE `t` (`i` INT DEFAULT -1)"},
 		{"create table t (i int default (+1))", true, "CREATE TABLE `t` (`i` INT DEFAULT +1)"},
+		// For column default expression with column reference
+		{"create table t (a int, b int, c char(33) default (b))", true, "CREATE TABLE `t` (`a` INT,`b` INT,`c` CHAR(33) DEFAULT (`b`))"},
+		{"create table t (a int, b int, c char(33) default `b`)", false, ""},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -5839,9 +5843,9 @@ func TestBinding(t *testing.T) {
 		{"CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", true, "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
 		{"set binding enabled for sql digest '1'", true, "SET BINDING ENABLED FOR SQL DIGEST '1'"},
 		{"set binding disabled for sql digest '1'", true, "SET BINDING DISABLED FOR SQL DIGEST '1'"},
-		// Show plan for a specified SQL.
-		{"show plan for 'select a from t'", true, "SHOW PLAN FOR 'select a from t'"},
-		{"show plan for '23adc8e6f62'", true, "SHOW PLAN FOR '23adc8e6f62'"},
+		// Explain explore for a specified SQL.
+		{"explain explore 'select a from t'", true, "EXPLAIN EXPLORE 'select a from t'"},
+		{"explain explore '23adc8e6f62'", true, "EXPLAIN EXPLORE '23adc8e6f62'"},
 	}
 	RunTest(t, table, false)
 

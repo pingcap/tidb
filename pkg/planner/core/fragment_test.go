@@ -17,6 +17,7 @@ package core
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +26,7 @@ func TestFragmentInitSingleton(t *testing.T) {
 	r1, r2 := &PhysicalExchangeReceiver{}, &PhysicalExchangeReceiver{}
 	r1.SetChildren(&PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_PassThrough})
 	r2.SetChildren(&PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_Broadcast})
-	p := &PhysicalHashJoin{}
+	p := &physicalop.PhysicalHashJoin{}
 
 	f := &Fragment{}
 	p.SetChildren(r1, r1)

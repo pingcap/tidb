@@ -197,6 +197,10 @@ func (s *mockSession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
 }
 
+func (s *mockSession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
+	return s.GetLatestInfoSchema()
+}
+
 func (s *mockSession) SessionInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)

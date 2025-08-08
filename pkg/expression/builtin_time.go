@@ -5868,7 +5868,11 @@ func (c *secToTimeFunctionClass) getFunction(ctx BuildContext, args []Expression
 	var retFsp int
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	argEvalTp := argType.EvalType()
-	if argEvalTp == types.ETString {
+
+	// to match MySQL behavior more check issue #59428
+	if IsBinaryLiteral(args[0]) {
+		retFsp = types.MinFsp
+	} else if argEvalTp == types.ETString {
 		retFsp = types.UnspecifiedLength
 	} else {
 		retFsp = argType.GetDecimal()

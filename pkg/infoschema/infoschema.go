@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -71,6 +72,8 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+
+	r autoid.Requirement
 }
 
 type infoSchemaMisc struct {
@@ -100,7 +103,7 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -166,7 +169,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -196,7 +199,7 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
-func newInfoSchema() *infoSchema {
+func newInfoSchema(r autoid.Requirement) *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
 			policyMap:        map[string]*model.PolicyInfo{},
@@ -207,6 +210,7 @@ func newInfoSchema() *infoSchema {
 		schemaID2Name:         map[int64]string{},
 		sortedTablesBuckets:   make([]sortedTables, bucketCount),
 		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		r:                     r,
 	}
 }
 
@@ -502,7 +506,7 @@ func init() {
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
-		Name:    util.InformationSchemaName,
+		Name:    metadef.InformationSchemaName,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 	}
@@ -690,6 +694,10 @@ func (is *infoSchema) deleteReferredForeignKeys(schema ast.CIStr, tbInfo *model.
 func (is *infoSchema) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
 	name := SchemaAndTableName{schema: schema, table: table}
 	return is.referredForeignKeyMap[name]
+}
+
+func (is *infoSchema) GetAutoIDRequirement() autoid.Requirement {
+	return is.r
 }
 
 // SessionTables store local temporary tables

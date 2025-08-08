@@ -483,19 +483,19 @@ drop table if exists t;
 create table t(j json, unique kj((cast(j as signed array))));
 explain select j from t where j=1;
 id	estRows	task	access object	operator info
-TableReader_7	8000.00	root		data:Selection_6
-└─Selection_6	8000.00	cop[tikv]		eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY))
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_8	8000.00	root		data:Selection_7
+└─Selection_7	8000.00	cop[tikv]		eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY))
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select j from t where j=1 or j=2;
 id	estRows	task	access object	operator info
-TableReader_7	9600.00	root		data:Selection_6
-└─Selection_6	9600.00	cop[tikv]		or(eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY)), eq(planner__core__indexmerge_path.t.j, cast(2, json BINARY)))
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_8	9600.00	root		data:Selection_7
+└─Selection_7	9600.00	cop[tikv]		or(eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY)), eq(planner__core__indexmerge_path.t.j, cast(2, json BINARY)))
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select j from t where j in (1, 2);
 id	estRows	task	access object	operator info
-TableReader_7	8000.00	root		data:Selection_6
-└─Selection_6	8000.00	cop[tikv]		in(planner__core__indexmerge_path.t.j, cast(1, json BINARY), cast(2, json BINARY))
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader_8	8000.00	root		data:Selection_7
+└─Selection_7	8000.00	cop[tikv]		in(planner__core__indexmerge_path.t.j, cast(1, json BINARY), cast(2, json BINARY))
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, j json, index kj((cast(j as signed array))));
 explain format = 'brief' select /*+ use_index(t, kj) */ * from t;
@@ -695,9 +695,9 @@ analyze table t all columns;
 alter table t add index ibb( (cast(b->'$.b' as signed array)) );
 explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 id	estRows	task	access object	operator info
-IndexMerge_7	1.00	root		type: union
-├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
-└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
+IndexMerge_8	1.00	root		type: union
+├─IndexRangeScan_6(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
+└─TableRowIDScan_7(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
 drop table if exists t, t1;
 create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
 insert into t values ('[1,2,3]', 1);
@@ -940,11 +940,11 @@ INSERT INTO `t` VALUES('[12474495489656359869, 14407883655486982855, 42211846364
 EXPLAIN SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 id	estRows	task	access object	operator info
 Projection_8	7.32	root		planner__core__indexmerge_path.t.col_37->Column#7
-└─IndexMerge_14	6.66	root		type: union
-  ├─TableFullScan_10(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  ├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
-  └─Selection_13(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
-    └─TableRowIDScan_12	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexMerge_15	6.66	root		type: union
+  ├─TableFullScan_11(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  ├─IndexRangeScan_12(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
+  └─Selection_14(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
+    └─TableRowIDScan_13	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 MIN(col_37)
 drop table if exists t1;

@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -89,30 +89,6 @@ type cacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.SelectStmt:
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
-				return in, true
-			}
-		}
-	case *ast.DeleteStmt:
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
-				return in, true
-			}
-		}
-	case *ast.UpdateStmt:
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
-				return in, true
-			}
-		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
 			nRows := len(node.Lists)
@@ -123,13 +99,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			if nRows*nCols > checker.maxNumParam { // to save memory
 				checker.cacheable = false
 				checker.reason = "too many values in the insert statement"
-				return in, true
-			}
-		}
-		for _, hints := range node.TableHints {
-			if hints.HintName.L == h.HintIgnorePlanCache {
-				checker.cacheable = false
-				checker.reason = "ignore plan cache by hint"
 				return in, true
 			}
 		}
@@ -494,7 +463,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 		}
 		return in, !checker.cacheable
 	case *ast.TableName:
-		if filter.IsSystemSchema(node.Schema.O) {
+		if filter.IsSystemSchema(node.Schema.L) {
 			checker.cacheable = false
 			checker.reason = "access tables in system schema"
 			return in, !checker.cacheable
@@ -576,7 +545,7 @@ func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum
 func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
 	var subPlans []base.PhysicalPlan
 	switch x := p.(type) {
-	case *PhysicalTableDual:
+	case *physicalop.PhysicalTableDual:
 		if paramNum > 0 {
 			return false, "get a TableDual plan"
 		}
@@ -584,9 +553,9 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		if x.StoreType == kv.TiFlash {
 			return false, "TiFlash plan is un-cacheable"
 		}
-	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffle, *physicalop.PhysicalShuffleReceiverStub:
 		return false, "get a Shuffle plan"
-	case *PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
@@ -598,11 +567,11 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		if underIndexMerge && x.isFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *PhysicalTableScan:
-		if underIndexMerge && x.isFullScan() {
+	case *physicalop.PhysicalTableScan:
+		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *PhysicalApply:
+	case *physicalop.PhysicalApply:
 		return false, "PhysicalApply plan is un-cacheable"
 	}
 

@@ -40,6 +40,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/client-go/v2/util/async"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
@@ -244,6 +245,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		coprStore: coprStore,
 		codec:     codec,
 		clusterID: clusterID,
+		keyspace:  keyspaceName,
 	}
 
 	mc.cache[uuid] = store
@@ -261,6 +263,7 @@ type tikvStore struct {
 	codec     tikv.Codec
 	opts      sync.Map
 	clusterID uint64
+	keyspace  string
 }
 
 // GetOption wraps around sync.Map.
@@ -435,6 +438,10 @@ func (s *tikvStore) GetClusterID() uint64 {
 	return s.clusterID
 }
 
+func (s *tikvStore) GetKeyspace() string {
+	return s.keyspace
+}
+
 // injectTraceClient injects trace info to the tikv request
 type injectTraceClient struct {
 	tikv.Client
@@ -452,4 +459,18 @@ func (c *injectTraceClient) SendRequest(ctx context.Context, addr string, req *t
 		source.SessionAlias = info.SessionAlias
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+// SendRequestAsync sends Request asynchronously.
+func (c *injectTraceClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	if info := tracing.TraceInfoFromContext(ctx); info != nil {
+		source := req.Context.SourceStmt
+		if source == nil {
+			source = &kvrpcpb.SourceStmt{}
+			req.Context.SourceStmt = source
+		}
+		source.ConnectionId = info.ConnectionID
+		source.SessionAlias = info.SessionAlias
+	}
+	c.Client.SendRequestAsync(ctx, addr, req, cb)
 }

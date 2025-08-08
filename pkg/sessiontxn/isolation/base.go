@@ -133,7 +133,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
 	sessVars.TxnCtxMu.Unlock()
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		sessVars.TxnCtx.EnableMDL = true
 	}
 
@@ -590,10 +590,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
-	needCheckSchema := true
+	needCheckSchemaByDelta := true
 	// Set this option for 2 phase commit to validate schema lease.
 	if sessVars.TxnCtx != nil {
-		needCheckSchema = !sessVars.TxnCtx.EnableMDL
+		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL
 	}
 
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
@@ -602,10 +602,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	txn.SetOption(
 		kv.SchemaChecker,
 		domain.NewSchemaChecker(
-			domain.GetDomain(p.sctx),
+			p.sctx.GetSchemaValidator(),
 			p.GetTxnInfoSchema().SchemaMetaVersion(),
 			physicalTableIDs,
-			needCheckSchema,
+			needCheckSchemaByDelta,
 		),
 	)
 

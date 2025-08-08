@@ -21,6 +21,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/rule/util",
         "//pkg/planner/implementation",
         "//pkg/planner/memo",

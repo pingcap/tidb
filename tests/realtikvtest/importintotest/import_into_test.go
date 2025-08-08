@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -119,6 +120,30 @@ func (s *mockGCSSuite) TestImportIntoPrivilegePositiveCase() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_import_into", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustQuery(importFromServerSQL)
 	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11", "2 test2 22"))
+}
+
+func (s *mockGCSSuite) TestImportIntoStatsUpdate() {
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-basic", Name: "t.csv"},
+		Content:     []byte("1,foo1,bar1,123\n2,foo2,bar2,456\n3,foo3,bar3,789\n"),
+	})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.prepareAndUseDB("gsort_basic")
+	s.tk.MustExec(`create table t(a bigint primary key, b varchar(100), c varchar(100), d int,
+		key(a), key(c,d), key(d));`)
+
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/*.csv?endpoint=%s'`, gcsEndpoint)
+	result := s.tk.MustQuery(importSQL).Rows()
+	require.Equal(s.T(), "finished", result[0][fmap["Status"]].(string))
+
+	// After import success, the table stat should be updated
+	require.Eventually(s.T(), func() bool {
+		r := s.tk.MustQuery("select table_rows from information_schema.tables where table_name= 't' and table_schema = 'gsort_basic'").Rows()
+		require.Len(s.T(), r, 1)
+		rows, err := strconv.Atoi(r[0][0].(string))
+		require.NoError(s.T(), err)
+		return rows == 3
+	}, 30*time.Second, 100*time.Millisecond, "stats not updated after import into")
 }
 
 func (s *mockGCSSuite) TestBasicImportInto() {
@@ -719,7 +744,7 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 	sql := fmt.Sprintf(`IMPORT INTO load_test_write_speed.t FROM 'gs://test-load/speed-test.csv?endpoint=%s'`,
 		gcsEndpoint)
 	result := s.tk.MustQuery(sql)
-	fileSize := result.Rows()[0][6].(string)
+	fileSize := result.Rows()[0][plannercore.ImportIntoFieldMap["SourceFileSize"]].(string)
 	s.Equal("7.598KiB", fileSize)
 	duration := time.Since(start).Seconds()
 	s.tk.MustQuery("SELECT count(1) FROM load_test_write_speed.t;").Check(testkit.Rows(
@@ -1027,7 +1052,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 			s.ErrorContains(err, "there is active job on the target table already")
 			etcdKey = fmt.Sprintf("/tidb/brie/import/import-into/%d", storage.TestLastTaskID.Load())
 			s.Eventually(func() bool {
-				resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+				resp, err2 := client.Get(context.Background(), etcdKey)
 				s.NoError(err2)
 				return len(resp.Kvs) == 1
 			}, maxWaitTime, 300*time.Millisecond)
@@ -1044,7 +1069,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	s.tk.MustQuery("SELECT * FROM load_data.register_task;").Sort().Check(testkit.Rows("1 11 111"))
 
 	// the task should be unregistered
-	resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
+	resp, err2 := client.Get(context.Background(), etcdKey)
 	s.NoError(err2)
 	s.Len(resp.Kvs, 0)
 }
@@ -1205,7 +1230,6 @@ func (s *mockGCSSuite) TestDiskQuota() {
 }
 
 func (s *mockGCSSuite) TestAnalyze() {
-	s.T().Skip("skip for ci now")
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_data;")
 	s.tk.MustExec("CREATE DATABASE load_data;")
 
