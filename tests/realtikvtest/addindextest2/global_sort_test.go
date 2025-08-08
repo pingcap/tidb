@@ -193,7 +193,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID := getTaskID(t, jobID)
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
 	<-ch
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)

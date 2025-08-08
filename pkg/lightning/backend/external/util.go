@@ -138,8 +138,8 @@ func seekPropsOffsets(
 //   - 30001/7/meta.json
 //   - 30001/plan/ingest/1/meta.json
 //   - 30001/plan/merge-sort/1/meta.json
-//   - e6/30001/7/617527bf-e25d-4312-8784-4a4576eb0195_stat/one-file
-//   - fa/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
+//   - p00110000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195_stat/one-file
+//   - p00000000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
 func GetAllFileNames(
 	ctx context.Context,
 	store storage.ExternalStorage,
