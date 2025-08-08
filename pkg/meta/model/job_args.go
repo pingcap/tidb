@@ -1430,6 +1430,11 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr, arg.ColumnarIndexType}
 	}
+	// Add Full text index
+	if job.Type == ActionAddFullTextIndex {
+		arg := a.IndexArgs[0]
+		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption}
+	}
 
 	// Add primary key
 	if job.Type == ActionAddPrimaryKey {
