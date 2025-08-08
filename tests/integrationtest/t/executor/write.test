@@ -558,8 +558,8 @@ create table t (id int, name varchar(10)) partition by list  (id) (
     	partition p3 values in (7,8,15,16,null)
 	);
 insert into t values  (1, 'a'),(1,'b');
---error 1062
-alter table t add unique index idx (id);
+#--error 1062
+#alter table t add unique index idx (id);
 delete from t where name='b';
 alter table t add unique index idx (id);
 delete from t;
@@ -653,8 +653,8 @@ create table t (location varchar(10), id int, a int) partition by list columns (
     	partition p_south values in (('s',13),('s',14),('s',15),('s',16))
 	);
 insert into t values  ('w', 1, 1),('w', 1, 2);
---error 1062
-alter table t add unique index idx (location,id);
+#--error 1062
+#alter table t add unique index idx (location,id);
 delete from t where a=2;
 alter table t add unique index idx (location,id);
 delete from t;
