@@ -104,7 +104,8 @@ type realtikvStoreOption struct {
 	retainData bool
 	keyspace   string
 	// only used when keyspace is not SYSTEM, in that case, the SYSTEM store will
-	// be closed together with its domain, we don't want close twice as the storage
+	// be closed together with its domain, if we close it before domain of SYSTEM,
+	// some routine might report errors, and we don't want close twice as the storage
 	// driver will cache store.
 	keepSystemStore bool
 }

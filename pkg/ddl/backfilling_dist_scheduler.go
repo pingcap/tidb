@@ -127,11 +127,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		taskKS := task.Keyspace
 		store := sch.d.store
 		if taskKS != sch.d.store.GetKeyspace() {
-			taskMgr, err := diststorage.GetTaskManager()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+			err = sch.WithNewSession(func(se sessionctx.Context) error {
 				store, err = se.GetSQLServer().GetKSStore(taskKS)
 				return err
 			})

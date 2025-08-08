@@ -672,6 +672,11 @@ func (s *BaseScheduler) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 	return s.taskMgr.WithNewTxn(ctx, fn)
 }
 
+// GetTaskMgr returns the task manager.
+func (s *BaseScheduler) GetTaskMgr() TaskManager {
+	return s.taskMgr
+}
+
 func (*BaseScheduler) isStepSucceed(cntByStates map[proto.SubtaskState]int64) bool {
 	_, ok := cntByStates[proto.SubtaskStateSucceed]
 	return len(cntByStates) == 0 || (len(cntByStates) == 1 && ok)
