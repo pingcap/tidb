@@ -14,6 +14,10 @@
 
 package rule
 
+import (
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+)
+
 // Note: The order of flags is same as the order of optRule in the list.
 // Do not mess up the order.
 const (
@@ -47,7 +51,7 @@ const (
 )
 
 // NewJoinReorderRule creates a new join reorder rule
-func NewJoinReorderRule() LogicalOptRule {
+func NewJoinReorderRule() base.LogicalOptRule {
 	return &JoinReorderRule{}
 }
 
