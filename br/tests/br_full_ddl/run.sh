@@ -188,7 +188,7 @@ fi
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP DATABASE __tidb_br_temporary_mysql;"
-snapshot_checkpoint_databases+=$(run_sql "SHOW DATABASES LIKE '__TiDB_BR_Temporary%';" | awk '/Database/{print $3}')
+snapshot_checkpoint_databases=($(run_sql "SHOW DATABASES LIKE '__TiDB_BR_Temporary%';" | awk '/Database/{print $3}'))
 for snapshot_checkpoint_database in "${snapshot_checkpoint_databases[@]}"; do
     run_sql "DROP DATABASE $snapshot_checkpoint_database"
 done
