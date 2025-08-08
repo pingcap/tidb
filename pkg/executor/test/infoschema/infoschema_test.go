@@ -1147,6 +1147,67 @@ func TestIndexUsageWithData2(t *testing.T) {
 
 		checkIndexUsage(startQuery, endQuery)
 	})
+}
+
+func TestIndexUsageWithData3(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Some bad tests will set the global variable to 0, and they don't set it back. So even if the default value for this variable is 1,
+	// we'll need to set it to 1 here.
+	tk.MustExec("set global tidb_enable_collect_execution_info=1;")
+	tk.RefreshSession()
+
+	insertDataAndScanToT := func(indexName string) {
+		// insert 1000 rows
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		tk.MustExec("ANALYZE TABLE t all columns")
+
+		// full scan
+		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
+		rows := tk.MustQuery(sql).Rows()
+		require.Len(t, rows, 1000)
+		for i, r := range rows {
+			require.Equal(t, r[0], strconv.Itoa(i+1))
+		}
+
+		logutil.BgLogger().Info("execute with plan",
+			zap.String("sql", sql),
+			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+
+		// scan 1/4 of the rows
+		sql = fmt.Sprintf("SELECT * FROM t use index(%s) WHERE a <= 250 ORDER BY a", indexName)
+		rows = tk.MustQuery(sql).Rows()
+		require.Len(t, rows, 250)
+		for i, r := range rows {
+			require.Equal(t, r[0], strconv.Itoa(i+1))
+		}
+
+		logutil.BgLogger().Info("execute with plan",
+			zap.String("sql", sql),
+			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+	}
+
+	checkIndexUsage := func(startQuery time.Time, endQuery time.Time) {
+		require.Eventually(t, func() bool {
+			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
+
+			if len(rows) != 1 {
+				return false
+			}
+			if rows[0][0] != "2" || rows[0][1] != "1" || rows[0][2] != "1" {
+				return false
+			}
+			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
+			if err != nil {
+				return false
+			}
+			if lastAccessTime.Unix() < startQuery.Unix() || lastAccessTime.Unix() > endQuery.Unix() {
+				return false
+			}
+
+			return true
+		}, 10*time.Second, 100*time.Millisecond)
+	}
 
 	t.Run("test index usage with integer primary key", func(t *testing.T) {
 		tk.MustExec("use test")
