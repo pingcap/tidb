@@ -867,10 +867,12 @@ func TestGetAdjustedMergeSortOverlapThresholdAndMergeSortFileCountStep(t *testin
 func TestRandPartitionedPrefix(t *testing.T) {
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	prefix := "write-prefix"
-	partitioned := randPartitionedPrefix(prefix, rnd)
-	require.Equal(t, partitionHeaderChar, partitioned[0])
-	require.Equal(t, partitioned[10:], prefix)
-	require.True(t, isValidPartition([]byte(partitioned[:9])))
+	for range 2560 {
+		partitioned := randPartitionedPrefix(prefix, rnd)
+		require.Equal(t, partitionHeaderChar, partitioned[0])
+		require.Equal(t, partitioned[10:], prefix)
+		require.True(t, isValidPartition([]byte(partitioned[:9])))
+	}
 
 	require.False(t, isValidPartition([]byte("aa")))
 	require.False(t, isValidPartition([]byte("pa")))
