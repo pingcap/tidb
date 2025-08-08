@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
@@ -83,14 +84,14 @@ func TestCreateFulltextIndex(t *testing.T) {
 		Return(&CreateIndexResponse{Status: 1, IndexId: "2", ErrorMessage: "fail"}, nil).
 		Once()
 	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
-	assert.NoError(t, err)
+	require.ErrorContains(t, err, "fail")
 
 	mockClient.
 		On("CreateIndex", mock.Anything, mock.Anything).
 		Return(&CreateIndexResponse{}, errors.New("rpc error")).
 		Once()
 	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
-	assert.Error(t, err)
+	require.ErrorContains(t, err, "rpc error")
 }
 
 func TestGetCloudStoragePath(t *testing.T) {
