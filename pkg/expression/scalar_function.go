@@ -612,7 +612,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 		argsHashCode = append(argsHashCode, arg.CanonicalHashCode())
 	}
 	switch sf.FuncName.L {
-	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd:
+	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd, ast.IsNull, ast.NullEQ:
 		// encode original function name.
 		sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
 		// reorder parameters hashcode, eg: a+b and b+a should has the same hashcode here.
