@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -611,7 +612,13 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		if sysVar.field != "" {
 			varsRelatedFields = append(varsRelatedFields, sysVar.field)
 		}
-		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		sv := variable.GetSysVar(sysVar.name)
+		require.NotNil(t, sv)
+		if sv.HasGlobalScope() {
+			require.NoError(t, sv.SetGlobal(context.TODO(), sessionVars, sysVar.val))
+		} else {
+			require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		}
 	}
 
 	defaultEvalCtx := NewEvalContext()
