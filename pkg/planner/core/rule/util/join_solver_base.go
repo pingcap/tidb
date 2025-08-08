@@ -20,21 +20,21 @@ import (
 
 // JoinOrderSolver interface for different join order solving algorithms
 type JoinOrderSolver interface {
-	Solve() (interface{}, error)
+	Solve() (base.LogicalPlan, error)
 }
 
 // BaseSingleGroupJoinOrderSolver provides common functionality for join order solvers
 type BaseSingleGroupJoinOrderSolver struct {
-	ctx                interface{}
+	ctx                base.PlanContext
 	group              *JoinGroupResult
 	eqEdges           []*expression.ScalarFunction
 	otherConds        []expression.Expression
 	joinTypes         []*JoinTypeWithExtMsg
-	createJoin         func(lChild, rChild interface{}, eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType int) interface{}
+	createJoin         func(lChild, rChild base.LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType int) base.LogicalPlan
 }
 
 // NewBaseSingleGroupJoinOrderSolver creates a new base solver
-func NewBaseSingleGroupJoinOrderSolver(ctx interface{}, group *JoinGroupResult) *BaseSingleGroupJoinOrderSolver {
+func NewBaseSingleGroupJoinOrderSolver(ctx base.PlanContext, group *JoinGroupResult) *BaseSingleGroupJoinOrderSolver {
 	return &BaseSingleGroupJoinOrderSolver{
 		ctx:        ctx,
 		group:      group,
@@ -45,8 +45,8 @@ func NewBaseSingleGroupJoinOrderSolver(ctx interface{}, group *JoinGroupResult) 
 }
 
 // CheckConnection checks if two plans can be joined and returns the join conditions
-func (s *BaseSingleGroupJoinOrderSolver) CheckConnection(leftPlan, rightPlan interface{}) (
-	leftNode, rightNode interface{}, 
+func (s *BaseSingleGroupJoinOrderSolver) CheckConnection(leftPlan, rightPlan base.LogicalPlan) (
+	leftNode, rightNode base.LogicalPlan, 
 	usedEdges []*expression.ScalarFunction, 
 	joinType *JoinTypeWithExtMsg) {
 	
@@ -96,9 +96,9 @@ func (s *BaseSingleGroupJoinOrderSolver) columnsInSchema(cols []*expression.Colu
 
 // MakeJoin creates a join between two plans with the given conditions  
 func (s *BaseSingleGroupJoinOrderSolver) MakeJoin(  
-	leftPlan, rightPlan interface{},   
+	leftPlan, rightPlan base.LogicalPlan,   
 	eqEdges []*expression.ScalarFunction,   
-	joinType *JoinTypeWithExtMsg) (interface{}, []expression.Expression) {  
+	joinType *JoinTypeWithExtMsg) (base.LogicalPlan, []expression.Expression) {  
 	  
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))  
 	copy(remainOtherConds, s.otherConds)  
@@ -110,10 +110,10 @@ func (s *BaseSingleGroupJoinOrderSolver) MakeJoin(
 
 // newJoinWithEdges creates a new join with the specified conditions  
 func (s *BaseSingleGroupJoinOrderSolver) newJoinWithEdges(
-	lChild, rChild interface{},
+	lChild, rChild base.LogicalPlan,
 	eqEdges []*expression.ScalarFunction,
 	otherConds, leftConds, rightConds []expression.Expression,
-	joinType int) interface{} {  
+	joinType int) base.LogicalPlan {  
 	  
 	// Create a new join using the factory function
 	// This avoids direct import of logicalop package
@@ -121,7 +121,7 @@ func (s *BaseSingleGroupJoinOrderSolver) newJoinWithEdges(
 }  
   
 // newCartesianJoin creates a new cartesian join  
-func (s *BaseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild interface{}) interface{} {  
+func (s *BaseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.LogicalPlan) base.LogicalPlan {  
 	// Create a cartesian join using the factory function
 	return s.createJoinMethod(lChild, rChild, nil, nil, nil, nil, 0) // 0 = InnerJoin
 }
@@ -129,10 +129,10 @@ func (s *BaseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild interfa
 // createJoinMethod is a factory function that creates joins
 // This will be overridden by the actual implementation in the rule package
 func (s *BaseSingleGroupJoinOrderSolver) createJoinMethod(
-	lChild, rChild interface{},
+	lChild, rChild base.LogicalPlan,
 	eqEdges []*expression.ScalarFunction,
 	otherConds, leftConds, rightConds []expression.Expression,
-	joinType int) interface{} {
+	joinType int) base.LogicalPlan {
 	
 	// Default implementation - return left child as fallback
 	// The actual implementation should be provided by the rule package
@@ -141,15 +141,15 @@ func (s *BaseSingleGroupJoinOrderSolver) createJoinMethod(
 
 // SetJoinFactory sets the join factory function
 func (s *BaseSingleGroupJoinOrderSolver) SetJoinFactory(factory func(
-	lChild, rChild interface{},
+	lChild, rChild base.LogicalPlan,
 	eqEdges []*expression.ScalarFunction,
 	otherConds, leftConds, rightConds []expression.Expression,
-	joinType int) interface{}) {
+	joinType int) base.LogicalPlan) {
 	s.createJoin = factory
 }  
-  
+
 // BaseNodeCumCost calculates the cumulative cost of a node  
-func (s *BaseSingleGroupJoinOrderSolver) BaseNodeCumCost(groupNode interface{}) float64 {  
+func (s *BaseSingleGroupJoinOrderSolver) BaseNodeCumCost(groupNode base.LogicalPlan) float64 {  
 	// For now, return a simplified implementation
 	// TODO: Implement full cost calculation logic
 	return 1.0

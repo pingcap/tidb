@@ -79,7 +79,6 @@ func (s *GreedyJoinOrderSolver) Solve() (base.LogicalPlan, error) {
 	for len(remainingNodes) > 0 {
 		bestIdx := -1
 		bestCost := float64(-1)
-		var bestJoin base.LogicalPlan
 		var bestUsedEdges []*expression.ScalarFunction
 		var bestJoinType *JoinTypeWithExtMsg
 		
@@ -96,7 +95,6 @@ func (s *GreedyJoinOrderSolver) Solve() (base.LogicalPlan, error) {
 			if bestIdx == -1 || cost < bestCost {
 				bestIdx = i
 				bestCost = cost
-				bestJoin = tempJoin
 				bestUsedEdges = usedEdges
 				bestJoinType = joinType
 			}
