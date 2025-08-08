@@ -86,7 +86,8 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
 
-	index := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	index, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(b, err)
 	sctx := tk.Session().GetSessionVars().StmtCtx
 	idxDt := []types.Datum{types.NewIntDatum(10)}
 	buf := make([]byte, 0, 64)
