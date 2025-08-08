@@ -869,11 +869,13 @@ func TestRandPartitionedPrefix(t *testing.T) {
 	prefix := "write-prefix"
 	partitioned := randPartitionedPrefix(prefix, rnd)
 	require.Equal(t, partitionHeaderChar, partitioned[0])
-	require.Equal(t, partitioned[4:], prefix)
-	require.True(t, isValidPartition([]byte(partitioned[:3])))
+	require.Equal(t, partitioned[10:], prefix)
+	require.True(t, isValidPartition([]byte(partitioned[:9])))
 
 	require.False(t, isValidPartition([]byte("aa")))
-	require.False(t, isValidPartition([]byte("aaa")))
-	require.False(t, isValidPartition([]byte("paz")))
-	require.False(t, isValidPartition([]byte("pza")))
+	require.False(t, isValidPartition([]byte("pa")))
+	require.False(t, isValidPartition([]byte("p1111000a")))
+	require.False(t, isValidPartition([]byte("pa111000")))
+	require.True(t, isValidPartition([]byte("p00000000")))
+	require.True(t, isValidPartition([]byte("p11110000")))
 }

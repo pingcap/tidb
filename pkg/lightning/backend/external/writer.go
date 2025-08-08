@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"math/rand"
 	"path/filepath"
@@ -844,22 +845,23 @@ func (w *Writer) getPartitionedPrefix() string {
 // be partitioned, and let the user file a ticket to let cloud provider partition
 // by prefix manually before import large dataset.
 //
-// the rule is: generate a random byte in range [0, 256) and encode to hex string,
-// and use it as the partitioned prefix.
+// the rule is: generate a random byte in range [0, 256) and encode to binary
+// string, and use it as the partitioned prefix.
 func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
-	partitionID := byte(rnd.Intn(math.MaxUint8 + 1))
-	return filepath.Join(partitionHeader+hex.EncodeToString([]byte{partitionID}), prefix)
-}
-
-func isLowerHexChar(b byte) bool {
-	return ('0' <= b && b <= '9') || ('a' <= b && b <= 'f')
+	partitionPrefix := fmt.Sprintf("%s%08b", partitionHeader, rnd.Intn(math.MaxUint8+1))
+	return filepath.Join(partitionPrefix, prefix)
 }
 
 func isValidPartition(in []byte) bool {
-	if len(in) != 3 || in[0] != partitionHeaderChar {
+	if len(in) != 9 || in[0] != partitionHeaderChar {
 		return false
 	}
-	return isLowerHexChar(in[1]) && isLowerHexChar(in[2])
+	for _, c := range in[1:] {
+		if c != '0' && c != '1' {
+			return false
+		}
+	}
+	return true
 }
 
 // EngineWriter implements backend.EngineWriter interface.
