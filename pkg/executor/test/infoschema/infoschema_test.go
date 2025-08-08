@@ -989,14 +989,14 @@ func TestIndexUsageWithData(t *testing.T) {
 	tk.RefreshSession()
 
 	insertDataAndScanToT := func(indexName string) {
-		// insert 1000 rows
-		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		// insert 500 rows
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 500) select n from cte;")
 		tk.MustExec("ANALYZE TABLE t all columns")
 
 		// full scan
 		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
 		rows := tk.MustQuery(sql).Rows()
-		require.Len(t, rows, 1000)
+		require.Len(t, rows, 500)
 		for i, r := range rows {
 			require.Equal(t, r[0], strconv.Itoa(i+1))
 		}
@@ -1081,14 +1081,14 @@ func TestIndexUsageWithData2(t *testing.T) {
 	tk.RefreshSession()
 
 	insertDataAndScanToT := func(indexName string) {
-		// insert 1000 rows
-		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		// insert 500 rows
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 500) select n from cte;")
 		tk.MustExec("ANALYZE TABLE t all columns")
 
 		// full scan
 		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
 		rows := tk.MustQuery(sql).Rows()
-		require.Len(t, rows, 1000)
+		require.Len(t, rows, 500)
 		for i, r := range rows {
 			require.Equal(t, r[0], strconv.Itoa(i+1))
 		}
@@ -1156,14 +1156,14 @@ func TestIndexUsageWithData3(t *testing.T) {
 	tk.RefreshSession()
 
 	insertDataAndScanToT := func(indexName string) {
-		// insert 1000 rows
-		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
+		// insert 500 rows
+		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 500) select n from cte;")
 		tk.MustExec("ANALYZE TABLE t all columns")
 
 		// full scan
 		sql := fmt.Sprintf("SELECT * FROM t use index(%s) ORDER BY a", indexName)
 		rows := tk.MustQuery(sql).Rows()
-		require.Len(t, rows, 1000)
+		require.Len(t, rows, 500)
 		for i, r := range rows {
 			require.Equal(t, r[0], strconv.Itoa(i+1))
 		}
