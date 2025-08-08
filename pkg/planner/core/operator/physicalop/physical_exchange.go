@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -42,9 +43,8 @@ type PhysicalExchangeReceiver struct {
 }
 
 // Init only assigns type and context.
-func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExchangeReceiver {
-	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeExchangeReceiver, &p, offset)
-	p.SetChildrenReqProps(props)
+func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeReceiver {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
 	p.SetStats(stats)
 	return &p
 }
@@ -110,9 +110,8 @@ type PhysicalExchangeSender struct {
 }
 
 // Init only assigns type and context.
-func (p PhysicalExchangeSender) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExchangeSender {
-	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeExchangeSender, &p, offset)
-	p.SetChildrenReqProps(props)
+func (p PhysicalExchangeSender) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeSender {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
 	p.SetStats(stats)
 	return &p
 }
