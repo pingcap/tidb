@@ -160,6 +160,10 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, vardef.DefTiFlashMaxBytesBeforeExternalSort)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaxBytesBeforeTiFlashCTESpill, Type: vardef.TypeInt, Value: strconv.Itoa(vardef.DefTiFlashMaxBytesBeforeExternalSort), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxBytesBeforeCTESpill = TidbOptInt64(val, vardef.DefTiFlashMaxBytesBeforeCTESpill)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiFlashMemQuotaQueryPerNode, Type: vardef.TypeInt, Value: strconv.Itoa(vardef.DefTiFlashMemQuotaQueryPerNode), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.TiFlashMaxQueryMemoryPerNode = TidbOptInt64(val, vardef.DefTiFlashMemQuotaQueryPerNode)
 		return nil
