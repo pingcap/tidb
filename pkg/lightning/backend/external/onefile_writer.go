@@ -17,9 +17,9 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/docker/go-units"
@@ -93,6 +93,8 @@ type OneFileWriter struct {
 	lastTime   time.Time
 	lastSize   int
 	lastKeyNum int
+	cancelFunc context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -124,6 +126,40 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	w.dataFile, w.dataWriter = dataFile, dataWriter
 	w.statFile, w.statWriter = statFile, statWriter
 	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
+
+	// speed statistic
+	cancelCtx, cancel := context.WithCancel(ctx)
+	w.cancelFunc = cancel
+	w.wg = sync.WaitGroup{}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		label := "OFW-" + w.writerID[:8]
+		ticker := time.NewTicker(metrics.ReportDuration)
+
+		lastSZ := 0
+		lastTime := time.Now()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				sz := w.lastSize - lastSZ
+				lastSZ = w.lastSize
+				d := time.Since(lastTime)
+				lastTime = time.Now()
+
+				metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues(label).
+					Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
+				logutil.BgLogger().Info("write one file speed",
+					zap.Duration("time", d),
+					zap.Int("size(Byte)", sz),
+					zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
+				)
+			case <-cancelCtx.Done():
+				return
+			}
+		}
+	}()
 	return nil
 }
 
@@ -271,25 +307,25 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	//)
 
 	w.lastSize += length
-	w.lastKeyNum++
-	d := time.Since(w.lastTime)
-	if d > metrics.ReportDuration {
-		sz := w.lastSize
-		keyNum := w.lastKeyNum
-
-		w.lastTime = time.Now()
-		w.lastSize = 0
-		w.lastKeyNum = 0
-		logutil.BgLogger().Info("write one file speed",
-			zap.Int("size(Byte)", sz),
-			zap.Duration("time", d),
-			zap.Int("keyNum", keyNum),
-			zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
-		)
-		label := fmt.Sprintf("OFW-%s", w.writerID[:8])
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues(label).
-			Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
-	}
+	//w.lastKeyNum++
+	//d := time.Since(w.lastTime)
+	//if d > metrics.ReportDuration {
+	//	sz := w.lastSize
+	//	keyNum := w.lastKeyNum
+	//
+	//	w.lastTime = time.Now()
+	//	w.lastSize = 0
+	//	w.lastKeyNum = 0
+	//	logutil.BgLogger().Info("write one file speed",
+	//		zap.Int("size(Byte)", sz),
+	//		zap.Duration("time", d),
+	//		zap.Int("keyNum", keyNum),
+	//		zap.Float64("speed(MiB/s)", float64(sz)/1024.0/1024.0/d.Seconds()),
+	//	)
+	//	label := fmt.Sprintf("OFW-%s", w.writerID[:8])
+	//	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues(label).
+	//		Observe(float64(sz) / 1024.0 / 1024.0 / d.Seconds())
+	//}
 	return nil
 }
 
@@ -303,6 +339,8 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	w.cancelFunc()
+	w.wg.Wait()
 	w.logger.Info("close one file writer", zap.String("writerID", w.writerID),
 		zap.Uint64("totalCnt", w.totalCnt),
 		zap.Uint64("totalSize", w.totalSize),
