@@ -84,7 +84,7 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 		if shuffle := optimizeByShuffle4MergeJoin(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
-	case *PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
@@ -131,7 +131,7 @@ func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContex
 	return shuffle
 }
 
-func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *physicalop.PhysicalShuffle {
+func optimizeByShuffle4StreamAgg(pp *physicalop.PhysicalStreamAgg, ctx base.PlanContext) *physicalop.PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
 	if concurrency <= 1 {
 		return nil

@@ -543,8 +543,8 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 	switch x := plan.(type) {
 	case *physicalop.PhysicalHashAgg:
 		physicalAgg = x.GetPointer()
-	case *PhysicalStreamAgg:
-		physicalAgg = x.getPointer()
+	case *physicalop.PhysicalStreamAgg:
+		physicalAgg = x.GetPointer()
 	default:
 		return
 	}

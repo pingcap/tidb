@@ -17,12 +17,10 @@ package core
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	util2 "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -79,37 +77,6 @@ func (p *PhysicalExpand) toPBV2(ctx *base.BuildPBContext, storeType kv.StoreType
 		executorID = p.ExplainID().String()
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand2, Expand2: expand2, ExecutorId: &executorID}, nil
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalStreamAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	pushDownCtx := util2.GetPushDownCtxFromBuildPBContext(ctx)
-	groupByExprs, err := expression.ExpressionsToPBList(evalCtx, p.GroupByItems, client)
-	if err != nil {
-		return nil, err
-	}
-	aggExec := &tipb.Aggregation{
-		GroupBy: groupByExprs,
-	}
-	for _, aggFunc := range p.AggFuncs {
-		agg, err := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		aggExec.AggFunc = append(aggExec.AggFunc, agg)
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		aggExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeStreamAgg, Aggregation: aggExec, ExecutorId: &executorID}, nil
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of

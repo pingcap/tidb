@@ -277,10 +277,6 @@ var GetIndexJoinCostVer24PhysicalIndexJoin func(pp base.PhysicalPlan, taskType p
 // Attach2Task4PhysicalIndexJoin will be called by PhysicalIndexJoin in physicalOp pkg.
 var Attach2Task4PhysicalIndexJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
-// InitForStream will be called by BasePhysicalAgg in physicalOp pkg.
-var InitForStream func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
-	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
-
 // Attach2Task4PhysicalWindow will be called by PhysicalWindow in physicalOp pkg.
 var Attach2Task4PhysicalWindow func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
@@ -358,6 +354,23 @@ var GetPlanCostVer24PhysicalHashAgg func(pp base.PhysicalPlan, taskType property
 
 // Attach2Task4PhysicalHashAgg implements PhysicalPlan interface for PhysicalHashJoin.
 var Attach2Task4PhysicalHashAgg func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// GetCost4PhysicalStreamAgg computes cost of stream aggregation considering CPU/memory.
+var GetCost4PhysicalStreamAgg func(pp base.PhysicalPlan, inputRows float64, isRoot bool,
+	costFlag uint64) float64
+
+// GetPlanCostVer14PhysicalStreamAgg calculates the cost of the plan if it has not been
+// calculated yet and returns the cost.
+var GetPlanCostVer14PhysicalStreamAgg func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalStreamAgg returns the plan-cost of this sub-plan, which is:
+// plan-cost = child-cost + agg-cost + group-cost
+var GetPlanCostVer24PhysicalStreamAgg func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalStreamAgg implements PhysicalPlan interface.
+var Attach2Task4PhysicalStreamAgg func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // Attach2Task4PhysicalApply implements PhysicalPlan interface for PhysicalApply
 var Attach2Task4PhysicalApply func(pp base.PhysicalPlan, tasks ...base.Task) base.Task

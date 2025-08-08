@@ -115,13 +115,17 @@ func init() {
 	utilfuncp.Attach2Task4PhysicalHashAgg = attach2Task4PhysicalHashAgg
 	utilfuncp.GetPlanCostVer14PhysicalHashAgg = getPlanCostVer14PhysicalHashAgg
 	utilfuncp.GetPlanCostVer24PhysicalHashAgg = getPlanCostVer24PhysicalHashAgg
+	// for physical stream agg
+	utilfuncp.GetCost4PhysicalStreamAgg = getCost4PhysicalStreamAgg
+	utilfuncp.Attach2Task4PhysicalStreamAgg = attach2Task4PhysicalStreamAgg
+	utilfuncp.GetPlanCostVer14PhysicalStreamAgg = getPlanCostVer14PhysicalStreamAgg
+	utilfuncp.GetPlanCostVer24PhysicalStreamAgg = getPlanCostVer24PhysicalStreamAgg
 	// for physical apply
 	utilfuncp.Attach2Task4PhysicalApply = attach2Task4PhysicalApply
 	utilfuncp.GetCost4PhysicalApply = getCost4PhysicalApply
 	utilfuncp.GetPlanCostVer14PhysicalApply = getPlanCostVer14PhysicalApply
 	utilfuncp.GetPlanCostVer24PhysicalApply = getPlanCostVer24PhysicalApply
-	// for physical aggregation.
-	utilfuncp.InitForStream = initForStream
+
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
 	// for physical sequence
