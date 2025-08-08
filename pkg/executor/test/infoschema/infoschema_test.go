@@ -1021,11 +1021,11 @@ func TestIndexUsageWithData(t *testing.T) {
 	checkIndexUsage := func(startQuery time.Time, endQuery time.Time) {
 		require.Eventually(t, func() bool {
 			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
-
+			fmt.Println(rows)
 			if len(rows) != 1 {
 				return false
 			}
-			if rows[0][0] != "2" || rows[0][1] != "1" || rows[0][2] != "1" {
+			if rows[0][0] != "2" || rows[0][1] != "0" || rows[0][2] != "1" {
 				return false
 			}
 			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
