@@ -475,6 +475,14 @@ type GlobalStatsInfo struct {
 	StatsVersion int
 }
 
+// StatsInfo contains minimal statistics information for decision-making.
+// Used to avoid creating full pseudo tables when only basic info is needed.
+// If nil, the table doesn't exist.
+type StatsInfo struct {
+	Pseudo        bool
+	RealtimeCount int64 // row count (PseudoRowCount for pseudo tables)
+}
+
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
@@ -516,8 +524,8 @@ type StatsHandle interface {
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
-	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
-	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
+	// GetStatsInfoByID retrieves minimal stats information without creating pseudo tables.
+	GetStatsInfoByID(is infoschema.InfoSchema, pid int64) *StatsInfo
 
 	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
 	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table
