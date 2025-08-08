@@ -218,15 +218,15 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 }
 
 // ToPB generates the pb structure.
-func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
+func (p *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	child, err := p.Children()[0].ToPB(ctx, kv.TiFlash)
 	if err != nil {
 		return nil, perrors.Trace(err)
 	}
 
-	encodedTask := make([][]byte, 0, len(e.TargetTasks))
+	encodedTask := make([][]byte, 0, len(p.TargetTasks))
 
-	for _, task := range e.TargetTasks {
+	for _, task := range p.TargetTasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
 			return nil, perrors.Trace(err)
@@ -234,8 +234,8 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
-	encodedUpstreamCTETask := make([]*tipb.EncodedBytesSlice, 0, len(e.TargetCTEReaderTasks))
-	for _, cteRTasks := range e.TargetCTEReaderTasks {
+	encodedUpstreamCTETask := make([]*tipb.EncodedBytesSlice, 0, len(p.TargetCTEReaderTasks))
+	for _, cteRTasks := range p.TargetCTEReaderTasks {
 		encodedTasksForOneCTEReader := &tipb.EncodedBytesSlice{
 			EncodedTasks: make([][]byte, 0, len(cteRTasks)),
 		}
@@ -249,9 +249,9 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		encodedUpstreamCTETask = append(encodedUpstreamCTETask, encodedTasksForOneCTEReader)
 	}
 
-	hashCols := make([]expression.Expression, 0, len(e.HashCols))
-	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
-	for _, col := range e.HashCols {
+	hashCols := make([]expression.Expression, 0, len(p.HashCols))
+	hashColTypes := make([]*tipb.FieldType, 0, len(p.HashCols))
+	for _, col := range p.HashCols {
 		hashCols = append(hashCols, col.Col)
 		tp, err := expression.ToPBFieldTypeWithCheck(col.Col.RetType, storeType)
 		if err != nil {
@@ -260,8 +260,8 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		tp.Collate = col.CollateID
 		hashColTypes = append(hashColTypes, tp)
 	}
-	allFieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
-	for _, column := range e.Schema().Columns {
+	allFieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
 		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, storeType)
 		if err != nil {
 			return nil, perrors.Trace(err)
@@ -273,30 +273,30 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		return nil, perrors.Trace(err)
 	}
 	ecExec := &tipb.ExchangeSender{
-		Tp:                  e.ExchangeType,
+		Tp:                  p.ExchangeType,
 		EncodedTaskMeta:     encodedTask,
 		PartitionKeys:       hashColPb,
 		Child:               child,
 		Types:               hashColTypes,
 		AllFieldTypes:       allFieldTypes,
-		Compression:         e.CompressionMode.ToTipbCompressionMode(),
+		Compression:         p.CompressionMode.ToTipbCompressionMode(),
 		UpstreamCteTaskMeta: encodedUpstreamCTETask,
 	}
-	executorID := e.ExplainID().String()
+	executorID := p.ExplainID().String()
 	return &tipb.Executor{
 		Tp:                            tipb.ExecType_TypeExchangeSender,
 		ExchangeSender:                ecExec,
 		ExecutorId:                    &executorID,
-		FineGrainedShuffleStreamCount: e.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
 	}, nil
 }
 
 // ToPB generates the pb structure.
-func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
-	encodedTask := make([][]byte, 0, len(e.Tasks))
+func (p *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
+	encodedTask := make([][]byte, 0, len(p.Tasks))
 
-	for _, task := range e.Tasks {
+	for _, task := range p.Tasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
 			return nil, perrors.Trace(err)
@@ -304,8 +304,8 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
-	fieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
-	for _, column := range e.Schema().Columns {
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
 		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, kv.TiFlash)
 		if err != nil {
 			return nil, perrors.Trace(err)
@@ -316,17 +316,17 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 		EncodedTaskMeta: encodedTask,
 		FieldTypes:      fieldTypes,
 	}
-	if e.IsCTEReader {
-		encodedTaskShallowCopy := make([][]byte, len(e.Tasks))
+	if p.IsCTEReader {
+		encodedTaskShallowCopy := make([][]byte, len(p.Tasks))
 		copy(encodedTaskShallowCopy, encodedTask)
 		ecExec.OriginalCtePrdocuerTaskMeta = encodedTaskShallowCopy
 	}
-	executorID := e.ExplainID().String()
+	executorID := p.ExplainID().String()
 	return &tipb.Executor{
 		Tp:                            tipb.ExecType_TypeExchangeReceiver,
 		ExchangeReceiver:              ecExec,
 		ExecutorId:                    &executorID,
-		FineGrainedShuffleStreamCount: e.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
 	}, nil
 }
