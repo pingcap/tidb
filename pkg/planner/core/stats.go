@@ -143,13 +143,12 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 			return nil, false, err
 		}
 	}
+	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
 	// after heuristic pruning, the new path are stored into ds.PossibleAccessPaths.
 	err := derivePathStatsAndTryHeuristics(ds)
 	if err != nil {
 		return nil, false, err
 	}
-	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))
-
 	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
 	if err := generateIndexMergePath(ds); err != nil {
