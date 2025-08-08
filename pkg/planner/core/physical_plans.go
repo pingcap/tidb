@@ -887,8 +887,8 @@ type PhysicalCTE struct {
 	cteAsName ast.CIStr
 	cteName   ast.CIStr
 
-	readerReceiver *PhysicalExchangeReceiver
-	storageSender  *PhysicalExchangeSender
+	readerReceiver *physicalop.PhysicalExchangeReceiver
+	storageSender  *physicalop.PhysicalExchangeSender
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -948,14 +948,14 @@ func (p *PhysicalCTE) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) 
 		if err != nil {
 			return nil, err
 		}
-		cloned.storageSender = clonedSender.(*PhysicalExchangeSender)
+		cloned.storageSender = clonedSender.(*physicalop.PhysicalExchangeSender)
 	}
 	if p.readerReceiver != nil {
 		clonedReceiver, err := p.readerReceiver.Clone(newCtx)
 		if err != nil {
 			return nil, err
 		}
-		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
+		cloned.readerReceiver = clonedReceiver.(*physicalop.PhysicalExchangeReceiver)
 	}
 	return cloned, nil
 }

@@ -3883,9 +3883,9 @@ func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.Physica
 	p := lp.(*logicalop.LogicalCTE)
 	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
-		pcte.storageSender = PhysicalExchangeSender{
+		pcte.storageSender = physicalop.PhysicalExchangeSender{
 			ExchangeType: tipb.ExchangeType_Broadcast,
-		}.Init(p.SCtx(), p.StatsInfo())
+		}.Init(p.SCtx(), p.StatsInfo(), 0)
 	}
 	pcte.SetSchema(p.Schema())
 	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})

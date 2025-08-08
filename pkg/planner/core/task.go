@@ -398,11 +398,11 @@ func appendExpr(p *physicalop.PhysicalProjection, expr expression.Expression) *e
 func convertPartitionKeysIfNeed4PhysicalHashJoin(pp base.PhysicalPlan, lTask, rTask *MppTask) (_, _ *MppTask) {
 	p := pp.(*physicalop.PhysicalHashJoin)
 	lp := lTask.p
-	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
+	if _, ok := lp.(*physicalop.PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
 	}
 	rp := rTask.p
-	if _, ok := rp.(*PhysicalExchangeReceiver); ok {
+	if _, ok := rp.(*physicalop.PhysicalExchangeReceiver); ok {
 		rp = rp.Children()[0].Children()[0]
 	}
 	// to mark if any partition key needs to convert
@@ -2287,17 +2287,17 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 		}
 	}
 	ctx := t.p.SCtx()
-	sender := PhysicalExchangeSender{
+	sender := physicalop.PhysicalExchangeSender{
 		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
-	}.Init(ctx, t.p.StatsInfo())
+	}.Init(ctx, t.p.StatsInfo(), 0)
 
 	if ctx.GetSessionVars().ChooseMppVersion() >= kv.MppVersionV1 {
 		sender.CompressionMode = ctx.GetSessionVars().ChooseMppExchangeCompressionMode()
 	}
 
 	sender.SetChildren(t.p)
-	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo())
+	receiver := physicalop.PhysicalExchangeReceiver{}.Init(ctx, t.p.StatsInfo(), 0)
 	receiver.SetChildren(sender)
 	nt := &MppTask{
 		p:        receiver,
