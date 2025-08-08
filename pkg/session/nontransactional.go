@@ -82,6 +82,7 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	// NT-DML should not use the bulk DML mode.
 	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
 	sessVars.BulkDMLEnabled = false
+	// NT-DML is used to be large and unusual, so we don't mix it with other DMLs, give it the prefix "NTDML-".
 	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
 	sessVars.NonTransactionalType = stmtType
 	defer func() {
