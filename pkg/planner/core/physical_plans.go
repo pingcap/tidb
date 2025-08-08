@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
@@ -873,48 +871,6 @@ func (p *PhysicalIndexMergeJoin) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalExchangeReceiver accepts connection and receives data passively.
-type PhysicalExchangeReceiver struct {
-	physicalop.BasePhysicalPlan
-
-	Tasks []*kv.MPPTask
-	frags []*Fragment
-
-	IsCTEReader bool
-}
-
-// Clone implment op.PhysicalPlan interface.
-func (p *PhysicalExchangeReceiver) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	np := new(PhysicalExchangeReceiver)
-	np.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np.BasePhysicalPlan = *base
-
-	np.IsCTEReader = p.IsCTEReader
-	return np, nil
-}
-
-// GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
-func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
-	return p.Children()[0].(*PhysicalExchangeSender)
-}
-
-// MemoryUsage return the memory usage of PhysicalExchangeReceiver
-func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*2 + int64(cap(p.Tasks)+cap(p.frags))*size.SizeOfPointer
-	for _, frag := range p.frags {
-		sum += frag.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalExpand is used to expand underlying data sources to feed different grouping sets.
 type PhysicalExpand struct {
 	// data after repeat-OP will generate a new grouping-ID column to indicate what grouping set is it for.
@@ -997,73 +953,6 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 	}
 	sum += p.GroupingIDCol.MemoryUsage()
 	return
-}
-
-// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
-type PhysicalExchangeSender struct {
-	physicalop.BasePhysicalPlan
-
-	TargetTasks          []*kv.MPPTask
-	TargetCTEReaderTasks [][]*kv.MPPTask
-	ExchangeType         tipb.ExchangeType
-	HashCols             []*property.MPPPartitionColumn
-	// Tasks is the mpp task for current PhysicalExchangeSender.
-	Tasks           []*kv.MPPTask
-	CompressionMode vardef.ExchangeCompressionMode
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalExchangeSender) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	np := new(PhysicalExchangeSender)
-	np.SetSCtx(newCtx)
-	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np.BasePhysicalPlan = *base
-	np.ExchangeType = p.ExchangeType
-	np.HashCols = p.HashCols
-	np.CompressionMode = p.CompressionMode
-	return np, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalExchangeSender
-func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice*3 + size.SizeOfInt32 +
-		int64(cap(p.TargetTasks)+cap(p.HashCols)+cap(p.Tasks))*size.SizeOfPointer
-	for _, hCol := range p.HashCols {
-		sum += hCol.MemoryUsage()
-	}
-	return
-}
-
-// GetCompressionMode returns the compression mode of this exchange sender.
-func (p *PhysicalExchangeSender) GetCompressionMode() vardef.ExchangeCompressionMode {
-	return p.CompressionMode
-}
-
-// GetSelfTasks returns mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) GetSelfTasks() []*kv.MPPTask {
-	return p.Tasks
-}
-
-// SetSelfTasks sets mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) SetSelfTasks(tasks []*kv.MPPTask) {
-	p.Tasks = tasks
-}
-
-// SetTargetTasks sets mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
-	p.TargetTasks = tasks
-}
-
-// AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
-func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
-	p.TargetTasks = append(p.TargetTasks, tasks...)
 }
 
 // PhysicalStreamAgg is stream operator of aggregate.
@@ -1152,8 +1041,8 @@ type PhysicalCTE struct {
 	cteAsName ast.CIStr
 	cteName   ast.CIStr
 
-	readerReceiver *PhysicalExchangeReceiver
-	storageSender  *PhysicalExchangeSender
+	readerReceiver *physicalop.PhysicalExchangeReceiver
+	storageSender  *physicalop.PhysicalExchangeSender
 }
 
 // PhysicalCTETable is for CTE table.
@@ -1220,14 +1109,14 @@ func (p *PhysicalCTE) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) 
 		if err != nil {
 			return nil, err
 		}
-		cloned.storageSender = clonedSender.(*PhysicalExchangeSender)
+		cloned.storageSender = clonedSender.(*physicalop.PhysicalExchangeSender)
 	}
 	if p.readerReceiver != nil {
 		clonedReceiver, err := p.readerReceiver.Clone(newCtx)
 		if err != nil {
 			return nil, err
 		}
-		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
+		cloned.readerReceiver = clonedReceiver.(*physicalop.PhysicalExchangeReceiver)
 	}
 	return cloned, nil
 }

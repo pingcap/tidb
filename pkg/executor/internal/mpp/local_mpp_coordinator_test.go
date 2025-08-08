@@ -26,7 +26,7 @@ import (
 func TestNeedReportExecutionSummary(t *testing.T) {
 	tableScan := &physicalop.PhysicalTableScan{}
 	limit := &physicalop.PhysicalLimit{}
-	passSender := &plannercore.PhysicalExchangeSender{
+	passSender := &physicalop.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	passSender.SetID(10)
