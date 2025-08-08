@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"slices"
 
 	"github.com/pingcap/failpoint"
@@ -109,9 +110,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(sessVars, preparedObj.PreparedAst.Stmt, preparedObj.ResolveCtx, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+		CountStmtNode(sessVars, stmtNode, nodeW.GetResolveContext(), sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -182,12 +183,12 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
+func CountStmtNode(sessVars *variable.SessionVars, stmtNode ast.StmtNode, resolveCtx *resolve.Context, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
 
-	typeLabel := ast.GetStmtLabel(stmtNode)
+	typeLabel := sessVars.GetStmtLabel(stmtNode)
 
 	if config.GetGlobalConfig().Status.RecordQPSbyDB || config.GetGlobalConfig().Status.RecordDBLabel {
 		dbLabels := getStmtDbLabel(stmtNode, resolveCtx)

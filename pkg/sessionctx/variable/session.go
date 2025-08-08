@@ -1452,6 +1452,10 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
+	// NonTransactionalType indicates the stmt type of non-transactional statements,
+	// only set in non-transactional statements,
+	// will ignore ast.GetStmtLabel when it's not empty.
+	NonTransactionalType string
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
@@ -1995,6 +1999,15 @@ func (s *SessionVars) GetTotalCostDuration() time.Duration {
 // GetExecuteDuration returns the execute duration of the last statement in the current session.
 func (s *SessionVars) GetExecuteDuration() time.Duration {
 	return time.Since(s.StartTime) - s.DurationCompile
+}
+
+// GetStmtLabel returns the label for the statement node.
+func (s *SessionVars) GetStmtLabel(node ast.StmtNode) string {
+	if s.NonTransactionalType != "" {
+		// If the session is in non-transactional mode, we use the NonTransactionalType as the label.
+		return s.NonTransactionalType
+	}
+	return ast.GetStmtLabel(node)
 }
 
 // PartitionPruneMode presents the prune mode used.

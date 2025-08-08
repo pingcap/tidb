@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -71,6 +70,6 @@ func TestStmtLabel(t *testing.T) {
 		require.NoError(t, err)
 		_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		require.Equal(t, tt.label, ast.GetStmtLabel(stmtNode))
+		require.Equal(t, tt.label, tk.Session().GetSessionVars().GetStmtLabel(stmtNode))
 	}
 }

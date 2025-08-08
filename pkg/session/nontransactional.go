@@ -82,9 +82,12 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 	// NT-DML should not use the bulk DML mode.
 	originalBulkDMLEnabled := sessVars.BulkDMLEnabled
 	sessVars.BulkDMLEnabled = false
+	stmtType := fmt.Sprintf("NTDML-%s", ast.GetStmtLabel(stmt.DMLStmt))
+	sessVars.NonTransactionalType = stmtType
 	defer func() {
 		sessVars.ReadStaleness = originalReadStaleness
 		sessVars.BulkDMLEnabled = originalBulkDMLEnabled
+		sessVars.NonTransactionalType = ""
 	}()
 	nodeW := resolve.NewNodeW(stmt)
 	err := core.Preprocess(ctx, se, nodeW)
@@ -279,14 +282,6 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	if shardColumnRefer == nil && stmt.ShardColumn.Name.L != model.ExtraHandleName.L {
 		return nil, errors.New("Non-transactional DML, shard column not found")
 	}
-	switch s := stmt.DMLStmt.(type) {
-	case *ast.DeleteStmt:
-		s.IsNontransactionalDML = true
-	case *ast.UpdateStmt:
-		s.IsNontransactionalDML = true
-	case *ast.InsertStmt:
-		s.IsNontransactionalDML = true
-	}
 
 	splitStmts := make([]string, 0, len(jobs))
 	for i := range jobs {
@@ -460,43 +455,16 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
-	stmts, err := se.Parse(ctx, selectSQL)
-	if err != nil {
-		return nil, errors.Annotatef(err, "Failed to parse non-transactional DML select SQL: %s", selectSQL)
-	}
-	if len(stmts) != 1 {
-		return nil, errors.Errorf("Non-transactional DML, expecting 1 statement, but got %d", len(stmts))
-	}
-
-	selectStmt, ok := stmts[0].(*ast.SelectStmt)
-	if !ok {
-		return nil, errors.Errorf("Non-transactional DML, selectSQL parsed to a non-select statement, type %T", stmts[0])
-	}
-	// Mark the select statement as non-transactional DML.
-	switch dmlStmt := stmt.DMLStmt.(type) {
-	case *ast.DeleteStmt:
-		tp := "Delete"
-		selectStmt.NontransactionalDMLType = &tp
-	case *ast.UpdateStmt:
-		tp := "Update"
-		selectStmt.NontransactionalDMLType = &tp
-	case *ast.InsertStmt:
-		tp := "Insert"
-		if dmlStmt.IsReplace {
-			tp = "Replace"
-		}
-		selectStmt.NontransactionalDMLType = &tp
-	default:
-		tp := "Unknown"
-		selectStmt.NontransactionalDMLType = &tp
-	}
-
-	rs, err := se.ExecuteStmt(ctx, stmts[0])
+	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
 
 	if err != nil {
 		return nil, err
 	}
+	if len(rss) != 1 {
+		return nil, errors.Errorf("Non-transactional DML, expecting 1 record set, but got %d", len(rss))
+	}
+	rs := rss[0]
 	defer func() {
 		_ = rs.Close()
 	}()

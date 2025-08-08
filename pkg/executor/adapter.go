@@ -411,7 +411,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if sctx.GetSessionVars().StmtCtx.StmtType == "" {
-			sctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			sctx.GetSessionVars().StmtCtx.StmtType = sctx.GetSessionVars().GetStmtLabel(a.StmtNode)
 		}
 	}
 
@@ -635,7 +635,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = a.Ctx.GetSessionVars().GetStmtLabel(a.StmtNode)
 		}
 		// Since maxExecutionTime is used only for query statement, here we limit it affect scope.
 		if !a.IsReadOnly(a.Ctx.GetSessionVars()) {
@@ -1969,7 +1969,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
-		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
+		stmtCtx.StmtType = sessVars.GetStmtLabel(a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
 	costTime := sessVars.GetTotalCostDuration()

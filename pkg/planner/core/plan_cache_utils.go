@@ -133,7 +133,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:     paramStmt,
-		StmtType: ast.GetStmtLabel(paramStmt),
+		StmtType: sctx.GetSessionVars().GetStmtLabel(paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
