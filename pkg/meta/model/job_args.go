@@ -1592,11 +1592,10 @@ func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
 		indexName              ast.CIStr
 		indexPartSpecification *ast.IndexPartSpecification
 		indexOption            *ast.IndexOption
-		funcExpr               string
 	)
 
 	if err := job.decodeArgs(
-		&indexName, &indexPartSpecification, &indexOption, &funcExpr); err != nil {
+		&indexName, &indexPartSpecification, &indexOption); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1604,7 +1603,6 @@ func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
 		IndexName:               indexName,
 		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
 		IndexOption:             indexOption,
-		FuncExpr:                funcExpr,
 	}}
 	return nil
 }
