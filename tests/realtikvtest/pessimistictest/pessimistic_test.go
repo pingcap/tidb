@@ -2460,16 +2460,12 @@ func TestIssue28011(t *testing.T) {
 }
 
 func TestPessimisticAutoCommitTxn(t *testing.T) {
-	originCfg := config.GetGlobalConfig()
-
-	// false case
-	newCfg := *originCfg
-	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(false)
-	config.StoreGlobalConfig(&newCfg)
-
-	defer config.StoreGlobalConfig(originCfg)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-
+	defer config.RestoreFunc()()
+	// false case
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
+	})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2492,8 +2488,9 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	require.NotRegexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
 
 	// true case
-	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	})
 
 	rows = tk.MustQuery("explain update t set i = -i").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
