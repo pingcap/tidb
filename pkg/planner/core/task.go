@@ -165,8 +165,9 @@ func attach2Task4PhysicalUnionScan(pp base.PhysicalPlan, tasks ...base.Task) bas
 	return p.BasePhysicalPlan.Attach2Task(task)
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalApply implements PhysicalPlan interface.
+func attach2Task4PhysicalApply(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalApply)
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())

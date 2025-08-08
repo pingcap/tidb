@@ -586,7 +586,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 		}
 	}
 
-	s.statusServer = statusServer
+	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
 	go util.WithRecovery(func() {

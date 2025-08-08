@@ -107,7 +107,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					pp, ok := p.(*physicalop.PhysicalProjection)
 					require.True(t, ok)
-					pa, ok := pp.Children()[0].(*plannercore.PhysicalApply)
+					pa, ok := pp.Children()[0].(*physicalop.PhysicalApply)
 					require.True(t, ok)
 					left := pa.PhysicalHashJoin.Children()[0]
 					right := pa.PhysicalHashJoin.Children()[0]

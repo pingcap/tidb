@@ -723,9 +723,10 @@ func (p *PhysicalIndexMergeJoin) GetPlanCostVer1(taskType property.TaskType, opt
 	return p.PlanCost, nil
 }
 
-// GetCost computes the cost of apply operator.
-func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
+// getCost4PhysicalApply computes the cost of apply operator.
+func getCost4PhysicalApply(pp base.PhysicalPlan, lCount, rCount, lCost, rCost float64) float64 {
 	var cpuCost float64
+	p := pp.(*physicalop.PhysicalApply)
 	sessVars := p.SCtx().GetSessionVars()
 	if len(p.LeftConditions) > 0 {
 		cpuCost += lCount * sessVars.GetCPUFactor()
@@ -750,8 +751,9 @@ func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 	return cpuCost + lCost + lCount*rCost
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalApply) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalApply calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalApply(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalApply)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
