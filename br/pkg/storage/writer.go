@@ -3,14 +3,13 @@ package storage
 import (
 	"bytes"
 	"context"
-	"io"
-
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
+	"io"
 )
 
 // CompressType represents the type of compression.
@@ -205,11 +204,22 @@ func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 				continue
 			}
 		}
+		//st := time.Now()
+		//bufferLen := u.buf.Len()
 		_ = u.buf.Flush()
 		err := u.uploadChunk(ctx)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		//writeDuration := time.Since(st)
+		//metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("bufferedWriter").Observe(writeDuration.Seconds())
+		//metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("bufferedWriter").
+		//	Observe(float64(bufferLen) / 1024.0 / 1024.0 / writeDuration.Seconds())
+		//log.Info("bufferedWriter upload chunk speed",
+		//	zap.Duration("duration", writeDuration),
+		//	zap.Int("size(Byte)", bufferLen),
+		//	zap.Float64("speed(MiB/s)", float64(bufferLen)/1024.0/1024.0/writeDuration.Seconds()),
+		//)
 	}
 	w, err := u.buf.Write(p)
 	bytesWritten += w
@@ -222,7 +232,15 @@ func (u *bufferedWriter) uploadChunk(ctx context.Context) error {
 	}
 	b := u.buf.Bytes()
 	u.buf.Reset()
+	//size := len(b)
+	//t := time.Now()
 	_, err := u.writer.Write(ctx, b)
+	//dur := time.Since(t)
+	//logutil.BgLogger().Info("bufferedWriter uploadChunk",
+	//	zap.Int("size(Byte)", size),
+	//	zap.Duration("duration", dur),
+	//	zap.Float64("speed(MiB/s)", float64(size)/1024.0/1024.0/dur.Seconds()),
+	//)
 	return errors.Trace(err)
 }
 

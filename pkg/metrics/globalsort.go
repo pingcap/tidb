@@ -17,6 +17,7 @@ package metrics
 import (
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
+	"time"
 )
 
 var (
@@ -32,6 +33,8 @@ var (
 	GlobalSortIngestWorkerCnt *prometheus.GaugeVec
 	// GlobalSortUploadWorkerCount is the gauge of active parallel upload worker count.
 	GlobalSortUploadWorkerCount prometheus.Gauge
+	// ReportDuration is the duration for reporting metrics.
+	ReportDuration = time.Second
 )
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
