@@ -620,10 +620,10 @@ func TestExchangeSenderResolveIndices(t *testing.T) {
 	partitionCol1 := &property.MPPPartitionColumn{Col: &expression.Column{UniqueID: 4}}
 
 	// two exchange sender share the same MPPPartitionColumn
-	exchangeSender1 := &core.PhysicalExchangeSender{
+	exchangeSender1 := &physicalop.PhysicalExchangeSender{
 		HashCols: []*property.MPPPartitionColumn{partitionCol1},
 	}
-	exchangeSender2 := &core.PhysicalExchangeSender{
+	exchangeSender2 := &physicalop.PhysicalExchangeSender{
 		HashCols: []*property.MPPPartitionColumn{partitionCol1},
 	}
 

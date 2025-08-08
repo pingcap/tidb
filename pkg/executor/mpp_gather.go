@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -41,7 +42,7 @@ func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader
 	if !ctx.GetSessionVars().IsMPPAllowed() {
 		return false
 	}
-	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
+	_, ok := tr.GetTablePlan().(*physicalop.PhysicalExchangeSender)
 	return ok
 }
 
@@ -92,7 +93,7 @@ type MPPGather struct {
 // Open implements the Executor Open interface.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if e.dummy {
-		sender, ok := e.originalPlan.(*plannercore.PhysicalExchangeSender)
+		sender, ok := e.originalPlan.(*physicalop.PhysicalExchangeSender)
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}

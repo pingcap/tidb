@@ -231,7 +231,7 @@ func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *physicalop.P
 
 func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode base.PhysicalPlan, targetNode *physicalop.PhysicalTableScan) bool {
 	switch currentNode.(type) {
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		// terminal traversal
 		return false
 	case *physicalop.PhysicalTableScan:

@@ -234,32 +234,6 @@ func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
 }
 
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
-	return p.ResolveIndicesItselfWithSchema(p.Children()[0].Schema())
-}
-
-// ResolveIndicesItselfWithSchema is added for test usage
-func (p *PhysicalExchangeSender) ResolveIndicesItselfWithSchema(inputSchema *expression.Schema) (err error) {
-	for i, hashCol := range p.HashCols {
-		newHashCol, err := hashCol.ResolveIndices(inputSchema)
-		if err != nil {
-			return err
-		}
-		p.HashCols[i] = newHashCol
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
-	err = p.BasePhysicalPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	return p.ResolveIndicesItself()
-}
-
-// ResolveIndicesItself resolve indices for PhysicalPlan itself
 func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
 	// for version 1
 	for _, gs := range p.GroupingSets {
