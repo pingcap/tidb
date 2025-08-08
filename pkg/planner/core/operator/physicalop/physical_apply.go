@@ -100,14 +100,14 @@ func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType,
 }
 
 // MemoryUsage return the memory usage of PhysicalApply
-func (la *PhysicalApply) MemoryUsage() (sum int64) {
-	if la == nil {
+func (p *PhysicalApply) MemoryUsage() (sum int64) {
+	if p == nil {
 		return
 	}
 
-	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
-		int64(cap(la.OuterSchema))*size.SizeOfPointer
-	for _, corrCol := range la.OuterSchema {
+	sum = p.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
+		int64(cap(p.OuterSchema))*size.SizeOfPointer
+	for _, corrCol := range p.OuterSchema {
 		sum += corrCol.MemoryUsage()
 	}
 	return
