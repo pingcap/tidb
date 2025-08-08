@@ -1231,6 +1231,24 @@ func getOperatorActRows(operator base.PhysicalPlan) float64 {
 	return actRows
 }
 
+// getPlanCostVer1PhysicalExchangeReceiver calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer1PhysicalExchangeReceiver(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalExchangeReceiver)
+	costFlag := option.CostFlag
+	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCost, nil
+	}
+	childCost, err := p.Children()[0].GetPlanCostVer1(taskType, option)
+	if err != nil {
+		return 0, err
+	}
+	p.PlanCost = childCost
+	// accumulate net cost
+	p.PlanCost += getCardinality(p.Children()[0], costFlag) * p.SCtx().GetSessionVars().GetNetworkFactor(nil)
+	p.PlanCostInit = true
+	return p.PlanCost, nil
+}
+
 func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {
 	if hasCostFlag(costFlag, costusage.CostFlagUseTrueCardinality) {
 		actualProbeCnt := operator.GetActualProbeCnt(operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl)
