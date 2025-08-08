@@ -1098,7 +1098,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		))
 
 		tk.MustExec("INSERT into t WITH RECURSIVE cte AS (select 1 as n UNION ALL select n+1 FROM cte WHERE n < 1000) select n from cte;")
-		tk.MustExec("ANALYZE TABLE t")
+		tk.MustExec("ANALYZE TABLE t all columns")
 
 		// full scan
 		rows := tk.MustQuery("SELECT * FROM t ORDER BY a").Rows()
