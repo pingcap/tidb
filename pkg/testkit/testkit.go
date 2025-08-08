@@ -70,6 +70,8 @@ type TestKit struct {
 	store   kv.Storage
 	session sessionapi.Session
 	alloc   chunk.Allocator
+
+	pushDownCheck bool
 }
 
 // NewTestKit returns a new *TestKit.
@@ -86,6 +88,8 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		t:       t,
 		store:   store,
 		alloc:   chunk.NewAllocator(),
+
+		pushDownCheck: true,
 	}
 	tk.RefreshSession()
 
@@ -169,25 +173,23 @@ func (tk *TestKit) MustQuery(sql string, args ...any) *Result {
 		}
 	}()
 	rs1 := tk.MustQueryWithContext(context.Background(), sql, args...)
-	if !strings.Contains(sql, "information_schema") ||
-		strings.Contains(sql, "trace") ||
-		strings.Contains(sql, "statements_summary") ||
-		strings.Contains(sql, "slow_query") ||
-		strings.Contains(sql, "cluster_config") ||
-		strings.Contains(sql, "CLUSTER_") ||
-		strings.Contains(sql, "STATEMENTS_SUMMARY_EVICTED") ||
-		strings.Contains(sql, "TIDB_TRX") {
+	sqlLower := strings.ToLower(sql)
+	if !tk.pushDownCheck ||
+		!strings.Contains(sqlLower, "information_schema") ||
+		strings.Contains(sqlLower, "trace") ||
+		strings.Contains(sqlLower, "statements_summary") ||
+		strings.Contains(sqlLower, "slow_query") ||
+		strings.Contains(sqlLower, "cluster_config") ||
+		strings.Contains(sqlLower, "cluster_") ||
+		strings.Contains(sqlLower, "statements_summary_evicted") ||
+		strings.Contains(sqlLower, "tidb_trx") {
 		return rs1
 	}
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor", "return(true)")
-	if err != nil {
-		panic(err)
-	}
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+	require.NoError(tk.t, err)
 	rs2 := tk.MustQueryWithContext(context.Background(), sql, args...)
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/skipExtractor")
-	if err != nil {
-		panic(err)
-	}
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+	require.NoError(tk.t, err)
 	rs1Row := make([][]string, 0, len(rs1.rows))
 	for _, row := range rs1.rows {
 		rs1SubRow := make([]string, 0, len(row))
@@ -629,6 +631,17 @@ func (tk *TestKit) RequireNotEqual(expected any, actual any, msgAndArgs ...any) 
 // RequireNoError checks if error happens
 func (tk *TestKit) RequireNoError(err error, msgAndArgs ...any) {
 	tk.require.NoError(err, msgAndArgs)
+}
+
+// DisablePushDownCheckForMemTables disable the push down check flag for memory tables temporarily.
+// Known issue:
+// - predicate match is case-insensitive for memory table scan, but it is case-sensitive for memory table scan + selection.
+func (tk *TestKit) DisablePushDownCheckForMemTables(assertFn func()) {
+	tk.pushDownCheck = false
+	defer func() {
+		tk.pushDownCheck = true
+	}()
+	assertFn()
 }
 
 // RegionProperityClient is to get region properties.

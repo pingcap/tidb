@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
@@ -251,10 +252,7 @@ func TestRegionsFromMeta(t *testing.T) {
 	}
 
 	// test no panic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/errGetRegionByIDEmpty", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/errGetRegionByIDEmpty"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/server/handler/errGetRegionByIDEmpty", `return(true)`)
 	resp1, err := ts.FetchStatus("/regions/meta")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, resp1.Body.Close()) }()

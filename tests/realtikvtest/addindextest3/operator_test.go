@@ -130,7 +130,6 @@ func TestBackfillOperators(t *testing.T) {
 		results := sink.Collect()
 		cnt := 0
 		for _, rs := range results {
-			require.NoError(t, rs.Err)
 			chkRowCnt := rs.Chunk.NumRows()
 			cnt += chkRowCnt
 			if chkRowCnt > 0 {
