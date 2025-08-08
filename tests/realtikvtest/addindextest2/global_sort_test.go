@@ -404,7 +404,6 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	}
 
 	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
-		// tidb_redact_log is actually a instance variable. We should avoid other sessions overwriting it.
 		tk.MustExec("set global tidb_redact_log = on;")
 		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
 		tk.MustExec("set global tidb_redact_log = off;")
