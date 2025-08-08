@@ -51,6 +51,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/dbterror",
         "//pkg/util/deadlockhistory",
+        "//pkg/util/disttask",
         "//pkg/util/domainutil",
         "//pkg/util/execdetails",
         "//pkg/util/intest",
