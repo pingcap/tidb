@@ -319,11 +319,6 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Equal(t, []byte("i1_2_c"), allKVMetas["1"].EndKey)
 }
 
-func writeAndGetFiles(t *testing.T, writer *external.Writer, keys [][]byte, values [][]byte) (
-	dataFiles []string, statsFiles []string) {
-	return
-}
-
 func TestSplitForOneSubtask(t *testing.T) {
 	ctx := context.Background()
 	workDir := t.TempDir()
