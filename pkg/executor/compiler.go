@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"slices"
 
 	"github.com/pingcap/failpoint"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
