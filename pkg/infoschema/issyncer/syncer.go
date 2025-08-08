@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
@@ -167,12 +168,11 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 		return
 	}
 	defer s.sysSessionPool.Put(se)
-	exec := sctx.GetRestrictedSQLExecutor()
 	domainSchemaVer := s.InfoSchema().SchemaMetaVersion()
 	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.
 	sql := fmt.Sprintf(`select job_id, version, table_ids from mysql.tidb_mdl_info
 		where job_id >= %d and version <= %d`, s.minJobIDRefresher.GetCurrMinJobID(), domainSchemaVer)
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
+	rows, err := sqlexec.ExecSQL(ctx, sctx.GetSQLExecutor(), sql)
 	if err != nil {
 		s.logger.Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
