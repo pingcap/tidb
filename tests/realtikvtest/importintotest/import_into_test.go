@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -1316,4 +1317,51 @@ func (s *mockGCSSuite) TestImportIntoWithFK() {
 	// it should success even if the parent table is empty
 	s.tk.MustQuery(sql)
 	s.tk.MustQuery("SELECT * FROM import_into.child;").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func (s *mockGCSSuite) TestCancelImportInto() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/mydump/mockSlowMakeTableRegions", "sleep(1000)")
+
+	// Create 64 files so that MakeTableRegions will cost about 32 seconds to finish with THREAD=1.
+	for i := range 64 {
+		content := fmt.Appendf(nil, "%d,%d", i, i)
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: "cancel-test",
+				Name:       fmt.Sprintf("test_%d.csv", i),
+			},
+			Content: content,
+		})
+	}
+
+	s.prepareAndUseDB("cancel_test")
+	s.tk.MustExec("create table t1(id int primary key, c1 int);")
+	sql := fmt.Sprintf(`IMPORT INTO cancel_test.t1
+		FROM 'gs://cancel-test/*.csv?endpoint=%s' WITH THREAD=1, DETACHED`, gcsEndpoint)
+
+	result := s.tk.MustQuery(sql).Rows()
+	idStr, ok := result[0][0].(string)
+	require.True(s.T(), ok)
+
+	// wait for the import job to start
+	time.Sleep(time.Second)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		s.tk.MustExec("cancel import job " + idStr)
+	}()
+
+	// Task should be canceled after a short time
+	require.Eventually(s.T(), func() bool {
+		// check if the job is canceled
+		rs := s.tk.MustQuery(fmt.Sprintf("SELECT status FROM mysql.tidb_import_jobs WHERE id = %s", idStr))
+		require.Len(s.T(), rs.Rows(), 1)
+		state := rs.Rows()[0][0].(string)
+		return state == "cancelled"
+	}, scheduler.CheckTaskCancelledInterval*3, 100*time.Millisecond)
+
+	wg.Wait()
 }

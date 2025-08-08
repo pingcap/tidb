@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
@@ -230,6 +231,8 @@ func MakeTableRegions(
 				return nil
 			default:
 			}
+
+			failpoint.Inject("mockSlowMakeTableRegions", func() {})
 
 			var (
 				regions []*TableRegion

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -50,6 +51,9 @@ var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
 	// exported for testing.
 	CheckTaskFinishedInterval = 500 * time.Millisecond
+	// CheckTaskCancelledInterval is the interval for checking if the task is cancelled.
+	// exported for testing.
+	CheckTaskCancelledInterval = 3 * time.Second
 	// RetrySQLTimes is the max retry times when executing SQL.
 	RetrySQLTimes = 30
 	// RetrySQLInterval is the initial interval between two SQL retries.
@@ -162,6 +166,29 @@ func (s *BaseScheduler) refreshTaskIfNeeded() error {
 		s.task.Store(newTask)
 	}
 	return nil
+}
+
+// checkTaskCancelled checks if the task is cancelled by user.
+func (s *BaseScheduler) checkTaskCancelled(ctx context.Context, cancel context.CancelFunc) {
+	taskID := s.GetTask().ID
+
+	ticker := time.NewTicker(CheckTaskCancelledInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		// We omit the error here and treat task as not cancelled.
+		taskBase, err := s.taskMgr.GetTaskBaseByID(s.ctx, taskID)
+		if err == nil && taskBase.State == proto.TaskStateCancelling {
+			s.logger.Info("task is cancelled by user, stop generating subtasks")
+			cancel()
+			return
+		}
+	}
 }
 
 // scheduleTask schedule the task execution step by step.
@@ -482,7 +509,21 @@ func (s *BaseScheduler) switch2NextStep() error {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
+	// Sometimes, it's time-consuming to generate subtasks, so we add a goroutine here
+	// to check if the task is cancelled and cancel the subtask generation if necessary.
+	subCtx, cancel := context.WithCancel(s.ctx)
+	eg := &errgroup.Group{}
+	eg.Go(func() error {
+		s.checkTaskCancelled(subCtx, cancel)
+		return nil
+	})
+	defer func() {
+		cancel()
+		_ = eg.Wait()
+	}()
+
+	metas, err := s.OnNextSubtasksBatch(subCtx, s, task, eligibleNodes, nextStep)
+
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePlanErr(err)
