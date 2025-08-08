@@ -29,11 +29,17 @@ function main() {
     fi
 
     # start the servers.
+    echo "🚀 Starting PD server pd-0, log in `pwd`/pd-0.log"
     bin/pd-server --name=pd-0 --data-dir=${data_base_dir}/pd-0/data --peer-urls=http://127.0.0.1:2380 --advertise-peer-urls=http://127.0.0.1:2380 --client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd0.log &
+    echo "🚀 Starting PD server pd-1, log in `pwd`/pd-1.log"
     bin/pd-server --name=pd-1 --data-dir=${data_base_dir}/pd-1/data --peer-urls=http://127.0.0.1:2381 --advertise-peer-urls=http://127.0.0.1:2381 --client-urls=http://127.0.0.1:2382 --advertise-client-urls=http://127.0.0.1:2382 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd1.log &
+    echo "🚀 Starting PD server pd-2, log in `pwd`/pd-2.log"
     bin/pd-server --name=pd-2 --data-dir=${data_base_dir}/pd-2/data --peer-urls=http://127.0.0.1:2383 --advertise-peer-urls=http://127.0.0.1:2383 --client-urls=http://127.0.0.1:2384 --advertise-client-urls=http://127.0.0.1:2384 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd2.log &
+    echo "🚀 Starting TiKV server tikv-0, log in `pwd`/tikv-0.log"
     bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-0/data --addr=127.0.0.1:20160 --advertise-addr=127.0.0.1:20160 --status-addr=127.0.0.1:20180 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv0.log &
+    echo "🚀 Starting TiKV server tikv-1, log in `pwd`/tikv-1.log"
     bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-1/data --addr=127.0.0.1:20161 --advertise-addr=127.0.0.1:20161 --status-addr=127.0.0.1:20181 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv1.log &
+    echo "🚀 Starting TiKV server tikv-2, log in `pwd`/tikv-2.log"
     bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-2/data --addr=127.0.0.1:20162 --advertise-addr=127.0.0.1:20162 --status-addr=127.0.0.1:20182 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv2.log &
 
     sleep 10
