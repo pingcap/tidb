@@ -1117,7 +1117,7 @@ func TestIndexUsageWithData2(t *testing.T) {
 			if len(rows) != 1 {
 				return false
 			}
-			if rows[0][0] != "2" || rows[0][1] != "1" || rows[0][2] != "1" {
+			if rows[0][0] != "2" || rows[0][1] != "0" || rows[0][2] != "1" {
 				return false
 			}
 			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
@@ -1192,7 +1192,7 @@ func TestIndexUsageWithData3(t *testing.T) {
 			if len(rows) != 1 {
 				return false
 			}
-			if rows[0][0] != "2" || rows[0][1] != "1" || rows[0][2] != "1" {
+			if rows[0][0] != "2" || rows[0][1] != "0" || rows[0][2] != "1" {
 				return false
 			}
 			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
