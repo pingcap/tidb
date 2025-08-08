@@ -23,22 +23,19 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
-// to run this test, you need to start a SYSTEM KS TiDB first.
 func TestOnUserKeyspace(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only runs in nextgen kernel")
 	}
 	// create the SYSTEM store and dom
 	realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-	userStore, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t,
+	userStore, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t,
 		realtikvtest.WithKeyspaceName("keyspace1"), realtikvtest.WithKeepSystemStore(true))
 	userTK := testkit.NewTestKit(t, userStore)
 	prepareAndUseDB("cross_ks", userTK)
@@ -59,14 +56,7 @@ func TestOnUserKeyspace(t *testing.T) {
 	userTK.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 	taskKey := importinto.TaskKey(int64(jobID))
 	// job to user keyspace, task to system keyspace
-	pool, err := dom.GetKSSessPool(keyspace.System)
-	require.NoError(t, err)
-	se, err := pool.Get()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		pool.Put(se)
-	})
-	sysKSTk := testkit.NewTestKitWithSession(t, kvstore.GetSystemStorage(), se.(sessionapi.Session))
+	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
 	jobQuerySQL := fmt.Sprintf("select count(1) from mysql.tidb_import_jobs where id = %d", jobID)
 	taskQuerySQL := fmt.Sprintf(`select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key='%s'
 		union select count(1) c from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
