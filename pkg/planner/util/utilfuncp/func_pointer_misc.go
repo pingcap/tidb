@@ -204,6 +204,14 @@ var GetPlanCostVer14PhysicalUnionAll func(pp base.PhysicalPlan, taskType propert
 var GetPlanCostVer24PhysicalUnionAll func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
 
+// GetPlanCostVer1PhysicalExchangeReceiver will be called by PhysicalExchangeReceiver in physicalOp pkg.
+var GetPlanCostVer1PhysicalExchangeReceiver func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer2PhysicalExchangeReceiver will be called by PhysicalExchangeReceiver in physicalOp pkg.
+var GetPlanCostVer2PhysicalExchangeReceiver func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
 // ResolveIndices4PhysicalLimit will be called by PhysicalLimit in physicalOp pkg.
 var ResolveIndices4PhysicalLimit func(pp base.PhysicalPlan) (err error)
 
