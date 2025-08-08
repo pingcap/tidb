@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/stretchr/testify/require"
@@ -653,9 +654,7 @@ func TestForIssue23387(t *testing.T) {
 	currentBootstrapVersion = version57
 
 	// Bootstrap to an old version, create a user.
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() { require.NoError(t, store.Close()) }()
+	store := teststore.NewMockStoreWithoutBootstrap(t)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 
