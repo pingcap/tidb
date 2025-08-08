@@ -1501,10 +1501,13 @@ type stmtLabelKeyType struct{}
 
 var stmtLabelKey stmtLabelKeyType
 
+// WithStmtLabel sets the label for the statement node.
 func WithStmtLabel(ctx context.Context, label string) context.Context {
 	return context.WithValue(ctx, stmtLabelKey, label)
 }
 
+// GetStmtLabel returns the label for the statement node.
+// context with stmtLabelKey will return the label if it exists.
 func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
 	if val := ctx.Value(stmtLabelKey); val != nil {
 		return val.(string)
