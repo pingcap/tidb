@@ -292,6 +292,9 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true)
 	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true)
 	return p

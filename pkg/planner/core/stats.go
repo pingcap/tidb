@@ -116,6 +116,9 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		return ds.StatsInfo(), false, nil
 	}
 	initStats(ds)
+	if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if ds.StatsInfo() != nil {
 		// Just reload the GroupNDVs.
 		selectivity := ds.StatsInfo().RowCount / ds.TableStats.RowCount
@@ -393,6 +396,9 @@ func detachCondAndBuildRangeForPath(
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
 		return nil
+	}
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
 	}
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
