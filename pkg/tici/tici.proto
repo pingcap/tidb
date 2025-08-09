@@ -202,7 +202,11 @@ message DebugGetShardManifestRequest {
   KeyRange key_range = 3;
 }
 
-message DebugGetShardManifestResponse { repeated FragMeta frag_metas = 1; }
+message DebugGetShardManifestResponse {
+  int32 status = 1;
+  repeated FragMeta frag_metas = 2;
+  uint64 shard_id = 3;
+}
 
 service MetaService {
   // Maintains heartbeat from worker nodes(such as writers, compactors) to meta
@@ -232,6 +236,7 @@ service MetaService {
   rpc AppendDeltaFragMeta(AppendDeltaFragMetaRequest)
       returns (AppendFragMetaResponse);
 
+  // TODO: this method should be replace by `FinishPartitionBuild`
   /// Append base fragment metadata, used for baseline shards
   /// MetaService is responsible for
   /// 1. Find the overlapped Shards for the given table_id, index_id and
@@ -253,23 +258,28 @@ service MetaService {
 
   // -----------------------------------------------------------------------------
   // APIs for importing data
-  rpc StartImportIndex(StartImportIndexRequest)
-      returns (StartImportIndexResponse);
+  rpc SubmitImportIndexJob(ImportIndexJobRequest)
+      returns (ImportIndexJobResponse);
 
   // Returns the cloud storage path where TiDB should upload a baseline shard
-  // for the specified [table_info, index_info, key_range].
+  // for the specified [table_id, index_id, key_range].
   rpc GetImportStoragePath(GetImportStoragePathRequest)
       returns (GetImportStoragePathResponse);
 
-  // Called by Import DXF to notify Meta Service after a partitions for
+  // Called by Import DXF to notify Meta Service after a partition for
   // the given index are uploaded.
-  rpc FinishPartitionUpload(FinishPartitionUploadRequest)
-      returns (FinishPartitionUploadResponse);
+  rpc FinishImportPartitionUpload(FinishImportPartitionUploadRequest)
+      returns (FinishImportResponse);
+
+  // Called by TiCI worker to notify Meta Service after a partition for
+  // the given index is built.
+  rpc FinishImportPartitionBuild(FinishImportPartitionBuildRequest)
+      returns (FinishImportResponse);
 
   // Called to notify Meta Service that the whole table/index upload is
   // finished.
   rpc FinishImportIndexUpload(FinishImportIndexUploadRequest)
-      returns (FinishImportIndexUploadResponse);
+      returns (FinishImportResponse);
 
   // -----------------------------------------------------------------------------
 }
@@ -323,7 +333,11 @@ message ImportWriteRequest {
   uint64 task_id = 1;
   int64 table_id = 2;
   int64 index_id = 3;
-  S3Location file_location = 4;
+  // The location of the file to be imported
+  // For example, s3://bucket/prefix/filename
+  string file_location = 4;
+  // The location of the fragment prefix
+  // For example, s3://bucket/prefix/
   string frag_prefix = 5;
 }
 
@@ -393,8 +407,7 @@ message CreateIndexRequest {
 
 // CreateIndexResponse is a response to the index creation request
 message CreateIndexResponse {
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
   // Created index ID
@@ -409,8 +422,7 @@ message DropIndexRequest {
 
 // DropIndexResponse is a response to the index drop request
 message DropIndexResponse {
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
 }
@@ -503,8 +515,7 @@ message GetIndexProgressResponse {
     NOTFOUND = 4;
     ERROR = 5;
   }
-  // Operation result status code, 0 means success
-  int32 status = 1;
+  ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;
   // Number of documents indexed so far
@@ -529,17 +540,17 @@ message GetIndexProgressResponse {
 //    supported as the cloud storage backend.
 //
 // 2. After import DXF has uploaded one partition data belonging to a baseline
-//    full text index, it calls `MarkPartitionUploadFinished`. This allows
+//    full text index, it calls `FinishPartitionUpload`. This allows
 //    TiCI to mark the partition as complete and make it available to downstream
 //    consumers.
 //
 // 3. After import DXF has uploaded all partitions data belonging to a baseline
-//    full text index on a table, it calls `MarkTableUploadFinishedRequest`.
+//    full text index on a table, it calls `FinishIndexUploadRequest`.
 //    This allows TiCI to mark the table as complete and make it available to
 //    GC data after consumed by downstream consumers.
 // -----------------------------------------------------------------------------
 
-message StartImportIndexRequest {
+message ImportIndexJobRequest {
   // Table ID of the target table.
   int64 table_id = 1;
   // Index ID of the target index.
@@ -548,10 +559,8 @@ message StartImportIndexRequest {
   uint64 start_ts = 3;
 }
 
-message StartImportIndexResponse {
-  // 0 - success
-  // ... other error codes
-  int32 status = 1;
+message ImportIndexJobResponse {
+  ErrorCode status = 1;
   // Optional human‑readable diagnostics, only defined when status ≠ 0.
   string error_message = 2;
   // The import index job_id in TiCI
@@ -566,9 +575,7 @@ message GetImportStoragePathRequest {
 }
 
 message GetImportStoragePathResponse {
-  // 0 - success
-  // ... other error codes
-  int32 status = 1;
+  ErrorCode status = 1;
   // Optional human‑readable diagnostics, only defined when status ≠ 0.
   string error_message = 2;
   // Object key inside the bucket that TiDB Import should write to.
@@ -576,21 +583,31 @@ message GetImportStoragePathResponse {
   string s3_path = 3;
 }
 
-message FinishPartitionUploadRequest {
+message FinishImportPartitionUploadRequest {
   int64 table_id = 1;
   int64 index_id = 2;
-  // Key range for the partition uploaded. [Inclusive, exclusive)
+  // Key range for the partition uploaded.
   KeyRange key_range = 3;
+  string s3_path = 4;
 }
 
-// DXF receives this in-band result so callers can
-// inspect the status and customized results.
-message FinishPartitionUploadResponse {
-  // 0 - success
-  // ... other error codes
-  int32 status = 1;
-  // Optional human‑readable diagnostics, only defined when status ≠ 0.
-  string error_message = 2;
+// - If the index is built successfully, the `status` field should be 0,
+//  and the `frag_metas` field should contain the metadata of the uploaded
+//  baseline fragments. MetaService is responsible for
+//  1. Find the overlapped Shards for the given table_id, index_id and key_range
+//  2. Append the frags to all the overlapped shards' baseline frags
+//  3. Update the ImportTask with task_id status as finished
+// - If the index building meet unrecoverable errors, then MetaService should
+//  update the ImportTask with task_id status as failed
+message FinishImportPartitionBuildRequest {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  uint64 task_id = 3;
+  ErrorCode status = 4;
+  // The uploaded fragment metadata when status is 0.
+  repeated FragMeta frag_metas = 5;
+  // The error message if the status is not 0.
+  string error_message = 6;
 }
 
 message FinishImportIndexUploadRequest {
@@ -600,10 +617,8 @@ message FinishImportIndexUploadRequest {
   int64 index_id = 2;
 }
 
-message FinishImportIndexUploadResponse {
-  // 0 - success
-  // ... other error codes
-  int32 status = 1;
+message FinishImportResponse {
+  ErrorCode status = 1;
   // Optional human‑readable diagnostics, only defined when status ≠ 0.
   string error_message = 2;
 }

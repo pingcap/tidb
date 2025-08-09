@@ -1477,7 +1477,7 @@ func (local *Backend) doImport(
 
 	if local.ticiWriteGroup != nil {
 		// If the import is done, we can close the write group.
-		return local.ticiWriteGroup.MarkTableUploadFinished(ctx)
+		return local.ticiWriteGroup.FinishIndexUpload(ctx)
 	}
 
 	return nil

@@ -219,7 +219,7 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 	if err != nil {
 		return err
 	}
-	if resp.Status != 0 {
+	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("create fulltext index failed", zap.String("indexID", resp.IndexId), zap.String("errorMessage", resp.ErrorMessage))
 		return nil
 	}
@@ -247,7 +247,7 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 	if err != nil {
 		return err
 	}
-	if resp.Status != 0 {
+	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("drop full text index failed", zap.Int64("table ID", req.TableId), zap.Int64("index ID", req.IndexId), zap.String("errorMessage", resp.ErrorMessage))
 		return nil
 	}
@@ -261,7 +261,7 @@ func (t *ManagerCtx) StartImportIndex(
 	tableID int64,
 	indexID int64,
 ) error {
-	req := &StartImportIndexRequest{
+	req := &ImportIndexJobRequest{
 		TableId: tableID,
 		IndexId: indexID,
 		// TODO: Set the StartTs as the commit_tso of imported data
@@ -277,11 +277,11 @@ func (t *ManagerCtx) StartImportIndex(
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
 		return errors.Wrap(t.err, "meta service client is nil")
 	}
-	resp, err := t.metaServiceClient.StartImportIndex(ctx, req)
+	resp, err := t.metaServiceClient.SubmitImportIndexJob(ctx, req)
 	if err != nil {
 		return err
 	}
-	if resp.Status != 0 {
+	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("start import index failed",
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
@@ -291,6 +291,7 @@ func (t *ManagerCtx) StartImportIndex(
 	logutil.BgLogger().Info("start import index success",
 		zap.Int64("tableID", tableID),
 		zap.Int64("indexID", indexID),
+		// log down the tici job ID for tracking
 		zap.Uint64("ticiJobID", resp.JobId),
 	)
 	return nil
@@ -327,7 +328,7 @@ func (t *ManagerCtx) GetCloudStoragePath(
 	if err != nil {
 		return "", err
 	}
-	if resp.Status != 0 {
+	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("Request TiCI cloud storage path failed",
 			zap.Int64("tableID", tblInfo.ID),
 			zap.Int64("indexID", indexInfo.ID),
@@ -345,20 +346,22 @@ func (t *ManagerCtx) GetCloudStoragePath(
 	return resp.S3Path, nil
 }
 
-// MarkPartitionUploadFinished notifies TiCI Meta Service that all partitions for the given table are uploaded.
-func (t *ManagerCtx) MarkPartitionUploadFinished(
+// FinishPartitionUpload notifies TiCI Meta Service that all partitions for the given table are uploaded.
+func (t *ManagerCtx) FinishPartitionUpload(
 	ctx context.Context,
 	tableId int64,
 	indexId int64,
 	lowerBound, upperBound []byte,
+	s3Path string,
 ) error {
-	req := &FinishPartitionUploadRequest{
+	req := &FinishImportPartitionUploadRequest{
 		TableId: tableId,
 		IndexId: indexId,
 		KeyRange: &KeyRange{
 			StartKey: lowerBound,
 			EndKey:   upperBound,
 		},
+		S3Path: s3Path,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -370,12 +373,12 @@ func (t *ManagerCtx) MarkPartitionUploadFinished(
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
 		return errors.Wrap(t.err, "meta service client is nil")
 	}
-	resp, err := t.metaServiceClient.FinishPartitionUpload(ctx, req)
+	resp, err := t.metaServiceClient.FinishImportPartitionUpload(ctx, req)
 	if err != nil {
 		return err
 	}
-	if resp.Status != 0 {
-		logutil.BgLogger().Error("MarkPartitionUploadFinished failed",
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("FinishPartitionUpload failed",
 			zap.Int64("tableID", tableId),
 			zap.Int64("indexID", indexId),
 			zap.String("startKey", string(lowerBound)),
@@ -383,15 +386,15 @@ func (t *ManagerCtx) MarkPartitionUploadFinished(
 			zap.String("errorMessage", resp.ErrorMessage))
 		return fmt.Errorf("tici mark partition upload finished error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("MarkPartitionUploadFinished success", zap.Int64("tableID", tableId),
+	logutil.BgLogger().Info("FinishPartitionUpload success", zap.Int64("tableID", tableId),
 		zap.Int64("indexID", indexId),
 		zap.String("startKey", string(lowerBound)),
 		zap.String("endKey", string(upperBound)))
 	return nil
 }
 
-// MarkTableUploadFinished notifies TiCI Meta Service that the whole table/index upload is finished.
-func (t *ManagerCtx) MarkTableUploadFinished(
+// FinishIndexUpload notifies TiCI Meta Service that the whole table/index upload is finished.
+func (t *ManagerCtx) FinishIndexUpload(
 	ctx context.Context,
 	tableID int64,
 	indexID int64,
@@ -414,14 +417,14 @@ func (t *ManagerCtx) MarkTableUploadFinished(
 	if err != nil {
 		return err
 	}
-	if resp.Status != 0 {
-		logutil.BgLogger().Error("MarkTableUploadFinished failed",
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("FinishIndexUpload failed",
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return fmt.Errorf("tici mark table upload finished error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("MarkTableUploadFinished success",
+	logutil.BgLogger().Info("FinishIndexUpload success",
 		zap.Int64("tableID", tableID),
 		zap.Int64("indexID", indexID))
 	return nil

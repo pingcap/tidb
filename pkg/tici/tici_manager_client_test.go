@@ -43,11 +43,11 @@ func (m *MockMetaServiceClient) GetCloudStoragePath(ctx context.Context, in *Get
 	args := m.Called(ctx, in)
 	return args.Get(0).(*GetImportStoragePathResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) MarkPartitionUploadFinished(ctx context.Context, in *FinishPartitionUploadRequest, opts ...grpc.CallOption) (*FinishPartitionUploadResponse, error) {
+func (m *MockMetaServiceClient) FinishPartitionUpload(ctx context.Context, in *FinishPartitionUploadRequest, opts ...grpc.CallOption) (*FinishPartitionUploadResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*FinishPartitionUploadResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) MarkTableUploadFinished(ctx context.Context, in *FinishImportIndexUploadRequest, opts ...grpc.CallOption) (*FinishImportIndexUploadResponse, error) {
+func (m *MockMetaServiceClient) FinishIndexUpload(ctx context.Context, in *FinishImportIndexUploadRequest, opts ...grpc.CallOption) (*FinishImportIndexUploadResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*FinishImportIndexUploadResponse), args.Error(1)
 }
@@ -124,7 +124,7 @@ func TestGetCloudStoragePath(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestMarkPartitionUploadFinished(t *testing.T) {
+func TestFinishPartitionUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
 	tableID := int64(1)
@@ -133,52 +133,52 @@ func TestMarkPartitionUploadFinished(t *testing.T) {
 
 	// 1st call – success
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
+		On("FinishPartitionUpload", mock.Anything, mock.Anything).
 		Return(&FinishPartitionUploadResponse{Status: 0}, nil).
 		Once()
-	assert.NoError(t, ctx.MarkPartitionUploadFinished(context.Background(), tableID, indexID, lower, upper))
+	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper))
 
 	// 2nd call – business error from TiCI
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
+		On("FinishPartitionUpload", mock.Anything, mock.Anything).
 		Return(&FinishPartitionUploadResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
-	assert.Error(t, ctx.MarkPartitionUploadFinished(context.Background(), tableID, indexID, lower, upper))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper))
 
 	// 3rd call – RPC error
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
+		On("FinishPartitionUpload", mock.Anything, mock.Anything).
 		Return(&FinishPartitionUploadResponse{}, errors.New("rpc error")).
 		Once()
-	assert.Error(t, ctx.MarkPartitionUploadFinished(context.Background(), tableID, indexID, lower, upper))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper))
 
 	mockClient.AssertExpectations(t)
 }
 
-func TestMarkTableUploadFinished(t *testing.T) {
+func TestFinishIndexUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
 	tableID, indexID := int64(1), int64(2)
 
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
+		On("FinishIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportIndexUploadResponse{Status: 0}, nil).
 		Once()
-	err := ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
+	err := ctx.FinishIndexUpload(context.Background(), tableID, indexID)
 	assert.NoError(t, err)
 
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
+		On("FinishIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportIndexUploadResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
-	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), tableID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
+		On("FinishIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportIndexUploadResponse{}, errors.New("rpc error")).
 		Once()
-	err = ctx.MarkTableUploadFinished(context.Background(), tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), tableID, indexID)
 	assert.Error(t, err)
 }
 

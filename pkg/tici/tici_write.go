@@ -175,15 +175,24 @@ func (w *DataWriter) FetchCloudStoragePath(
 	return s3Path, nil
 }
 
-// MarkPartitionUploadFinished notifies TiCI Meta Service that a partition upload is finished.
+// FinishPartitionUpload notifies TiCI Meta Service that a partition upload is finished.
 // Uses the stored s3Path if not explicitly provided.
-func (w *DataWriter) MarkPartitionUploadFinished(
+func (w *DataWriter) FinishPartitionUpload(
 	ctx context.Context,
 	ticiMgr *ManagerCtx,
 	lowerBound, upperBound []byte,
+	s3PathOpt ...string,
 ) error {
 	logger := w.logger
-	err := ticiMgr.MarkPartitionUploadFinished(ctx, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound)
+	s3Path := w.s3Path
+	if len(s3PathOpt) > 0 && s3PathOpt[0] != "" {
+		s3Path = s3PathOpt[0]
+	}
+	if s3Path == "" {
+		logger.Warn("no s3Path set for FinishPartitionUpload")
+		return nil // or return an error if s3Path is required
+	}
+	err := ticiMgr.FinishPartitionUpload(ctx, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound, s3Path)
 	if err != nil {
 		logger.Error("failed to mark partition upload finished",
 			zap.String("startKey", string(lowerBound)),
@@ -199,13 +208,13 @@ func (w *DataWriter) MarkPartitionUploadFinished(
 	return err
 }
 
-// MarkTableUploadFinished notifies TiCI Meta Service that the whole table/index upload is finished.
-func (w *DataWriter) MarkTableUploadFinished(
+// FinishIndexUpload notifies TiCI Meta Service that the whole table/index upload is finished.
+func (w *DataWriter) FinishIndexUpload(
 	ctx context.Context,
 	ticiMgr *ManagerCtx,
 ) error {
 	logger := w.logger
-	if err := ticiMgr.MarkTableUploadFinished(ctx, w.tblInfo.ID, w.idxInfo.ID); err != nil {
+	if err := ticiMgr.FinishIndexUpload(ctx, w.tblInfo.ID, w.idxInfo.ID); err != nil {
 		logger.Error("failed to mark table upload finished", zap.Error(err))
 		return err
 	}
@@ -458,9 +467,9 @@ func (g *DataWriterGroup) FetchCloudStoragePath(
 	return nil
 }
 
-// MarkPartitionUploadFinished runs MarkPartitionUploadFinished for all writers.
+// FinishPartitionUpload runs FinishPartitionUpload for all writers.
 // Optionally, you can pass a slice of s3Paths to override the stored s3Path for each writer.
-func (g *DataWriterGroup) MarkPartitionUploadFinished(
+func (g *DataWriterGroup) FinishPartitionUpload(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 ) error {
@@ -468,19 +477,19 @@ func (g *DataWriterGroup) MarkPartitionUploadFinished(
 		return nil
 	}
 	for _, w := range g.writers {
-		if err := w.MarkPartitionUploadFinished(ctx, g.mgrCtx, lowerBound, upperBound); err != nil {
+		if err := w.FinishPartitionUpload(ctx, g.mgrCtx, lowerBound, upperBound); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// MarkTableUploadFinished runs MarkTableUploadFinished for all writers.
-func (g *DataWriterGroup) MarkTableUploadFinished(
+// FinishIndexUpload runs FinishIndexUpload for all writers.
+func (g *DataWriterGroup) FinishIndexUpload(
 	ctx context.Context,
 ) error {
 	for _, w := range g.writers {
-		if err := w.MarkTableUploadFinished(ctx, g.mgrCtx); err != nil {
+		if err := w.FinishIndexUpload(ctx, g.mgrCtx); err != nil {
 			return err
 		}
 		w.logger.Info("successfully marked table upload finished for TICIDataWriter")
