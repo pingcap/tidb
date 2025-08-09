@@ -358,3 +358,50 @@ func TestExclusiveShared(t *testing.T) {
 	runnable = j.checkRunnable(0, pendingInvolves)
 	require.True(t, runnable)
 }
+
+func TestRunningAlterSchemaReadOnlyDDLOrder(t *testing.T) {
+	j := newRunningJobs()
+	require.Equal(t, "", j.allIDs())
+	checkInvariants(t, j)
+	readOnlyInvolve := []model.InvolvingSchemaInfo{
+		{Database: "db1", Table: model.InvolvingAll},
+	}
+	var readOnlyJobID int64 = 2
+
+	// block by running table ddl
+	jobID1, involves1 := mkJob(1, "db1.t1", "db1.t2")
+	runnable := j.checkRunnable(jobID1, involves1)
+	require.True(t, runnable)
+	j.addRunning(jobID1, involves1)
+	runnable = j.checkRunnable(readOnlyJobID, readOnlyInvolve)
+	require.False(t, runnable)
+	j.removeRunning(jobID1, involves1)
+
+	// block by running db ddl
+	dbInvolve := []model.InvolvingSchemaInfo{
+		{Database: "db1", Table: model.InvolvingAll},
+	}
+	var dbJobID int64 = 3
+	runnable = j.checkRunnable(dbJobID, dbInvolve)
+	require.True(t, runnable)
+	j.addRunning(dbJobID, dbInvolve)
+	runnable = j.checkRunnable(readOnlyJobID, readOnlyInvolve)
+	require.False(t, runnable)
+	j.removeRunning(dbJobID, dbInvolve)
+
+	// block by pending table ddl
+	runnable = j.checkRunnable(jobID1, involves1)
+	require.True(t, runnable)
+	j.addPending(involves1)
+	runnable = j.checkRunnable(readOnlyJobID, readOnlyInvolve)
+	require.False(t, runnable)
+	j.resetAllPending()
+
+	// block by pending db ddl
+	runnable = j.checkRunnable(dbJobID, dbInvolve)
+	require.True(t, runnable)
+	j.addPending(dbInvolve)
+	runnable = j.checkRunnable(readOnlyJobID, readOnlyInvolve)
+	require.False(t, runnable)
+	j.resetAllPending()
+}

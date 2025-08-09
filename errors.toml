@@ -1191,6 +1191,11 @@ error = '''
 A primary key index cannot be invisible
 '''
 
+["ddl:3552"]
+error = '''
+Access to system schema '%s' is rejected.
+'''
+
 ["ddl:3593"]
 error = '''
 You cannot use the window function '%s' in this context.'

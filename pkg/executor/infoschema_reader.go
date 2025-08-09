@@ -2920,6 +2920,11 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		e.initialized = true
 
 		sm := sctx.GetSessionManager()
+		failpoint.Inject("mockModifySchemaReadOnlyDDL", func() {
+			if sm == nil {
+				sm = domain.GetDomain(sctx).InfoSyncer().GetSessionManager()
+			}
+		})
 		if sm == nil {
 			e.retrieved = true
 			return nil, nil
