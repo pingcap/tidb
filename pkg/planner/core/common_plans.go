@@ -1504,14 +1504,14 @@ func (e *Explain) prepareTaskDot(pa *pair, taskTp string, buffer *bytes.Buffer) 
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
 			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
-		case *PhysicalIndexMergeReader:
-			for i := range copPlan.partialPlans {
-				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.partialPlans[i]})
+		case *physicalop.PhysicalIndexMergeReader:
+			for i := range copPlan.PartialPlansRaw {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.PartialPlansRaw[i].ExplainID()))
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.PartialPlansRaw[i]})
 			}
-			if copPlan.tablePlan != nil {
-				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-				copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan, isChildOfINL: true})
+			if copPlan.TablePlan != nil {
+				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+				copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan, isChildOfINL: true})
 			}
 		}
 		for _, child := range curPair.physicalPlan.Children() {

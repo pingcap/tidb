@@ -184,33 +184,6 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 	return
 }
 
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	if p.tablePlan != nil {
-		err = p.tablePlan.ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	for i := range p.partialPlans {
-		err = p.partialPlans[i].ResolveIndices()
-		if err != nil {
-			return err
-		}
-	}
-	if p.HandleCols != nil && p.KeepOrder {
-		p.HandleCols, err = p.HandleCols.ResolveIndices(p.Schema())
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // resolveIndices4PhysicalSelection implements Plan interface.
 func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
 	p := pp.(*physicalop.PhysicalSelection)

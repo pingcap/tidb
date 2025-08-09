@@ -557,12 +557,12 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		return false, "get a Shuffle plan"
 	case *physicalop.PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
-	case *PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
 			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 		underIndexMerge = true
-		subPlans = append(subPlans, x.partialPlans...)
+		subPlans = append(subPlans, x.PartialPlansRaw...)
 	case *PhysicalIndexScan:
 		if underIndexMerge && x.isFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
