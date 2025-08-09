@@ -916,6 +916,9 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
 
 	configFile = "config.toml.example"
+	if kerneltype.IsNextGen() {
+		configFile = "config.toml.nextgen.example"
+	}
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
