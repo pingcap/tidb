@@ -1513,11 +1513,12 @@ func constructDS2IndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:         indexConds,
-		TableFilters:         tblConds,
-		CountAfterIndex:      rowCount,
-		CountAfterAccess:     rowCount,
-		CorrCountAfterAccess: 0,
+		IndexFilters:        indexConds,
+		TableFilters:        tblConds,
+		CountAfterIndex:     rowCount,
+		CountAfterAccess:    rowCount,
+		MinCountAfterAccess: 0,
+		MaxCountAfterAccess: 0,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {
