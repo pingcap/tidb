@@ -1558,3 +1558,35 @@ func TestLoadStatsForBitColumn(t *testing.T) {
 		tk.MustExec("drop table " + tableName)
 	}
 }
+
+func TestGetStatsInfoByID(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+
+	h := dom.StatsHandle()
+
+	// Test non-existent table
+	result := h.GetStatsInfoByID(dom.InfoSchema(), 99999)
+	require.Nil(t, result)
+
+	// Test table without stats (pseudo)
+	testKit.MustExec("CREATE TABLE test_table (id INT, name VARCHAR(50))")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_table"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	result = h.GetStatsInfoByID(dom.InfoSchema(), tableID)
+	require.NotNil(t, result)
+	require.True(t, result.Pseudo)
+	require.Equal(t, int64(statistics.PseudoRowCount), result.RealtimeCount)
+
+	// Test table with real stats
+	testKit.MustExec("INSERT INTO test_table VALUES (1, 'test'), (2, 'data')")
+	testKit.MustExec("ANALYZE TABLE test_table")
+
+	result = h.GetStatsInfoByID(dom.InfoSchema(), tableID)
+	require.NotNil(t, result)
+	require.False(t, result.Pseudo)
+	require.Equal(t, int64(2), result.RealtimeCount)
+}
