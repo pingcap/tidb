@@ -165,8 +165,9 @@ func attach2Task4PhysicalUnionScan(pp base.PhysicalPlan, tasks ...base.Task) bas
 	return p.BasePhysicalPlan.Attach2Task(task)
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalApply) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalApply implements PhysicalPlan interface.
+func attach2Task4PhysicalApply(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalApply)
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
@@ -649,7 +650,7 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	// We need to refactor these logics.
 	aggPushedDown := false
 	switch p.tablePlan.(type) {
-	case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg:
+	case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 		aggPushedDown = true
 	}
 
@@ -1527,7 +1528,7 @@ func inheritStatsFromBottomElemForIndexJoinInner(p base.PhysicalPlan, indexJoinI
 		case *physicalop.PhysicalProjection:
 			// mainly about the rowEst, proj doesn't change that.
 			p.SetStats(stats.Scale(1))
-		case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg:
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			// todo: for simplicity, we can just inherit it from child.
 			p.SetStats(stats.Scale(1))
 		case *physicalop.PhysicalUnionScan:
@@ -1552,8 +1553,9 @@ func inheritStatsFromBottomTaskForIndexJoinInner(p base.PhysicalPlan, t base.Tas
 	inheritStatsFromBottomElemForIndexJoinInner(p, indexJoinInfo, t.Plan().StatsInfo())
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalStreamAgg) Attach2Task(tasks ...base.Task) base.Task {
+// attach2Task4PhysicalStreamAgg implements PhysicalPlan interface.
+func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
+	p := pp.(*physicalop.PhysicalStreamAgg)
 	t := tasks[0].Copy()
 	if cop, ok := t.(*CopTask); ok {
 		// We should not push agg down across
