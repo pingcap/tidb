@@ -170,7 +170,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}
-	rangeCounts, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
+	rangeCounts, _, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -180,7 +180,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges, nil)
+		rangeCount, _, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges, nil)
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
@@ -196,30 +196,30 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, float64, bool) {
+func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) (rangeCounts []float64, minCount float64, maxCount float64, ok bool) {
 	var err error
-	var count, corrCount float64
-	rangeCounts := make([]float64, len(ranges))
+	var count float64
+	rangeCounts = make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.GetIdx(idxID)
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
-			count, corrCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran}, nil)
+			count, minCount, maxCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran}, nil)
 		} else {
 			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
 			count, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
 		}
 		if err != nil {
-			return nil, 0, false
+			return nil, 0, 0, false
 		}
 		rangeCounts[i] = count
 	}
-	return rangeCounts, corrCount, true
+	return rangeCounts, minCount, maxCount, true
 }
 
 // convertRangeFromExpectedCnt builds new ranges used to estimate row count we need to scan in table scan before finding specified
