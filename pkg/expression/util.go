@@ -1146,7 +1146,7 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 		innerMap := make(map[string]struct{})
 		cnfItems := SplitCNFItems(dnfItem)
 		for _, cnfItem := range cnfItems {
-			code := cnfItem.HashCode()
+			code := cnfItem.CanonicalHashCode()
 			if i == 0 {
 				codeMap[string(code)] = 1
 				hashcode2Expr[string(code)] = cnfItem
@@ -1176,7 +1176,7 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 		cnfItems := SplitCNFItems(dnfItem)
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
-			code := cnfItem.HashCode()
+			code := cnfItem.CanonicalHashCode()
 			_, ok := hashcode2Expr[string(code)]
 			if !ok {
 				newCNFItems = append(newCNFItems, cnfItem)
@@ -1496,7 +1496,7 @@ func RemoveDupExprs(exprs []Expression) []Expression {
 	}
 	exists := make(map[string]struct{}, len(exprs))
 	return slices.DeleteFunc(exprs, func(expr Expression) bool {
-		key := string(expr.HashCode())
+		key := string(expr.CanonicalHashCode())
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			exists[key] = struct{}{}
 			return false
