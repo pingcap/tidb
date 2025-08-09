@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -559,7 +560,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
-			val:   "on",
+			val:   "ON",
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
@@ -611,7 +612,13 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		if sysVar.field != "" {
 			varsRelatedFields = append(varsRelatedFields, sysVar.field)
 		}
-		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		sv := variable.GetSysVar(sysVar.name)
+		require.NotNil(t, sv)
+		if sv.HasSessionScope() {
+			require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		} else if sv.HasGlobalScope() {
+			require.NoError(t, sv.SetGlobalFromHook(context.TODO(), sessionVars, sysVar.val, false))
+		}
 	}
 
 	defaultEvalCtx := NewEvalContext()
