@@ -197,6 +197,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	case model.StateNone:
 		dbInfo.ReadOnly = args.ReadOnly
 		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		    job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
