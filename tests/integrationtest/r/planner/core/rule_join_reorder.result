@@ -47,7 +47,7 @@ Sort	2.50	root		planner__core__rule_join_reorder.queries_identifier.id
 explain format='brief' select * from t left join t1 on t.a=t1.a inner join t2 on t.a=t2.a and t2.c = 100 left join t3 on t2.a=t3.a and t3.b > 1 left join t4 on t2.a = t4.a where (t2.b > 100 or t.a > 10 or t1.b < 10);
 id	estRows	task	access object	operator info
 Projection	19.51	root		planner__core__rule_join_reorder.t.a, planner__core__rule_join_reorder.t1.a, planner__core__rule_join_reorder.t1.b, planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t2.b, planner__core__rule_join_reorder.t2.c, planner__core__rule_join_reorder.t3.a, planner__core__rule_join_reorder.t3.b, planner__core__rule_join_reorder.t4.a, planner__core__rule_join_reorder.t4.b
-└─Selection	19.51	root		or(gt(planner__core__rule_join_reorder.t2.b, 100), or(gt(planner__core__rule_join_reorder.t.a, 10), lt(planner__core__rule_join_reorder.t1.b, 10))), or(gt(planner__core__rule_join_reorder.t2.b, 100), or(gt(planner__core__rule_join_reorder.t2.a, 10), lt(planner__core__rule_join_reorder.t1.b, 10)))
+└─Selection	19.51	root		or(gt(planner__core__rule_join_reorder.t2.b, 100), or(gt(planner__core__rule_join_reorder.t.a, 10), lt(planner__core__rule_join_reorder.t1.b, 10)))
   └─HashJoin	24.39	root		left outer join, left side:HashJoin, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t4.a)]
     ├─HashJoin(Build)	19.51	root		left outer join, left side:HashJoin, equal:[eq(planner__core__rule_join_reorder.t.a, planner__core__rule_join_reorder.t1.a)]
     │ ├─HashJoin(Build)	15.61	root		inner join, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t.a)]

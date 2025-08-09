@@ -1242,7 +1242,7 @@ Projection	100.00	root		tpch50.supplier.s_name, Column#72
 └─TopN	100.00	root		Column#72:desc, tpch50.supplier.s_name, offset:0, count:100
   └─HashAgg	12799.64	root		group by:tpch50.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch50.supplier.s_name)->tpch50.supplier.s_name
     └─IndexHashJoin	7814888.66	root		anti semi join, inner:IndexLookUp, left side:IndexHashJoin, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey)
-      ├─IndexHashJoin(Build)	9768610.82	root		semi join, inner:IndexLookUp, left side:IndexJoin, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey), ne(tpch50.lineitem.l_suppkey, tpch50.supplier.s_suppkey)
+      ├─IndexHashJoin(Build)	9768610.82	root		semi join, inner:IndexLookUp, left side:IndexJoin, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey)
       │ ├─IndexJoin(Build)	12210763.53	root		inner join, inner:TableReader, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.orders.o_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)
       │ │ ├─HashJoin(Build)	12033011.28	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
       │ │ │ ├─HashJoin(Build)	19999.44	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
