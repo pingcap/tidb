@@ -27,58 +27,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalExpand) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	if len(p.LevelExprs) > 0 {
-		return p.toPBV2(ctx, storeType)
-	}
-	client := ctx.GetClient()
-	groupingSetsPB, err := p.GroupingSets.ToPB(ctx.GetExprCtx().GetEvalCtx(), client)
-	if err != nil {
-		return nil, err
-	}
-	expand := &tipb.Expand{
-		GroupingSets: groupingSetsPB,
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		expand.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand, Expand: expand, ExecutorId: &executorID}, nil
-}
-
-func (p *PhysicalExpand) toPBV2(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	projExprsPB := make([]*tipb.ExprSlice, 0, len(p.LevelExprs))
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	for _, exprs := range p.LevelExprs {
-		expressionsPB, err := expression.ExpressionsToPBList(evalCtx, exprs, client)
-		if err != nil {
-			return nil, err
-		}
-		projExprsPB = append(projExprsPB, &tipb.ExprSlice{Exprs: expressionsPB})
-	}
-	expand2 := &tipb.Expand2{
-		ProjExprs:            projExprsPB,
-		GeneratedOutputNames: p.ExtraGroupingColNames,
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		expand2.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand2, Expand2: expand2, ExecutorId: &executorID}, nil
-}
-
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
 // range and index are equal.
 func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
