@@ -183,6 +183,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
         "//pkg/table/tblsession",
         "//pkg/telemetry",
         "//pkg/testkit/testmain",
