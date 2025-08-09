@@ -325,3 +325,18 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
 		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE t0(c0 DOUBLE);`)
+	tk.MustExec(`CREATE TABLE t1(c1 DOUBLE);`)
+	tk.MustExec(`INSERT INTO t0(c0) VALUES (0.6);`)
+	tk.MustExec(`INSERT INTO t1(c1) VALUES (1);`)
+	tk.MustQuery(`SELECT t1.c1,subQuery1.col_0
+FROM t1
+         RIGHT JOIN (SELECT CAST(t0.c0 AS DECIMAL) AS col_0
+                     FROM t0) as subQuery1 ON (((((IF(((t1.c1) <= (subQuery1.col_0)), (subQuery1.col_0),
+                                                      subQuery1.col_0)))))) INNER JOIN t1 as t1_alias on t1.c1;`)
+}
