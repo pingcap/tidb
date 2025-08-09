@@ -227,12 +227,12 @@ select * from t where a < -1;
 a	b
 explain format='brief' select * from t where a > 0;
 id	estRows	task	access object	operator info
-PartitionUnion	4.00	root		
+PartitionUnion	2.27	root		
 ├─TableReader	1.00	root		data:Selection
 │ └─Selection	1.00	cop[tikv]		gt(util__ranger.t.a, 0)
 │   └─TableFullScan	1.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	3.00	root		data:Selection
-  └─Selection	3.00	cop[tikv]		gt(util__ranger.t.a, 0)
+└─TableReader	1.27	root		data:Selection
+  └─Selection	1.27	cop[tikv]		gt(util__ranger.t.a, 0)
     └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a > 0;
 a	b

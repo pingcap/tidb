@@ -29,6 +29,7 @@ import (
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -41,7 +42,7 @@ import (
 )
 
 var (
-	outOfRangeBetweenRate int64 = 100
+	outOfRangeNDV int64 = 100
 )
 
 // Selectivity is a function calculate the selectivity of the expressions on the specified HistColl.
@@ -604,14 +605,15 @@ const valueAwareRowAddedThreshold = 0.5
 // IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
 // has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
 func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum,
-	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
-	if modifyCount <= 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
-		return false
-	}
+	histCnt float64, histNDV float64, realtimeRowCount int64) bool {
 
 	// This represents data changes since ANALYZE - we use absolute difference as a proxy for
 	// activity level since we cannot distinguish between inserts, deletes, and updates
 	newRowsAdded := hg.AbsRowCountDifference(realtimeRowCount)
+
+	if newRowsAdded == 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
+		return false
+	}
 
 	// Calculate average count per distinct value
 	avgValueCount := hg.NotNullCount() / histNDV
@@ -1146,8 +1148,8 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 	if increaseRowCount <= 0 {
 		return 0 // it must be 0 since the histogram contains the whole data
 	}
-	if ndv < outOfRangeBetweenRate {
-		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	if ndv < outOfRangeNDV {
+		ndv = outOfRangeNDV // avoid inaccurate selectivity caused by small NDV
 	}
 	selectivity := 1 / float64(ndv)
 	if selectivity*float64(columnRowCount) > float64(increaseRowCount) {
@@ -1156,34 +1158,82 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 	return selectivity
 }
 
-// outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
-// and the searched value does not appear in the topN
-func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {
-	// If the table hasn't been modified, it's safe to return 0.
-	if modifyCount == 0 {
-		return 0
+// unmatchedEqAverage estimates the row count for equal conditions not matched in TopN or last value of a bucket.
+// Func call can pass in nil for c or idx, but at least one of them must be non-nil. If both are nil, then
+// the returned result will be based on realtimeRowCount only, and the maxEstimate will be equal to realtimeRowCount.
+func unmatchedEQAverage(sctx planctx.PlanContext, hg *statistics.Histogram, topN *statistics.TopN, realtimeRowCount float64) (result, maxEstimate float64) {
+	fullRowCount, fullNDV, histRowCount, histNDV, minTopN, lenTopN, fullResult := float64(0), float64(0), float64(0), float64(0), float64(0), float64(0), float64(0)
+	if hg != nil {
+		fullRowCount = hg.TotalRowCount()
+		fullNDV = float64(hg.NDV)
+		histRowCount = hg.NotNullCount()
+		histNDV = float64(hg.NDV)
 	}
-	// Calculate "newly added rows" using original row count. We do NOT use notNullCount here
-	// because that can always be less than realtimeRowCount if NULLs exist
-	newRows := realtimeRowCount - origRowCount
-	// If the original row count is zero - take the min of original row count and realtimeRowCount
-	if notNullCount <= 0 {
-		notNullCount = min(origRowCount, realtimeRowCount)
+	if topN != nil {
+		histNDV = float64(hg.NDV - int64(topN.Num()))
+		minTopN = float64(topN.MinCount())
+		lenTopN = float64(topN.Num())
 	}
-	// If realtimeRowCount has reduced below the original, we can't determine if there has been a
-	// combination of inserts/updates/deletes or only deletes - any out of range estimate is unreliable
-	if newRows < 0 {
-		newRows = min(notNullCount, realtimeRowCount)
-	}
-	// if no NDV - derive an NDV using sqrt
-	if ndv <= 0 {
-		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
+	addedRows := hg.AbsRowCountDifference(int64(realtimeRowCount))
+	missingHist := histRowCount == 0 && lenTopN > 0 && lenTopN <= fullNDV
+	allTopN := missingHist && lenTopN == fullNDV
+	if histNDV > 0 && histRowCount > 0 {
+		result = histRowCount / histNDV
+		maxEstimate = histRowCount - (histNDV - 1)
 	} else {
-		// We need to increase the ndv by increaseFactor because the estimate will be increased by
-		// the caller of the function
-		ndv *= increaseFactor
+		if allTopN {
+			// Reduce the risk of low NDV.
+			fullNDV = max(float64(outOfRangeNDV), fullNDV)
+		}
+		if fullNDV <= 0 {
+			fullNDV = float64(outOfRangeNDV)
+		}
+		// Setup default estimates if we don't have histogram buckets.
+		if fullRowCount > 0 {
+			fullResult = fullRowCount / fullNDV
+			maxEstimate = fullRowCount - (fullNDV - 1)
+		} else if realtimeRowCount > 0 {
+			allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
+			if allowUseModifyCount {
+				fullResult = realtimeRowCount / fullNDV
+				maxEstimate = realtimeRowCount - (fullNDV - 1)
+			}
+		}
 	}
-	return max(1, newRows/ndv)
+	// If we didn't get a result, but we have a fullResult - use that.
+	if result <= 0 && fullResult > 0 {
+		result = fullResult
+	} else {
+		result = 1.0
+	}
+	// Do not allow the result to be greater than the smallest TopN value.
+	if minTopN > 0 {
+		result = min(result, minTopN)
+		// If we have valid stats, the "worst case" estimate should not be greater than the smallest TopN value.
+		maxEstimate = min(minTopN, maxEstimate)
+	}
+	// If we've gotten here - our worst case is very large.
+	if maxEstimate <= 0 {
+		maxEstimate = addedRows
+	}
+	skewEstimate := adjustEQSkewRisk(sctx, maxEstimate, result)
+	// Also return the maxEstimate, so the caller can assess the risk of skew.
+	return max(0, result+skewEstimate), maxEstimate
+}
+
+func adjustEQSkewRisk(sctx planctx.PlanContext, maxEstimate, currRowEst float64) float64 {
+	// skewRatio determines how much of the potential skew should be considered between the estimated/average
+	// row count and the worst case row count. This code should only be considered when we do not have a matching
+	// value in the TopN or histogram buckets.
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
+	skewEstimate := float64(0)
+	if skewRatio > 0 {
+		// Calculate the adjusted value that should be considered to be added to the original estimate by the
+		// calling function.
+		skewEstimate = max(0, (maxEstimate-currRowEst)*skewRatio)
+	}
+	return skewEstimate
 }
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.

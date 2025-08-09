@@ -413,10 +413,10 @@ insert into t values (1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E"), (6, "F");
 analyze table t;
 desc format = 'brief' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
 id	estRows	task	access object	operator info
-Projection	1.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
-└─IndexLookUp	1.00	root		
-  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:["a" 2,"a" 2], ["b" 5,"b" 5], keep order:false
-  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
+Projection	2.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
+└─Selection	4.80	root		or(and(eq(lower(explain_generate_column_substitute.t.b), "a"), eq(plus(explain_generate_column_substitute.t.a, 1), 2)), and(eq(lower(explain_generate_column_substitute.t.b), "b"), eq(plus(explain_generate_column_substitute.t.a, 1), 5)))
+  └─TableReader	6.00	root		data:TableFullScan
+    └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 desc format = 'brief' select * from t where not (lower(b) >= "a");
 id	estRows	task	access object	operator info
 Projection	1.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b

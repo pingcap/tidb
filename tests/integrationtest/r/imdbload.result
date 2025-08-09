@@ -336,8 +336,8 @@ IndexLookUp_11	83406.52	root
 └─TableRowIDScan_10(Probe)	83406.52	cop[tikv]	table:cast_info	keep order:false
 explain select * from aka_title where kind_id = 5;
 id	estRows	task	access object	operator info
-TableReader_8	34260.33	root		data:Selection_7
-└─Selection_7	34260.33	cop[tikv]		eq(imdbload.aka_title.kind_id, 5)
+TableReader_8	24700.00	root		data:Selection_7
+└─Selection_7	24700.00	cop[tikv]		eq(imdbload.aka_title.kind_id, 5)
   └─TableFullScan_6	528337.00	cop[tikv]	table:aka_title	keep order:false
 explain select * from aka_title where kind_id > 7;
 id	estRows	task	access object	operator info
