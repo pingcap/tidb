@@ -19,10 +19,14 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -323,6 +327,18 @@ var Attach2Task4PhysicalHashJoin func(pp base.PhysicalPlan, tasks ...base.Task) 
 var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
+// GetPlanCostVer14PhysicalIndexMergeReader calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalIndexMergeReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + probe-child-cost +
+// build-hash-cost + build-filter-cost +
+// (probe-filter-cost + probe-hash-cost) / concurrency
+var GetPlanCostVer24PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
 // GetPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +
 // build-hash-cost + build-filter-cost +
@@ -401,3 +417,34 @@ var DoOptimize func(
 
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// *************************************** index scan helpers ********************************************
+
+// GetDataSourceSchema4IndexScan provides the DataSourceSchema for an IndexScan if pp is a core.PhysicalIndexScan.
+// It returns (schema, true) when pp is an IndexScan; otherwise (nil, false).
+var GetDataSourceSchema4IndexScan func(pp base.PhysicalPlan) (*expression.Schema, bool)
+
+// GetByItems4IndexScan provides the ByItems for an IndexScan if pp is a core.PhysicalIndexScan.
+// It returns (byItems, true) when pp is an IndexScan; otherwise (nil, false).
+var GetByItems4IndexScan func(pp base.PhysicalPlan) ([]*util.ByItems, bool)
+
+// FlattenPushDownPlan flattens a physical plan and returns all physical plans in the tree.
+var FlattenPushDownPlan func(p base.PhysicalPlan) []base.PhysicalPlan
+
+// GetTblStats gets the statistics histogram collection from a physical plan.
+var GetTblStats func(p base.PhysicalPlan) *statistics.HistColl
+
+// ClonePhysicalPlansForPlanCache clones physical plans for plan cache usage.
+var ClonePhysicalPlansForPlanCache func(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool)
+
+// AppendChildCandidate appends a child candidate to the origin physical plan.
+var AppendChildCandidate func(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp)
+
+// ResolveIndicesForVirtualColumn resolves indices for virtual columns.
+var ResolveIndicesForVirtualColumn func(result []*expression.Column, schema *expression.Schema) error
+
+// LoadTableStats loads statistics for a table.
+var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
+
+// GetDynamicAccessPartition gets dynamic access partition information.
+var GetDynamicAccessPartition func(sctx base.PlanContext, tblInfo *model.TableInfo, physPlanPartInfo any, asName string) base.AccessObject

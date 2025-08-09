@@ -310,7 +310,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSplitRegion(v)
 	case *plannercore.DistributeTable:
 		return b.buildDistributeTable(v)
-	case *plannercore.PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		return b.buildIndexMergeReader(v)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
@@ -4388,7 +4388,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	return ret
 }
 
-func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
+func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
 	partialPlanCount := len(v.PartialPlans)
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
 	partialDataSizes := make([]float64, 0, partialPlanCount)
@@ -4499,7 +4499,7 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader, load
 	return buildIndexUsageReporter(b.ctx, plan, loadStats)
 }
 
-func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
+func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMergeReader) exec.Executor {
 	if b.Ti != nil {
 		b.Ti.UseIndexMerge = true
 		b.Ti.UseTableLookUp.Store(true)

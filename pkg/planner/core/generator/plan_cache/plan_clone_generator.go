@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 )
 
 // GenPlanCloneForPlanCacheCode generates CloneForPlanCache for all physical plan nodes in plan_clone_generated.go.
@@ -37,7 +38,7 @@ import (
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{core.PhysicalIndexScan{}, core.PhysicalStreamAgg{}, core.PhysicalTableReader{},
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
+		core.PhysicalIndexLookUpReader{}, physicalop.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x

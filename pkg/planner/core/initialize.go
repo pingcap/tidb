@@ -89,48 +89,6 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *Physi
 	return &p
 }
 
-// Init initializes PhysicalIndexMergeReader.
-func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexMergeReader {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexMerge, &p, offset)
-	if p.tablePlan != nil {
-		p.SetStats(p.tablePlan.StatsInfo())
-	} else {
-		var totalRowCount float64
-		for _, partPlan := range p.partialPlans {
-			totalRowCount += partPlan.StatsCount()
-		}
-		p.SetStats(p.partialPlans[0].StatsInfo().ScaleByExpectCnt(totalRowCount))
-		p.StatsInfo().StatsVersion = p.partialPlans[0].StatsInfo().StatsVersion
-	}
-	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.partialPlans))
-	for _, partialPlan := range p.partialPlans {
-		tempPlans := flattenPushDownPlan(partialPlan)
-		p.PartialPlans = append(p.PartialPlans, tempPlans)
-	}
-	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
-		p.SetSchema(p.tablePlan.Schema())
-		p.HandleCols = p.TablePlans[0].(*physicalop.PhysicalTableScan).HandleCols
-	} else {
-		switch p.PartialPlans[0][0].(type) {
-		case *physicalop.PhysicalTableScan:
-			p.SetSchema(p.PartialPlans[0][0].Schema())
-		default:
-			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
-			p.SetSchema(is.dataSourceSchema)
-		}
-	}
-	if p.KeepOrder {
-		switch x := p.PartialPlans[0][0].(type) {
-		case *physicalop.PhysicalTableScan:
-			p.ByItems = x.ByItems
-		case *PhysicalIndexScan:
-			p.ByItems = x.ByItems
-		}
-	}
-	return &p
-}
-
 func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 	if p.StoreType == kv.TiFlash {
 		_, ok := p.tablePlan.(*PhysicalExchangeSender)

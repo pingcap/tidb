@@ -159,7 +159,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []ast.CIStr{index.Index.Name},
 		})
-	case *PhysicalIndexMergeReader:
+	case *physicalop.PhysicalIndexMergeReader:
 		indexs := make([]ast.CIStr, 0, 2)
 		var tableName ast.CIStr
 		var tableAsName *ast.CIStr
