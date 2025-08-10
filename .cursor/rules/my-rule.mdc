@@ -1,0 +1,90 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 🧠 TiDB Optimizer Refactor Assistant — Prompt Rules (English)
+
+## 🎯 Purpose
+
+This prompt set helps contributors (especially first-timers) reason about code placement, dependency resolution, and modular boundaries while refactoring the `planner/core` package in TiDB, with a focus on optimizer rule migration (e.g., PR #55226), interface cleanup, and logic classification.
+
+---
+
+## ✅ Core Classification Rules
+
+### Rule 1: Struct Receiver Method Placement
+
+- If you define a method with a struct receiver (e.g., `(p *LogicalSort) buildKeyInfo()`), it **must** be placed in the same package where the struct is defined.
+  - ✅ Example: `LogicalSort` is defined in `planner/core/operator/logicalimpl`, so its methods should stay there.
+  - ❌ Not allowed in `util`, `rewrite`, or other submodules.
+
+- If the method can be decoupled into a utility-style function:
+  - ✅ Refactor to `func BuildKeyInfo(p *LogicalSort) {...}` and place in `core/util` **only if** it meets Rule 2.
+
+---
+
+### Rule 2: What Belongs in `util`
+
+- Only put the following kinds of functions in `planner/core/util`:
+  - Stateless
+  - Not bound to any plan/operator struct
+  - Shared across multiple submodules
+  - No optimizer-specific business logic or side effects
+
+- Do **not** put the following into `util`:
+  - Struct receiver methods
+  - Plan/task generation logic
+  - Cost model calculations
+  - Operator-specific logic with tight coupling
+
+---
+
+### Rule 3: Handling Import Cycles
+
+When circular dependencies arise (e.g., core ↔ core2), follow these strategies:
+
+- 🔧 **Tip 1: Extract shared logic into `util`**
+  - If both A and B depend on logic X, move X to a neutral location like `util`.
+
+- 🔧 **Tip 2: Use function pointer injection**
+  - Define a function variable in one package, assign the actual implementation from another:
+    ```go
+    // In planner/core:
+    var ComputeCost func(task *Task) float64
+
+    // In executor:
+    func init() {
+        planner.ComputeCost = executor.ComputeCostImpl
+    }
+    ```
+
+- 🔧 **Tip 3: Use `interface{}` or small interface types**
+  - If dependency is only in struct fields, use interfaces to reduce coupling.
+
+---
+
+### Rule 4: Break Down Large Refactor
+
+If one refactor triggers a cascade of changes:
+- Identify the **minimal decoupling set** based on Tips 1–3.
+- Land the smallest unit first (e.g., utility extraction), then iterate.
+- Avoid over-refactoring in one PR — think in layers.
+
+---
+
+### Rule 5: Suggested Package Structure for `/core`
+
+```text
+/core
+  /base        -> All basic interfaces (LogicalPlan, PhysicalPlan, Task, etc.)
+  /operator
+    /baseimpl        -> Operator base logic
+    /logicalimpl     -> Logical plan implementations
+    /physicalimpl    -> Physical plan implementations
+  /stats       -> Cardinality estimation, row size, selectivity
+  /cost        -> Cost model formulas and logic
+  /dump        -> Plan visualization, explain info, plan replayer
+  /rewrite     -> Constant propagation, order elimination, etc.
+  /rule        -> Logical rewrite rules (e.g., rule_xxx.go)
+  /util        -> Stateless helper functions, glue logic (no tight coupling)

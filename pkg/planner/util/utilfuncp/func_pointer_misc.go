@@ -480,4 +480,9 @@ var ResolveIndicesForVirtualColumn func(result []*expression.Column, schema *exp
 var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 
 // GetDynamicAccessPartition gets dynamic access partition information.
-var GetDynamicAccessPartition func(sctx base.PlanContext, tblInfo *model.TableInfo, physPlanPartInfo any, asName string) base.AccessObject
+var GetDynamicAccessPartition func(
+	sctx base.PlanContext,
+	tblInfo *model.TableInfo,
+	physPlanPartInfo any,
+	asName string,
+) base.AccessObject
