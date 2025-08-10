@@ -326,7 +326,7 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
 
-func TestABC(t *testing.T) {
+func TestTrivial(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -334,9 +334,27 @@ func TestABC(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t1(c1 DOUBLE);`)
 	tk.MustExec(`INSERT INTO t0(c0) VALUES (0.6);`)
 	tk.MustExec(`INSERT INTO t1(c1) VALUES (1);`)
+	// https://github.com/pingcap/tidb/issues/60659
+	tk.MustQuery(`explain format='brief' SELECT t1.c1,subQuery1.col_0
+FROM t1
+         RIGHT JOIN (SELECT CAST(t0.c0 AS DECIMAL) AS col_0
+                     FROM t0) as subQuery1 ON (((((IF(((t1.c1) <= (subQuery1.col_0)), (subQuery1.col_0),
+                                                      subQuery1.col_0)))))) INNER JOIN t1 as t1_alias on t1.c1;`).
+		Check(testkit.Rows(
+			`HashJoin 665666666666.67 root  CARTESIAN inner join, other cond:if(le(test.t1.c1, cast(Column#5, double BINARY)), Column#5, Column#5)`,
+			`├─Projection(Build) 10000.00 root  cast(test.t0.c0, decimal(10,0) BINARY)->Column#5`,
+			`│ └─TableReader 10000.00 root  data:TableFullScan`,
+			`│   └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`,
+			`└─HashJoin(Probe) 66566666.67 root  CARTESIAN inner join`,
+			`  ├─TableReader(Build) 6656.67 root  data:Selection`,
+			`  │ └─Selection 6656.67 cop[tikv]  test.t1.c1`,
+			`  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`,
+			`  └─TableReader(Probe) 10000.00 root  data:TableFullScan`,
+			`    └─TableFullScan 10000.00 cop[tikv] table:t1_alias keep order:false, stats:pseudo`))
 	tk.MustQuery(`SELECT t1.c1,subQuery1.col_0
 FROM t1
          RIGHT JOIN (SELECT CAST(t0.c0 AS DECIMAL) AS col_0
                      FROM t0) as subQuery1 ON (((((IF(((t1.c1) <= (subQuery1.col_0)), (subQuery1.col_0),
-                                                      subQuery1.col_0)))))) INNER JOIN t1 as t1_alias on t1.c1;`)
+                                                      subQuery1.col_0)))))) INNER JOIN t1 as t1_alias on t1.c1;`).
+		Check(testkit.Rows("1 1"))
 }

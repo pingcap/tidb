@@ -350,7 +350,7 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType,
+		RetType:  sf.RetType.Clone(),
 		Function: sf.Function.Clone(),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
