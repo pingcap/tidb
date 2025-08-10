@@ -16,9 +16,7 @@ package core
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
-	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -40,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -68,8 +65,8 @@ var (
 	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexMergeReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashAgg{}
-	_ base.PhysicalPlan = &PhysicalStreamAgg{}
-	_ base.PhysicalPlan = &PhysicalApply{}
+	_ base.PhysicalPlan = &physicalop.PhysicalStreamAgg{}
+	_ base.PhysicalPlan = &physicalop.PhysicalApply{}
 	_ base.PhysicalPlan = &physicalop.PhysicalIndexJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashJoin{}
 	_ base.PhysicalPlan = &physicalop.PhysicalMergeJoin{}
@@ -318,7 +315,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *physicalop.PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalProjection:
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -730,60 +727,6 @@ func expandVirtualColumn(schema *expression.Schema, copyColumn []*model.ColumnIn
 	return copyColumn
 }
 
-// PhysicalApply represents apply plan, only used for subquery.
-type PhysicalApply struct {
-	physicalop.PhysicalHashJoin
-
-	CanUseCache bool
-	Concurrency int
-	OuterSchema []*expression.CorrelatedColumn
-}
-
-// PhysicalJoinImplement has an extra bool return value compared with PhysicalJoin interface.
-// This will override BasePhysicalJoin.PhysicalJoinImplement() and make PhysicalApply not an implementation of
-// base.PhysicalJoin interface.
-func (*PhysicalApply) PhysicalJoinImplement() bool { return false }
-
-// Clone implements op.PhysicalPlan interface.
-func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalApply)
-	cloned.SetSCtx(newCtx)
-	base, err := la.PhysicalHashJoin.Clone(newCtx)
-	if err != nil {
-		return nil, err
-	}
-	hj := base.(*physicalop.PhysicalHashJoin)
-	cloned.PhysicalHashJoin = *hj
-	cloned.CanUseCache = la.CanUseCache
-	cloned.Concurrency = la.Concurrency
-	for _, col := range la.OuterSchema {
-		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
-	}
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
-	return slices.DeleteFunc(corCols, func(col *expression.CorrelatedColumn) bool {
-		return la.Children()[0].Schema().Contains(&col.Column)
-	})
-}
-
-// MemoryUsage return the memory usage of PhysicalApply
-func (la *PhysicalApply) MemoryUsage() (sum int64) {
-	if la == nil {
-		return
-	}
-
-	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
-		int64(cap(la.OuterSchema))*size.SizeOfPointer
-	for _, corrCol := range la.OuterSchema {
-		sum += corrCol.MemoryUsage()
-	}
-	return
-}
-
 // PhysicalJoin provides some common methods for join operators.
 // Note that PhysicalApply is deliberately excluded from this interface.
 type PhysicalJoin interface {
@@ -863,90 +806,6 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalExpand is used to expand underlying data sources to feed different grouping sets.
-type PhysicalExpand struct {
-	// data after repeat-OP will generate a new grouping-ID column to indicate what grouping set is it for.
-	physicalop.PhysicalSchemaProducer
-
-	// generated grouping ID column itself.
-	GroupingIDCol *expression.Column
-
-	// GroupingSets is used to define what kind of group layout should the underlying data follow.
-	// For simple case: select count(distinct a), count(distinct b) from t; the grouping expressions are [a] and [b].
-	GroupingSets expression.GroupingSets
-
-	// The level projections is generated from grouping sets，make execution more clearly.
-	LevelExprs [][]expression.Expression
-
-	// The generated column names. Eg: "grouping_id" and so on.
-	ExtraGroupingColNames []string
-}
-
-// Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalExpand) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	if len(p.LevelExprs) > 0 {
-		return p.cloneV2(newCtx)
-	}
-	np := new(PhysicalExpand)
-	np.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, np)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np.PhysicalSchemaProducer = *base
-	// clone ID cols.
-	np.GroupingIDCol = p.GroupingIDCol.Clone().(*expression.Column)
-
-	// clone grouping expressions.
-	clonedGroupingSets := make([]expression.GroupingSet, 0, len(p.GroupingSets))
-	for _, one := range p.GroupingSets {
-		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
-	}
-	np.GroupingSets = clonedGroupingSets
-	return np, nil
-}
-
-func (p *PhysicalExpand) cloneV2(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	np := new(PhysicalExpand)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, np)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	np.PhysicalSchemaProducer = *base
-	// clone level projection expressions.
-	for _, oneLevelProjExprs := range p.LevelExprs {
-		np.LevelExprs = append(np.LevelExprs, util.CloneExprs(oneLevelProjExprs))
-	}
-
-	// clone generated column names.
-	for _, name := range p.ExtraGroupingColNames {
-		np.ExtraGroupingColNames = append(np.ExtraGroupingColNames, strings.Clone(name))
-	}
-	return np, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalExpand
-func (p *PhysicalExpand) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfSlice + int64(cap(p.GroupingSets))*size.SizeOfPointer
-	for _, gs := range p.GroupingSets {
-		sum += gs.MemoryUsage()
-	}
-	sum += p.GroupingIDCol.MemoryUsage()
-	return
-}
-
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing.
 type PhysicalExchangeSender struct {
 	physicalop.BasePhysicalPlan
@@ -1012,36 +871,6 @@ func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
 // AppendTargetTasks appends mpp tasks for current PhysicalExchangeSender.
 func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
-}
-
-// PhysicalStreamAgg is stream operator of aggregate.
-type PhysicalStreamAgg struct {
-	physicalop.BasePhysicalAgg
-}
-
-func (p *PhysicalStreamAgg) getPointer() *physicalop.BasePhysicalAgg {
-	return &p.BasePhysicalAgg
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalStreamAgg) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalStreamAgg)
-	cloned.SetSCtx(newCtx)
-	base, err := p.BasePhysicalAgg.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.BasePhysicalAgg = *base
-	return cloned, nil
-}
-
-// MemoryUsage return the memory usage of PhysicalStreamAgg
-func (p *PhysicalStreamAgg) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.BasePhysicalAgg.MemoryUsage()
 }
 
 // IsPartition returns true and partition ID if it works on a partition.

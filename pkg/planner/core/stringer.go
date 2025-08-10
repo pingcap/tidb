@@ -163,7 +163,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			r := x.RightJoinKeys[i].StringWithCtx(ectx, perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *logicalop.LogicalApply, *PhysicalApply:
+	case *logicalop.LogicalApply, *physicalop.PhysicalApply:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
@@ -249,7 +249,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Dual"
 	case *physicalop.PhysicalHashAgg:
 		str = "HashAgg"
-	case *PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		str = "StreamAgg"
 	case *logicalop.LogicalAggregation:
 		str = "Aggr("

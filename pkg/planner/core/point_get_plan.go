@@ -2002,12 +2002,9 @@ func isExprHasSubQuery(expr ast.Node) bool {
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
-	for _, a := range list {
-		if isExprHasSubQuery(a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(list, func(assignment *ast.Assignment) bool {
+		return isExprHasSubQuery(assignment.Expr)
+	})
 }
 
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
