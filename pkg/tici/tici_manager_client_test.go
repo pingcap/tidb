@@ -40,9 +40,9 @@ func (m *MockMetaServiceClient) CreateIndex(ctx context.Context, in *CreateIndex
 	args := m.Called(ctx, in)
 	return args.Get(0).(*CreateIndexResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) GetCloudStoragePath(ctx context.Context, in *GetImportStoragePathRequest, opts ...grpc.CallOption) (*GetImportStoragePathResponse, error) {
+func (m *MockMetaServiceClient) SubmitImportIndexJob(ctx context.Context, in *ImportIndexJobRequest, opts ...grpc.CallOption) (*ImportIndexJobResponse, error) {
 	args := m.Called(ctx, in)
-	return args.Get(0).(*GetImportStoragePathResponse), args.Error(1)
+	return args.Get(0).(*ImportIndexJobResponse), args.Error(1)
 }
 func (m *MockMetaServiceClient) FinishPartitionUpload(ctx context.Context, in *FinishImportPartitionUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
 	args := m.Called(ctx, in)
@@ -96,34 +96,32 @@ func TestCreateFulltextIndex(t *testing.T) {
 	require.ErrorContains(t, err, "rpc error")
 }
 
-func TestGetCloudStoragePath(t *testing.T) {
+func TestSubmitImportIndexJob(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
 	tblID := int64(1)
 	indexID := int64(2)
-	schemaName := "testdb"
-	lower, upper := []byte("a"), []byte("z")
 
 	mockClient.
-		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetImportStoragePathResponse{Status: 0, S3Path: "/s3/path"}, nil).
+		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
+		Return(&ImportIndexJobResponse{Status: 0, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
-	path, err := ctx.GetCloudStoragePath(context.Background(), tblID, indexID, schemaName, lower, upper)
+	path, err := ctx.StartImportIndex(context.Background(), tblID, indexID)
 	assert.NoError(t, err)
-	assert.Equal(t, "/s3/path", path)
+	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
 
 	mockClient.
-		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetImportStoragePathResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
+		Return(&ImportIndexJobResponse{Status: 1, ErrorMessage: "fail"}, nil).
 		Once()
-	_, err = ctx.GetCloudStoragePath(context.Background(), tblID, indexID, schemaName, lower, upper)
+	_, err = ctx.StartImportIndex(context.Background(), tblID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
-		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetImportStoragePathResponse{}, errors.New("rpc error")).
+		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
+		Return(&ImportIndexJobResponse{}, errors.New("rpc error")).
 		Once()
-	_, err = ctx.GetCloudStoragePath(context.Background(), tblID, indexID, schemaName, lower, upper)
+	_, err = ctx.StartImportIndex(context.Background(), tblID, indexID)
 	assert.Error(t, err)
 }
 
