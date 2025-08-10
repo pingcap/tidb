@@ -44,11 +44,11 @@ func (m *MockMetaServiceClient) SubmitImportIndexJob(ctx context.Context, in *Im
 	args := m.Called(ctx, in)
 	return args.Get(0).(*ImportIndexJobResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) FinishPartitionUpload(ctx context.Context, in *FinishImportPartitionUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
+func (m *MockMetaServiceClient) FinishImportPartitionUpload(ctx context.Context, in *FinishImportPartitionUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*FinishImportResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) FinishIndexUpload(ctx context.Context, in *FinishImportIndexUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
+func (m *MockMetaServiceClient) FinishImportIndexUpload(ctx context.Context, in *FinishImportIndexUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*FinishImportResponse), args.Error(1)
 }
@@ -76,14 +76,14 @@ func TestCreateFulltextIndex(t *testing.T) {
 
 	mockClient.
 		On("CreateIndex", mock.Anything, mock.Anything).
-		Return(&CreateIndexResponse{Status: 0, IndexId: "2"}, nil).
+		Return(&CreateIndexResponse{Status: ErrorCode_SUCCESS, IndexId: "2"}, nil).
 		Once()
 	err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
 	assert.NoError(t, err)
 
 	mockClient.
 		On("CreateIndex", mock.Anything, mock.Anything).
-		Return(&CreateIndexResponse{Status: 1, IndexId: "2", ErrorMessage: "fail"}, nil).
+		Return(&CreateIndexResponse{Status: ErrorCode_UNKNOWN_ERROR, IndexId: "2", ErrorMessage: "fail"}, nil).
 		Once()
 	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName)
 	require.ErrorContains(t, err, "fail")
@@ -99,59 +99,61 @@ func TestCreateFulltextIndex(t *testing.T) {
 func TestSubmitImportIndexJob(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
+	taskID := "tidb-task-123"
 	tblID := int64(1)
 	indexID := int64(2)
 
 	mockClient.
 		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: 0, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
+		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
-	path, err := ctx.StartImportIndex(context.Background(), tblID, indexID)
+	path, err := ctx.StartImportIndex(context.Background(), taskID, tblID, indexID)
 	assert.NoError(t, err)
 	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
 
 	mockClient.
 		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		Return(&ImportIndexJobResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	_, err = ctx.StartImportIndex(context.Background(), tblID, indexID)
+	_, err = ctx.StartImportIndex(context.Background(), taskID, tblID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
 		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
 		Return(&ImportIndexJobResponse{}, errors.New("rpc error")).
 		Once()
-	_, err = ctx.StartImportIndex(context.Background(), tblID, indexID)
+	_, err = ctx.StartImportIndex(context.Background(), taskID, tblID, indexID)
 	assert.Error(t, err)
 }
 
 func TestFinishPartitionUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
+	taskID := "tidb-task-123"
 	tableID := int64(1)
 	indexID := int64(2)
 	lower, upper := []byte("a"), []byte("z")
 
 	// 1st call – success
 	mockClient.
-		On("FinishPartitionUpload", mock.Anything, mock.Anything).
-		Return(&FinishImportResponse{Status: 0}, nil).
+		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
-	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper, "/s3/path"))
+	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), taskID, tableID, indexID, lower, upper, "/s3/path"))
 
 	// 2nd call – business error from TiCI
 	mockClient.
-		On("FinishPartitionUpload", mock.Anything, mock.Anything).
-		Return(&FinishImportResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper, "/s3/path"))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, tableID, indexID, lower, upper, "/s3/path"))
 
 	// 3rd call – RPC error
 	mockClient.
-		On("FinishPartitionUpload", mock.Anything, mock.Anything).
+		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
-	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), tableID, indexID, lower, upper, "/s3/path"))
+	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, tableID, indexID, lower, upper, "/s3/path"))
 
 	mockClient.AssertExpectations(t)
 }
@@ -159,27 +161,28 @@ func TestFinishPartitionUpload(t *testing.T) {
 func TestFinishIndexUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
+	taskID := "tidb-task-123"
 	tableID, indexID := int64(1), int64(2)
 
 	mockClient.
-		On("FinishIndexUpload", mock.Anything, mock.Anything).
-		Return(&FinishImportResponse{Status: 0}, nil).
+		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
-	err := ctx.FinishIndexUpload(context.Background(), tableID, indexID)
+	err := ctx.FinishIndexUpload(context.Background(), taskID, tableID, indexID)
 	assert.NoError(t, err)
 
 	mockClient.
-		On("FinishIndexUpload", mock.Anything, mock.Anything).
-		Return(&FinishImportResponse{Status: 1, ErrorMessage: "fail"}, nil).
+		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	err = ctx.FinishIndexUpload(context.Background(), tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), taskID, tableID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
-		On("FinishIndexUpload", mock.Anything, mock.Anything).
+		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
-	err = ctx.FinishIndexUpload(context.Background(), tableID, indexID)
+	err = ctx.FinishIndexUpload(context.Background(), taskID, tableID, indexID)
 	assert.Error(t, err)
 }
 
