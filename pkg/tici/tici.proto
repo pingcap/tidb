@@ -258,13 +258,15 @@ service MetaService {
 
   // -----------------------------------------------------------------------------
   // APIs for importing data
+
+  // Submit a new import index job to TiCI.
+  // This will create a new import job with a unique job_id and a storage
+  // backend prefix for the import data. The caller should generate files under
+  // the storage backend prefix and call `FinishImportPartitionUpload` after
+  // uploading each partition. If there is an existing running import job for
+  // the same table_id and index_id, it will return the existing job_id.
   rpc SubmitImportIndexJob(ImportIndexJobRequest)
       returns (ImportIndexJobResponse);
-
-  // Returns the cloud storage path where TiDB should upload a baseline shard
-  // for the specified [table_id, index_id, key_range].
-  rpc GetImportStoragePath(GetImportStoragePathRequest)
-      returns (GetImportStoragePathResponse);
 
   // Called by Import DXF to notify Meta Service after a partition for
   // the given index are uploaded.
@@ -565,22 +567,9 @@ message ImportIndexJobResponse {
   string error_message = 2;
   // The import index job_id in TiCI
   uint64 job_id = 3;
-}
-
-message GetImportStoragePathRequest {
-  int64 table_id = 1;
-  int64 index_id = 2;
-  // Key range for the partition being uploaded. [Inclusive, exclusive)
-  KeyRange key_range = 3;
-}
-
-message GetImportStoragePathResponse {
-  ErrorCode status = 1;
-  // Optional human‑readable diagnostics, only defined when status ≠ 0.
-  string error_message = 2;
-  // Object key inside the bucket that TiDB Import should write to.
-  // The format is "s3://bucket/prefix/filename".
-  string s3_path = 3;
+  // The cloud storage prefix where the import data should be written.
+  // The format is "s3://bucket/prefix/".
+  string storage_uri = 4;
 }
 
 message FinishImportPartitionUploadRequest {

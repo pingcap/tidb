@@ -17,8 +17,6 @@ package tici
 import (
 	"context"
 	"encoding/json"
-	"path"
-	"strings"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -63,6 +61,7 @@ type DataWriter struct {
 	tblInfo        *model.TableInfo
 	idxInfo        *model.IndexInfo
 	schema         string
+	storeURI       string
 	s3Path         string      // stores the S3 URI for this writer
 	ticiFileWriter *FileWriter // handles writing to S3 file for this writer
 	logger         *zap.Logger // logger with table/index fields
@@ -89,49 +88,31 @@ func NewTiCIDataWriter(
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
 	// FIXME: I'm not sure whether it is the right place to mark the import index job as started in TiCI.
-	err := ticiMgr.StartImportIndex(ctx, tblInfo.ID, idxInfo.ID)
+	storeURI, err := ticiMgr.StartImportIndex(ctx, tblInfo.ID, idxInfo.ID)
 	if err != nil {
 		return nil, err
 	}
 	return &DataWriter{
-		tblInfo: tblInfo,
-		idxInfo: idxInfo,
-		schema:  schema,
-		logger:  logger,
+		tblInfo:  tblInfo,
+		idxInfo:  idxInfo,
+		schema:   schema,
+		storeURI: storeURI,
+		logger:   logger,
 	}, nil
 }
 
 // InitTICIFileWriter initializes the ticiFileWriter for this TiCIDataWriter.
 // cloudStoreURI is the S3 URI, logger is optional (can be nil).
 func (w *DataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Logger) error {
-	cloudStoreURI := w.s3Path
-	if cloudStoreURI == "" {
-		return errors.New("s3Path is not set, cannot initialize TICIFileWriter")
+	if w.storeURI == "" {
+		return errors.New("storageURI is not set, cannot initialize TICIFileWriter")
 	}
 
-	// storage.ParseBackend parse all path components as the storage path
-	// prefix, but we expect our filename to be the last component
-	// of the URI path, so we need to parse it as a raw URL.
-	// This allows us to handle URIs like "s3://bucket/prefix/file.txt?query=param"
-	// and extract the file name ("file.txt") correctly.
+	// Generate a unique filename
+	filename := uuid.New().String()
 
-	// Split the URI path to isolate the actual file name.
-	u, err := storage.ParseRawURL(cloudStoreURI)
-	if err != nil {
-		return errors.Annotate(err, "failed to parse s3Path as URI")
-	}
-
-	segments := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
-	if len(segments) < 2 {
-		return errors.New("s3Path must include at least a bucket name and one file name")
-	}
-
-	// Extract the filename and reconstruct the base URI path
-	filename := segments[len(segments)-1]
-	u.Path = "/" + path.Join(segments[:len(segments)-1]...) // strip the filename
-	baseURI := u.String()
-
-	storeBackend, err := storage.ParseBackend(baseURI, nil)
+	// storage.ParseBackend parse all path components as the storage path prefix
+	storeBackend, err := storage.ParseBackend(w.storeURI, nil)
 	if err != nil {
 		return err
 	}
@@ -143,37 +124,17 @@ func (w *DataWriter) InitTICIFileWriter(ctx context.Context, logger *zap.Logger)
 		logger = logutil.Logger(ctx)
 	}
 
+	// Keep track of the S3 path actually store data
+	baseURL := storage.FormatBackendURL(storeBackend) // throw away the options
+	w.s3Path = baseURL.String() + "/" + filename
+	logger.Info("TiCI cloud storage path", zap.String("s3Path", w.s3Path))
+
 	writer, err := NewTICIFileWriter(ctx, store, filename, TiCIMinUploadPartSize, logger)
 	if err != nil {
 		return err
 	}
 	w.ticiFileWriter = writer
 	return nil
-}
-
-// FetchCloudStoragePath requests the S3 path for a baseline shard upload and stores it in the struct.
-func (w *DataWriter) FetchCloudStoragePath(
-	ctx context.Context,
-	ticiMgr *ManagerCtx,
-	lowerBound, upperBound []byte,
-) (string, error) {
-	logger := w.logger
-	s3Path, err := ticiMgr.GetCloudStoragePath(ctx, w.tblInfo.ID, w.idxInfo.ID, w.schema, lowerBound, upperBound)
-	if err != nil {
-		logger.Error("failed to get TiCI cloud storage path",
-			zap.Error(err),
-			zap.Binary("startKey", lowerBound),
-			zap.Binary("endKey", upperBound),
-		)
-		return "", err
-	}
-	logger.Info("got TiCI cloud storage path",
-		zap.String("s3Path", s3Path),
-		zap.Binary("startKey", lowerBound),
-		zap.Binary("endKey", upperBound),
-	)
-	w.s3Path = s3Path
-	return s3Path, nil
 }
 
 // FinishPartitionUpload notifies TiCI Meta Service that a partition upload is finished.
@@ -425,24 +386,6 @@ func (g *DataWriterGroup) InitTICIFileWriters(ctx context.Context) error {
 				zap.Error(err),
 				zap.String("cloudStoreURI", w.s3Path),
 			)
-			return err
-		}
-	}
-	return nil
-}
-
-// FetchCloudStoragePath runs FetchCloudStoragePath for all writers.
-// Sets the s3Path for each writer, returns the first error encountered.
-func (g *DataWriterGroup) FetchCloudStoragePath(
-	ctx context.Context,
-	lowerBound, upperBound []byte,
-) error {
-	if !g.writable.Load() {
-		return nil
-	}
-	for _, w := range g.writers {
-		_, err := w.FetchCloudStoragePath(ctx, g.mgrCtx, lowerBound, upperBound)
-		if err != nil {
 			return err
 		}
 	}

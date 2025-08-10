@@ -233,7 +233,7 @@ func (t *ManagerCtx) StartImportIndex(
 	ctx context.Context,
 	tableID int64,
 	indexID int64,
-) error {
+) (string, error) {
 	req := &ImportIndexJobRequest{
 		TableId: tableID,
 		IndexId: indexID,
@@ -248,70 +248,27 @@ func (t *ManagerCtx) StartImportIndex(
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+		return "", errors.Wrap(t.err, "meta service client is nil")
 	}
 	resp, err := t.metaClient.client.SubmitImportIndexJob(ctx, req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("start import index failed",
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return fmt.Errorf("tici start import index error: %s", resp.ErrorMessage)
+		return "", fmt.Errorf("tici start import index error: %s", resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("start import index success",
 		zap.Int64("tableID", tableID),
 		zap.Int64("indexID", indexID),
 		// log down the tici job ID for tracking
 		zap.Uint64("ticiJobID", resp.JobId),
+		zap.String("ticiStorageURI", resp.StorageUri),
 	)
-	return nil
-}
-
-// GetCloudStoragePath requests the S3 path from TiCI Meta Service
-// for a baseline shard upload.
-func (t *ManagerCtx) GetCloudStoragePath(
-	ctx context.Context,
-	tblID int64,
-	indexID int64,
-	schemaName string,
-	lowerBound, upperBound []byte,
-) (string, error) {
-	req := &GetImportStoragePathRequest{
-		TableId: tblID,
-		IndexId: indexID,
-		KeyRange: &KeyRange{
-			StartKey: lowerBound,
-			EndKey:   upperBound,
-		},
-	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if err := t.checkMetaClient(); err != nil {
-		return "", err
-	}
-	resp, err := t.metaClient.client.GetImportStoragePath(ctx, req)
-	if err != nil {
-		return "", err
-	}
-	if resp.Status != ErrorCode_SUCCESS {
-		logutil.BgLogger().Error("Request TiCI cloud storage path failed",
-			zap.Int64("tableID", tblID),
-			zap.Int64("indexID", indexID),
-			zap.String("startKey", string(lowerBound)),
-			zap.String("endKey", string(upperBound)),
-			zap.String("errorMessage", resp.ErrorMessage))
-		return "", fmt.Errorf("tici cloud storage path error: %s", resp.ErrorMessage)
-	}
-	logutil.BgLogger().Info("Requested TiCI cloud storage path",
-		zap.Int64("tableID", tblID),
-		zap.Int64("indexID", indexID),
-		zap.String("startKey", string(lowerBound)),
-		zap.String("endKey", string(upperBound)),
-		zap.String("filepath", resp.S3Path))
-	return resp.S3Path, nil
+	return resp.StorageUri, nil
 }
 
 // FinishPartitionUpload notifies TiCI Meta Service that all partitions for the given table are uploaded.

@@ -449,10 +449,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	}
 
 	if local.ticiWriteGroup != nil {
-		// Call FetchCloudStoragePath for all tici writers in the group.
-		if err = local.ticiWriteGroup.FetchCloudStoragePath(ctx, firstKey, lastKey); err != nil {
-			return nil, errors.Annotate(err, "ticiWriteGroup.FetchCloudStoragePath failed")
-		}
 		// Initialize TICI file writers for each full-text index in the group.
 		if err = local.ticiWriteGroup.InitTICIFileWriters(ctx); err != nil {
 			return nil, errors.Annotate(err, "ticiWriteGroup.InitTICIFileWriters failed")
