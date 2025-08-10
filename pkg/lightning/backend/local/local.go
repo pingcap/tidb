@@ -1778,8 +1778,8 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 }
 
 // InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema.
-func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string) error {
-	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, getEtcdClient, tblInfo, schema)
+func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string, taskID string) error {
+	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, getEtcdClient, tblInfo, schema, taskID)
 	if err != nil {
 		return err
 	}

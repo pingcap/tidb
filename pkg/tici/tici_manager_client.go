@@ -231,14 +231,15 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 // StartImportIndex register an TiCI import job for a (fulltext) index on TiCI.
 func (t *ManagerCtx) StartImportIndex(
 	ctx context.Context,
+	tidbTaskID string,
 	tableID int64,
 	indexID int64,
 ) (string, error) {
+	// TODO: Can we set the start tso here?
 	req := &ImportIndexJobRequest{
-		TableId: tableID,
-		IndexId: indexID,
-		// TODO: Set the StartTs as the commit_tso of imported data
-		StartTs: uint64(0),
+		TidbTaskId: tidbTaskID,
+		TableId:    tableID,
+		IndexId:    indexID,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -256,12 +257,14 @@ func (t *ManagerCtx) StartImportIndex(
 	}
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("start import index failed",
+			zap.String("tidbTaskID", tidbTaskID),
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return "", fmt.Errorf("tici start import index error: %s", resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("start import index success",
+		zap.String("tidbTaskID", tidbTaskID),
 		zap.Int64("tableID", tableID),
 		zap.Int64("indexID", indexID),
 		// log down the tici job ID for tracking
@@ -274,19 +277,21 @@ func (t *ManagerCtx) StartImportIndex(
 // FinishPartitionUpload notifies TiCI Meta Service that all partitions for the given table are uploaded.
 func (t *ManagerCtx) FinishPartitionUpload(
 	ctx context.Context,
+	tidbTaskID string,
 	tableID int64,
 	indexID int64,
 	lowerBound, upperBound []byte,
-	s3Path string,
+	storagePath string,
 ) error {
 	req := &FinishImportPartitionUploadRequest{
-		TableId: tableID,
-		IndexId: indexID,
+		TidbTaskId: tidbTaskID,
+		TableId:    tableID,
+		IndexId:    indexID,
 		KeyRange: &KeyRange{
 			StartKey: lowerBound,
 			EndKey:   upperBound,
 		},
-		S3Path: s3Path,
+		StoragePath: storagePath,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -316,12 +321,14 @@ func (t *ManagerCtx) FinishPartitionUpload(
 // FinishIndexUpload notifies TiCI Meta Service that the whole table/index upload is finished.
 func (t *ManagerCtx) FinishIndexUpload(
 	ctx context.Context,
+	tidbTaskID string,
 	tableID int64,
 	indexID int64,
 ) error {
 	req := &FinishImportIndexUploadRequest{
-		TableId: tableID,
-		IndexId: indexID,
+		TidbTaskId: tidbTaskID,
+		TableId:    tableID,
+		IndexId:    indexID,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()

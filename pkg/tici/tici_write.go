@@ -58,10 +58,11 @@ func GetPrimaryIndex(tbl *model.TableInfo) *model.IndexInfo {
 
 // DataWriter handles S3 path management and upload notifications via TiCI Meta Service.
 type DataWriter struct {
+	tidbTaskID     string // TiDB task ID for this writer
 	tblInfo        *model.TableInfo
 	idxInfo        *model.IndexInfo
 	schema         string
-	storeURI       string
+	storeURI       string      // cloud store prefix for this writer, may also include the S3 options
 	s3Path         string      // stores the S3 URI for this writer
 	ticiFileWriter *FileWriter // handles writing to S3 file for this writer
 	logger         *zap.Logger // logger with table/index fields
@@ -74,6 +75,7 @@ func NewTiCIDataWriter(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	schema string,
+	tidbTaskID string,
 	ticiMgr *ManagerCtx,
 ) (*DataWriter, error) {
 	baseLogger := logutil.Logger(ctx)
@@ -88,16 +90,17 @@ func NewTiCIDataWriter(
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
 	// FIXME: I'm not sure whether it is the right place to mark the import index job as started in TiCI.
-	storeURI, err := ticiMgr.StartImportIndex(ctx, tblInfo.ID, idxInfo.ID)
+	storeURI, err := ticiMgr.StartImportIndex(ctx, tidbTaskID, tblInfo.ID, idxInfo.ID)
 	if err != nil {
 		return nil, err
 	}
 	return &DataWriter{
-		tblInfo:  tblInfo,
-		idxInfo:  idxInfo,
-		schema:   schema,
-		storeURI: storeURI,
-		logger:   logger,
+		tidbTaskID: tidbTaskID,
+		tblInfo:    tblInfo,
+		idxInfo:    idxInfo,
+		schema:     schema,
+		storeURI:   storeURI,
+		logger:     logger,
 	}, nil
 }
 
@@ -154,7 +157,7 @@ func (w *DataWriter) FinishPartitionUpload(
 		logger.Warn("no s3Path set for FinishPartitionUpload")
 		return nil // or return an error if s3Path is required
 	}
-	err := ticiMgr.FinishPartitionUpload(ctx, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound, s3Path)
+	err := ticiMgr.FinishPartitionUpload(ctx, w.tidbTaskID, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound, s3Path)
 	if err != nil {
 		logger.Error("failed to mark partition upload finished",
 			zap.String("startKey", string(lowerBound)),
@@ -176,7 +179,7 @@ func (w *DataWriter) FinishIndexUpload(
 	ticiMgr *ManagerCtx,
 ) error {
 	logger := w.logger
-	if err := ticiMgr.FinishIndexUpload(ctx, w.tblInfo.ID, w.idxInfo.ID); err != nil {
+	if err := ticiMgr.FinishIndexUpload(ctx, w.tidbTaskID, w.tblInfo.ID, w.idxInfo.ID); err != nil {
 		logger.Error("failed to mark table upload finished", zap.Error(err))
 		return err
 	}
@@ -278,7 +281,7 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, pairs []*sst.Pair, cou
 // of which engine is currently being written. Addressing this would require
 // significant changes to the import-into interface and should be considered
 // in longer-term architectural improvements.
-func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string) (*DataWriterGroup, error) {
+func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string, tidbTaskID string) (*DataWriterGroup, error) {
 	fulltextIndexes := GetFulltextIndexes(tblInfo)
 	if len(fulltextIndexes) == 0 {
 		return nil, nil // No full-text indexes, no writers needed
@@ -290,6 +293,7 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 		zap.Int64("tableID", tblInfo.ID),
 		zap.String("schema", schema),
 		zap.Int("fulltextIndexCount", len(fulltextIndexes)),
+		zap.String("tidbTaskID", tidbTaskID),
 	)
 
 	etcdClient, err := getEtcdClient()
@@ -302,7 +306,7 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 	}
 
 	for _, idx := range fulltextIndexes {
-		w, err := NewTiCIDataWriter(ctx, tblInfo, idx, schema, mgrCtx)
+		w, err := NewTiCIDataWriter(ctx, tblInfo, idx, schema, tidbTaskID, mgrCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -334,7 +338,11 @@ func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblI
 
 	for _, idx := range fulltextIndexes {
 		// We ignore the error in the test setup,
-		w, _ := NewTiCIDataWriter(ctx, tblInfo, idx, schema, mgrCtx)
+		w, err := NewTiCIDataWriter(ctx, tblInfo, idx, schema, "fakeTaskID", mgrCtx)
+		if err != nil {
+			// create write group fails
+			return nil
+		}
 		writers = append(writers, w)
 	}
 

@@ -16,16 +16,16 @@ syntax = "proto3";
 
 package tici;
 
-import "gogoproto/gogo.proto";
-import "rustproto.proto";
+// import "gogoproto/gogo.proto";
+// import "rustproto.proto";
 
-option (gogoproto.sizer_all) = true;
-option (gogoproto.marshaler_all) = true;
-option (gogoproto.unmarshaler_all) = true;
-option (gogoproto.goproto_unkeyed_all) = false;
-option (gogoproto.goproto_unrecognized_all) = false;
-option (gogoproto.goproto_sizecache_all) = false;
-option (rustproto.lite_runtime_all) = true;
+// option (gogoproto.sizer_all) = true;
+// option (gogoproto.marshaler_all) = true;
+// option (gogoproto.unmarshaler_all) = true;
+// option (gogoproto.goproto_unkeyed_all) = false;
+// option (gogoproto.goproto_unrecognized_all) = false;
+// option (gogoproto.goproto_sizecache_all) = false;
+// option (rustproto.lite_runtime_all) = true;
 
 enum ErrorCode {
   SUCCESS = 0;
@@ -553,12 +553,12 @@ message GetIndexProgressResponse {
 // -----------------------------------------------------------------------------
 
 message ImportIndexJobRequest {
+  // TiDB unique task ID for this Import Index job.
+  string tidb_task_id = 1;
   // Table ID of the target table.
-  int64 table_id = 1;
+  int64 table_id = 2;
   // Index ID of the target index.
-  int64 index_id = 2;
-  // Start TSO of the import job.
-  uint64 start_ts = 3;
+  int64 index_id = 3;
 }
 
 message ImportIndexJobResponse {
@@ -573,11 +573,13 @@ message ImportIndexJobResponse {
 }
 
 message FinishImportPartitionUploadRequest {
-  int64 table_id = 1;
-  int64 index_id = 2;
+  // TiDB unique task ID for this Import Index job.
+  string tidb_task_id = 1;
+  int64 table_id = 2;
+  int64 index_id = 3;
   // Key range for the partition uploaded.
-  KeyRange key_range = 3;
-  string s3_path = 4;
+  KeyRange key_range = 4;
+  string storage_path = 5;
 }
 
 // - If the index is built successfully, the `status` field should be 0,
@@ -600,10 +602,12 @@ message FinishImportPartitionBuildRequest {
 }
 
 message FinishImportIndexUploadRequest {
+  // TiDB unique task ID for this Import Index job.
+  string tidb_task_id = 1;
   // Table ID of the target table.
-  int64 table_id = 1;
+  int64 table_id = 2;
   // Index ID of the target index.
-  int64 index_id = 2;
+  int64 index_id = 3;
 }
 
 message FinishImportResponse {
