@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -267,7 +268,7 @@ type SlowQueryLogItems struct {
 	RewriteInfo       RewritePhaseInfo
 	WriteSQLRespTotal time.Duration
 	KVExecDetail      *util.ExecDetails
-	ExecDetail        execdetails.ExecDetails
+	ExecDetail        *execdetails.ExecDetails
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
 	ResultRows        int64
@@ -519,4 +520,115 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+type SlowLogRuleItems struct {
+	TxnTS             uint64
+	KeyspaceName      string
+	UserAndHost       string // new
+	ConnID            int64  // new
+	SlowLogSessAlias  string // new
+	CurrentDB         string // new
+	Digest            string
+	TimeTotal         time.Duration
+	TimeParse         time.Duration
+	TimeCompile       time.Duration
+	TimeOptimize      time.Duration
+	TimeWaitTS        time.Duration
+	IndexNames        string
+	Succ              bool
+	IsInternal        bool // new
+	IsExplicitTxn     bool
+	IsSyncStatsFailed bool
+	Prepared          bool
+	// plan information
+	PlanFromCache   bool
+	PlanFromBinding bool
+	HasMoreResults  bool
+	PlanDigest      string
+	// execution detail information
+	UsedStats         *stmtctx.UsedStatsInfo
+	CopTasks          *execdetails.CopTasksDetails
+	RewriteInfo       RewritePhaseInfo
+	WriteSQLRespTotal time.Duration
+	KVExecDetail      *util.ExecDetails
+	ExecDetail        execdetails.ExecDetails
+	ExecRetryCount    uint
+	ResultRows        int64
+	// resource information
+	MemMax     int64
+	DiskMax    int64
+	CPUUsages  ppcpuusage.CPUUsages
+	StorageKV  bool // query read from TiKV
+	StorageMPP bool // query read from TiFlash
+}
+
+type SlowLogCondition struct {
+	Field     string
+	Threshold interface{}
+}
+
+type SlowLogRule struct {
+	Conditions []SlowLogCondition // AND
+}
+
+type SlowLogRules struct {
+	RawRules           string
+	AllConditionFields map[string]struct{}
+	Rules              []SlowLogRule // OR
+}
+
+type FieldGetterAndSetter struct {
+	Setter func(ctx sessionctx.Context, items *SlowQueryLogItems)
+	Getter func(ctx sessionctx.Context, items *SlowQueryLogItems) interface{}
+}
+
+func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
+	rawRules = strings.TrimSpace(rawRules)
+	if rawRules == "" {
+		return nil, nil
+	}
+
+	rules := strings.Split(rawRules, ";")
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	if len(rules) > 10 {
+		return nil, errors.Errorf("invalid slow log rules count:%d", len(rules))
+	}
+
+	slowLogRules := SlowLogRules{
+		RawRules: rawRules,
+		Rules:    make([]SlowLogRule, len(rules))}
+	for _, rule := range rules {
+		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			continue
+		}
+
+		fields := strings.Split(rule, ",")
+		if len(fields) == 0 {
+			continue
+		}
+
+		slowLogRule := SlowLogRule{Conditions: make([]SlowLogCondition, 0, len(fields))}
+		for _, field := range fields {
+			kv := strings.Split(field, "=")
+			if len(kv) != 2 {
+				return nil, errors.Errorf("invalid slow log field format:%s", field)
+			}
+
+			// TODO: Check if this to vals are validated.
+			fieldName := strings.TrimSpace(kv[0])
+			fieldValue := strings.TrimSpace(kv[1])
+
+			slowLogRule.Conditions = append(slowLogRule.Conditions, SlowLogCondition{
+				Field:     fieldName,
+				Threshold: fieldValue,
+			})
+			slowLogRules.AllConditionFields[fieldName] = struct{}{}
+		}
+		slowLogRules.Rules = append(slowLogRules.Rules, slowLogRule)
+	}
+	return nil, nil
 }

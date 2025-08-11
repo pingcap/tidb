@@ -1174,6 +1174,8 @@ type SessionVars struct {
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
 
+	SlowLogRules *SlowLogRules
+
 	// EnableFastAnalyze indicates whether to take fast analyze.
 	EnableFastAnalyze bool
 

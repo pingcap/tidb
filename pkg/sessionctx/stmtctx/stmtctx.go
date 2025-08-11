@@ -484,6 +484,9 @@ type StatementContext struct {
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
+
+	ExecSucc       bool
+	ExecRetryCount uint
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
