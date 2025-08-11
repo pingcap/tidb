@@ -1541,9 +1541,96 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 	}{
 		// INSERT
 		{
-			sql: "insert into t (a) values (1)",
+			sql: "INSERT INTO t(a) VALUES (1)",
 			ans: []visitInfo{
 				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t2 VALUES (1,2,3),(4,5,6)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "INSERT INTO t(a) SELECT a FROM t2",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t2 (SELECT a,b,c FROM t)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t2 SET a = 1, b = 2`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t(c) SELECT a from t2 ON DUPLICATE KEY UPDATE t.b = t2.b`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "c", nil, false, nil, false},
+				{mysql.UpdatePriv, "test", "t", "b", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		// REPLACE
+		{
+			sql: "REPLACE t(a) VALUES (1)",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `REPLACE t2 VALUES (1,2,3),(4,5,6)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "t2", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "REPLACE t(a) SELECT a FROM t2",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `REPLACE t2 (SELECT a,b,c FROM t)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.DeletePriv, "test", "t2", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `REPLACE t2 SET a = 1, b = 2`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "t2", "", nil, false, nil, false},
 			},
 		},
 
@@ -1624,6 +1711,17 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `WITH cte AS (SELECT a,b,c FROM t2) UPDATE t,cte SET t.a = cte.a WHERE t.b = cte.b AND t.c = cte.c`,
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
 			},
 		},
@@ -1716,6 +1814,14 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 		// Aggregation with window function
 		{
 			sql: "SELECT SUM(a) OVER(PARTITION BY b ORDER BY c) AS s FROM t",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "SELECT SUM(a) OVER w AS s FROM t WINDOW w AS (PARTITION BY b ORDER BY c)",
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
@@ -2461,6 +2567,12 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			sql: `SELECT 1 FROM (SELECT count(a) FROM t) tt`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT 1 FROM (SELECT count(*) FROM t) tt`,
+			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},

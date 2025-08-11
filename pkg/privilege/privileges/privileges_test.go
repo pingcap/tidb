@@ -170,6 +170,19 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	require.Equal(t, 3, len(tk.Session().GetSessionVars().ActiveRoles))
 	tk.MustExec(`SET ROLE ALL EXCEPT r_1, r_2;`)
 	require.Equal(t, 1, len(tk.Session().GetSessionVars().ActiveRoles))
+
+	// Column Privilege
+	rootTk.MustExec("CREATE USER u")
+	rootTk.MustExec("CREATE ROLE r")
+	rootTk.MustExec("USE test")
+	rootTk.MustExec("CREATE TABLE t (a int, b int, c int);")
+	rootTk.MustExec("GRANT SELECT(a) ON t TO r;")
+	rootTk.MustExec("GRANT r TO u;")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u", Hostname: "%"}, nil, nil, nil))
+	tk.MustGetErrCode("SELECT a FROM test.t;", mysql.ErrColumnaccessDenied)
+	tk.MustExec("SET ROLE r;")
+	tk.MustQuery("SELECT a FROM test.t;")
+	tk.MustGetErrCode("SELECT b FROM test.t;", mysql.ErrColumnaccessDenied)
 }
 
 // TestErrorMessage checks that the identity in error messages matches the mysql.user table one.
@@ -1051,7 +1064,7 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a, @var) set b = @var + 1", path))
 
 	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path), mysql.ErrTableaccessDenied)
-	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
+	tk.MustExec(`GRANT INSERT(c) on test.t_load to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
 
 	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path), mysql.ErrTableaccessDenied)
@@ -2249,6 +2262,9 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustExec(`use test;`)
 
 	/* Subquery */
+	subQueryInHaving := `SELECT b, COUNT(*) AS counts
+		FROM t1 GROUP BY b HAVING
+    COUNT(*) > (SELECT AVG(a) FROM (SELECT COUNT(*) AS a FROM t1 GROUP BY b) AS counts);`
 	userTk.MustQuery(`select a from t1 where a in (select a from t1);`).Check(testkit.Rows(`1`))
 	userTk.MustGetErrCode(`select a from t1 where a in (select a from t2);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where exists (select a from t2);`, errno.ErrColumnaccessDenied)
@@ -2260,6 +2276,10 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustGetErrCode(`select a from t1 where b = 1 and exists (select a from t1);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT (SELECT a FROM t2) FROM t1;`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT b FROM t2	WHERE a = (SELECT MAX(a) FROM t1);`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`SELECT count(*) FROM test.t2;`, errno.ErrTableaccessDenied)
+	userTk.MustGetErrCode(`SELECT (SELECT count(*) FROM test.t2);`, errno.ErrTableaccessDenied)
+	userTk.MustExec("SELECT count(*) FROM test.t1;")
+	userTk.MustExec("SELECT (SELECT count(*) FROM test.t1);")
 
 	/* CTE */
 	userTk.MustGetErrCode(`WITH CTE AS (SELECT b from t1) SELECT * FROM cte t;`, errno.ErrColumnaccessDenied)
@@ -2269,6 +2289,10 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustQuery(`with cte1 as (with cte2 as (select 1) select * from cte2) select * from cte1;`).Check(testkit.Rows(`1`))
 	userTk.MustQuery(`with cte1 as (with cte2 as (SELECT a from t1) select * from cte2) select * from cte1;`).Check(testkit.Rows(`1`))
 	userTk.MustGetErrCode(`with cte1 as (with cte2 as (SELECT b from t1) select * from cte2) select * from cte1;`, errno.ErrColumnaccessDenied)
+
+	userTk.MustGetErrCode(subQueryInHaving, errno.ErrColumnaccessDenied)
+	tk.MustExec("GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';")
+	userTk.MustQuery(subQueryInHaving)
 }
 
 func TestInsertColumnPrivilege(t *testing.T) {
