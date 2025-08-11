@@ -198,20 +198,20 @@ func (h *Handle) getStatsByPhysicalID(physicalTableID int64, tblInfo *model.Tabl
 	}
 
 	tbl, ok := h.Get(physicalTableID)
-	if !ok {
-		if tblInfo != nil {
-			tbl = statistics.PseudoTable(tblInfo, false, true)
-			tbl.PhysicalID = physicalTableID
-			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
-				h.UpdateStatsCache(types.CacheUpdate{
-					Updated: []*statistics.Table{tbl},
-				})
-			}
-			return tbl, true
-		}
-		return nil, false
+	if ok {
+		return tbl, true
 	}
-	return tbl, true
+	if tblInfo != nil {
+		tbl = statistics.PseudoTable(tblInfo, false, true)
+		tbl.PhysicalID = physicalTableID
+		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+			h.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{tbl},
+			})
+		}
+		return tbl, true
+	}
+	return nil, false
 }
 
 // GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
