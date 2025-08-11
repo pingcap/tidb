@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/parser/terror",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/naming",
         "//pkg/util/tikvutil",

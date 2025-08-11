@@ -421,7 +421,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 					require.Equal(t, aggfunc.RetTp, agg.Schema().Columns[i].RetType)
 				}
 			}
-			if agg, ok := baseAgg.(*core.PhysicalStreamAgg); ok {
+			if agg, ok := baseAgg.(*physicalop.PhysicalStreamAgg); ok {
 				for i, aggfunc := range agg.AggFuncs {
 					require.Equal(t, aggfunc.RetTp, agg.Schema().Columns[i].RetType)
 				}

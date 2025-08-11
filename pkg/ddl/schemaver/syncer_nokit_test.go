@@ -174,7 +174,7 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// job 4 is matched using WaitVersionSynced
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 	serverInfos := map[string]*serverinfo.ServerInfo{"aa": {StaticInfo: serverinfo.StaticInfo{ID: "aa", IP: "test", Port: 4000}}}
 	bytes, err := json.Marshal(serverInfos)
 	require.NoError(t, err)

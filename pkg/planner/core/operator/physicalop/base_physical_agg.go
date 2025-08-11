@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -82,7 +81,12 @@ func (p *BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.Stat
 
 // InitForStream initializes BasePhysicalAgg for stream aggregation.
 func (p *BasePhysicalAgg) InitForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	return utilfuncp.InitForStream(p, ctx, stats, offset, schema, props...)
+	streamAgg := &PhysicalStreamAgg{*p}
+	streamAgg.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, streamAgg, offset)
+	streamAgg.SetChildrenReqProps(props)
+	streamAgg.SetStats(stats)
+	streamAgg.SetSchema(schema)
+	return streamAgg
 }
 
 // IsFinalAgg checks whether the aggregation is a final aggregation.

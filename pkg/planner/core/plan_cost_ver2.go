@@ -569,9 +569,10 @@ func getPlanCostVer24PhysicalTopN(pp base.PhysicalPlan, taskType property.TaskTy
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalStreamAgg returns the plan-cost of this sub-plan, which is:
 // plan-cost = child-cost + agg-cost + group-cost
-func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalStreamAgg(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalStreamAgg)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -798,10 +799,12 @@ func (p *PhysicalIndexMergeJoin) GetPlanCostVer2(taskType property.TaskType, opt
 	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(&p.PhysicalIndexJoin, taskType, option, 2)
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalApply returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
 // probe-cost = probe-child-cost * build-rows
-func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalApply(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalApply)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
