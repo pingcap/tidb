@@ -1126,31 +1126,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
 	if statsTbl != nil {
-		lhsPseudo, rhsPseudo, tablePseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
-		if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-			if !lhsFullScan && lhs.path.Index != nil {
-				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
-					lhsPseudo = false // We have statistics for the lhs index
-				} else {
-					lhsPseudo = true
-				}
-			}
-			if !rhsFullScan && rhs.path.Index != nil {
-				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
-					rhsPseudo = false // We have statistics on the rhs index
-				} else {
-					rhsPseudo = true
-				}
-			}
-		}
+		tablePseudo = statsTbl.HistColl.Pseudo
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
 	}
-
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	// TODO: riskResult is not added to sum to limit change to existing logic. Further testing required.
 	riskResult, _ := compareRiskRatio(lhs, rhs)
-	sum := accessResult + scanResult + matchResult + globalResult
+	sum := accessResult + scanResult + matchResult + globalResult + riskResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
 	if (lhsPseudo || rhsPseudo) && !tablePseudo && !lhsFullScan && !rhsFullScan { // At least one index doesn't have statistics
@@ -1200,11 +1183,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	// Below compares the two candidate paths on four dimensions:
+	// Below compares the two candidate paths on five dimensions:
 	// (1): the set of columns that occurred in the access condition,
 	// (2): does it require a double scan,
 	// (3): whether or not it matches the physical property,
 	// (4): it's a global index path or not.
+	// (5): lower qualifying row count and row count risk
 	// If `x` is not worse than `y` at all factors,
 	// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 	if !comparable1 {
@@ -1213,13 +1197,34 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	if !comparable2 {
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && sum > 0 {
+	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && riskResult >= 0 && sum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && sum < 0 {
+	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && riskResult <= 0 && sum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
+}
+
+func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
+		if !lhsFullScan && lhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+				lhsPseudo = false // We have statistics for the lhs index
+			} else {
+				lhsPseudo = true
+			}
+		}
+		if !rhsFullScan && rhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+				rhsPseudo = false // We have statistics on the rhs index
+			} else {
+				rhsPseudo = true
+			}
+		}
+	}
+	return lhsPseudo, rhsPseudo
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
