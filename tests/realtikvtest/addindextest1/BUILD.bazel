@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
+        "//pkg/ddl",
         "//pkg/ddl/ingest",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
@@ -23,6 +24,7 @@ go_test(
         "//pkg/lightning/backend/local",
         "//pkg/meta/model",
         "//pkg/sessionctx/vardef",
+        "//pkg/store",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",

@@ -9,7 +9,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/domain/crossks",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/infoschema",
         "//pkg/infoschema/issyncer",
