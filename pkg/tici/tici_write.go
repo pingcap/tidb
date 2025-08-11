@@ -16,6 +16,7 @@ package tici
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"sync/atomic"
 
@@ -81,16 +82,15 @@ func NewTiCIDataWriter(
 	baseLogger := logutil.Logger(ctx)
 	logger := baseLogger.With(
 		zap.Int64("tableID", tblInfo.ID),
-		zap.String("tableName", tblInfo.Name.O),
 		zap.Int64("indexID", idxInfo.ID),
-		zap.String("indexName", idxInfo.Name.O),
 	)
 	logger.Info("building TiCIDataWriter",
+		zap.String("tableName", tblInfo.Name.O),
+		zap.String("indexName", idxInfo.Name.O),
 		zap.String("schema", schema),
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
-	// FIXME: I'm not sure whether it is the right place to mark the import index job as started in TiCI.
-	storeURI, err := ticiMgr.GetCloudStoragePrefix(ctx, tidbTaskID, tblInfo.ID, idxInfo.ID)
+	storeURI, ticiJobID, err := ticiMgr.GetCloudStoragePrefix(ctx, tidbTaskID, tblInfo.ID, idxInfo.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,8 @@ func NewTiCIDataWriter(
 		idxInfo:    idxInfo,
 		schema:     schema,
 		storeURI:   storeURI,
-		logger:     logger,
+		// add the ticiJobID to the logger for better traceability
+		logger: logger.With(zap.Uint64("ticiJobID", ticiJobID)),
 	}, nil
 }
 
@@ -159,15 +160,15 @@ func (w *DataWriter) FinishPartitionUpload(
 	}
 	err := ticiMgr.FinishPartitionUpload(ctx, w.tidbTaskID, w.tblInfo.ID, w.idxInfo.ID, lowerBound, upperBound, s3Path)
 	if err != nil {
-		logger.Error("failed to mark partition upload finished",
-			zap.String("startKey", string(lowerBound)),
-			zap.String("endKey", string(upperBound)),
+		logger.Error("failed to finish partition upload",
+			zap.String("startKey", hex.EncodeToString(lowerBound)),
+			zap.String("endKey", hex.EncodeToString(upperBound)),
 			zap.Error(err),
 		)
 	} else {
-		logger.Info("successfully marked partition upload finished",
-			zap.String("startKey", string(lowerBound)),
-			zap.String("endKey", string(upperBound)),
+		logger.Info("successfully finish partition upload",
+			zap.String("startKey", hex.EncodeToString(lowerBound)),
+			zap.String("endKey", hex.EncodeToString(upperBound)),
 		)
 	}
 	return err
@@ -180,9 +181,10 @@ func (w *DataWriter) FinishIndexUpload(
 ) error {
 	logger := w.logger
 	if err := ticiMgr.FinishIndexUpload(ctx, w.tidbTaskID, w.tblInfo.ID, w.idxInfo.ID); err != nil {
-		logger.Error("failed to mark table upload finished", zap.Error(err))
+		logger.Error("failed to finish index upload", zap.Error(err))
 		return err
 	}
+	logger.Info("successfully finish index upload")
 	return nil
 }
 

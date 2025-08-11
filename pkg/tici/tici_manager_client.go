@@ -16,6 +16,7 @@ package tici
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"sync"
 
@@ -234,7 +235,7 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	tidbTaskID string,
 	tableID int64,
 	indexID int64,
-) (string, error) {
+) (string, uint64, error) {
 	// TODO: Can we set the start tso here?
 	req := &GetImportStoragePrefixRequest{
 		TidbTaskId: tidbTaskID,
@@ -249,11 +250,11 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 			errMsg = t.err.Error()
 		}
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return "", errors.Wrap(t.err, "meta service client is nil")
+		return "", 0, errors.Wrap(t.err, "meta service client is nil")
 	}
 	resp, err := t.metaClient.client.GetImportStoragePrefix(ctx, req)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("start import index failed",
@@ -261,7 +262,7 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return "", fmt.Errorf("tici start import index error: %s", resp.ErrorMessage)
+		return "", 0, fmt.Errorf("tici start import index error: %s", resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("start import index success",
 		zap.String("tidbTaskID", tidbTaskID),
@@ -271,7 +272,7 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 		zap.Uint64("ticiJobID", resp.JobId),
 		zap.String("ticiStorageURI", resp.StorageUri),
 	)
-	return resp.StorageUri, nil
+	return resp.StorageUri, resp.JobId, nil
 }
 
 // FinishPartitionUpload notifies TiCI Meta Service that all partitions for the given table are uploaded.
@@ -304,17 +305,14 @@ func (t *ManagerCtx) FinishPartitionUpload(
 	}
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("FinishPartitionUpload failed",
+			zap.String("tidbTaskID", tidbTaskID),
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
-			zap.String("startKey", string(lowerBound)),
-			zap.String("endKey", string(upperBound)),
+			zap.String("startKey", hex.EncodeToString(lowerBound)),
+			zap.String("endKey", hex.EncodeToString(upperBound)),
 			zap.String("errorMessage", resp.ErrorMessage))
-		return fmt.Errorf("tici mark partition upload finished error: %s", resp.ErrorMessage)
+		return fmt.Errorf("tici finish partition upload finished error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("FinishPartitionUpload success", zap.Int64("tableID", tableID),
-		zap.Int64("indexID", indexID),
-		zap.String("startKey", string(lowerBound)),
-		zap.String("endKey", string(upperBound)))
 	return nil
 }
 
@@ -341,14 +339,12 @@ func (t *ManagerCtx) FinishIndexUpload(
 	}
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("FinishIndexUpload failed",
+			zap.String("tidbTaskID", tidbTaskID),
 			zap.Int64("tableID", tableID),
 			zap.Int64("indexID", indexID),
 			zap.String("errorMessage", resp.ErrorMessage))
 		return fmt.Errorf("tici mark table upload finished error: %s", resp.ErrorMessage)
 	}
-	logutil.BgLogger().Info("FinishIndexUpload success",
-		zap.Int64("tableID", tableID),
-		zap.Int64("indexID", indexID))
 	return nil
 }
 
