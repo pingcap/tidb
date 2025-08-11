@@ -353,6 +353,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		RetType:  sf.RetType.Clone(),
 		Function: sf.Function.Clone(),
 	}
+	c.Function.setRetTp(c.RetType)
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
