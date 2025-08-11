@@ -35,13 +35,13 @@ import (
 )
 
 // NewMockBackendCtx creates a MockBackendCtx.
-func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpMgr *CheckpointManager) BackendCtx {
+func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpOp CheckpointOperator) BackendCtx {
 	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", job.ID))
 	mockCtx := &MockBackendCtx{
 		mu:            sync.Mutex{},
 		sessCtx:       sessCtx,
 		jobID:         job.ID,
-		checkpointMgr: cpMgr,
+		checkpointMgr: cpOp,
 	}
 	return mockCtx
 }

@@ -132,13 +132,13 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
-	var cpMgr *CheckpointManager
+	var cpOp CheckpointOperator
 
 	// Create checkpoint manager based on the configuration
 	if b.useDistTask {
 		// Use distributed task checkpoint manager
 		if b.updateFunc != nil || b.getFunc != nil {
-			cpMgr, err = NewCheckpointManagerForDistTask(
+			cpOp, err = NewCheckpointManagerForDistTask(
 				ctx,
 				b.subtaskID,
 				b.physicalID,
@@ -158,7 +158,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	} else {
 		// Use normal checkpoint manager
 		if b.sessPool != nil {
-			cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
+			cpOp, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
 			if err != nil {
 				logutil.Logger(ctx).Warn("create checkpoint manager failed",
 					zap.Int64("jobID", job.ID),
@@ -169,14 +169,14 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	}
 
 	var mockBackend BackendCtx
-	failpoint.InjectCall("mockNewBackendContext", b.job, cpMgr, &mockBackend)
+	failpoint.InjectCall("mockNewBackendContext", b.job, cpOp, &mockBackend)
 	if mockBackend != nil {
 		BackendCounterForTest.Inc()
 		return mockBackend, nil
 	}
 
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
-		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
+		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpOp)
 
 	LitDiskRoot.Add(job.ID, bCtx)
 	BackendCounterForTest.Add(1)
@@ -266,7 +266,7 @@ func newBackendContext(
 	memRoot MemRoot,
 	etcdClient *clientv3.Client,
 	initTS, importTS uint64,
-	cpMgr *CheckpointManager,
+	cpOp CheckpointOperator,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		engines:        make(map[int64]*engineInfo, 10),
@@ -280,7 +280,7 @@ func newBackendContext(
 		etcdClient:     etcdClient,
 		initTS:         initTS,
 		importTS:       importTS,
-		checkpointMgr:  cpMgr,
+		checkpointMgr:  cpOp,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
 	return bCtx
