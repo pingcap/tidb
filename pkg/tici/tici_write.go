@@ -182,9 +182,8 @@ func (w *DataWriter) FinishIndexUpload(
 	if err := ticiMgr.FinishIndexUpload(ctx, w.tidbTaskID, w.tblInfo.ID, w.idxInfo.ID); err != nil {
 		logger.Error("failed to finish index upload", zap.Error(err))
 		return err
-	} else {
-		logger.Info("successfully finish index upload")
 	}
+	logger.Info("successfully finish index upload")
 	return nil
 }
 
