@@ -1035,11 +1035,11 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1AndStaticPartition(t *testin
 	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
 
 	// Check the stats of the indexes for each partition.
-	tableStats := h.GetPartitionStats(tableInfo, p0ID)
+	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
-	tableStats = h.GetPartitionStats(tableInfo, p1ID)
+	tableStats = h.GetPhysicalTableStats(p1ID, tableInfo)
 	require.True(t, tableStats.GetIdx(1).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(2).IsAnalyzed())
 	require.True(t, tableStats.GetIdx(3).IsAnalyzed())
