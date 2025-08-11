@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -892,8 +893,11 @@ func onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err e
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = infosync.CreateFulltextIndex(jobCtx.stepCtx, tblInfo, indexInfo, job.SchemaName)
+			err = tici.CreateFulltextIndex(jobCtx.stepCtx, tblInfo, indexInfo, job.SchemaName)
 			if err != nil {
+				if !isRetryableJobError(err, job.ErrorCount) {
+					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+				}
 				return ver, errors.Trace(err)
 			}
 			job.SnapshotVer = currVer.Ver
@@ -1850,17 +1854,16 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 
 		if isColumnarIndex {
-			if isFullTextIndex {
-				// Send sync schema notification to TiCI.
-				for _, indexID := range indexIDs {
-					if err := infosync.DropFullTextIndex(jobCtx.stepCtx, tblInfo.ID, indexID); err != nil {
-						logutil.DDLLogger().Warn("run drop column index but droping index on TiCI failed", zap.Error(err))
-					}
-				}
-			} else {
-				// Send sync schema notification to TiFlash.
-				if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
-					logutil.DDLLogger().Warn("run drop column index but syncing TiFlash schema failed", zap.Error(err))
+			// Send sync schema notification to TiFlash.
+			if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
+				logutil.DDLLogger().Warn("run drop column index but syncing TiFlash schema failed", zap.Error(err))
+			}
+		}
+		if isFullTextIndex {
+			// Drop full text index on TiCI.
+			for _, indexID := range indexIDs {
+				if err := tici.DropFullTextIndex(jobCtx.stepCtx, tblInfo.ID, indexID); err != nil {
+					logutil.DDLLogger().Warn("run drop column index but droping index on TiCI failed", zap.Error(err))
 				}
 			}
 		}
