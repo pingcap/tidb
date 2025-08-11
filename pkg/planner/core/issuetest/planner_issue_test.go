@@ -358,3 +358,11 @@ FROM t1
                                                       subQuery1.col_0)))))) INNER JOIN t1 as t1_alias on t1.c1;`).
 		Check(testkit.Rows("1 1"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`create table bug22555 (i smallint, s1 smallint, s2 smallint, o1 double, o2 double, e1 decimal, e2 decimal);`)
+	tk.MustQuery(`select std(s1/s2) from bug22555;`)
+}

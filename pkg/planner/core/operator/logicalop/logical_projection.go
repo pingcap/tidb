@@ -98,7 +98,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
 		return predicates, child, err
 	}
-	canBePushed, canNotBePushed := breakDownPredicates(p, predicates)
+	canBePushed, canNotBePushed := p.breakDownPredicates(predicates)
 	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
 	return append(remained, canNotBePushed...), child, err
 }
@@ -485,7 +485,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 // ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 func (p *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	proj := p.Self().(*LogicalProjection)
-	canBePushed, _ := breakDownPredicates(proj, predicates)
+	canBePushed, _ := proj.breakDownPredicates(predicates)
 	child := proj.Children()[0]
 	child = child.ConvertOuterToInnerJoin(canBePushed)
 	proj.SetChildren(child)
@@ -598,12 +598,13 @@ func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.C
 }
 
 // breakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
-func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) (canBePushed, canNotBePushed []expression.Expression) {
+func (p *LogicalProjection) breakDownPredicates(predicates []expression.Expression) (canBePushed, canNotBePushed []expression.Expression) {
 	canBePushed = make([]expression.Expression, 0, len(predicates))
 	canNotBePushed = make([]expression.Expression, 0, len(predicates))
 	exprCtx := p.SCtx().GetExprCtx()
+	exprs := util.CloneExprs(p.Exprs)
 	for _, cond := range predicates {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
