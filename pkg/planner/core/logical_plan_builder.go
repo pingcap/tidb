@@ -863,6 +863,28 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			copy(rNames[commonLen+1:j+1], rNames[commonLen:j])
 			rNames[commonLen] = name
 
+<<<<<<< HEAD
+=======
+			for _, fieldName := range []*types.FieldName{lNames[commonLen], rNames[commonLen]} {
+				colName := &ast.ColumnName{
+					Name:   fieldName.OrigColName,
+					Table:  fieldName.OrigTblName,
+					Schema: fieldName.DBName,
+				}
+				if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
+					colName.Name = fieldName.ColName
+					colName.Table = fieldName.TblName
+				}
+				if len(colName.Name.L) > 0 && len(colName.Table.L) > 0 && len(colName.Schema.L) > 0 {
+					// The column privilege is checked in the definition of CTE.
+					if _, ok := b.nameMapCTE[colName.Table.L]; ok {
+						continue
+					}
+					b.appendColNamesToVisitInfo([]*ast.ColumnName{colName})
+				}
+			}
+
+>>>>>>> fcbd8ed8257 (planner: add more test cases for column privilege (#62241))
 			commonLen++
 			break
 		}
