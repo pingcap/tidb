@@ -120,7 +120,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 			return
 		}
 		if err2 := s.tableImporter.Close(); err2 != nil {
-			s.logger.Error("close importer failed", zap.Error(err2))
+			s.logger.Warn("close importer failed", zap.Error(err2))
 		}
 	}()
 
