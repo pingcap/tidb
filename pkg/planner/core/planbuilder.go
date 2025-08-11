@@ -4155,25 +4155,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.L, tableInfo.Name.L, "", authErr)
 	}
 
-	// `ON DUPLICATE KEY UPDATE` requires both INSERT + UPDATE privilege
-	authErr = nil
-	if insert.OnDuplicate != nil {
-		if checkColumnPriv {
-			for _, col := range insert.Columns {
-				if user != nil {
-					authErr = plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", user.AuthUsername, user.AuthHostname, col.Name.L, tableInfo.Name.L)
-				}
-				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, tnW.DBInfo.Name.L, tableInfo.Name.L, col.Name.L, authErr)
-			}
-		} else {
-			if user != nil {
-				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("UPDATE", user.AuthUsername, user.AuthHostname, tableInfo.Name.L)
-			}
-			b.visitInfo = appendMultiColumns2VisitInfo(b.visitInfo, mysql.UpdatePriv, tnW.DBInfo.Name.L,
-				tableInfo.Name.L, tableInPlan.VisibleCols(), authErr)
-		}
-	}
-
 	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	mockTablePlan.SetSchema(insertPlan.TableSchema)
 	mockTablePlan.SetOutputNames(insertPlan.TableColNames)
@@ -4206,6 +4187,21 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.SetOutputNames(insertPlan.Names4OnDuplicate)
+
+	// `ON DUPLICATE KEY UPDATE` requires the UPDATE privilege of the assigned columns.
+	for _, assign := range insert.OnDuplicate {
+		idx, err := expression.FindFieldName(insertPlan.TableColNames, assign.Column)
+		if err != nil || idx < 0 {
+			// The error is reported in ResolveOnDuplicate.
+			continue
+		}
+		fieldName := insertPlan.TableColNames[idx]
+		var authErr error
+		if user != nil {
+			authErr = plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", user.AuthUsername, user.AuthHostname, fieldName.OrigColName.L, fieldName.OrigTblName.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, fieldName.DBName.L, fieldName.OrigTblName.L, fieldName.OrigColName.L, authErr)
+	}
 
 	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
 		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)

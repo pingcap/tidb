@@ -23,9 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) TestImportFromSelectBasic() {
@@ -178,4 +181,27 @@ func (s *mockGCSSuite) TestDiskFullOnIngestFailFast() {
 	s.tk.MustExec("create table dt(id int unsigned)")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/diskFullOnIngest", `return(true)`)
 	s.ErrorContains(s.tk.ExecToErr("import into dt from select 1"), "tikv disk full")
+}
+
+func (s *mockGCSSuite) TestImportFromSelectPrivilege() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec("DROP USER IF EXISTS 'testuser'@'localhost';")
+	s.tk.MustExec("DROP TABLE IF EXISTS test.t")
+	s.tk.MustExec("DROP TABLE IF EXISTS test.t1")
+	s.tk.MustExec(`CREATE USER 'testuser'@'localhost';`)
+	s.tk.MustExec(`CREATE TABLE test.t (a INT, b INT, c INT);`)
+	s.tk.MustExec(`CREATE TABLE test.t1 (a INT, b INT, c INT);`)
+	userTk := testkit.NewTestKit(s.T(), s.store)
+	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
+	require.NoError(s.T(), err)
+	s.tk.MustExec("GRANT ALL ON test.t1 TO 'testuser'@'localhost'")
+
+	importSQL := "IMPORT INTO test.t1 FROM SELECT a,b,c FROM test.t"
+	grantSQL := "GRANT SELECT(%s) ON test.t TO 'testuser'@'localhost'"
+
+	for _, colName := range []string{"a", "b", "c"} {
+		userTk.MustGetErrCode(importSQL, mysql.ErrColumnaccessDenied)
+		s.tk.MustExec(fmt.Sprintf(grantSQL, colName))
+	}
+	userTk.MustExec(importSQL)
 }
