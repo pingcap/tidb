@@ -2646,7 +2646,7 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	default:
 		return nil, errors.Errorf("cannot cast from %s", tp.EvalType())
 	}
-	f, err := fc.getFunction(ctx, []Expression{expr})
+	f, err := fc.getFunction(ctx, []Expression{expr.Clone()})
 	res = &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.Cast),
 		RetType:  tp,

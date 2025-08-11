@@ -602,9 +602,8 @@ func (p *LogicalProjection) breakDownPredicates(predicates []expression.Expressi
 	canBePushed = make([]expression.Expression, 0, len(predicates))
 	canNotBePushed = make([]expression.Expression, 0, len(predicates))
 	exprCtx := p.SCtx().GetExprCtx()
-	exprs := util.CloneExprs(p.Exprs)
 	for _, cond := range predicates {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), exprs, true)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {

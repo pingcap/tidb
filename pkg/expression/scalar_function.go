@@ -353,7 +353,12 @@ func (sf *ScalarFunction) Clone() Expression {
 		RetType:  sf.RetType.Clone(),
 		Function: sf.Function.Clone(),
 	}
-	c.Function.setRetTp(c.RetType)
+	if sf.RetType == sf.Function.getRetTp() {
+		// Not every return type is equal at these two positions.
+		// in the BuildJSONSumCrc32FunctionWithCheck, the return type is fixed to bigint.
+		c.Function.setRetTp(c.RetType)
+	}
+
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)

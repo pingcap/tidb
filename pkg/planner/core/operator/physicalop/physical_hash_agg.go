@@ -173,9 +173,6 @@ func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.Sta
 	// I clone it first.
 	// It needs a well refactor to make sure that the physical optimize should not change the things of logical plan.
 	// It's bad for cascades
-	if !la.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	for i, aggFunc := range la.AggFuncs {
 		newAggFuncs[i] = aggFunc.Clone()
 	}
