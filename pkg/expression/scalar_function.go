@@ -394,7 +394,6 @@ func CloneRetType(expr Expression, newRet, oldRet *types.FieldType) {
 				CloneRetType(arg, nRet, oRet)
 			}
 		}
-
 	}
 }
 
