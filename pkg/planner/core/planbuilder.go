@@ -1903,9 +1903,9 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	readers := make([]*PhysicalIndexLookUpReader, 0, len(readerPlans))
+	readers := make([]*physicalop.PhysicalIndexLookUpReader, 0, len(readerPlans))
 	for _, plan := range readerPlans {
-		readers = append(readers, plan.(*PhysicalIndexLookUpReader))
+		readers = append(readers, plan.(*physicalop.PhysicalIndexLookUpReader))
 	}
 	p.IndexInfos = indexInfos
 	p.IndexLookUpReaders = readers

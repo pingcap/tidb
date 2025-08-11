@@ -152,44 +152,6 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexLookUpReader)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if op.indexPlan != nil {
-		indexPlan, ok := op.indexPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.indexPlan = indexPlan.(base.PhysicalPlan)
-	}
-	if op.tablePlan != nil {
-		tablePlan, ok := op.tablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	if op.ExtraHandleCol != nil {
-		if op.ExtraHandleCol.SafeToShareAcrossSession() {
-			cloned.ExtraHandleCol = op.ExtraHandleCol
-		} else {
-			cloned.ExtraHandleCol = op.ExtraHandleCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.PushedLimit = op.PushedLimit.Clone()
-	cloned.CommonHandleCols = cloneColumnsForPlanCache(op.CommonHandleCols, nil)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexMergeReader)
 	*cloned = *op

@@ -975,9 +975,9 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 		propagateProbeParents(x.tablePlan, probeParents)
 	case *PhysicalIndexReader:
 		propagateProbeParents(x.indexPlan, probeParents)
-	case *PhysicalIndexLookUpReader:
-		propagateProbeParents(x.indexPlan, probeParents)
-		propagateProbeParents(x.tablePlan, probeParents)
+	case *physicalop.PhysicalIndexLookUpReader:
+		propagateProbeParents(x.IndexPlan, probeParents)
+		propagateProbeParents(x.TablePlan, probeParents)
 	case *PhysicalIndexMergeReader:
 		for _, pchild := range x.partialPlans {
 			propagateProbeParents(pchild, probeParents)
@@ -1300,7 +1300,7 @@ func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 	}
 	switch plan.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader,
-		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
+		*physicalop.PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
 		if existsOverlongType(plan.Schema()) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
 			return true

@@ -8,10 +8,13 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",
+        "//pkg/sessionctx",
+        "//pkg/statistics",
         "//pkg/util/execdetails",
         "@com_github_pingcap_tipb//go-tipb",
     ],

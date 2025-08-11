@@ -123,7 +123,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				})
 			}
 		}
-	case *PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
@@ -512,7 +512,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 			return &is.DBName, is.TableAsName
 		}
 		return &is.DBName, &is.Table.Name
-	case *PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		if is.TableAsName != nil && is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName

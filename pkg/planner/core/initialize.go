@@ -61,15 +61,6 @@ func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndex
 	return &p
 }
 
-// Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.SetSchema(p.tablePlan.Schema())
-	return &p
-}
-
 // Init initializes PhysicalIndexMergeReader.
 func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexMergeReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexMerge, &p, offset)

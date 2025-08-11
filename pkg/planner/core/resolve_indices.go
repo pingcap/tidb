@@ -154,37 +154,6 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	err = p.tablePlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	err = p.indexPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.tablePlan.Schema())
-		if err != nil {
-			return err
-		}
-		p.ExtraHandleCol = newCol.(*expression.Column)
-	}
-	for i, commonHandleCol := range p.CommonHandleCols {
-		newCol, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.CommonHandleCols[i] = newCol.(*expression.Column)
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.Schema())
 	if err != nil {

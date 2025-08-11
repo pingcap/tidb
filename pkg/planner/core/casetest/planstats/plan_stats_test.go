@@ -180,7 +180,7 @@ func TestPlanStatsLoad(t *testing.T) {
 			{ // check idx(b)
 				sql: "select * from t USE INDEX(idx) where b >= 10",
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
-					pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
+					pr, ok := p.(*physicalop.PhysicalIndexLookUpReader)
 					require.True(t, ok)
 					pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 					require.True(t, ok)

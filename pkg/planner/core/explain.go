@@ -167,20 +167,6 @@ func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
-	var str strings.Builder
-	// The children can be inferred by the relation symbol.
-	if p.PushedLimit != nil {
-		str.WriteString("limit embedded(offset:")
-		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
-		str.WriteString(", count:")
-		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
-		str.WriteString(")")
-	}
-	return str.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	var str strings.Builder
 	if p.IsIntersectionType {

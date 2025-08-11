@@ -37,7 +37,7 @@ import (
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{core.PhysicalIndexScan{}, core.PhysicalTableReader{},
 		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
-		core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
+		core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}}
 
 	// todo: add all back with physicalop.x
@@ -79,11 +79,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 
 		fullFieldName := fmt.Sprintf("%v.%v", vType.String(), vType.Field(i).Name)
 		switch fullFieldName { // handle some fields specially
-		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexLookUpReader.TablePlans",
-			"core.PhysicalIndexMergeReader.TablePlans":
+		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexMergeReader.TablePlans":
 			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
 			continue
-		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
+		case "core.PhysicalIndexReader.IndexPlans":
 			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":

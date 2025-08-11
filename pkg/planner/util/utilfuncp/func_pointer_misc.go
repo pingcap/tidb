@@ -19,10 +19,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -392,6 +395,20 @@ var GetPlanCostVer14PhysicalApply func(pp base.PhysicalPlan, taskType property.T
 var GetPlanCostVer24PhysicalApply func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
 
+// GetCost4PhysicalIndexLookUpReader computes the cost of index lookup reader operator.
+var GetCost4PhysicalIndexLookUpReader func(pp base.PhysicalPlan, costFlag uint64) float64
+
+// GetPlanCostVer14PhysicalIndexLookUpReader calculates the cost of the plan if it has not been calculated yet
+// and returns the cost.
+var GetPlanCostVer14PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
+// GetPlanCostVer24PhysicalIndexLookUpReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
+// probe-cost = probe-child-cost * build-rows
+var GetPlanCostVer24PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -434,3 +451,26 @@ var DoOptimize func(
 
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
+// ****************************************** index related ***********************************************
+
+// ClonePhysicalPlan is used to clone physical plans.
+var ClonePhysicalPlan func(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error)
+
+// GetAccessObjectFromIndexScan is used to get access object from index scan.
+var GetAccessObjectFromIndexScan func(sctx base.PlanContext, is base.PhysicalPlan, physPlanPartInfo any) base.AccessObject
+
+// ResolveIndicesForVirtualColumn is used to resolve indices for virtual column.
+var ResolveIndicesForVirtualColumn func(result []*expression.Column, schema *expression.Schema) error
+
+// FlattenPushDownPlan is used to flatten push down plan.
+var FlattenPushDownPlan func(p base.PhysicalPlan) []base.PhysicalPlan
+
+// LoadTableStats is used to load table stats.
+var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
+
+// AppendChildCandidate is used to append child candidate.
+var AppendChildCandidate func(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp)
+
+// GetTblStats is used to get table stats.
+var GetTblStats func(copTaskPlan base.PhysicalPlan) *statistics.HistColl

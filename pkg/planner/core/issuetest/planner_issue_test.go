@@ -44,11 +44,11 @@ func TestIssue43461(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, p)
 
-	var idxLookUpPlan *core.PhysicalIndexLookUpReader
+	var idxLookUpPlan *physicalop.PhysicalIndexLookUpReader
 	var ok bool
 
 	for {
-		idxLookUpPlan, ok = p.(*core.PhysicalIndexLookUpReader)
+		idxLookUpPlan, ok = p.(*physicalop.PhysicalIndexLookUpReader)
 		if ok {
 			break
 		}
