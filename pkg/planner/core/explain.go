@@ -114,19 +114,13 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 		}
 	}
 	if p.FtsQueryInfo != nil {
-		buffer.WriteString("textSearch:(")
+		buffer.WriteString("search func:")
 		if normalized {
-			buffer.WriteString("?")
+			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 		} else {
-			buffer.WriteString("\"" + p.FtsQueryInfo.QueryText + "\"")
+			buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.AccessCondition))
 		}
-		buffer.WriteString(" IN ")
-		if normalized {
-			buffer.WriteString("?")
-		} else {
-			fmt.Fprintf(&buffer, "%s", strings.Join(p.FtsQueryInfo.ColumnNames, ", "))
-		}
-		buffer.WriteString("), ")
+		buffer.WriteString(", ")
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))

@@ -716,9 +716,7 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	for _, col := range matchedColumns {
 		colNames = append(colNames, col.OrigName)
 	}
-	ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc, pbColumns, colNames)
-	// If we build a TiCI FTS access path, we should remove all the
-	return nil
+	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc, pbColumns, colNames)
 }
 
 func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
@@ -726,20 +724,29 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	ftsFunc *expression.ScalarFunction,
 	pbColumns []*tipb.ColumnInfo,
 	columnNames []string,
-) {
+) error {
 	// Fulltext index must be used. So we prune all other possible access paths.
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 		return path.Index == nil || path.Index.ID != index.ID
 	})
+
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	client := ds.SCtx().GetBuildPBCtx().Client
+	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
+	pbExpr := pbConverter.ExprToPB(ftsFunc)
+	if pbExpr == nil {
+		// If the expression is not converted to PB, we should return an error.
+		return errors.New("Failed to convert FTS function to PB expression")
+	}
+
 	// Build tipb protobuf info for the matched index.
 	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
 		IndexId:        index.ID,
-		Columns:        pbColumns,
-		ColumnNames:    columnNames,
-		QueryText:      ftsFunc.GetArgs()[0].(*expression.Constant).Value.GetString(),
 		QueryTokenizer: string(index.FullTextInfo.ParserType),
-		QueryFunc:      tipb.ScalarFuncSig_FTSMatchWord,
+		MatchExpr:      []tipb.Expr{*pbExpr},
 	}
+
 	ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
+	return nil
 }
