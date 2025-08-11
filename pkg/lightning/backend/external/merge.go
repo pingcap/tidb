@@ -23,10 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -41,7 +39,7 @@ var (
 	// external storage, which is 5MiB for both S3 and GCS.
 	MinUploadPartSize int64 = 5 * units.MiB
 
-	MergeSortMemLimiter *membuf.Limiter
+	//MergeSortMemLimiter *membuf.Limiter
 )
 
 // mergeCollector collects the bytes and row count in merge step.
@@ -101,10 +99,10 @@ func MergeOverlappingFiles(
 		zap.Int64("part-size", partSize))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
-	MergeSortMemLimiter = membuf.NewLimiter(int(10 * size.GB))
-	defer func() {
-		MergeSortMemLimiter = nil
-	}()
+	//MergeSortMemLimiter = membuf.NewLimiter(int(10 * size.GB))
+	//defer func() {
+	//	MergeSortMemLimiter = nil
+	//}()
 	for _, files := range dataFilesSlice {
 		eg.Go(func() error {
 			return mergeOverlappingFilesInternal(
@@ -195,7 +193,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 2)
 	if err != nil {
 		return err
 	}
