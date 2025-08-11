@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -38,6 +40,8 @@ var (
 	// MinUploadPartSize is the minimum size of each part when uploading files to
 	// external storage, which is 5MiB for both S3 and GCS.
 	MinUploadPartSize int64 = 5 * units.MiB
+
+	MergeSortMemLimiter *membuf.Limiter
 )
 
 // mergeCollector collects the bytes and row count in merge step.
@@ -97,6 +101,10 @@ func MergeOverlappingFiles(
 		zap.Int64("part-size", partSize))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
+	MergeSortMemLimiter = membuf.NewLimiter(int(10 * size.GB))
+	defer func() {
+		MergeSortMemLimiter = nil
+	}()
 	for _, files := range dataFilesSlice {
 		eg.Go(func() error {
 			return mergeOverlappingFilesInternal(
