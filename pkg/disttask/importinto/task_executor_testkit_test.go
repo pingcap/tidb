@@ -60,10 +60,13 @@ func TestPostProcessStepExecutor(t *testing.T) {
 
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	taskMeta := &importinto.TaskMeta{
 		Plan: importer.Plan{
+			DBID:             db.ID,
 			Checksum:         config.OpLevelRequired,
 			TableInfo:        table.Meta(),
 			DesiredTableInfo: table.Meta(),
