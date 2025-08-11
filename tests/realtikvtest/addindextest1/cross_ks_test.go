@@ -54,7 +54,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
 	taskQuerySQL := fmt.Sprintf(`select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key='%s'
 		union select count(1) c from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
-	sysKSTk.MustQueryInternal(taskQuerySQL).Check(testkit.Rows("1"))
+	sysKSTk.MustQuery(taskQuerySQL).Check(testkit.Rows("1"))
 	// reverse check
 	tk.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
 }

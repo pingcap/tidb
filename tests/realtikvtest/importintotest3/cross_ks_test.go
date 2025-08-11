@@ -61,8 +61,8 @@ func TestOnUserKeyspace(t *testing.T) {
 	taskQuerySQL := fmt.Sprintf(`select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key='%s'
 		union select count(1) c from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
 	userTK.MustQuery(jobQuerySQL).Check(testkit.Rows("1"))
-	sysKSTk.MustQueryInternal(taskQuerySQL).Check(testkit.Rows("1"))
+	sysKSTk.MustQuery(taskQuerySQL).Check(testkit.Rows("1"))
 	// reverse check
-	sysKSTk.MustQueryInternal(jobQuerySQL).Check(testkit.Rows("0"))
+	sysKSTk.MustQuery(jobQuerySQL).Check(testkit.Rows("0"))
 	userTK.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
 }
