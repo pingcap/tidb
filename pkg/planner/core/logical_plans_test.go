@@ -1539,31 +1539,142 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 		sql string
 		ans []visitInfo
 	}{
+		// INSERT
 		{
-			sql: "insert into t (a) values (1)",
+			sql: "INSERT INTO t(a) VALUES (1)",
 			ans: []visitInfo{
 				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
 			},
 		},
 		{
-			sql: "delete from t order by a",
+			sql: `INSERT INTO t2 VALUES (1,2,3),(4,5,6)`,
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
 			},
 		},
 		{
+			sql: "INSERT INTO t(a) SELECT a FROM t2",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t2 (SELECT a,b,c FROM t)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t2 SET a = 1, b = 2`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t(c) SELECT a from t2 ON DUPLICATE KEY UPDATE t.b = t2.b`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "c", nil, false, nil, false},
+				{mysql.UpdatePriv, "test", "t", "b", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		// REPLACE
+		{
+			sql: "REPLACE t(a) VALUES (1)",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `REPLACE t2 VALUES (1,2,3),(4,5,6)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "t2", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "REPLACE t(a) SELECT a FROM t2",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `REPLACE t2 (SELECT a,b,c FROM t)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.DeletePriv, "test", "t2", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `REPLACE t2 SET a = 1, b = 2`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t2", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t2", "b", nil, false, nil, false},
+				{mysql.DeletePriv, "test", "t2", "", nil, false, nil, false},
+			},
+		},
+
+		// DELETE
+		{
+			sql: "delete from t where a > 0 order by b limit 10",
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+			},
+		},
+		{ // alias
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
 				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 			},
 		},
-		{
-			sql: "update t set a = 7 where b = 1",
+		{ // multi-tables
+			sql: `DELETE t FROM t JOIN t2 WHERE t.a = t2.a`,
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t"), false, nil, false},
+				{mysql.DeletePriv, "test", "t", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{ // multi-tables
+			sql: `DELETE FROM t2 USING t JOIN t2 WHERE t.a = t2.a`,
+			ans: []visitInfo{
+				{mysql.DeletePriv, "test", "t2", "", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+
+		// UPDATE
+		{
+			sql: "update t set a = a + 1 where b = 1 order by c limit 10",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
 			},
 		},
 		{
@@ -1585,7 +1696,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t", "i_date", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
-
 		{
 			sql: "update t a1 set a1.a = a1.a + 1",
 			ans: []visitInfo{
@@ -1593,6 +1703,29 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 			},
 		},
+		{
+			sql: `UPDATE t, t2 SET t.a = t2.b, t2.b = t.a+1 WHERE t.c = t2.c`,
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
+				{mysql.UpdatePriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `WITH cte AS (SELECT a,b,c FROM t2) UPDATE t,cte SET t.a = cte.a WHERE t.b = cte.b AND t.c = cte.c`,
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+			},
+		},
+
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
@@ -1681,6 +1814,14 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 		// Aggregation with window function
 		{
 			sql: "SELECT SUM(a) OVER(PARTITION BY b ORDER BY c) AS s FROM t",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: "SELECT SUM(a) OVER w AS s FROM t WINDOW w AS (PARTITION BY b ORDER BY c)",
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
@@ -1865,7 +2006,216 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			},
 		},
 
-		// Join without ON
+		// Join without ON, USING and NATURAL JOIN
+		{
+			sql: `SELECT t.a, t2.* FROM t CROSS JOIN t2;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a, t2.b, v.c FROM (t JOIN t2) JOIN v`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "v"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a, t2.b FROM t JOIN t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a, t2.b FROM t CROSS JOIN t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a, t2.b FROM t INNER JOIN t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a, t2.b FROM t STRAIGHT_JOIN t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+
+		// Join with ON
+		{
+			sql: `SELECT t.b FROM t JOIN t2 ON t.a = t2.a`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.b FROM t CROSS JOIN t2 ON t.a = t2.a`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.b FROM t LEFT JOIN t2 ON t.a = t2.a`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.b FROM t RIGHT OUTER JOIN t2 ON t.a = t2.a`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.b FROM t STRAIGHT_JOIN t2 ON t.a = t2.a`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t2.* FROM t JOIN t2 ON t.b = t2.b`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.c, t.d, t.e, t2.b, t2.c
+						FROM t 
+								LEFT OUTER JOIN t2 ON t2.a = t.a 
+						WHERE t.b = 1;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t2.* FROM t JOIN t2 ON t.a = t2.a WHERE t.b > 0`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+
+		// Join with USING
+		{
+			sql: `SELECT t.a FROM t JOIN t2 USING (b)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a FROM t CROSS JOIN t2 USING (b)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a FROM t LEFT JOIN t2 USING (b)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a FROM t RIGHT OUTER JOIN t2 USING (b)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t.a FROM t STRAIGHT_JOIN t2 USING (b)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t2.* FROM t JOIN t2 USING (a)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t2.* FROM t2 JOIN v USING (b);`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT tt.* FROM (SELECT * FROM t2) tt JOIN t USING (a)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `WITH cte AS (SELECT * FROM t2)
+						SELECT cte.* FROM cte JOIN t USING (a)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+
+		// Join with NATURAL JOIN
 		{
 			sql: `SELECT t2.* FROM t2 NATURAL JOIN t;`,
 			ans: []visitInfo{
@@ -1875,6 +2225,71 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t2.* FROM t2 NATURAL LEFT JOIN t;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t2.* FROM t2 NATURAL RIGHT OUTER JOIN t;`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT v.* FROM v NATURAL JOIN t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT t2.* FROM v NATURAL LEFT JOIN t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT * FROM v NATURAL RIGHT OUTER JOIN t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "v"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "v", "d", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "v"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
@@ -1894,18 +2309,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 			},
 		},
-		{
-			sql: `SELECT t2.* FROM t JOIN t2 USING (a)`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-			},
-		},
-
-		// Join with View
 		{
 			sql: `SELECT t2.* FROM t2 NATURAL JOIN v;`,
 			ans: []visitInfo{
@@ -1934,18 +2337,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			},
 		},
 		{
-			sql: `SELECT t2.* FROM t2 JOIN v USING (b);`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "v", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "v"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-			},
-		},
-
-		// Join with CTE/ derived table
-		{
 			sql: `SELECT tt.* FROM t NATURAL JOIN (SELECT * FROM t2) tt;`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
@@ -1954,16 +2345,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-			},
-		},
-		{
-			sql: `SELECT tt.* FROM (SELECT * FROM t2) tt JOIN t USING (a)`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
@@ -1979,17 +2360,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-			},
-		},
-		{
-			sql: `WITH cte AS (SELECT * FROM t2)
-						SELECT cte.* FROM cte JOIN t USING (a)`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
@@ -2102,17 +2472,7 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
 			},
 		},
-		{
-			sql: `SELECT t2.* FROM t JOIN t2 ON t.a = t2.a WHERE t.b > 0`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
-			},
-		},
+
 		{
 			sql: `SELECT t.b FROM t
 						LEFT OUTER JOIN
@@ -2194,22 +2554,6 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
 			},
 		},
-		{
-			sql: `SELECT t.c, t.d, t.e, t2.b, t2.c
-						FROM t 
-								LEFT OUTER JOIN t2 ON t2.a = t.a 
-						WHERE t.b = 1;`,
-			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
-				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
-			},
-		},
 
 		// Function Call
 		{
@@ -2223,6 +2567,12 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 			sql: `SELECT 1 FROM (SELECT count(a) FROM t) tt`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+			},
+		},
+		{
+			sql: `SELECT 1 FROM (SELECT count(*) FROM t) tt`,
+			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "*", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
 			},
 		},
@@ -2356,6 +2706,99 @@ func testColumnPrivilegeVisitInfo(t *testing.T) {
 				{mysql.SelectPriv, "test", "t", "d", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "d", "t"), false, nil, false},
 				{mysql.SelectPriv, "test", "t", "e", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "e", "t"), false, nil, false},
 				{mysql.DeletePriv, "test", "t", "", plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", "", "", "t"), false, nil, false},
+			},
+		},
+
+		// CREATE VIEW
+		{
+			sql: `create view v1 as select a,b,c from t`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.CreateViewPriv, "test", "v1", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `create view v1 as select a,b,c from t union select a,b,c from t2`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t2"), false, nil, false},
+				{mysql.CreateViewPriv, "test", "v1", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `create view v1 as with cte as (select a,b,c from t) select * from cte`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t"), false, nil, false},
+				{mysql.CreateViewPriv, "test", "v1", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: `create view v1 as (select a,b,c from t)`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
+				{mysql.CreateViewPriv, "test", "v1", "", nil, false, nil, false},
+			},
+		},
+
+		// INSERT INTO ... SELECT
+		{
+			sql: `INSERT INTO t (a,b,c) SELECT * FROM t2`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t (a,b,c) (SELECT * FROM t2)`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t (a,b,c) WITH cte AS (SELECT * FROM t2) SELECT * FROM cte`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+			},
+		},
+		{
+			sql: `INSERT INTO t (a,b,c) SELECT * FROM t2 UNION SELECT a,b,c FROM t`,
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "a", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "b", nil, false, nil, false},
+				{mysql.InsertPriv, "test", "t", "c", nil, false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "a", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "b", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t2", "c", plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", "", "", "t2"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "a", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "a", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "b", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "b", "t"), false, nil, false},
+				{mysql.SelectPriv, "test", "t", "c", plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", "", "", "c", "t"), false, nil, false},
 			},
 		},
 	}
