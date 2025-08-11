@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -707,23 +706,12 @@ func (ds *DataSource) analyzeFTSFunc() error {
 
 	// Remove the matched condition from PushedDownConds.
 	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
-	// Build protobuf info for the matched index.
-	pbColumns := make([]*tipb.ColumnInfo, 0, len(matchedColumns))
-	for _, col := range matchedColumns {
-		pbColumns = append(pbColumns, tidbutil.ColumnToProto(col.ToInfo(), false, false))
-	}
-	colNames := make([]string, 0, len(matchedColumns))
-	for _, col := range matchedColumns {
-		colNames = append(colNames, col.OrigName)
-	}
-	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc, pbColumns, colNames)
+	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc)
 }
 
 func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	index *model.IndexInfo,
 	ftsFunc *expression.ScalarFunction,
-	pbColumns []*tipb.ColumnInfo,
-	columnNames []string,
 ) error {
 	// Fulltext index must be used. So we prune all other possible access paths.
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {

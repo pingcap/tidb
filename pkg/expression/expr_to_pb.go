@@ -77,7 +77,7 @@ func NewPBConverter(client kv.Client, ctx EvalContext) PbConverter {
 	return PbConverter{client: client, ctx: ctx}
 }
 
-// NewPBConverterTiCI creates a PbConverter for TiCI usage.
+// NewPBConverterForTiCI creates a PbConverter for TiCI usage.
 func NewPBConverterForTiCI(client kv.Client, ctx EvalContext) PbConverter {
 	return PbConverter{client: client, ctx: ctx, isTiCIExpr: true}
 }
