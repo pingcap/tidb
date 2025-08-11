@@ -300,6 +300,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustUseIndex("select * from t order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
 	tk.MustNoIndexUsed("select * from t ignore index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1")
 
+<<<<<<< HEAD
 	tk.MustExec("set tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
@@ -343,4 +344,91 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 1105 analyzing vector index is not supported, skip idx",
 		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+=======
+		testKit.MustUseIndex("select * from t force index(idx_a) where a > 0", "idx_a")
+		testKit.MustUseIndex("select * from t force index(idx_b) where b < 0", "idx_b")
+		testKit.MustUseIndex("select * from t force index(idx_c) where c = 0", "idx_c")
+		testKit.MustUseIndex("select * from t force index(idx_d) where d != 0", "idx_d")
+		testKit.MustNoIndexUsed("select * from t ignore index(idx_a) where a = 1")
+		testKit.MustNoIndexUsed("select * from t ignore index(idx_b) where b = 2")
+		testKit.MustNoIndexUsed("select * from t ignore index(idx_c) where c = 3")
+		testKit.MustNoIndexUsed("select * from t ignore index(idx_d) where d < 1")
+	})
+}
+
+func TestAnalyzeColumnarIndex(t *testing.T) {
+	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 200*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t;")
+
+		tiflash := infosync.NewMockTiFlash()
+		infosync.SetMockTiFlash(tiflash)
+		defer func() {
+			tiflash.Lock()
+			tiflash.StatusServer.Close()
+			tiflash.Unlock()
+		}()
+		testKit.MustExec(`create table t(a int, b vector(2), c datetime, j json, index(a))`)
+		testKit.MustExec("insert into t values(1, '[1, 0]', '2022-01-01 12:00:00', '{\"a\": 1}')")
+		testKit.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		err = domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tblInfo.ID, true)
+		require.NoError(t, err)
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+		testKit.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
+		testKit.MustExec("alter table t add columnar index idx2(c) USING INVERTED")
+
+		testKit.MustUseIndex("select * from t use index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
+		testKit.MustUseIndex("select * from t order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
+		testKit.MustNoIndexUsed("select * from t ignore index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1")
+
+		testKit.MustExec("set tidb_analyze_version=2")
+		testKit.MustExec("analyze table t")
+		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
+			"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
+			"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+			"Warning 1105 analyzing columnar index is not supported, skip idx",
+			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
+		testKit.MustExec("analyze table t index idx")
+		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
+			"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/1) as the sample-rate=1\"",
+			"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
+			"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+			"Warning 1105 analyzing columnar index is not supported, skip idx",
+			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
+
+		statsHandle := dom.StatsHandle()
+		statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		require.True(t, statsTbl.LastAnalyzeVersion > 0)
+		// int col
+		col := statsTbl.GetCol(1)
+		require.NotNil(t, col)
+		// It has stats.
+		require.True(t, (col.Histogram.Len()+col.TopN.Num()) > 0)
+		// vec col
+		col = statsTbl.GetCol(2)
+		require.NotNil(t, col)
+		// It doesn't have stats.
+		require.False(t, (col.Histogram.Len()+col.TopN.Num()) > 0)
+
+		testKit.MustExec("set tidb_analyze_version=1")
+		testKit.MustExec("analyze table t")
+		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
+			"Warning 1105 analyzing columnar index is not supported, skip idx",
+			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
+		testKit.MustExec("analyze table t index idx")
+		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
+			"Warning 1105 analyzing columnar index is not supported, skip idx"))
+		testKit.MustExec("analyze table t index a")
+		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows())
+		testKit.MustExec("analyze table t index a, idx, idx2")
+		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
+			"Warning 1105 analyzing columnar index is not supported, skip idx",
+			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
+	})
+>>>>>>> 4230cf349b0 (*: replace GetTableStats with GetPhysicalTableStats (#62790))
 }

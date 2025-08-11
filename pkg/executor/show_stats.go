@@ -49,7 +49,7 @@ func (e *ShowExec) fetchShowStatsExtended(ctx context.Context) error {
 			if pi != nil {
 				continue
 			}
-			e.appendTableForStatsExtended(db.L, tblInfo, h.GetTableStats(tblInfo))
+			e.appendTableForStatsExtended(db.L, tblInfo, h.GetPhysicalTableStats(tblInfo.ID, tblInfo))
 		}
 	}
 	return nil
@@ -126,15 +126,15 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsMeta(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+				e.appendTableForStatsMeta(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+						e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 				}
 			}
 		}
@@ -254,15 +254,15 @@ func (e *ShowExec) fetchShowStatsHistogram(ctx context.Context) error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsHistograms(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+				e.appendTableForStatsHistograms(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+						e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 				}
 			}
 		}
@@ -334,19 +334,19 @@ func (e *ShowExec) fetchShowStatsBuckets(ctx context.Context) error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
+				if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl)); err != nil {
 					return err
 				}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+						if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl)); err != nil {
 							return err
 						}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+					if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl)); err != nil {
 						return err
 					}
 				}
@@ -397,19 +397,19 @@ func (e *ShowExec) fetchShowStatsTopN(ctx context.Context) error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
+				if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl)); err != nil {
 					return err
 				}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+						if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl)); err != nil {
 							return err
 						}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+					if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl)); err != nil {
 						return err
 					}
 				}
@@ -528,15 +528,15 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsHealthy(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+				e.appendTableForStatsHealthy(db.O, tbl.Name.O, partitionName, h.GetPhysicalTableStats(tbl.ID, tbl))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+						e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPhysicalTableStats(def.ID, tbl))
 				}
 			}
 		}
