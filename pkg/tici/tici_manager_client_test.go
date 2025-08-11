@@ -107,7 +107,8 @@ func TestGetImportStoragePrefix(t *testing.T) {
 		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
-	path, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
+	path, jobID, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
+	assert.Equal(t, uint64(100), jobID)
 	assert.NoError(t, err)
 	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
 
@@ -115,14 +116,14 @@ func TestGetImportStoragePrefix(t *testing.T) {
 		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	_, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
+	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
 		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
 		Return(&GetImportStoragePrefixResponse{}, errors.New("rpc error")).
 		Once()
-	_, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
+	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
 	assert.Error(t, err)
 }
 
