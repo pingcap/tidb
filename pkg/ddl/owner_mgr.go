@@ -31,9 +31,11 @@ import (
 // keyspace name -> *ownerManager
 // we make it a map, as in real TiKV test, we might need to start multiple domain
 // and DDL owner manager in nextgen.
-// for classic kernel, the keyspace name is empty, so it's safe to use it as
-// the key too.
-var globalOwnerManagers = make(map[string]*ownerManager)
+// for classic kernel, the keyspace name is empty, we always init it, as some
+// test depends on it.
+var globalOwnerManagers = map[string]*ownerManager{
+	"": {},
+}
 
 // StartOwnerManager starts a global DDL owner manager.
 func StartOwnerManager(ctx context.Context, store kv.Storage) error {
