@@ -1018,13 +1018,22 @@ func TestIndexUsageWithData(t *testing.T) {
 			zap.String("plan", tk.MustQuery("explain "+sql).String()))
 	}
 
-	checkIndexUsage := func(startQuery time.Time, endQuery time.Time) {
+	checkIndexUsage := func(startQuery time.Time, endQuery time.Time, percentageAccess2050 bool) {
 		require.Eventually(t, func() bool {
 			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
 			if len(rows) != 1 {
 				return false
 			}
-			if rows[0][0] != "2" || rows[0][1] != "0" || rows[0][2] != "1" {
+			if percentageAccess2050 {
+				if rows[0][1] != "1" {
+					return false
+				}
+			} else {
+				if rows[0][1] != "0" {
+					return false
+				}
+			}
+			if rows[0][0] != "2" || rows[0][2] != "1" {
 				return false
 			}
 			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
@@ -1051,7 +1060,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		insertDataAndScanToT("idx")
 		endQuery := time.Now()
 
-		checkIndexUsage(startQuery, endQuery)
+		checkIndexUsage(startQuery, endQuery, false)
 	})
 
 	t.Run("test index usage with integer primary key", func(t *testing.T) {
@@ -1067,7 +1076,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		insertDataAndScanToT("primary")
 		endQuery := time.Now()
 
-		checkIndexUsage(startQuery, endQuery)
+		checkIndexUsage(startQuery, endQuery, false)
 	})
 
 	t.Run("test index usage with integer clustered primary key", func(t *testing.T) {
@@ -1083,7 +1092,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		insertDataAndScanToT("primary")
 		endQuery := time.Now()
 
-		checkIndexUsage(startQuery, endQuery)
+		checkIndexUsage(startQuery, endQuery, false)
 	})
 
 	t.Run("test index usage with string primary key", func(t *testing.T) {
@@ -1108,7 +1117,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		require.Len(t, rows, 222)
 		endQuery := time.Now()
 
-		checkIndexUsage(startQuery, endQuery)
+		checkIndexUsage(startQuery, endQuery, true)
 	})
 
 	t.Run("test index usage with nonclustered primary key", func(t *testing.T) {
@@ -1124,7 +1133,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		insertDataAndScanToT("primary")
 		endQuery := time.Now()
 
-		checkIndexUsage(startQuery, endQuery)
+		checkIndexUsage(startQuery, endQuery, false)
 	})
 }
 
