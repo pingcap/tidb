@@ -230,6 +230,7 @@ func TestIssue32632(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("set @@tidb_enforce_mpp = 1")
 
+<<<<<<< HEAD
 	tbl1, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "partsupp", L: "partsupp"})
 	require.NoError(t, err)
 	tbl2, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "supplier", L: "supplier"})
@@ -258,6 +259,29 @@ func TestIssue32632(t *testing.T) {
 	}
 	tk.MustExec("drop table if exists partsupp")
 	tk.MustExec("drop table if exists supplier")
+=======
+		statsTbl1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
+		statsTbl1.RealtimeCount = 800000
+		statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
+		statsTbl2.RealtimeCount = 10000
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		integrationSuiteData := GetIntegrationSuiteData()
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			})
+			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		}
+		testKit.MustExec("drop table if exists partsupp")
+		testKit.MustExec("drop table if exists supplier")
+	})
+>>>>>>> 4230cf349b0 (*: replace GetTableStats with GetPhysicalTableStats (#62790))
 }
 
 func TestTiFlashPartitionTableScan(t *testing.T) {
