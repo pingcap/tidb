@@ -13,12 +13,12 @@ go_library(
     deps = [
         "//pkg/ddl/logutil",
         "//pkg/infoschema/context",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/table/tables",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",

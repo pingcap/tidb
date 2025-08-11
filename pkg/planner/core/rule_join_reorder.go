@@ -105,14 +105,19 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == logicalop.LeftOuterJoin {
-			extractedCols := make([]*expression.Column, 0, 8)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.LeftConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+			extractedCols := make(map[int64]*expression.Column, len(join.LeftConditions)+len(join.OtherConditions)+len(eqConds))
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.LeftConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
 			affectedGroups := 0
-			for i := range lhsGroup {
-				if slices.ContainsFunc(extractedCols, lhsGroup[i].Schema().Contains) {
-					affectedGroups++
+			for _, lhs := range lhsGroup {
+				lhsSchema := lhs.Schema()
+				for _, col := range extractedCols {
+					if lhsSchema.Contains(col) {
+						affectedGroups++
+						break
+					}
 				}
 				if affectedGroups > 1 {
 					noExpand = true
@@ -144,14 +149,19 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == logicalop.RightOuterJoin {
-			extractedCols := make([]*expression.Column, 0, 8)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.OtherConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, join.RightConditions, nil)
-			extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, expression.ScalarFuncs2Exprs(join.EqualConditions), nil)
+			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
+			extractedCols := make(map[int64]*expression.Column, len(join.OtherConditions)+len(join.RightConditions)+len(eqConds))
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.RightConditions...)
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
 			affectedGroups := 0
-			for i := range rhsGroup {
-				if slices.ContainsFunc(extractedCols, rhsGroup[i].Schema().Contains) {
-					affectedGroups++
+			for _, rhs := range rhsGroup {
+				rhsSchema := rhs.Schema()
+				for _, col := range extractedCols {
+					if rhsSchema.Contains(col) {
+						affectedGroups++
+						break
+					}
 				}
 				if affectedGroups > 1 {
 					noExpand = true

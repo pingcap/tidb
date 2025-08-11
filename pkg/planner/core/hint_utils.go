@@ -93,7 +93,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			})
 		}
 	case *PhysicalTableReader:
-		tbl, ok := pp.TablePlans[0].(*PhysicalTableScan)
+		tbl, ok := pp.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
 			return res
 		}
@@ -179,7 +179,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
 			Indexes:  indexs,
 		})
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: ast.NewCIStr(h.HintHashAgg),
@@ -190,7 +190,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				HintName: ast.NewCIStr(h.HintAggToCop),
 			})
 		}
-	case *PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
 			HintName: ast.NewCIStr(h.HintStreamAgg),
@@ -201,7 +201,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				HintName: ast.NewCIStr(h.HintAggToCop),
 			})
 		}
-	case *PhysicalMergeJoin:
+	case *physicalop.PhysicalMergeJoin:
 		hint := genJoinMethodHintForSinglePhysicalJoin(
 			p.SCtx(),
 			h.HintSMJ,
@@ -213,7 +213,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		if hint != nil {
 			res = append(res, hint)
 		}
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		// For semi join, hash_join_[build|probe] is not supported. See getHashJoins() for details.
 		if pp.JoinType.IsSemiJoin() {
 			hint := genJoinMethodHintForSinglePhysicalJoin(
@@ -263,7 +263,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				res = append(res, hint)
 			}
 		}
-	case *PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		hint := genJoinMethodHintForSinglePhysicalJoin(
 			p.SCtx(),
 			h.HintINLJ,
@@ -289,7 +289,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		if hint != nil {
 			res = append(res, hint)
 		}
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		hint := genJoinMethodHintForSinglePhysicalJoin(
 			p.SCtx(),
 			h.HintINLHJ,
@@ -501,7 +501,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
+		ts := x.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if ts.TableAsName != nil && ts.TableAsName.L != "" {
 			return &ts.DBName, ts.TableAsName
 		}
@@ -519,7 +519,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 		}
 		return &is.DBName, &is.Table.Name
 	case *physicalop.PhysicalSort, *physicalop.PhysicalSelection, *physicalop.PhysicalUnionScan, *physicalop.PhysicalProjection,
-		*PhysicalHashAgg, *PhysicalStreamAgg:
+		*physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}
 	return nil, nil
@@ -572,7 +572,7 @@ func extractOrderedPhysicalJoinGroup(p PhysicalJoin, visitedIDs map[int]struct{}
 	// In our join reorder implementation, cartesian join will break the join relationship and make its two children
 	// two independent join groups. So we don't need to handle it here.
 	// Currently, index joins must match the index or PK of the inner table, so cartesian join must be a hash join.
-	if hashJoin, ok := p.(*PhysicalHashJoin); ok {
+	if hashJoin, ok := p.(*physicalop.PhysicalHashJoin); ok {
 		if len(hashJoin.EqualConditions) == 0 && len(hashJoin.NAEqualConditions) == 0 {
 			return nil
 		}

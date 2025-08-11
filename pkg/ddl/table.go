@@ -578,7 +578,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	})
 
 	var scatterScope string
-	if val, ok := job.GetSessionVars(vardef.TiDBScatterRegion); ok {
+	if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
 		scatterScope = val
 	}
 	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)

@@ -158,13 +158,13 @@ func TestSlowLogFormat(t *testing.T) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		BackoffTime:  time.Millisecond,
 		RequestCount: 2,
-		ScanDetail: &util.ScanDetail{
-			ProcessedKeys: 20001,
-			TotalKeys:     10000,
-		},
-		DetailsNeedP90: execdetails.DetailsNeedP90{
+		CopExecDetails: execdetails.CopExecDetails{
+			BackoffTime: time.Millisecond,
+			ScanDetail: &util.ScanDetail{
+				ProcessedKeys: 20001,
+				TotalKeys:     10000,
+			},
 			TimeDetail: util.TimeDetail{
 				ProcessTime: time.Second * time.Duration(2),
 				WaitTime:    time.Minute,
@@ -274,7 +274,9 @@ func TestSlowLogFormat(t *testing.T) {
 # Resource_group: rg1
 # Request_unit_read: 50
 # Request_unit_write: 100.56
-# Time_queued_by_rc: 0.134`
+# Time_queued_by_rc: 0.134
+# Storage_from_kv: true
+# Storage_from_mpp: false`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	tikvExecDetail := util.ExecDetails{
@@ -320,6 +322,8 @@ func TestSlowLogFormat(t *testing.T) {
 		RRU:               50.0,
 		WRU:               100.56,
 		WaitRUDuration:    134 * time.Millisecond,
+		StorageKV:         true,
+		StorageMPP:        false,
 	}
 	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
 	logItems.UsedStats.RecordUsedInfo(2, usedStats2)

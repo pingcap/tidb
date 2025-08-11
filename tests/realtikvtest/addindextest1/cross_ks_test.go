@@ -41,7 +41,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 
 	t.Run("submit add index sql on user keyspace", func(t *testing.T) {
 		userStore := realtikvtest.CreateMockStoreAndSetup(t,
-			realtikvtest.WithKeyspaceName("cross_ks"))
+			realtikvtest.WithKeyspaceName("keyspace1"))
 		tk := testkit.NewTestKit(t, userStore)
 		tk.MustExec("use test")
 		tk.MustExec("create table t (a int, b int);")
@@ -76,7 +76,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	})
 
 	t.Run("check ddl state at user keyspace", func(t *testing.T) {
-		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithKeyspaceName("cross_ks"), realtikvtest.WithRetainData())
+		systemStore := realtikvtest.CreateMockStoreAndSetup(t, realtikvtest.WithKeyspaceName("keyspace1"), realtikvtest.WithRetainData())
 		tk := testkit.NewTestKit(t, systemStore)
 		var jobState string
 		require.Eventuallyf(t, func() bool {

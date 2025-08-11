@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,9 +49,9 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 
 func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	switch x := p.(type) {
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		x.Ranges = ranges
-		x.rangeInfo = rangeInfo
+		x.RangeInfo = rangeInfo
 	case *PhysicalIndexScan:
 		x.Ranges = ranges
 		x.rangeInfo = rangeInfo
@@ -76,11 +77,11 @@ func rebuildRange(p base.Plan) error {
 	sctx := p.SCtx()
 	var err error
 	switch x := p.(type) {
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *PhysicalIndexMergeJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
-	case *PhysicalIndexJoin:
+	case *physicalop.PhysicalIndexJoin:
 		if err := x.Ranges.Rebuild(sctx); err != nil {
 			return err
 		}
@@ -95,7 +96,7 @@ func rebuildRange(p base.Plan) error {
 				return err
 			}
 		}
-	case *PhysicalTableScan:
+	case *physicalop.PhysicalTableScan:
 		err = buildRangeForTableScan(sctx, x)
 		if err != nil {
 			return err
@@ -179,7 +180,7 @@ func convertConstant2Datum(ctx base.PlanContext, con *expression.Constant, targe
 	return &dVal, nil
 }
 
-func buildRangeForTableScan(sctx base.PlanContext, ts *PhysicalTableScan) (err error) {
+func buildRangeForTableScan(sctx base.PlanContext, ts *physicalop.PhysicalTableScan) (err error) {
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))
@@ -336,7 +337,7 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *BatchPointGetPlan) (err er
 			var unsignedIntHandle bool
 			if x.TblInfo.PKIsHandle {
 				if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					pkCol = expression.ColInfo2Col(x.Schema().Columns, pkColInfo)
 				}
 				if !x.TblInfo.IsCommonHandle {
 					unsignedIntHandle = true

@@ -831,11 +831,10 @@
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v10, v10), LIMIT_TO_COP(@qb_v10) */ * from v10;",
         "Plan": [
           "TopN 1.00 root  test.t.b, offset:0, count:1",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN 1.00 mpp[tiflash]  test.t.b, offset:0, count:1",
-          "      └─Selection 3333.33 mpp[tiflash]  gt(test.t.a, 10)",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableReader 1.00 root  data:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─Selection 3333.33 cop[tikv]  gt(test.t.a, 10)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

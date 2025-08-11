@@ -23,13 +23,16 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -57,8 +60,8 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
-func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *infosync.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
-	var instances []*infosync.ServerInfo
+func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
+	var instances []*serverinfo.ServerInfo
 	if instance != nil {
 		instances = append(instances, instance)
 	}
@@ -160,8 +163,8 @@ type RuntimeInfo struct {
 	ErrorMsg   string
 
 	Step       proto.Step
-	StartTime  types.Time
 	UpdateTime types.Time
+	Speed      int64
 	Processed  int64
 	Total      int64
 }
@@ -195,31 +198,25 @@ func FormatSecondAsTime(sec int64) string {
 	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
 }
 
-// SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
-func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
-	s := int64(0)
-	duration := types.TimestampDiff("SECOND", ri.StartTime, ri.UpdateTime)
-	if duration > 0 && ri.Processed > 0 {
-		s = ri.Processed / duration
-	}
-
+// ETA returns the estimated time of arrival (ETA) for the current step.
+func (ri *RuntimeInfo) ETA() string {
 	remainTime := notAvailable
-	if s > 0 && ri.Total > 0 {
-		remainSecond := max((ri.Total-ri.Processed)/s, 0)
+	if ri.Speed > 0 && ri.Total > 0 {
+		remainSecond := max((ri.Total-ri.Processed)/ri.Speed, 0)
 		remainTime = FormatSecondAsTime(remainSecond)
 	}
 
-	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
+	return remainTime
 }
 
 // TotalSize returns the total size of the current step in human-readable format.
 func (ri *RuntimeInfo) TotalSize() string {
-	return units.HumanSize(float64(ri.Total))
+	return units.BytesSize(float64(ri.Total))
 }
 
 // ProcessedSize returns the processed size of the current step in human-readable format.
 func (ri *RuntimeInfo) ProcessedSize() string {
-	return units.HumanSize(float64(ri.Processed))
+	return units.BytesSize(float64(ri.Processed))
 }
 
 // convertToMySQLTime converts go time to MySQL time with the specified location.
@@ -284,11 +281,23 @@ func GetRuntimeInfoForJob(
 		return nil, err
 	}
 
+	currentTime := time.Now()
+	timeRange := execute.SubtaskSpeedUpdateInterval
+
+	failpoint.Inject("mockSpeedDuration", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			currentTime = time.Unix(1000, int64(v*1000000))
+			timeRange = time.Millisecond * time.Duration(v)
+		}
+	})
+
+	ri.Speed = 0
 	for _, s := range summaries {
 		ri.Processed += s.Bytes.Load()
 		ri.ImportRows += s.RowCnt.Load()
-		if s.UpdateTime.After(latestTime) {
-			latestTime = s.UpdateTime
+		ri.Speed += s.GetSpeedInTimeRange(currentTime, timeRange)
+		if s.UpdateTime().After(latestTime) {
+			latestTime = s.UpdateTime()
 		}
 	}
 
