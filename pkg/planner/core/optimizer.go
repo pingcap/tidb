@@ -550,8 +550,8 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 	switch x := plan.(type) {
 	case *physicalop.PhysicalHashAgg:
 		physicalAgg = x.GetPointer()
-	case *PhysicalStreamAgg:
-		physicalAgg = x.getPointer()
+	case *physicalop.PhysicalStreamAgg:
+		physicalAgg = x.GetPointer()
 	default:
 		return
 	}
@@ -959,7 +959,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalPlan) {
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
-	case *PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
+		*PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
@@ -999,7 +1000,7 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
-	if apply, ok := plan.(*PhysicalApply); ok {
+	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
 		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])

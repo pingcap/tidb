@@ -142,7 +142,7 @@ type Server struct {
 
 	statusAddr     string
 	statusListener net.Listener
-	statusServer   *http.Server
+	statusServer   atomic.Pointer[http.Server]
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
 	health         *uatomic.Bool
@@ -643,10 +643,10 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.socket = nil
 	}
-	if s.statusServer != nil {
-		err := s.statusServer.Close()
+	if statusServer := s.statusServer.Load(); statusServer != nil {
+		err := statusServer.Close()
 		terror.Log(errors.Trace(err))
-		s.statusServer = nil
+		s.statusServer.Store(nil)
 	}
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()

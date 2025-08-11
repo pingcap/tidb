@@ -1513,11 +1513,12 @@ func constructDS2IndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:         indexConds,
-		TableFilters:         tblConds,
-		CountAfterIndex:      rowCount,
-		CountAfterAccess:     rowCount,
-		CorrCountAfterAccess: 0,
+		IndexFilters:        indexConds,
+		TableFilters:        tblConds,
+		CountAfterIndex:     rowCount,
+		CountAfterAccess:    rowCount,
+		MinCountAfterAccess: 0,
+		MaxCountAfterAccess: 0,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {
@@ -2795,7 +2796,7 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 	if p.SCtx().GetSessionVars().IsMPPAllowed() {
 		mppProp := prop.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
-		expand := PhysicalExpand{
+		expand := physicalop.PhysicalExpand{
 			GroupingSets:          p.RollupGroupingSets,
 			LevelExprs:            p.LevelExprs,
 			ExtraGroupingColNames: p.ExtraGroupingColNames,
@@ -2814,7 +2815,7 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 			// require cop task type for children.F
 			tidbProp := prop.CloneEssentialFields()
 			tidbProp.TaskTp = taskType
-			expand := PhysicalExpand{
+			expand := physicalop.PhysicalExpand{
 				GroupingSets:          p.RollupGroupingSets,
 				LevelExprs:            p.LevelExprs,
 				ExtraGroupingColNames: p.ExtraGroupingColNames,
@@ -3059,7 +3060,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		canUseCache = false
 	}
 
-	apply := PhysicalApply{
+	apply := physicalop.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
 		CanUseCache:      canUseCache,
