@@ -361,11 +361,11 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
-	CloneRetType(c, sf.RetType.Clone(), sf.RetType)
+	cloneRetType(c, sf.RetType.Clone(), sf.RetType)
 	return c
 }
 
-func CloneRetType(expr Expression, newRet, oldRet *types.FieldType) {
+func cloneRetType(expr Expression, newRet, oldRet *types.FieldType) {
 	switch e := expr.(type) {
 	case *ScalarFunction:
 		if e.RetType.EvalType() != types.ETJson {
@@ -379,7 +379,7 @@ func CloneRetType(expr Expression, newRet, oldRet *types.FieldType) {
 			}
 			e.RetType = newRet
 			for _, arg := range e.GetArgs() {
-				CloneRetType(arg, newRet, oldRet)
+				cloneRetType(arg, newRet, oldRet)
 			}
 		} else {
 			oRet := e.RetType
@@ -391,7 +391,7 @@ func CloneRetType(expr Expression, newRet, oldRet *types.FieldType) {
 			}
 			e.RetType = nRet
 			for _, arg := range e.GetArgs() {
-				CloneRetType(arg, nRet, oRet)
+				cloneRetType(arg, nRet, oRet)
 			}
 		}
 	}

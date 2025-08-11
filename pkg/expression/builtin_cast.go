@@ -2652,11 +2652,11 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 		RetType:  tp,
 		Function: f,
 	}
-	res = res.Clone()
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson && err == nil {
+		res = res.Clone()
 		return FoldConstant(ctx, res), nil
 	}
 	return res, err
