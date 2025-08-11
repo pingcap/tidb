@@ -53,7 +53,6 @@ func CloseOwnerManager(store kv.Storage) {
 	keyspace := store.GetKeyspace()
 	if mgr, ok := globalOwnerManagers[keyspace]; ok {
 		mgr.Close()
-		delete(globalOwnerManagers, keyspace)
 	}
 }
 
