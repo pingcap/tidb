@@ -1143,18 +1143,3 @@ func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *op
 	pp.AppendChildCandidate(op)
 	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }
-
-// // GetTblColHists implements base.HasTblColHists interface.
-// func (p *PhysicalIndexScan) GetTblColHists() *statistics.HistColl {
-// 	return p.tblColHists
-// }
-
-// // GetTableInfo implements base.HasTableInfo interface.
-// func (p *PhysicalIndexScan) GetTableInfo() *model.TableInfo {
-// 	return p.Table
-// }
-
-// // GetPhysicalTableID implements base.HasPhysicalTableID interface.
-// func (p *PhysicalIndexScan) GetPhysicalTableID() int64 {
-// 	return p.physicalTableID
-// }
