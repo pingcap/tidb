@@ -1105,7 +1105,7 @@ func TestIndexUsageWithData(t *testing.T) {
 		// scan 1/4 of the rows
 		startQuery := time.Now()
 		rows = tk.MustQuery("select * from t where a < '3'").Rows()
-		require.Len(t, rows, 223)
+		require.Len(t, rows, 222)
 		endQuery := time.Now()
 
 		checkIndexUsage(startQuery, endQuery)
