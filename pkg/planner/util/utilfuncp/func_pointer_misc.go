@@ -336,7 +336,7 @@ var GetPlanCostVer14PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType
 // build-hash-cost + build-filter-cost +
 // (probe-filter-cost + probe-hash-cost) / concurrency
 var GetPlanCostVer24PhysicalIndexMergeReader func(pp base.PhysicalPlan, taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +

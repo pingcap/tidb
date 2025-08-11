@@ -236,9 +236,6 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 }
 
 func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, physPlanPartInfo *physicalop.PhysPlanPartInfo, asName string) (res *DynamicPartitionAccessObject) {
-	if tblInfo == nil {
-		return nil
-	}
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return nil
