@@ -150,8 +150,6 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	store := ddlObj.store
 	sessPool := ddlObj.sessPool
 	taskKS := s.task.Keyspace
-	// Although taskKS != config.GetGlobalKeyspaceName() implies running on the system keyspace,
-	// we still check kernel type explicitly to avoid unexpected executions.
 	if ddlObj.store.GetKeyspace() != taskKS {
 		var err error
 		err = s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
