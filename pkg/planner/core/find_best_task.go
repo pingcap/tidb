@@ -1154,11 +1154,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
 			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
-				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
+				(lhs.path.EqOrInCondCount > 1 || isFullIndexMatch(lhs)) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
 			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
-				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
+				(rhs.path.EqOrInCondCount > 1 || isFullIndexMatch(rhs)) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
 		}
@@ -1225,6 +1225,10 @@ func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, 
 		}
 	}
 	return lhsPseudo, rhsPseudo
+}
+
+func isFullIndexMatch(candidate *candidatePath) bool {
+	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
