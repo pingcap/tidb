@@ -426,6 +426,8 @@ func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.A
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 	if dbInfo.ReadOnly == readOnly {
+		ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("database %s is already in the %s state", dbInfo.Name.O,
+			map[bool]string{true: "read-only", false: "read-write"}[readOnly]))
 		return nil
 	}
 	// Do the DDL job.
@@ -443,7 +445,8 @@ func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.A
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.ModifySchemaArgs{
-		ReadOnly: readOnly,
+		ReadOnly:  readOnly,
+		DDLConnID: ctx.GetSessionVars().ConnectionID,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
