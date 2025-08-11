@@ -15,153 +15,17 @@
 package core
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	util2 "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalExpand) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	if len(p.LevelExprs) > 0 {
-		return p.toPBV2(ctx, storeType)
-	}
-	client := ctx.GetClient()
-	groupingSetsPB, err := p.GroupingSets.ToPB(ctx.GetExprCtx().GetEvalCtx(), client)
-	if err != nil {
-		return nil, err
-	}
-	expand := &tipb.Expand{
-		GroupingSets: groupingSetsPB,
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		expand.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand, Expand: expand, ExecutorId: &executorID}, nil
-}
-
-func (p *PhysicalExpand) toPBV2(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	projExprsPB := make([]*tipb.ExprSlice, 0, len(p.LevelExprs))
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	for _, exprs := range p.LevelExprs {
-		expressionsPB, err := expression.ExpressionsToPBList(evalCtx, exprs, client)
-		if err != nil {
-			return nil, err
-		}
-		projExprsPB = append(projExprsPB, &tipb.ExprSlice{Exprs: expressionsPB})
-	}
-	expand2 := &tipb.Expand2{
-		ProjExprs:            projExprsPB,
-		GeneratedOutputNames: p.ExtraGroupingColNames,
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		expand2.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeExpand2, Expand2: expand2, ExecutorId: &executorID}, nil
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalHashAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	groupByExprs, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), p.GroupByItems, client)
-	if err != nil {
-		return nil, err
-	}
-	aggExec := &tipb.Aggregation{
-		GroupBy: groupByExprs,
-	}
-	pushDownCtx := util2.GetPushDownCtx(p.SCtx())
-	for _, aggFunc := range p.AggFuncs {
-		agg, err := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		aggExec.AggFunc = append(aggExec.AggFunc, agg)
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		aggExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-		// If p.tiflashPreAggMode is empty, means no need to consider preagg mode.
-		// For example it's the the second stage of hashagg.
-		if len(p.tiflashPreAggMode) != 0 {
-			if preAggModeVal, ok := variable.ToTiPBTiFlashPreAggMode(p.tiflashPreAggMode); !ok {
-				err = fmt.Errorf("unexpected tiflash pre agg mode: %v", p.tiflashPreAggMode)
-			} else {
-				aggExec.PreAggMode = &preAggModeVal
-			}
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	return &tipb.Executor{
-		Tp:                            tipb.ExecType_TypeAggregation,
-		Aggregation:                   aggExec,
-		ExecutorId:                    &executorID,
-		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
-		FineGrainedShuffleBatchSize:   ctx.TiFlashFineGrainedShuffleBatchSize,
-	}, nil
-}
-
-// ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalStreamAgg) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
-	client := ctx.GetClient()
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	pushDownCtx := util2.GetPushDownCtxFromBuildPBContext(ctx)
-	groupByExprs, err := expression.ExpressionsToPBList(evalCtx, p.GroupByItems, client)
-	if err != nil {
-		return nil, err
-	}
-	aggExec := &tipb.Aggregation{
-		GroupBy: groupByExprs,
-	}
-	for _, aggFunc := range p.AggFuncs {
-		agg, err := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		aggExec.AggFunc = append(aggExec.AggFunc, agg)
-	}
-	executorID := ""
-	if storeType == kv.TiFlash {
-		var err error
-		aggExec.Child, err = p.Children()[0].ToPB(ctx, storeType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		executorID = p.ExplainID().String()
-	}
-	return &tipb.Executor{Tp: tipb.ExecType_TypeStreamAgg, Aggregation: aggExec, ExecutorId: &executorID}, nil
-}
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
 // range and index are equal.

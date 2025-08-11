@@ -3417,7 +3417,7 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 	return nil
 }
 
@@ -3461,9 +3461,9 @@ func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 		return nil
 	})
 	if isNull || !enable {
-		vardef.EnableMDL.Store(false)
+		vardef.SetEnableMDL(false)
 	} else {
-		vardef.EnableMDL.Store(true)
+		vardef.SetEnableMDL(true)
 	}
 	return isNull, err
 }
@@ -3490,7 +3490,7 @@ func InitMDLVariable(store kv.Storage) error {
 		}
 		return nil
 	})
-	vardef.EnableMDL.Store(enable)
+	vardef.SetEnableMDL(enable)
 	return err
 }
 

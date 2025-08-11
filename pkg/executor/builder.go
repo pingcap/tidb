@@ -274,9 +274,9 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexNestedLoopHashJoin(v)
 	case *physicalop.PhysicalSelection:
 		return b.buildSelection(v)
-	case *plannercore.PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		return b.buildHashAgg(v)
-	case *plannercore.PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		return b.buildStreamAgg(v)
 	case *physicalop.PhysicalProjection:
 		return b.buildProjection(v)
@@ -284,7 +284,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildMemTable(v)
 	case *physicalop.PhysicalTableDual:
 		return b.buildTableDual(v)
-	case *plannercore.PhysicalApply:
+	case *physicalop.PhysicalApply:
 		return b.buildApply(v)
 	case *physicalop.PhysicalMaxOneRow:
 		return b.buildMaxOneRow(v)
@@ -322,7 +322,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildCompactTable(v)
 	case *plannercore.AdminShowBDRRole:
 		return b.buildAdminShowBDRRole(v)
-	case *plannercore.PhysicalExpand:
+	case *physicalop.PhysicalExpand:
 		return b.buildExpand(v)
 	case *plannercore.RecommendIndexPlan:
 		return b.buildRecommendIndex(v)
@@ -2032,7 +2032,7 @@ func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.E
 	return e
 }
 
-func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Executor {
+func (b *executorBuilder) buildHashAgg(v *physicalop.PhysicalHashAgg) exec.Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2040,7 +2040,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) exec.Exec
 	return b.buildHashAggFromChildExec(src, v)
 }
 
-func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *plannercore.PhysicalHashAgg) *aggregate.HashAggExec {
+func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalHashAgg) *aggregate.HashAggExec {
 	sessionVars := b.ctx.GetSessionVars()
 	e := &aggregate.HashAggExec{
 		BaseExecutor:    exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -2117,7 +2117,7 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 	return e
 }
 
-func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.Executor {
+func (b *executorBuilder) buildStreamAgg(v *physicalop.PhysicalStreamAgg) exec.Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2125,7 +2125,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	return b.buildStreamAggFromChildExec(src, v)
 }
 
-func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v *plannercore.PhysicalStreamAgg) *aggregate.StreamAggExec {
+func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v *physicalop.PhysicalStreamAgg) *aggregate.StreamAggExec {
 	exprCtx := b.ctx.GetExprCtx()
 	e := &aggregate.StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -2167,7 +2167,7 @@ func (b *executorBuilder) buildSelection(v *physicalop.PhysicalSelection) exec.E
 	return e
 }
 
-func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Executor {
+func (b *executorBuilder) buildExpand(v *physicalop.PhysicalExpand) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2644,7 +2644,7 @@ func (b *executorBuilder) buildTopN(v *physicalop.PhysicalTopN) exec.Executor {
 	return t
 }
 
-func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor {
+func (b *executorBuilder) buildApply(v *physicalop.PhysicalApply) exec.Executor {
 	var (
 		innerPlan base.PhysicalPlan
 		outerPlan base.PhysicalPlan
@@ -4620,7 +4620,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		}
 		err = exec.open(ctx)
 		return exec, err
-	case *plannercore.PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4628,7 +4628,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildHashAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
-	case *plannercore.PhysicalStreamAgg:
+	case *physicalop.PhysicalStreamAgg:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
