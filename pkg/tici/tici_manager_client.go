@@ -228,15 +228,15 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 	return nil
 }
 
-// StartImportIndex register an TiCI import job for a (fulltext) index on TiCI.
-func (t *ManagerCtx) StartImportIndex(
+// GetCloudStoragePrefix Get a cloud storage prefix for save importing input data for TiCI
+func (t *ManagerCtx) GetCloudStoragePrefix(
 	ctx context.Context,
 	tidbTaskID string,
 	tableID int64,
 	indexID int64,
 ) (string, error) {
 	// TODO: Can we set the start tso here?
-	req := &ImportIndexJobRequest{
+	req := &GetImportStoragePrefixRequest{
 		TidbTaskId: tidbTaskID,
 		TableId:    tableID,
 		IndexId:    indexID,
@@ -251,7 +251,7 @@ func (t *ManagerCtx) StartImportIndex(
 		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
 		return "", errors.Wrap(t.err, "meta service client is nil")
 	}
-	resp, err := t.metaClient.client.SubmitImportIndexJob(ctx, req)
+	resp, err := t.metaClient.client.GetImportStoragePrefix(ctx, req)
 	if err != nil {
 		return "", err
 	}

@@ -90,7 +90,7 @@ func NewTiCIDataWriter(
 		zap.Any("fulltextInfo", idxInfo.FullTextInfo),
 	)
 	// FIXME: I'm not sure whether it is the right place to mark the import index job as started in TiCI.
-	storeURI, err := ticiMgr.StartImportIndex(ctx, tidbTaskID, tblInfo.ID, idxInfo.ID)
+	storeURI, err := ticiMgr.GetCloudStoragePrefix(ctx, tidbTaskID, tblInfo.ID, idxInfo.ID)
 	if err != nil {
 		return nil, err
 	}

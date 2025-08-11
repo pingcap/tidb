@@ -40,9 +40,9 @@ func (m *MockMetaServiceClient) CreateIndex(ctx context.Context, in *CreateIndex
 	args := m.Called(ctx, in)
 	return args.Get(0).(*CreateIndexResponse), args.Error(1)
 }
-func (m *MockMetaServiceClient) SubmitImportIndexJob(ctx context.Context, in *ImportIndexJobRequest, opts ...grpc.CallOption) (*ImportIndexJobResponse, error) {
+func (m *MockMetaServiceClient) GetImportStoragePrefix(ctx context.Context, in *GetImportStoragePrefixRequest, opts ...grpc.CallOption) (*GetImportStoragePrefixResponse, error) {
 	args := m.Called(ctx, in)
-	return args.Get(0).(*ImportIndexJobResponse), args.Error(1)
+	return args.Get(0).(*GetImportStoragePrefixResponse), args.Error(1)
 }
 func (m *MockMetaServiceClient) FinishImportPartitionUpload(ctx context.Context, in *FinishImportPartitionUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
 	args := m.Called(ctx, in)
@@ -96,7 +96,7 @@ func TestCreateFulltextIndex(t *testing.T) {
 	require.ErrorContains(t, err, "rpc error")
 }
 
-func TestSubmitImportIndexJob(t *testing.T) {
+func TestGetImportStoragePrefix(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ctx := newTestTiCIManagerCtx(mockClient)
 	taskID := "tidb-task-123"
@@ -104,25 +104,25 @@ func TestSubmitImportIndexJob(t *testing.T) {
 	indexID := int64(2)
 
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
-	path, err := ctx.StartImportIndex(context.Background(), taskID, tblID, indexID)
+	path, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
 	assert.NoError(t, err)
 	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
 
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
-	_, err = ctx.StartImportIndex(context.Background(), taskID, tblID, indexID)
+	_, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
 	assert.Error(t, err)
 
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{}, errors.New("rpc error")).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{}, errors.New("rpc error")).
 		Once()
-	_, err = ctx.StartImportIndex(context.Background(), taskID, tblID, indexID)
+	_, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexID)
 	assert.Error(t, err)
 }
 

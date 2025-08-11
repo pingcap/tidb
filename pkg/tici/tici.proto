@@ -259,14 +259,14 @@ service MetaService {
   // -----------------------------------------------------------------------------
   // APIs for importing data
 
-  // Submit a new import index job to TiCI.
-  // This will create a new import job with a unique job_id and a storage
-  // backend prefix for the import data. The caller should generate files under
-  // the storage backend prefix and call `FinishImportPartitionUpload` after
-  // uploading each partition. If there is an existing running import job for
-  // the same table_id and index_id, it will return the existing job_id.
-  rpc SubmitImportIndexJob(ImportIndexJobRequest)
-      returns (ImportIndexJobResponse);
+  // Get a cloud storage prefix for importing data.
+  // This will create a new import job with a unique job_id and a cloud storage
+  // prefix for the import data. The caller should generate files under the
+  // cloud storage prefix and call `FinishImportPartitionUpload` after uploading
+  // each partition. If there is an existing running import job for the same
+  // identifier, it will return the existing job_id.
+  rpc GetImportStoragePrefix(GetImportStoragePrefixRequest)
+      returns (GetImportStoragePrefixResponse);
 
   // Called by Import DXF to notify Meta Service after a partition for
   // the given index are uploaded.
@@ -552,7 +552,7 @@ message GetIndexProgressResponse {
 //    GC data after consumed by downstream consumers.
 // -----------------------------------------------------------------------------
 
-message ImportIndexJobRequest {
+message GetImportStoragePrefixRequest {
   // TiDB unique task ID for this Import Index job.
   string tidb_task_id = 1;
   // Table ID of the target table.
@@ -561,7 +561,7 @@ message ImportIndexJobRequest {
   int64 index_id = 3;
 }
 
-message ImportIndexJobResponse {
+message GetImportStoragePrefixResponse {
   ErrorCode status = 1;
   // Optional human‑readable diagnostics, only defined when status ≠ 0.
   string error_message = 2;

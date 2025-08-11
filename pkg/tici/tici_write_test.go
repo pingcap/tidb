@@ -153,8 +153,8 @@ func TestTiCIDataWriterGroup_CreateFail(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_UNKNOWN_ERROR}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	assert.Nil(t, group)
@@ -168,8 +168,8 @@ func TestTiCIDataWriterGroup_WriteHeader(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
@@ -193,8 +193,8 @@ func TestTiCIDataWriterGroup_WritePairs(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
@@ -218,8 +218,8 @@ func TestTiCIDataWriterGroup_WritePairs_Fail(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
@@ -244,8 +244,8 @@ func TestSetTiCIDataWriterGroupWritable(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	engineUUID := uuid.New()
@@ -269,8 +269,8 @@ func TestTiCIDataWriterGroup_FinishPartitionUpload_NotWritable(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
 	mockClient.
 		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
@@ -290,8 +290,8 @@ func TestTiCIDataWriterGroup_FinishIndexUpload(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("SubmitImportIndexJob", mock.Anything, mock.Anything).
-		Return(&ImportIndexJobResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil)
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil)
 	mockClient.
 		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
 		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
