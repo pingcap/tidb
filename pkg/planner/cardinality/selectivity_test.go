@@ -408,7 +408,7 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
-	statsTbl := h.GetTableStats(tblInfo.Meta())
+	statsTbl := h.GetPhysicalTableStats(tblInfo.Meta().ID, tblInfo.Meta())
 	colStats := statsTbl.GetCol(1)
 	require.NotNil(t, colStats)
 	require.True(t, colStats.IsAnalyzed())
