@@ -408,10 +408,6 @@ func (sf *ScalarFunction) GetStaticType() *types.FieldType {
 	return sf.RetType
 }
 
-func (sf *ScalarFunction) setStaticType(t *types.FieldType) {
-	sf.RetType = t
-}
-
 // Equal implements Expression interface.
 func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
 	intest.Assert(ctx != nil)
