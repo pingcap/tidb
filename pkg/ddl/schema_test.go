@@ -521,6 +521,12 @@ func TestAlterSchemaReadonlyBasic(t *testing.T) {
 	require.Equal(t, v, is.SchemaMetaVersion())
 	tk.MustExec("alter database test read only = 0")
 	tk.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	// note
+	tk.MustExec("alter database test read only = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 database test is already in the read-write state"))
+	tk.MustExec("alter database test read only = 1")
+	tk.MustExec("alter database test read only = 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 database test is already in the read-only state"))
 	// Can't modify the read-only status when TiDB is in restricted read-only mode.
 	tk.MustExec("set global tidb_restricted_read_only = 1")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
@@ -564,7 +570,10 @@ func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 	txnID, err := strconv.ParseInt(r[0][0].(string), 10, 64)
 	require.NoError(t, err)
 	var txnIDs map[int64]struct{}
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		require.Eventually(t, func() bool {
 			return len(txnIDs) == 1 && txnIDs[txnID] == struct{}{}
 		}, 5*time.Second, 100*time.Millisecond)
@@ -574,6 +583,7 @@ func TestAlterDBReadOnlyBlockByTxn(t *testing.T) {
 		txnIDs = ids
 	})
 	tk2.MustExec("alter database test_db read only = 1")
+	wg.Wait()
 	tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
 }
 
@@ -601,10 +611,10 @@ func TestAccessDBInTxnAfterDDLDone(t *testing.T) {
 
 	tk1.MustExec("create database test_db")
 	tk1.MustExec("create table test_db.t(a int)")
-	tk1.MustExec("begin; use test_db;")
-	tk2.MustExec("alter database test read only = 1")
-	tk2.MustQuery("show create database test").Check(testkit.Rows("test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
-	tk1.MustGetErrMsg("select * from test_db", "[schema:1146]Table 'test_db.test_db' doesn't exist")
+	tk1.MustExec("begin")
+	tk2.MustExec("alter database test_db read only = 1")
+	tk2.MustQuery("show create database test_db").Check(testkit.Rows("test_db CREATE DATABASE `test_db` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /* READ ONLY = 1 */"))
+	tk1.MustGetErrMsg("select * from test_db.t", "[domain:8028]public schema test_db read only state has changed")
 }
 
 func TestReadWriteDDLNotBlockByTxn(t *testing.T) {

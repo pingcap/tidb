@@ -197,7 +197,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	case model.StateNone:
 		dbInfo.ReadOnly = args.ReadOnly
 		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
-		    job.State = model.JobStateCancelled
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
@@ -205,7 +205,14 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		}
 		job.SchemaState = model.StatePendingReadOnly
 	case model.StatePendingReadOnly:
-		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, w.sess, job.Query, dbInfo.ID, trxTableName)
+		sessCtx, err := w.sessPool.Get()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		defer w.sessPool.Put(sessCtx)
+		session := sess.NewSession(sessCtx)
+		sampleLogger := logutil.SampleLoggerFactory(time.Second, 5, zap.String(logutil.LogFieldCategory, "ddl"))
+		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, session, dbInfo.ID, trxTableName, args.DDLConnID)
 		failpoint.Inject("mockCheckUncommittedTxnError", func() {
 			if err == nil {
 				err = errors.New("mock error for check uncommitted txn")
@@ -216,22 +223,31 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		}
 
 		// check and wait all uncommitted txn
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
 		for len(uncommittedTxn) > 0 {
-			for txnID := range uncommittedTxn {
-				sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID = %d", trxTableName, txnID)
-				r, err := w.sess.Execute(jobCtx.stepCtx, sql, "check if txn committed")
-				if err != nil {
-					return ver, errors.Trace(err)
+			select {
+			case <-ticker.C:
+				for txnID := range uncommittedTxn {
+					sql := fmt.Sprintf("SELECT ID FROM INFORMATION_SCHEMA.%s WHERE ID = %d", trxTableName, txnID)
+					r, err := session.Execute(jobCtx.stepCtx, sql, "check if txn committed")
+					if err != nil {
+						return ver, errors.Trace(err)
+					}
+					if len(r) == 0 {
+						delete(uncommittedTxn, txnID)
+						continue
+					}
+					sampleLogger().Info("uncommitted txn block read only ddl",
+						zap.Int64("txn ID", txnID),
+						zap.Int64("job ID", job.ID),
+					)
+					break
 				}
-				if len(r) == 0 {
-					delete(uncommittedTxn, txnID)
-					continue
-				}
-				logutil.BgLogger().Info("uncommitted txn block read only ddl", zap.Int64("txn ID", txnID))
-				break
+				failpoint.InjectCall("checkUncommittedTxns", uncommittedTxn)
+			case <-jobCtx.stepCtx.Done():
+				return ver, errors.Trace(jobCtx.stepCtx.Err())
 			}
-			time.Sleep(300 * time.Millisecond)
-			failpoint.InjectCall("checkUncommittedTxns", uncommittedTxn)
 		}
 
 		if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
@@ -245,7 +261,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	return ver, nil
 }
 
-func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, ddlQuery string, targetDBID int64, trxTableName string) (map[int64]struct{}, error) {
+func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlConnID uint64) (map[int64]struct{}, error) {
 	var currTS = uint64(0)
 	err := kv.RunInNewTxn(jobCtx.ctx, jobCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		currTS = txn.StartTS()
@@ -256,12 +272,11 @@ func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, ddlQuery strin
 	}
 	is := jobCtx.infoCache.GetLatest()
 	sql := fmt.Sprintf(
-		"SELECT RELATED_TABLE_IDS, CURRENT_SQL_DIGEST, ID "+
-			"FROM INFORMATION_SCHEMA.%s "+
-			"WHERE (CURRENT_SQL_DIGEST IS NULL OR CURRENT_SQL_DIGEST != TIDB_ENCODE_SQL_DIGEST('%s')) "+ // exclude ddl
+		"SELECT RELATED_TABLE_IDS, ID FROM INFORMATION_SCHEMA.%s "+
+			"WHERE SESSION_ID != %d "+ // exclude current ddl
 			"AND ID < %d", // exclude new transactions
 		trxTableName,
-		ddlQuery,
+		ddlConnID,
 		currTS,
 	)
 	t := time.Now()
@@ -272,7 +287,7 @@ func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, ddlQuery strin
 	queryDur := time.Since(t)
 	ids := make(map[int64]struct{})
 	for _, row := range r {
-		txnID := row.GetInt64(2)
+		txnID := row.GetInt64(1)
 		relatedTableIDs := row.GetString(0)
 		if relatedTableIDs == "" {
 			continue
