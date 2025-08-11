@@ -350,13 +350,8 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 func (sf *ScalarFunction) Clone() Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  sf.RetType.Clone(),
+		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
-	}
-	if sf.RetType == sf.Function.getRetTp() {
-		// Not every return type is equal at these two positions.
-		// in the BuildJSONSumCrc32FunctionWithCheck, the return type is fixed to bigint.
-		c.Function.setRetTp(c.RetType)
 	}
 
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
@@ -366,7 +361,41 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
+	CloneRetType(c, sf.RetType.Clone(), sf.RetType)
 	return c
+}
+
+func CloneRetType(expr Expression, newRet, oldRet *types.FieldType) {
+	switch e := expr.(type) {
+	case *ScalarFunction:
+		if e.RetType.EvalType() != types.ETJson {
+			return
+		}
+		if e.RetType == oldRet {
+			if e.RetType == e.Function.getRetTp() {
+				// Not every return type is equal at these two positions.
+				// in the BuildJSONSumCrc32FunctionWithCheck, the return type is fixed to bigint.
+				e.Function.setRetTp(newRet)
+			}
+			e.RetType = newRet
+			for _, arg := range e.GetArgs() {
+				CloneRetType(arg, newRet, oldRet)
+			}
+		} else {
+			oRet := e.RetType
+			nRet := e.RetType.Clone()
+			if e.RetType == e.Function.getRetTp() {
+				// Not every return type is equal at these two positions.
+				// in the BuildJSONSumCrc32FunctionWithCheck, the return type is fixed to bigint.
+				e.Function.setRetTp(nRet)
+			}
+			e.RetType = nRet
+			for _, arg := range e.GetArgs() {
+				CloneRetType(arg, nRet, oRet)
+			}
+		}
+
+	}
 }
 
 // GetType implements Expression interface.
@@ -377,6 +406,10 @@ func (sf *ScalarFunction) GetType(_ EvalContext) *types.FieldType {
 // GetStaticType returns the static type of the scalar function.
 func (sf *ScalarFunction) GetStaticType() *types.FieldType {
 	return sf.RetType
+}
+
+func (sf *ScalarFunction) setStaticType(t *types.FieldType) {
+	sf.RetType = t
 }
 
 // Equal implements Expression interface.

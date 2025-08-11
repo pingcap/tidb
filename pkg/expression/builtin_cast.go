@@ -2646,12 +2646,13 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	default:
 		return nil, errors.Errorf("cannot cast from %s", tp.EvalType())
 	}
-	f, err := fc.getFunction(ctx, []Expression{expr.Clone()})
+	f, err := fc.getFunction(ctx, []Expression{expr})
 	res = &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
 	}
+	res = res.Clone()
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
