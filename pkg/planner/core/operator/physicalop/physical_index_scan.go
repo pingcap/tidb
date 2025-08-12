@@ -329,20 +329,20 @@ func (p *PhysicalIndexScan) IsFullScan() bool {
 }
 
 // GetScanRowSize calculates the average row size for the index scan operation.
-func (is *PhysicalIndexScan) GetScanRowSize() float64 {
-	idx := is.Index
+func (p *PhysicalIndexScan) GetScanRowSize() float64 {
+	idx := p.Index
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
-	if len(idx.Columns) == len(is.Schema().Columns) {
-		scanCols = append(scanCols, is.Schema().Columns...)
-		handleCol := is.PkIsHandleCol
+	if len(idx.Columns) == len(p.Schema().Columns) {
+		scanCols = append(scanCols, p.Schema().Columns...)
+		handleCol := p.PkIsHandleCol
 		if handleCol != nil {
 			scanCols = append(scanCols, handleCol)
 		}
 	} else {
-		scanCols = is.Schema().Columns
+		scanCols = p.Schema().Columns
 	}
-	return cardinality.GetIndexAvgRowSize(is.SCtx(), is.TblColHists, scanCols, is.Index.Unique)
+	return cardinality.GetIndexAvgRowSize(p.SCtx(), p.TblColHists, scanCols, p.Index.Unique)
 }
 
 // InitSchema is used to set the schema of PhysicalIndexScan. Before calling this,
@@ -353,34 +353,34 @@ func (is *PhysicalIndexScan) GetScanRowSize() float64 {
 //	PhysicalIndexScan.Index.Columns []*IndexColumn
 //	PhysicalIndexScan.IdxCols       []*expression.Column
 //	PhysicalIndexScan.Columns       []*model.ColumnInfo
-func (is *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
-	copy(indexCols, is.IdxCols)
+func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
+	indexCols := make([]*expression.Column, len(p.IdxCols), len(p.Index.Columns)+1)
+	copy(indexCols, p.IdxCols)
 
-	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
+	for i := len(p.IdxCols); i < len(p.Index.Columns); i++ {
 		if idxExprCols[i] != nil {
 			indexCols = append(indexCols, idxExprCols[i])
 		} else {
 			// TODO: try to reuse the col generated when building the DataSource.
 			indexCols = append(indexCols, &expression.Column{
-				ID:       is.Table.Columns[is.Index.Columns[i].Offset].ID,
-				RetType:  &is.Table.Columns[is.Index.Columns[i].Offset].FieldType,
-				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+				ID:       p.Table.Columns[p.Index.Columns[i].Offset].ID,
+				RetType:  &p.Table.Columns[p.Index.Columns[i].Offset].FieldType,
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 			})
 		}
 	}
-	is.NeedCommonHandle = is.Table.IsCommonHandle
+	p.NeedCommonHandle = p.Table.IsCommonHandle
 
-	if is.NeedCommonHandle {
-		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
+	if p.NeedCommonHandle {
+		for i := len(p.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
 		}
 	}
-	setHandle := len(indexCols) > len(is.Index.Columns)
+	setHandle := len(indexCols) > len(p.Index.Columns)
 	if !setHandle {
-		for i, col := range is.Columns {
-			if (mysql.HasPriKeyFlag(col.GetFlag()) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				indexCols = append(indexCols, is.DataSourceSchema.Columns[i])
+		for i, col := range p.Columns {
+			if (mysql.HasPriKeyFlag(col.GetFlag()) && p.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
+				indexCols = append(indexCols, p.DataSourceSchema.Columns[i])
 				setHandle = true
 				break
 			}
@@ -389,32 +389,32 @@ func (is *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoub
 
 	var extraPhysTblCol *expression.Column
 	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
-	for _, col := range is.DataSourceSchema.Columns {
+	for _, col := range p.DataSourceSchema.Columns {
 		if col.ID == model.ExtraPhysTblID {
 			extraPhysTblCol = col.Clone().(*expression.Column)
 			break
 		}
 	}
 
-	if isDoubleRead || is.Index.Global {
+	if isDoubleRead || p.Index.Global {
 		// If it's double read case, the first index must return handle. So we should add extra handle column
 		// if there isn't a handle column.
 		if !setHandle {
-			if !is.Table.IsCommonHandle {
+			if !p.Table.IsCommonHandle {
 				indexCols = append(indexCols, &expression.Column{
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
 					ID:       model.ExtraHandleID,
-					UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+					UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 					OrigName: model.ExtraHandleName.O,
 				})
 			}
 		}
 		// If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.
-		if is.Index.Global && extraPhysTblCol == nil {
+		if p.Index.Global && extraPhysTblCol == nil {
 			indexCols = append(indexCols, &expression.Column{
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
 				ID:       model.ExtraPhysTblID,
-				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
 				OrigName: model.ExtraPhysTblIDName.O,
 			})
 		}
@@ -424,16 +424,16 @@ func (is *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoub
 		indexCols = append(indexCols, extraPhysTblCol)
 	}
 
-	is.SetSchema(expression.NewSchema(indexCols...))
+	p.SetSchema(expression.NewSchema(indexCols...))
 }
 
 // AddSelectionConditionForGlobalIndex adds partition filtering conditions for global index scans.
-func (is *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(p *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
-	if !is.Index.Global {
+func (p *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
+	if !p.Index.Global {
 		return conditions, nil
 	}
-	args := make([]expression.Expression, 0, len(p.PartitionNames)+1)
-	for _, col := range is.Schema().Columns {
+	args := make([]expression.Expression, 0, len(ds.PartitionNames)+1)
+	for _, col := range p.Schema().Columns {
 		if col.ID == model.ExtraPhysTblID {
 			args = append(args, col.Clone())
 			break
@@ -441,13 +441,13 @@ func (is *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(p *logicalop.Da
 	}
 
 	if len(args) != 1 {
-		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIDName.O, is.Schema())
+		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIDName.O, p.Schema())
 	}
 
 	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
 	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
 	// For truncate/drop partitions, we should only return indexes where partitions still in public state.
-	idxArr, err := utilfuncp.PartitionPruning(p.SCtx(), p.Table.GetPartitionedTable(),
+	idxArr, err := utilfuncp.PartitionPruning(ds.SCtx(), ds.Table.GetPartitionedTable(),
 		physPlanPartInfo.PruningConds,
 		physPlanPartInfo.PartitionNames,
 		physPlanPartInfo.Columns,
@@ -457,7 +457,7 @@ func (is *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(p *logicalop.Da
 	}
 	needNot := false
 	// TODO: Move all this into PartitionPruning or the PartitionProcessor!
-	pInfo := p.TableInfo.GetPartitionInfo()
+	pInfo := ds.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Filter away partitions that may exists in Global Index,
 		// but should not be seen.
@@ -488,12 +488,12 @@ func (is *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(p *logicalop.Da
 	if len(args) == 1 {
 		return conditions, nil
 	}
-	condition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+	condition, err := expression.NewFunction(ds.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 	if err != nil {
 		return nil, err
 	}
 	if needNot {
-		condition, err = expression.NewFunction(p.SCtx().GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeLonglong), condition)
+		condition, err = expression.NewFunction(ds.SCtx().GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeLonglong), condition)
 		if err != nil {
 			return nil, err
 		}
@@ -503,16 +503,16 @@ func (is *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(p *logicalop.Da
 
 // NeedExtraOutputCol is designed for check whether need an extra column for
 // pid or physical table id when build indexReq.
-func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
-	if is.Table.Partition == nil {
+func (p *PhysicalIndexScan) NeedExtraOutputCol() bool {
+	if p.Table.Partition == nil {
 		return false
 	}
 	// has global index, should return pid
-	if is.Index.Global {
+	if p.Index.Global {
 		return true
 	}
 	// has embedded limit, should return physical table id
-	if len(is.ByItems) != 0 && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if len(p.ByItems) != 0 && p.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return true
 	}
 	return false
@@ -532,31 +532,31 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexScan)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
-	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	if op.GenExprs != nil {
+	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(p.AccessCondition, nil)
+	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(p.IdxCols, nil)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	if p.GenExprs != nil {
 		return nil, false
 	}
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	if op.PkIsHandleCol != nil {
-		if op.PkIsHandleCol.SafeToShareAcrossSession() {
-			cloned.PkIsHandleCol = op.PkIsHandleCol
+	cloned.ByItems = util.CloneByItemss(p.ByItems)
+	if p.PkIsHandleCol != nil {
+		if p.PkIsHandleCol.SafeToShareAcrossSession() {
+			cloned.PkIsHandleCol = p.PkIsHandleCol
 		} else {
-			cloned.PkIsHandleCol = op.PkIsHandleCol.Clone().(*expression.Column)
+			cloned.PkIsHandleCol = p.PkIsHandleCol.Clone().(*expression.Column)
 		}
 	}
-	cloned.ConstColsByCond = make([]bool, len(op.ConstColsByCond))
-	copy(cloned.ConstColsByCond, op.ConstColsByCond)
+	cloned.ConstColsByCond = make([]bool, len(p.ConstColsByCond))
+	copy(cloned.ConstColsByCond, p.ConstColsByCond)
 	return cloned, true
 }
 
