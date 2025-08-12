@@ -652,7 +652,7 @@
         "SQL": "explain format = 'brief' select * from t where a not regexp '.*111.*'",
         "Result": [
           "TableReader 7.00 root  data:Selection",
-          "└─Selection 7.00 cop[tikv]  not(istrue_with_null(regexp(test.t.a, \".*111.*\")))",
+          "└─Selection 7.00 cop[tikv]  not(regexp(test.t.a, \".*111.*\"))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -749,7 +749,7 @@
         "SQL": "explain format = 'brief' select * from t where b not regexp '.*111.*'",
         "Result": [
           "TableReader 36.00 root  data:Selection",
-          "└─Selection 36.00 cop[tikv]  not(istrue_with_null(regexp(test.t.b, \".*111.*\")))",
+          "└─Selection 36.00 cop[tikv]  not(regexp(test.t.b, \".*111.*\"))",
           "  └─TableFullScan 40.00 cop[tikv] table:t keep order:false"
         ]
       },
