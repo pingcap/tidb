@@ -2646,9 +2646,6 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	default:
 		return nil, errors.Errorf("cannot cast from %s", tp.EvalType())
 	}
-	if ctx.ConnectionID() != 0 {
-		fmt.Println("wwz")
-	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	res = &ScalarFunction{
 		FuncName: ast.NewCIStr(ast.Cast),
