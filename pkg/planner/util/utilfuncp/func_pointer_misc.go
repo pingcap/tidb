@@ -280,6 +280,10 @@ var GetIndexJoinCostVer24PhysicalIndexJoin func(pp base.PhysicalPlan, taskType p
 // Attach2Task4PhysicalIndexJoin will be called by PhysicalIndexJoin in physicalOp pkg.
 var Attach2Task4PhysicalIndexJoin func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// InitForStream will be called by BasePhysicalAgg in physicalOp pkg.
+var InitForStream func(base base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo,
+	offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan
+
 // Attach2Task4PhysicalWindow will be called by PhysicalWindow in physicalOp pkg.
 var Attach2Task4PhysicalWindow func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
@@ -304,6 +308,10 @@ var GetPlanCostVer24PhysicalMergeJoin func(pp base.PhysicalPlan, taskType proper
 var GetPlanCostVer14PhysicalTableScan func(pp base.PhysicalPlan,
 	option *optimizetrace.PlanCostOption) (float64, error)
 
+// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
+var GetPlanCostVer14PhysicalTableReader func(pp base.PhysicalPlan, _ property.TaskType,
+	option *optimizetrace.PlanCostOption) (float64, error)
+
 // GetCost4PhysicalHashJoin computes cost of hash join operator itself.
 var GetCost4PhysicalHashJoin func(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag uint64,
 	op *optimizetrace.PhysicalOptimizeOp) float64
@@ -321,6 +329,12 @@ var Attach2Task4PhysicalHashJoin func(pp base.PhysicalPlan, tasks ...base.Task) 
 // log2(row-size) is from experiments.
 var GetPlanCostVer24PhysicalTableScan func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+
+// GetPlanCostVer24PhysicalTableReader returns the plan-cost of this sub-plan, which is:
+// plan-cost = (child-cost + net-cost) / concurrency
+// net-cost = rows * row-size * net-factor
+var GetPlanCostVer24PhysicalTableReader func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
 // GetPlanCostVer24PhysicalHashJoin returns the plan-cost of this sub-plan, which is:
 // plan-cost = build-child-cost + probe-child-cost +

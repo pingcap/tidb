@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/utils"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -37,7 +38,7 @@ type FlatPhysicalOperatorForTest struct {
 	Label          core.OperatorLabel
 	IsRoot         bool
 	StoreType      kv.StoreType
-	ReqType        core.ReadReqType
+	ReqType        utils.ReadReqType
 	IsPhysicalPlan bool
 	TextTreeIndent string
 	IsLastChild    bool

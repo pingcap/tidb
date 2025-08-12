@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/utils"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -291,7 +292,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildMaxOneRow(v)
 	case *plannercore.Analyze:
 		return b.buildAnalyze(v)
-	case *plannercore.PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		return b.buildTableReader(v)
 	case *physicalop.PhysicalTableSample:
 		return b.buildTableSample(v)
@@ -3731,7 +3732,7 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *physicalop.PhysicalInd
 	return idxHash
 }
 
-func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
+func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
 		tablePlans = []base.PhysicalPlan{v.GetTablePlan()}
@@ -3781,7 +3782,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:                      v.TablePlans,
 		tablePlan:                  v.GetTablePlan(),
 		storeType:                  v.StoreType,
-		batchCop:                   v.ReadReqType == plannercore.BatchCop,
+		batchCop:                   v.ReadReqType == utils.BatchCop,
 	}
 	e.buildVirtualColumnInfo()
 
@@ -3804,7 +3805,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	return e, nil
 }
 
-func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) exec.Executor {
+func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec.Executor {
 	startTs, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -3875,7 +3876,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) exe
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
-func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) exec.Executor {
+func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) exec.Executor {
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
 		if !b.ctx.GetSessionVars().InRestrictedSQL && val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
@@ -3900,7 +3901,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	}
 
 	useMPP := useMPPExecution(b.ctx, v)
-	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
+	useTiFlashBatchCop := v.ReadReqType == utils.BatchCop
 	useTiFlash := useMPP || useTiFlashBatchCop
 	if useTiFlash {
 		if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiFlashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
@@ -4601,7 +4602,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
 ) (exec.Executor, error) {
 	switch v := plan.(type) {
-	case *plannercore.PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *plannercore.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
@@ -4676,7 +4677,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	return ret, err
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader,
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *physicalop.PhysicalTableReader,
 	lookUpContents []*join.IndexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
 	cwc *physicalop.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value,
 ) (exec.Executor, error) {

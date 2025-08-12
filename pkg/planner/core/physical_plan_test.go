@@ -413,7 +413,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 }
 
 func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
-	if p, ok := root.(*core.PhysicalTableReader); ok {
+	if p, ok := root.(*physicalop.PhysicalTableReader); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
 			if agg, ok := baseAgg.(*physicalop.PhysicalHashAgg); ok {
@@ -484,7 +484,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 					}
 				}
 				return nil
-			case *core.PhysicalTableReader:
+			case *physicalop.PhysicalTableReader:
 				for _, child := range v.TablePlans {
 					if sel := findSelection(child); sel != nil {
 						return sel

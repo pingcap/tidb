@@ -118,15 +118,6 @@ func resolveIndicesForVirtualColumn(result []*expression.Column, schema *express
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalTableReader) ResolveIndices() error {
-	err := resolveIndicesForVirtualColumn(p.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	return p.tablePlan.ResolveIndices()
-}
-
-// ResolveIndices implements Plan interface.
 func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 	err = p.PhysicalSchemaProducer.ResolveIndices()
 	if err != nil {

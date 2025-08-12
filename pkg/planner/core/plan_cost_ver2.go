@@ -289,15 +289,16 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// getPlanCostVer24PhysicalTableReader returns the plan-cost of this sub-plan, which is:
 // plan-cost = (child-cost + net-cost) / concurrency
 // net-cost = rows * row-size * net-factor
-func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalTableReader)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
 
-	rows := getCardinality(p.tablePlan, option.CostFlag)
+	rows := getCardinality(p.TablePlan, option.CostFlag)
 	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
@@ -308,7 +309,7 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 
 	netCost := netCostVer2(option, rows, rowSize, netFactor)
 
-	childCost, err := p.tablePlan.GetPlanCostVer2(childType, option)
+	childCost, err := p.TablePlan.GetPlanCostVer2(childType, option)
 	if err != nil {
 		return costusage.ZeroCostVer2, err
 	}
@@ -1192,8 +1193,8 @@ func getTaskNetFactorVer2(p base.PhysicalPlan, _ property.TaskType) costusage.Co
 	if _, ok := p.(*PhysicalExchangeReceiver); ok { // TiFlash MPP
 		return defaultVer2Factors.TiFlashMPPNet
 	}
-	if tblReader, ok := p.(*PhysicalTableReader); ok {
-		if _, isMPP := tblReader.tablePlan.(*PhysicalExchangeSender); isMPP { // TiDB to TiFlash with mpp protocol
+	if tblReader, ok := p.(*physicalop.PhysicalTableReader); ok {
+		if _, isMPP := tblReader.TablePlan.(*PhysicalExchangeSender); isMPP { // TiDB to TiFlash with mpp protocol
 			return defaultVer2Factors.TiDB2FlashNet
 		}
 	}
@@ -1215,8 +1216,8 @@ func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
 	switch x := p.(type) {
 	case *PhysicalIndexReader:
 		return getTableInfo(x.indexPlan)
-	case *PhysicalTableReader:
-		return getTableInfo(x.tablePlan)
+	case *physicalop.PhysicalTableReader:
+		return getTableInfo(x.TablePlan)
 	case *PhysicalIndexLookUpReader:
 		return getTableInfo(x.tablePlan)
 	case *PhysicalIndexMergeReader:

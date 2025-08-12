@@ -136,37 +136,6 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalTableReader) ExplainInfo() string {
-	tablePlanInfo := "data:" + p.tablePlan.ExplainID().String()
-
-	if p.ReadReqType == MPP {
-		return fmt.Sprintf("MppVersion: %d, %s", p.SCtx().GetSessionVars().ChooseMppVersion(), tablePlanInfo)
-	}
-
-	return tablePlanInfo
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (*PhysicalTableReader) ExplainNormalizedInfo() string {
-	return ""
-}
-
-// OperatorInfo return other operator information to be explained.
-func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
-	return "data:" + p.tablePlan.ExplainID().String()
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID().String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return "index:" + p.indexPlan.TP()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	var str strings.Builder
 	// The children can be inferred by the relation symbol.

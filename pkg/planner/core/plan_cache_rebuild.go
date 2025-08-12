@@ -55,7 +55,7 @@ func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	case *PhysicalIndexScan:
 		x.Ranges = ranges
 		x.rangeInfo = rangeInfo
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		updateRange(x.TablePlans[0], ranges, rangeInfo)
 	case *PhysicalIndexReader:
 		updateRange(x.IndexPlans[0], ranges, rangeInfo)
@@ -106,7 +106,7 @@ func rebuildRange(p base.Plan) error {
 		if err != nil {
 			return err
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		err = rebuildRange(x.TablePlans[0])
 		if err != nil {
 			return err
