@@ -124,10 +124,10 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
-	paritionedTables := make(map[int64]*model.TableInfo)
+	partitionedTables := make(map[int64]*model.TableInfo)
 	for _, result := range tableInfoResult {
 		for _, tbl := range result.TableInfos {
-			paritionedTables[tbl.ID] = tbl
+			partitionedTables[tbl.ID] = tbl
 		}
 	}
 	for _, db := range dbs {
@@ -140,19 +140,19 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 		terror.Log(err)
 		for _, nameInfo := range tableNames {
 			tblID := nameInfo.ID
-			paritionedTable, ok := paritionedTables[tblID]
+			partitionedTable, ok := partitionedTables[tblID]
 			// Partitioned table:
 			if ok {
 				// For dynamic partitioned table, we need to display the global table as well.
 				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-					if stats, found := h.GetNonPseudoPhysicalTableStats(paritionedTable.ID); found {
-						e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, "global", stats)
+					if stats, found := h.GetNonPseudoPhysicalTableStats(partitionedTable.ID); found {
+						e.appendTableForStatsMeta(db.O, partitionedTable.Name.O, "global", stats)
 					}
 				}
-				pi := paritionedTable.GetPartitionInfo()
+				pi := partitionedTable.GetPartitionInfo()
 				for _, def := range pi.Definitions {
 					if stats, found := h.GetNonPseudoPhysicalTableStats(def.ID); found {
-						e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, def.Name.O, stats)
+						e.appendTableForStatsMeta(db.O, partitionedTable.Name.O, def.Name.O, stats)
 					}
 				}
 			} else {
@@ -539,10 +539,10 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
-	paritionedTables := make(map[int64]*model.TableInfo)
+	partitionedTables := make(map[int64]*model.TableInfo)
 	for _, result := range tableInfoResult {
 		for _, tbl := range result.TableInfos {
-			paritionedTables[tbl.ID] = tbl
+			partitionedTables[tbl.ID] = tbl
 		}
 	}
 	for _, db := range dbs {
@@ -555,19 +555,19 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		terror.Log(err)
 		for _, nameInfo := range tableNames {
 			tblID := nameInfo.ID
-			paritionedTable, ok := paritionedTables[tblID]
+			partitionedTable, ok := partitionedTables[tblID]
 			// Partitioned table:
 			if ok {
 				// For dynamic partitioned table, we need to display the global table as well.
 				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-					if stats, found := h.GetNonPseudoPhysicalTableStats(paritionedTable.ID); found {
-						e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, "global", stats)
+					if stats, found := h.GetNonPseudoPhysicalTableStats(partitionedTable.ID); found {
+						e.appendTableForStatsHealthy(db.O, partitionedTable.Name.O, "global", stats)
 					}
 				}
-				pi := paritionedTable.GetPartitionInfo()
+				pi := partitionedTable.GetPartitionInfo()
 				for _, def := range pi.Definitions {
 					if stats, found := h.GetNonPseudoPhysicalTableStats(def.ID); found {
-						e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, def.Name.O, stats)
+						e.appendTableForStatsHealthy(db.O, partitionedTable.Name.O, def.Name.O, stats)
 					}
 				}
 			} else {
