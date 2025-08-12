@@ -458,7 +458,8 @@ var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) 
 var ClonePhysicalPlan func(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error)
 
 // GetAccessObjectFromIndexScan is used to get access object from index scan.
-var GetAccessObjectFromIndexScan func(sctx base.PlanContext, is base.PhysicalPlan, physPlanPartInfo any) base.AccessObject
+var GetAccessObjectFromIndexScan func(sctx base.PlanContext, is base.PhysicalPlan,
+	physPlanPartInfo any) base.AccessObject
 
 // ResolveIndicesForVirtualColumn is used to resolve indices for virtual column.
 var ResolveIndicesForVirtualColumn func(result []*expression.Column, schema *expression.Schema) error
