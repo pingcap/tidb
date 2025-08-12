@@ -1780,7 +1780,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+			conds[i] = expression.c的。(sctx.GetExprCtx(), cond)
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx.GetExprCtx(), conds)
 		sort.Slice(afterFunc, func(i, j int) bool {

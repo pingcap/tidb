@@ -65,7 +65,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
 	indexMergeConds := make([]expression.Expression, 0, len(ds.AllConds))
 	for _, expr := range ds.AllConds {
-		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.SCtx().GetExprCtx(), expr))
+		indexMergeConds = append(indexMergeConds, expr)
 	}
 
 	sessionAndStmtPermission := (ds.SCtx().GetSessionVars().GetEnableIndexMerge() || len(ds.IndexMergeHints) > 0) && !stmtCtx.NoIndexMergeHint

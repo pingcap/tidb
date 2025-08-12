@@ -2077,7 +2077,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		tblColHists:       ds.TblColHists,
 	}
 	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
@@ -2502,7 +2502,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
 	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
@@ -3007,7 +3007,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			tblColHists: ds.TblColHists,
 		}
 		ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
-			PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+			PruningConds:   ds.AllConds,
 			PartitionNames: ds.PartitionNames,
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.OutputNames(),
@@ -3038,7 +3038,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		tblColHists:       ds.TblColHists,
 	}
 	copTask.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
