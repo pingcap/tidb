@@ -813,16 +813,16 @@ var logicalOps = map[string]struct{}{
 }
 
 var oppositeOp = map[string]string{
-	ast.LT:                 ast.GE,
-	ast.GE:                 ast.LT,
-	ast.GT:                 ast.LE,
-	ast.LE:                 ast.GT,
-	ast.EQ:                 ast.NE,
-	ast.NE:                 ast.EQ,
-	ast.LogicOr:            ast.LogicAnd,
-	ast.LogicAnd:           ast.LogicOr,
-	ast.IsTruthWithoutNull: ast.IsFalsity,
-	ast.IsFalsity:          ast.IsTruthWithoutNull,
+	ast.LT:              ast.GE,
+	ast.GE:              ast.LT,
+	ast.GT:              ast.LE,
+	ast.LE:              ast.GT,
+	ast.EQ:              ast.NE,
+	ast.NE:              ast.EQ,
+	ast.LogicOr:         ast.LogicAnd,
+	ast.LogicAnd:        ast.LogicOr,
+	ast.IsTruthWithNull: ast.IsFalsity,
+	ast.IsFalsity:       ast.IsTruthWithNull,
 }
 
 // a op b is equal to b symmetricOp a
