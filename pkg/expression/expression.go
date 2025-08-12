@@ -1263,10 +1263,8 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 					}
 				}
 			}
-			newVal := args[0].Clone()
-			newVal.GetType(ctx).SetFlenUnderLimit(newFlen)
-			newVal.GetType(ctx).SetDecimalUnderLimit(newDecimal)
-			args[0] = newVal
+			args[0].GetType(ctx).SetFlenUnderLimit(newFlen)
+			args[0].GetType(ctx).SetDecimalUnderLimit(newDecimal)
 		}
 	}
 }
