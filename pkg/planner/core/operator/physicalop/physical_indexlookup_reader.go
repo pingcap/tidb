@@ -201,23 +201,23 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *Physi
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+func (p *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexLookUpReader)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	*cloned = *p
+	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
-	if op.IndexPlan != nil {
-		indexPlan, ok := op.IndexPlan.CloneForPlanCache(newCtx)
+	if p.IndexPlan != nil {
+		indexPlan, ok := p.IndexPlan.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
 		cloned.IndexPlan = indexPlan.(base.PhysicalPlan)
 	}
-	if op.TablePlan != nil {
-		tablePlan, ok := op.TablePlan.CloneForPlanCache(newCtx)
+	if p.TablePlan != nil {
+		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
 		if !ok {
 			return nil, false
 		}
@@ -225,16 +225,16 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 	}
 	cloned.IndexPlans = utilfuncp.FlattenPushDownPlan(cloned.IndexPlan)
 	cloned.TablePlans = utilfuncp.FlattenPushDownPlan(cloned.TablePlan)
-	if op.ExtraHandleCol != nil {
-		if op.ExtraHandleCol.SafeToShareAcrossSession() {
-			cloned.ExtraHandleCol = op.ExtraHandleCol
+	if p.ExtraHandleCol != nil {
+		if p.ExtraHandleCol.SafeToShareAcrossSession() {
+			cloned.ExtraHandleCol = p.ExtraHandleCol
 		} else {
-			cloned.ExtraHandleCol = op.ExtraHandleCol.Clone().(*expression.Column)
+			cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
 		}
 	}
-	cloned.PushedLimit = op.PushedLimit.Clone()
-	cloned.CommonHandleCols = utilfuncp.CloneColumnsForPlanCache(op.CommonHandleCols, nil)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
+	cloned.PushedLimit = p.PushedLimit.Clone()
+	cloned.CommonHandleCols = utilfuncp.CloneColumnsForPlanCache(p.CommonHandleCols, nil)
+	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
 }
 
