@@ -450,8 +450,10 @@ var DoOptimize func(
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
 // PartitionPruning is used to prune partitions of a physical plan.
-var PartitionPruning func(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []ast.CIStr,
+var PartitionPruning func(ctx base.PlanContext, tbl table.PartitionedTable,
+	conds []expression.Expression, partitionNames []ast.CIStr,
 	columns []*expression.Column, names types.NameSlice) ([]int, error)
 
 // ColumnsToProto is used to convert columns to proto.
-var ColumnsToProto func(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo
+var ColumnsToProto func(columns []*model.ColumnInfo, pkIsHandle bool,
+	forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo

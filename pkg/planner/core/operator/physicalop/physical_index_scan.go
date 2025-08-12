@@ -315,6 +315,7 @@ func (p *PhysicalIndexScan) haveCorCol() bool {
 	return false
 }
 
+// IsFullScan checks whether the index scan covers the full range of the index.
 func (p *PhysicalIndexScan) IsFullScan() bool {
 	if len(p.RangeInfo) > 0 || p.haveCorCol() {
 		return false
@@ -327,6 +328,7 @@ func (p *PhysicalIndexScan) IsFullScan() bool {
 	return true
 }
 
+// GetScanRowSize calculates the average row size for the index scan operation.
 func (is *PhysicalIndexScan) GetScanRowSize() float64 {
 	idx := is.Index
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
@@ -425,6 +427,7 @@ func (is *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoub
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
+// AddSelectionConditionForGlobalIndex adds partition filtering conditions for global index scans.
 func (is *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(p *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
 	if !is.Index.Global {
 		return conditions, nil
@@ -515,7 +518,7 @@ func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
 	return false
 }
 
-// IsPartition returns true and partition ID if it works on a partition.
+// IsPartitionTable returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartitionTable() (bool, int64) {
 	return p.IsPartition, p.PhysicalTableID
 }
@@ -654,6 +657,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 	return is
 }
 
+// GetOriginalPhysicalIndexScan creates a new PhysicalIndexScan from the given DataSource and AccessPath.
 func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
 	is := PhysicalIndexScan{
