@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 // SelectionFactor is the factor which is used to estimate the row count of selection.
@@ -171,7 +170,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}
-	rangeCounts, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
+	rangeCounts, _, _, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -181,7 +180,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	}
 	var rangeCount float64
 	if idxExists {
-		rangeCount, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
+		rangeCount, _, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges, nil)
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
@@ -197,30 +196,30 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 }
 
 // getColumnRangeCounts estimates row count for each range respectively.
-func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) ([]float64, float64, bool) {
+func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) (rangeCounts []float64, minCount float64, maxCount float64, ok bool) {
 	var err error
-	var count, corrCount float64
-	rangeCounts := make([]float64, len(ranges))
+	var count float64
+	rangeCounts = make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.GetIdx(idxID)
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
-			count, corrCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
+			count, minCount, maxCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran}, nil)
 		} else {
 			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
-				return nil, 0, false
+				return nil, 0, 0, false
 			}
 			count, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})
 		}
 		if err != nil {
-			return nil, 0, false
+			return nil, 0, 0, false
 		}
 		rangeCounts[i] = count
 	}
-	return rangeCounts, corrCount, true
+	return rangeCounts, minCount, maxCount, true
 }
 
 // convertRangeFromExpectedCnt builds new ranges used to estimate row count we need to scan in table scan before finding specified
@@ -261,18 +260,13 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
 		return nil, 0
 	}
-	cols := expression.ExtractColumnsFromExpressions(append(path.TableFilters, path.IndexFilters...), nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, append(path.TableFilters, path.IndexFilters...)...)
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		curCorr := float64(0)
 		for _, item := range histColl.ExtendedStats.Stats {
 			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
@@ -286,7 +280,7 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
@@ -295,18 +289,13 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
 func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
-	cols := expression.ExtractColumnsFromExpressions(exprs, nil)
+	cols := expression.ExtractColumnsMapFromExpressions(nil, exprs...)
 	if len(cols) == 0 {
 		return nil, 0
 	}
-	colSet := set.NewInt64Set()
 	var corr float64
 	var corrCol *expression.Column
 	for _, col := range cols {
-		if colSet.Exist(col.UniqueID) {
-			continue
-		}
-		colSet.Insert(col.UniqueID)
 		hist := histColl.GetCol(col.ID)
 		if hist == nil {
 			continue
@@ -317,7 +306,7 @@ func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.T
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+	if len(cols) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr

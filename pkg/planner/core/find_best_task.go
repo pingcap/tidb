@@ -748,7 +748,7 @@ func appendCandidate4PhysicalOptimizeOp(pop *optimizetrace.PhysicalOptimizeOp, l
 	case *PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		index = join.InnerChildIdx
 		plan = join.InnerPlan
 	case *physicalop.PhysicalIndexJoin:
@@ -1084,24 +1084,22 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
 }
 
-func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
-	lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
-	// CorrCountAfterAccess tracks the "CountAfterAccess" only including the most selective index column, thus
-	// lhs/rhsCorrRatio represents the "risk" of the CountAfterAccess value - lower value means less risk that
-	// we do NOT know about actual correlation between indexed columns
-	// TODO - corrCountAfterAccess is only currently used to compete 2 indexes - since they are the only paths
-	// that potentially go through expBackOffEstimation
-	if lhs.path.CorrCountAfterAccess > 0 && rhs.path.CorrCountAfterAccess > 0 {
-		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
-		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
+func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
+	lhsRiskRatio, rhsRiskRatio := 0.0, 0.0
+	// MaxCountAfterAccess tracks the worst case "CountAfterAccess", accounting for scenarios that could
+	// increase our row estimation, thus lhs/rhsRiskRatio represents the "risk" of the CountAfterAccess value.
+	// Lower value means less risk that the actual row count is higher than the estimated one.
+	if lhs.path.MaxCountAfterAccess > 0 && rhs.path.MaxCountAfterAccess > 0 {
+		lhsRiskRatio = lhs.path.MaxCountAfterAccess / lhs.path.CountAfterAccess
+		rhsRiskRatio = rhs.path.MaxCountAfterAccess / rhs.path.CountAfterAccess
 	}
 	// lhs has lower risk
-	if lhsCorrRatio < rhsCorrRatio && lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
-		return 1, lhsCorrRatio
+	if lhsRiskRatio < rhsRiskRatio && lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
+		return 1, lhsRiskRatio
 	}
 	// rhs has lower risk
-	if rhsCorrRatio < lhsCorrRatio && rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
-		return -1, rhsCorrRatio
+	if rhsRiskRatio < lhsRiskRatio && rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
+		return -1, rhsRiskRatio
 	}
 	return 0, 0
 }
@@ -1150,8 +1148,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	// TODO: corrResult is not added to sum to limit change to existing logic. Further testing required.
-	corrResult, _ := compareCorrRatio(lhs, rhs)
+	// TODO: riskResult is not added to sum to limit change to existing logic. Further testing required.
+	riskResult, _ := compareRiskRatio(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
@@ -1159,11 +1157,13 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		// If one index has statistics and the other does not, choose the index with statistics if it
 		// has the same or higher number of equal/IN predicates.
 		if !lhsPseudo && globalResult >= 0 && sum >= 0 &&
-			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount {
+			lhs.path.EqOrInCondCount > 0 && lhs.path.EqOrInCondCount >= rhs.path.EqOrInCondCount &&
+			(rhs.path.MaxCountAfterAccess <= 0 || lhs.path.CountAfterAccess < rhs.path.MaxCountAfterAccess) {
 			return 1, lhsPseudo // left wins and has statistics (lhsPseudo==false)
 		}
 		if !rhsPseudo && globalResult <= 0 && sum <= 0 &&
-			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount {
+			rhs.path.EqOrInCondCount > 0 && rhs.path.EqOrInCondCount >= lhs.path.EqOrInCondCount &&
+			(lhs.path.MaxCountAfterAccess <= 0 || rhs.path.CountAfterAccess < lhs.path.MaxCountAfterAccess) {
 			return -1, rhsPseudo // right wins and has statistics (rhsPseudo==false)
 		}
 		if preferRange {
@@ -1191,10 +1191,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		if threshold > 0 { // set it to 0 to disable this rule
 			// corrResult is included to ensure we don't preference to a higher risk plan given that
 			// this rule does not check the other criteria included below.
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && corrResult <= 0 {
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && riskResult <= 0 {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && corrResult >= 0 {
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && riskResult >= 0 {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}

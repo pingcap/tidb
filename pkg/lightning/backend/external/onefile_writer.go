@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"math/rand"
 	"path/filepath"
 	"slices"
 
@@ -61,6 +62,7 @@ type OneFileWriter struct {
 	// file information.
 	writerID       string
 	filenamePrefix string
+	rnd            *rand.Rand
 	dataFile       string
 	statFile       string
 	dataWriter     storage.ExternalFileWriter
@@ -97,14 +99,14 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 		return nil
 	}
 
-	dataFile := filepath.Join(w.filenamePrefix, "one-file")
+	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
 	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    w.partSize})
 	if err != nil {
 		return err
 	}
-	statFile := filepath.Join(w.filenamePrefix+statSuffix, "one-file")
+	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
 	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize})
@@ -127,7 +129,7 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 		return nil
 	}
 
-	dupFile := filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
+	dupFile := filepath.Join(w.getPartitionedPrefix()+dupSuffix, "one-file")
 	dupWriter, err := w.store.Create(ctx, dupFile, &storage.WriterOption{
 		// too many duplicates will cause duplicate resolution part very slow,
 		// we temporarily use 1 as we don't expect too many duplicates, if there
@@ -345,6 +347,10 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		}
 	}
 	return nil
+}
+
+func (w *OneFileWriter) getPartitionedPrefix() string {
+	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
 }
 
 // caller should make sure the buf is large enough to hold the encoded data.

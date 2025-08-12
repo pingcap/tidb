@@ -28,6 +28,8 @@ import (
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -48,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -103,14 +106,44 @@ func getTableImporter(
 	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
-func (s *importStepExecutor) Init(ctx context.Context) error {
+func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	s.logger.Info("init subtask env")
-	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
+	var tableImporter *importer.TableImporter
+	var taskManager *dxfstorage.TaskManager
+	tableImporter, err = getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
 	s.tableImporter = tableImporter
+	defer func() {
+		if err == nil {
+			return
+		}
+		if err2 := s.tableImporter.Close(); err2 != nil {
+			s.logger.Warn("close importer failed", zap.Error(err2))
+		}
+	}()
 
+	if kerneltype.IsClassic() {
+		taskManager, err = dxfstorage.GetTaskManager()
+		if err != nil {
+			return err
+		}
+		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			// User can write table between precheck and alter table mode to Import,
+			// so check table emptyness again.
+			isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(s.store, se, s.tableImporter.Table)
+			if err2 != nil {
+				return err2
+			}
+			if !isEmpty {
+				return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
@@ -226,7 +259,7 @@ outer:
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	s.summary.UpdateTime = time.Now()
+	s.summary.Update()
 	return &s.summary
 }
 
@@ -434,7 +467,7 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 }
 
 func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	m.summary.UpdateTime = time.Now()
+	m.summary.Update()
 	return &m.summary
 }
 
@@ -537,7 +570,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 }
 
 func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	e.summary.UpdateTime = time.Now()
+	e.summary.Update()
 	return &e.summary
 }
 

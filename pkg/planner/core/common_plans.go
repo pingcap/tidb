@@ -209,12 +209,6 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
-// Change represents a change plan.
-type Change struct {
-	physicalop.SimpleSchemaProducer
-	*ast.ChangeStmt
-}
-
 // Prepare represents prepare plan.
 type Prepare struct {
 	physicalop.SimpleSchemaProducer
@@ -1356,7 +1350,8 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 		for i, op := range ops {
 			operators[i].BriefName = op.ExplainID().String()
 			switch op.Origin.(type) {
-			case *PhysicalTableReader, *PhysicalIndexReader, *physicalop.PhysicalHashJoin, *physicalop.PhysicalIndexJoin, *PhysicalIndexHashJoin, *physicalop.PhysicalMergeJoin:
+			case *PhysicalTableReader, *PhysicalIndexReader, *physicalop.PhysicalHashJoin,
+				*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
 			}
 		}
