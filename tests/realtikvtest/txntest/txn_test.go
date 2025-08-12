@@ -644,10 +644,9 @@ func TestIssue62775(t *testing.T) {
 		defer tk.MustExec("drop table if exists t")
 		tk.MustExec(prepare)
 
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
-
 		s, err := session.CreateSession4Test(store)
 		// Simulate session initializations of GC worker
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
 		s.GetSessionVars().CommonGlobalLoaded = true
 		s.GetSessionVars().InRestrictedSQL = true
 		require.NoError(t, err)
@@ -655,18 +654,31 @@ func TestIssue62775(t *testing.T) {
 		s.SetConnectionID(0)
 		_, err = s.ExecuteInternal(ctx, "use test")
 		require.NoError(t, err)
+
+		require.Equal(t, uint64(0), s.GetSessionVars().LastCommitTS)
+
 		recordSet, err := s.ExecuteInternal(ctx, query)
 		require.NoError(t, err)
 		require.NotNil(t, recordSet)
 		rs := tk.ResultSetToResultWithCtx(ctx, recordSet, "failed to drain record set after query")
 		rs.Check(expectedData)
+
+		// Check the transaction is readonly, which can be inferred by commitTS == 0.
+		require.Equal(t, uint64(0), s.GetSessionVars().LastCommitTS)
+
+		// Verify that the LastCommitTS works for internal transaction, preventing the possibility that LastCommitTS
+		// is not set and thus causes the previous check false-negative.
+		_, err = s.ExecuteInternal(ctx, `update t set v = v + 1`)
+		require.NoError(t, err)
+		require.NotEqual(t, uint64(0), s.GetSessionVars().LastCommitTS)
 	}
 
 	// The following sub-cases covers the combination of:
-	// * Primary key:
-	//   * int (PKIsHandle == true)
-	//   * varchar, clustered (PKIsHandle == false; IsCommonHandle == ture)
-	//   * varchar, non-clustered
+	// * Where clause:
+	//   * int PK (PKIsHandle == true)
+	//   * varchar PK, clustered (PKIsHandle == false; IsCommonHandle == ture)
+	//   * varchar PK, non-clustered
+	//   * Scan
 	// * Query:
 	//   * Columns without parentheses
 	//   * Columns with parentheses (affects the expression type)
@@ -694,6 +706,13 @@ func TestIssue62775(t *testing.T) {
 
 	testForSetup(
 		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10), (2, 20)`,
+		`select v from t for update`,
+		testkit.Rows("10", "20"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
 		`insert into t values (1, 10)`,
 		`select (v) from t where id = 1 for update`,
 		testkit.Rows("10"),
@@ -711,5 +730,12 @@ func TestIssue62775(t *testing.T) {
 		`insert into t values ("a", 10)`,
 		`select (v) from t where id = "a" for update`,
 		testkit.Rows("10"),
+	)
+
+	testForSetup(
+		`create table t (id int primary key, v int)`,
+		`insert into t values (1, 10), (2, 20)`,
+		`select (v) from t for update`,
+		testkit.Rows("10", "20"),
 	)
 }

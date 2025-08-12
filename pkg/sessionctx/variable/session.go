@@ -3644,12 +3644,13 @@ func (s *SessionVars) UseLowResolutionTSO() bool {
 
 // PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current
 // statement execution. There are cases the `for update` clause should not take effect, like autocommit
-// statements with “pessimistic-auto-commit disabled.
+// statements with `pessimistic-auto-commit` disabled.
 func (s *SessionVars) PessimisticLockEligible() bool {
 	if s.StmtCtx.ForShareLockEnabledByNoop {
 		return false
 	}
-	if !s.IsAutocommit() || s.InTxn() {
+	if !s.IsAutocommit() || s.InTxn() ||
+		s.StmtCtx.InInsertStmt || s.StmtCtx.InUpdateStmt || s.StmtCtx.InDeleteStmt {
 		return true
 	}
 	return false
