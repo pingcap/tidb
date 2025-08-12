@@ -19,6 +19,7 @@ go_test(
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser",
+        "//pkg/session",
         "//pkg/session/txninfo",
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/staleread",
