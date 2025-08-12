@@ -40,7 +40,7 @@ import (
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	if kerneltype.IsNextGen() {
 		t.Skip("MDL is always enabled in next-gen TiDB")
 	}
