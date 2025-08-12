@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -223,7 +222,6 @@ func mergeOverlappingFilesInternal(
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
 		key, value := iter.Key(), iter.Value()
-		metrics.MergeSortReadBytes1.Add(float64(len(key) + len(value)))
 		err = writer.WriteRow(ctx, key, value)
 		if err != nil {
 			return err

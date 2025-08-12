@@ -535,7 +535,7 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
-			rd.byteReader.mergeSortReadBytes = metrics.MergeSortReadBytes
+			rd.byteReader.mergeSortReadCounter = metrics.MergeSortReadBytes
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],

@@ -85,8 +85,9 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger   *zap.Logger
-	partSize int64
+	logger       *zap.Logger
+	partSize     int64
+	writtenBytes int64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -253,7 +254,11 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	metrics.MergeSortWriteBytes.Add(float64(length))
+	w.writtenBytes += int64(length)
+	if w.writtenBytes >= 16*units.MiB {
+		metrics.MergeSortWriteBytes.Add(float64(w.writtenBytes))
+		w.writtenBytes = 0
+	}
 	return nil
 }
 

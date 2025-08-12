@@ -68,8 +68,8 @@ type byteReader struct {
 		reloadCnt int
 	}
 
-	logger             *zap.Logger
-	mergeSortReadBytes prometheus.Counter
+	logger               *zap.Logger
+	mergeSortReadCounter prometheus.Counter
 }
 
 func openStoreReaderAndSeek(
@@ -276,16 +276,18 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 }
 
 func (r *byteReader) reload() error {
+	if r.mergeSortReadCounter != nil {
+		defer func() {
+			sz := 0
+			for _, b := range r.curBuf {
+				sz += len(b)
+			}
+			r.mergeSortReadCounter.Add(float64(sz))
+		}()
+	}
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible
-	if r.mergeSortReadBytes != nil {
-		defer func() {
-			for _, b := range r.curBuf {
-				r.mergeSortReadBytes.Add(float64(len(b)))
-			}
-		}()
-	}
 	if !now && to {
 		r.logger.Info("switch reader mode", zap.Bool("use concurrent mode", true))
 		err := r.switchToConcurrentReader()
