@@ -869,15 +869,11 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	if pi == nil {
 		return ds, nil
 	}
-	exprCtx := ds.SCtx().GetExprCtx()
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
-	ds.AllConds = pushDownNotOnConds(exprCtx, ds.AllConds)
-
 	// AllConds and PushedDownConds may become inconsistent in subsequent ApplyPredicateSimplification calls.
 	// They must be kept in sync to ensure correctness after PR #61571.
-	ds.PushedDownConds = pushDownNotOnConds(exprCtx, ds.PushedDownConds)
 	ds.PushedDownConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds, false)
 	ds.AllConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.AllConds, false)
 	// Return table dual when filter is constant false or null.
