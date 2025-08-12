@@ -145,15 +145,21 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 			if ok {
 				// For dynamic partitioned table, we need to display the global table as well.
 				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-					e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, "global", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
+					if stats, found := h.GetNonPseudoPhysicalTableStats(paritionedTable.ID); found {
+						e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, "global", stats)
+					}
 				}
 				pi := paritionedTable.GetPartitionInfo()
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
+					if stats, found := h.GetNonPseudoPhysicalTableStats(def.ID); found {
+						e.appendTableForStatsMeta(db.O, paritionedTable.Name.O, def.Name.O, stats)
+					}
 				}
 			} else {
 				// Non-partitioned table:
-				e.appendTableForStatsMeta(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(nameInfo.ID))
+				if stats, found := h.GetNonPseudoPhysicalTableStats(nameInfo.ID); found {
+					e.appendTableForStatsMeta(db.O, nameInfo.Name.O, "", stats)
+				}
 			}
 		}
 	}
@@ -554,15 +560,21 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 			if ok {
 				// For dynamic partitioned table, we need to display the global table as well.
 				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-					e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, "global", h.GetNonPseudoPhysicalTableStats(paritionedTable.ID))
+					if stats, found := h.GetNonPseudoPhysicalTableStats(paritionedTable.ID); found {
+						e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, "global", stats)
+					}
 				}
 				pi := paritionedTable.GetPartitionInfo()
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, def.Name.O, h.GetNonPseudoPhysicalTableStats(def.ID))
+					if stats, found := h.GetNonPseudoPhysicalTableStats(def.ID); found {
+						e.appendTableForStatsHealthy(db.O, paritionedTable.Name.O, def.Name.O, stats)
+					}
 				}
 			} else {
 				// Non-partitioned table:
-				e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", h.GetNonPseudoPhysicalTableStats(nameInfo.ID))
+				if stats, found := h.GetNonPseudoPhysicalTableStats(nameInfo.ID); found {
+					e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", stats)
+				}
 			}
 		}
 	}
