@@ -1457,7 +1457,7 @@
             "table_name": "t",
             "type": "Column Stats-Range",
             "expr": "((a > 0 and a < 2))",
-            "row_count": 4
+            "row_count": 2
           },
           {
             "table_name": "t",
@@ -1469,7 +1469,7 @@
             "table_name": "t",
             "type": "Table Stats-Expression-CNF",
             "expr": "`and`(`gt`(test.t.a, 0), `lt`(test.t.a, 2))",
-            "row_count": 4
+            "row_count": 2
           }
         ]
       },
