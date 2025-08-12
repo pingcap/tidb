@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -499,7 +500,7 @@ type IndexLookUpExecutor struct {
 	idxCols         []*expression.Column
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
 
@@ -744,29 +745,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
 		}
-		var builder distsql.RequestBuilder
-		builder.SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetTxnScope(e.txnScope).
-			SetReadReplicaScope(e.readReplicaScope).
-			SetIsStaleness(e.isStaleness).
-			SetFromSessionVars(e.dctx).
-			SetFromInfoSchema(e.infoSchema).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-			SetMemTracker(tracker).
-			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
-		if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-			// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-			// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-			builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-			if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-				builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-			}
-		}
+
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			// check if executor is closed
@@ -778,6 +758,28 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 			if finished {
 				break
+			}
+			var builder distsql.RequestBuilder
+			builder.SetDAGRequest(e.dagPB).
+				SetStartTS(e.startTS).
+				SetDesc(e.desc).
+				SetKeepOrder(e.keepOrder).
+				SetTxnScope(e.txnScope).
+				SetReadReplicaScope(e.readReplicaScope).
+				SetIsStaleness(e.isStaleness).
+				SetFromSessionVars(e.dctx).
+				SetFromInfoSchema(e.infoSchema).
+				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+				SetMemTracker(tracker).
+				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+
+			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+				}
 			}
 
 			// init kvReq, result and worker for this partition
@@ -1022,7 +1024,7 @@ type indexWorker struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
 }

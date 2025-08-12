@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -46,7 +46,7 @@ func TestShowBackupQuery(t *testing.T) {
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 
-	log.SetLevel(zapcore.ErrorLevel)
+	logutil.OverrideLevelForTest(t, zapcore.ErrorLevel)
 	tk.MustExec("use test;")
 	tk.MustExec("create table foo(pk int primary key auto_increment, v varchar(255));")
 	tk.MustExec("insert into foo(v) values " + strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",") + ";")

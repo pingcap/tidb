@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -187,7 +187,7 @@ func checkExprWithProvidedProps(idx int, expr expression.Expression, props expre
 func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chunk.Chunk) error {
 	e.dataFilled = true
 	// we use taskManager to get job, user might not have the privilege to system tables.
-	taskManager, err := fstorage.GetTaskManager()
+	taskManager, err := dxfstorage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
@@ -201,7 +201,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
-	FillOneImportJobInfo(req, info, unknownImportedRowCount)
+	FillOneImportJobInfo(req, info, nil)
 	return nil
 }
 
@@ -233,12 +233,8 @@ func (*ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.Ta
 	err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 	// when user KILL the connection, the ctx will be canceled, we need to cancel the import job.
 	if errors.Cause(err) == context.Canceled {
-		taskManager, err2 := fstorage.GetTaskManager()
-		if err2 != nil {
-			return err2
-		}
 		// use background, since ctx is canceled already.
-		return cancelAndWaitImportJob(context.Background(), taskManager, jobID)
+		return cancelAndWaitImportJob(context.Background(), jobID)
 	}
 	return err
 }
@@ -279,11 +275,11 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	selectedChunkCh := make(chan importer.QueryChunk, 1)
 	ti.SetSelectedChunkCh(selectedChunkCh)
 
-	var importResult *importer.JobImportResult
+	var importedRows int64
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		var err error
-		importResult, err = ti.ImportSelectedRows(egCtx, newSCtx)
+		importedRows, err = ti.ImportSelectedRows(egCtx, newSCtx)
 		return err
 	})
 	eg.Go(func() error {
@@ -323,14 +319,14 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	}
 
-	if err2 = importer.FlushTableStats(ctx, newSCtx, e.controller.TableInfo.ID, importResult); err2 != nil {
+	if err2 = importer.FlushTableStats(ctx, newSCtx, e.controller.TableInfo.ID, importedRows); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
 	}
 
 	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
-	stmtCtx.SetAffectedRows(importResult.Affected)
+	stmtCtx.SetAffectedRows(uint64(importedRows))
 	// TODO: change it after spec is ready.
-	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importedRows, importID))
 	return nil
 }
 
@@ -362,7 +358,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have enough privileges.
-	taskManager, err := fstorage.GetTaskManager()
+	taskManager, err := dxfstorage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
@@ -376,10 +372,10 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	return cancelAndWaitImportJob(ctx, taskManager, e.jobID)
+	return cancelAndWaitImportJob(ctx, e.jobID)
 }
 
-func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
+func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *dxfstorage.TaskManager, hasSuperPriv bool) error {
 	var info *importer.JobInfo
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
@@ -395,7 +391,11 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 	return nil
 }
 
-func cancelAndWaitImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
+func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
+	manager, err := dxfstorage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return err
+	}
 	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 		return manager.CancelTaskByKeySession(ctx, se, importinto.TaskKey(jobID))

@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -28,8 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 )
@@ -158,6 +162,54 @@ func TestNextGenS3ExternalID(t *testing.T) {
 		})
 		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket?external-id=allowed'")
 		require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+	})
+}
+
+func TestNextGenUnsupportedLocalSortAndOptions(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	outerTK := testkit.NewTestKit(t, store)
+	outerTK.MustExec("create table test.t (id int);")
+	sem.Enable()
+	t.Cleanup(func() {
+		sem.Disable()
+	})
+
+	t.Run("import from select", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		err := tk.ExecToErr("IMPORT INTO test.t FROM select 1")
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO from select")
+	})
+
+	t.Run("local sort", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket/*.csv'")
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO with local sort")
+	})
+
+	t.Run("unsupported options", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		bak := variable.ValidateCloudStorageURI
+		variable.ValidateCloudStorageURI = func(ctx context.Context, uri string) error {
+			return nil
+		}
+		t.Cleanup(func() {
+			variable.ValidateCloudStorageURI = bak
+		})
+		tk.MustExec("set global tidb_cloud_storage_uri='s3://bucket/tmp'")
+		for _, option := range []string{
+			"disk_quota",
+			"max_write_speed",
+			"cloud_storage_uri",
+		} {
+			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s='1'", option))
+			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
+			require.ErrorContains(t, err, option)
+		}
 	})
 }
 

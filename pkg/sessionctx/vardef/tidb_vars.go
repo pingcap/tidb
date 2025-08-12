@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -325,6 +326,9 @@ const (
 
 	// TiDBOptRiskEqSkewRatio controls the amount of skew is applied to equal predicate estimation when a value is not found in TopN/buckets.
 	TiDBOptRiskEqSkewRatio = "tidb_opt_risk_eq_skew_ratio"
+
+	// TiDBOptRiskRangeSkewRatio controls the amount of skew that is applied to range predicate estimation when a range falls within a bucket or outside the histogram bucket range.
+	TiDBOptRiskRangeSkewRatio = "tidb_opt_risk_range_skew_ratio"
 
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
@@ -1081,6 +1085,7 @@ const (
 	// In test, we disable it by default. See GlobalSystemVariableInitialValue for details.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
 	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
+	// DEPRECATED: This variable is deprecated, please do not use this variable.
 	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
 	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
@@ -1258,12 +1263,16 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
-	// TiDBCircuitBreakerPDMetadataErrorRateThresholdPct variable is used to set percent of errors to trip the circuit breaker for get region calls to PD
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
 	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
-	TiDBCircuitBreakerPDMetadataErrorRateThresholdPct = "tidb_cb_pd_metadata_error_rate_threshold_pct"
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
 
 	// TiDBEnableTSValidation controls whether to enable the timestamp validation in client-go.
 	TiDBEnableTSValidation = "tidb_enable_ts_validation"
+
+	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
+	// The log backup task will be paused if the checkpoint lag is larger than it.
+	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1327,6 +1336,7 @@ const (
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
 	DefOptRiskEqSkewRatio                   = 0.0
+	DefOptRiskRangeSkewRatio                = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0
@@ -1400,7 +1410,7 @@ const (
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiFlashHashJoinVersion               = joinversion.TiFlashHashJoinVersionDefVal
 	DefTiDBEnableTiFlashPipelineMode        = true
-	DefTiDBMPPStoreFailTTL                  = "60s"
+	DefTiDBMPPStoreFailTTL                  = "0s"
 	DefTiDBTxnMode                          = PessimisticTxnMode
 	DefTiDBRowFormatV1                      = 1
 	DefTiDBRowFormatV2                      = 2
@@ -1453,7 +1463,7 @@ const (
 	DefTiDBSuperReadOnly                    = false
 	DefTiDBShardAllocateStep                = math.MaxInt64
 	DefTiDBPointGetCache                    = false
-	DefTiDBEnableTelemetry                  = false
+	DefTiDBEnableTelemetry                  = true
 	DefTiDBEnableParallelApply              = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
@@ -1658,9 +1668,11 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
+	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBEnableTSValidation                         = true
+	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 )
 
 // Process global variables.
@@ -1721,7 +1733,7 @@ var (
 	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
-	EnableMDL                           = atomic.NewBool(false)
+	enableMDL                           = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// TODO: set value by session variable
@@ -1788,6 +1800,10 @@ var (
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
 	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
+
+	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
+
+	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 )
 
 func serverMemoryLimitDefaultValue() string {
@@ -2117,4 +2133,23 @@ func SetMaxDeltaSchemaCount(cnt int64) {
 // GetMaxDeltaSchemaCount gets MaxDeltaSchemaCount size.
 func GetMaxDeltaSchemaCount() int64 {
 	return goatomic.LoadInt64(&MaxDeltaSchemaCount)
+}
+
+// IsMDLEnabled returns if MDL is enabled.
+func IsMDLEnabled() bool {
+	if kerneltype.IsNextGen() {
+		// MDL is very useful to avoid the 'Information schema is changed' error,
+		// in next-gen TiDB, MDL is always enabled, as we don't have the compatibility
+		// debts.
+		// some tests might call SetEnableMDL(false) to disable MDL, but it is not
+		// expected in nextgen, we use this branch to ensure MDL is always enabled,
+		// even in test.
+		return true
+	}
+	return enableMDL.Load()
+}
+
+// SetEnableMDL sets the MDL enable status.
+func SetEnableMDL(enabled bool) {
+	enableMDL.Store(enabled)
 }

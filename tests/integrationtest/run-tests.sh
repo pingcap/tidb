@@ -15,6 +15,7 @@
 
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
+NEXT_GEN=$NEXT_GEN
 
 build=1
 mysql_tester="./mysql_tester"
@@ -28,7 +29,7 @@ stats="s"
 collation_opt=2
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
+trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -100,13 +101,13 @@ function find_multiple_available_ports() {
 
 function build_tidb_server()
 {
-    tidb_server="./integrationtest_tidb-server"
+    tidb_server="$(pwd)/integrationtest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        GO111MODULE=on go build -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server
     else
-        GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/cmd/tidb-server
+        make -C ../.. server SERVER_OUT=$tidb_server RACE_FLAG="-race"
     fi
 }
 
@@ -219,14 +220,20 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
-    echo "start tidb-server, log file: $mysql_tester_log"
+    start_options="-P $port -status $status -config $config_file"
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        start_options="$start_options -store tikv -path ${TIKV_PATH}"
     else
-        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
-        SERVER_PID=$!
+        start_options="$start_options -store unistore -path ''"
     fi
+
+    if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
+        start_options="$start_options -keyspace-name SYSTEM"
+    fi
+
+    echo "start tidb-server, log file: $mysql_tester_log"
+    $tidb_server $start_options > $mysql_tester_log 2>&1 &
+    SERVER_PID=$!
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 

@@ -567,6 +567,7 @@ import (
 	recommend                  "RECOMMEND"
 	recover                    "RECOVER"
 	redundant                  "REDUNDANT"
+	refresh                    "REFRESH"
 	reload                     "RELOAD"
 	remove                     "REMOVE"
 	reorganize                 "REORGANIZE"
@@ -1057,6 +1058,7 @@ import (
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
 	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
+	RefreshStatsStmt           "REFRESH STATS statement"
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
@@ -1296,6 +1298,8 @@ import (
 	Priority                               "Statement priority"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
+	RefreshObject                          "Refresh object"
+	RefreshObjectList                      "Refresh object list"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -3192,23 +3196,23 @@ FlashbackDatabaseStmt:
  *
  *******************************************************************/
 DistributeTableStmt:
-	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit
 	{
 		$$ = &ast.DistributeTableStmt{
 			Table:          $3.(*ast.TableName),
 			PartitionNames: $4.([]ast.CIStr),
-			Rule:           ast.NewCIStr($7),
-			Engine:         ast.NewCIStr($10),
+			Rule:           $7,
+			Engine:         $10,
 		}
 	}
-|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier "TIMEOUT" EqOrAssignmentEq Identifier
+|	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOpt stringLit "ENGINE" EqOpt stringLit "TIMEOUT" EqOpt stringLit
 	{
 		$$ = &ast.DistributeTableStmt{
 			Table:          $3.(*ast.TableName),
 			PartitionNames: $4.([]ast.CIStr),
-			Rule:           ast.NewCIStr($7),
-			Engine:         ast.NewCIStr($10),
-			Timeout:        ast.NewCIStr($13),
+			Rule:           $7,
+			Engine:         $10,
+			Timeout:        $13,
 		}
 	}
 
@@ -4101,6 +4105,12 @@ DefaultValueExpr:
 |	SignedLiteral
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
+|	'(' Identifier ')'
+	{
+		$$ = &ast.ColumnNameExpr{Name: &ast.ColumnName{
+			Name: ast.NewCIStr($2),
+		}}
+	}
 |	'(' SignedLiteral ')'
 	{
 		$$ = $2
@@ -5569,6 +5579,25 @@ ExplainStmt:
 			Explore:   true,
 		}
 	}
+|	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		stmt := $4
+		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		$$ = &ast.ExplainStmt{
+			Stmt:    stmt,
+			Explore: true,
+			Analyze: true,
+		}
+	}
+|	ExplainSym "EXPLORE" "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			SQLDigest: $4,
+			Explore:   true,
+			Analyze:   true,
+		}
+	}
 |	ExplainSym TableName
 	{
 		$$ = &ast.ExplainStmt{
@@ -5593,6 +5622,13 @@ ExplainStmt:
 		$$ = &ast.ExplainStmt{
 			Stmt:   $2,
 			Format: "row",
+		}
+	}
+|	ExplainSym stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $2,
+			Format:     "row",
 		}
 	}
 |	ExplainSym "FOR" "CONNECTION" NUM
@@ -5630,6 +5666,20 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $5,
+			Format:     $4,
+		}
+	}
 |	ExplainSym "ANALYZE" ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
@@ -5638,12 +5688,36 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $3,
+			Format:     "row",
+			Analyze:    true,
+		}
+	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType ExplainableStmt
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt:    $6,
 			Format:  $5,
 			Analyze: true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" ExplainFormatType stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
+		}
+	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit stringLit
+	{
+		$$ = &ast.ExplainStmt{
+			PlanDigest: $6,
+			Format:     $5,
+			Analyze:    true,
 		}
 	}
 |	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
@@ -6968,6 +7042,7 @@ UnReservedKeyword:
 |	"RECOMMEND"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"REFRESH"
 |	"RESOURCE"
 |	"RESTART"
 |	"ROLE"
@@ -12201,10 +12276,6 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
-|	"PLAN" "FOR" stringLit
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQLOrDigest: $3}
-	}
 |	"DISTRIBUTION" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
@@ -12483,6 +12554,7 @@ Statement:
 |	ReleaseSavepointStmt
 |	RevokeStmt
 |	RevokeRoleStmt
+|	RefreshStatsStmt
 |	SavepointStmt
 |	SetOprStmt
 |	SelectStmt
@@ -15529,6 +15601,54 @@ UnlockStatsStmt:
 		x.PartitionNames = $6.([]ast.CIStr)
 		$$ = &ast.UnlockStatsStmt{
 			Tables: []*ast.TableName{x},
+		}
+	}
+
+RefreshStatsStmt:
+	"REFRESH" "STATS" RefreshObjectList
+	{
+		$$ = &ast.RefreshStatsStmt{
+			RefreshObjects: $3.([]*ast.RefreshObject),
+		}
+	}
+
+RefreshObjectList:
+	RefreshObject
+	{
+		$$ = []*ast.RefreshObject{$1.(*ast.RefreshObject)}
+	}
+|	RefreshObjectList ',' RefreshObject
+	{
+		$$ = append($1.([]*ast.RefreshObject), $3.(*ast.RefreshObject))
+	}
+
+RefreshObject:
+	'*' '.' '*'
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeGlobal,
+		}
+	}
+|	Identifier '.' '*'
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeDatabase,
+			DBName:             ast.NewCIStr($1),
+		}
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeTable,
+			DBName:             ast.NewCIStr($1),
+			TableName:          ast.NewCIStr($3),
+		}
+	}
+|	Identifier
+	{
+		$$ = &ast.RefreshObject{
+			RefreshObjectScope: ast.RefreshObjectScopeTable,
+			TableName:          ast.NewCIStr($1),
 		}
 	}
 

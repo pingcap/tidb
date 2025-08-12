@@ -117,7 +117,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	ctx.BindDomain(do)
+	ctx.BindDomainAndSchValidator(do, nil)
 	ctx.SetInfoSchema(s.is)
 	s.ctx = ctx
 	s.sctx = ctx
@@ -145,7 +145,7 @@ func TestPredicatePushDown(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -507,7 +507,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -1127,7 +1127,7 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -2027,7 +2027,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 or g = 5",
-			result: "PRIMARY_KEY,[g,b_global]",
+			result: "PRIMARY_KEY,[b_global,g]",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",

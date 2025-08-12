@@ -68,7 +68,7 @@ func (s *MemSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version in
 			failpoint.Return(errors.New("mock update mdl to etcd error"))
 		}
 	})
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		s.mdlSchemaVersions.Store(jobID, version)
 	} else {
 		atomic.StoreInt64(&s.selfSchemaVersion, version)
@@ -102,7 +102,7 @@ func (s *MemSyncer) OwnerUpdateGlobalVersion(_ context.Context, _ int64) error {
 }
 
 // WaitVersionSynced implements Syncer.WaitVersionSynced interface.
-func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error {
+func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, _ bool) error {
 	ticker := time.NewTicker(checkVersionsInterval)
 	defer ticker.Stop()
 
@@ -117,7 +117,7 @@ func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVe
 		case <-ctx.Done():
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
-			if vardef.EnableMDL.Load() {
+			if vardef.IsMDLEnabled() {
 				ver, ok := s.mdlSchemaVersions.Load(jobID)
 				if ok && ver.(int64) >= latestVer {
 					return nil

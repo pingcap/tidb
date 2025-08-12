@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 	"time"
 
@@ -33,6 +34,7 @@ var (
 	pkgDir  string
 	outDir  string
 	pgoFile string
+	nextGen bool
 )
 
 const codeTemplate = `
@@ -76,6 +78,7 @@ func init() {
 	flag.StringVar(&pkgDir, "pkg-dir", "", "plugin package folder path")
 	flag.StringVar(&outDir, "out-dir", "", "plugin packaged folder path")
 	flag.StringVar(&pgoFile, "pgo-file", "", "go profile-guided optimization(pgo) file path")
+	flag.BoolVar(&nextGen, "next-gen", false, "whether to build plugin with next-gen features")
 	flag.Usage = usage
 }
 
@@ -155,8 +158,14 @@ func main() {
 	if pgoFile != "" {
 		flags = append(flags, "-pgo="+pgoFile)
 	}
+
+	buildTags := []string{"codes"}
+	if nextGen {
+		buildTags = append(buildTags, "nextgen")
+	}
+
 	flags = append(flags,
-		"-tags=codes",
+		"-tags="+strings.Join(buildTags, ","),
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
 	buildCmd := exec.CommandContext(ctx, "go", flags...)

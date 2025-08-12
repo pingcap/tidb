@@ -277,7 +277,7 @@ func (bc *litBackendCtx) unsafeImportAndResetAllEngines(ctx context.Context) err
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
-	logger := log.FromContext(bc.ctx).With(
+	logger := log.Wrap(logutil.Logger(bc.ctx)).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
 	logger.Info(LitInfoUnsafeImport,

@@ -19,6 +19,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/server",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",

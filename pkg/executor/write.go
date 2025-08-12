@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -232,6 +233,15 @@ func updateRecord(
 
 		if err := checkColumnFunc(idxInCols, false); err != nil {
 			return false, false, err
+		}
+	}
+
+	// Null value can be inserted into not nullable generated column by ON DUPLICATE KEY UPDATE.
+	// But we don't allow to update this record later. So we return an error for null value.
+	for i, col := range t.Cols() {
+		if col.IsVirtualGenerated() && oldData[i].IsNull() &&
+			(mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) {
+			return false, false, plannererrors.ErrBadNull.GenWithStackByArgs(col.Name.O)
 		}
 	}
 
@@ -436,7 +446,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 // checkRowForExchangePartition is only used for ExchangePartition by non-partitionTable during write only state.
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
 func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pt, tableFound := is.TableByID(context.Background(), tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
 		return errors.Errorf("exchange partition process table by id failed")
@@ -457,7 +467,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 		return err
 	}
 	if vardef.EnableCheckConstraint.Load() {
-		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
+		if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), pt.WritableConstraint(), row, tbl); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err
 		}

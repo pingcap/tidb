@@ -61,6 +61,7 @@ var (
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
+	_ StmtNode = &RecommendIndexStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -216,6 +217,8 @@ type ExplainStmt struct {
 	Explore bool
 	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
 	SQLDigest string
+	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
+	PlanDigest string
 }
 
 // Restore implements Node interface.
@@ -247,6 +250,9 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Format)
 		ctx.WritePlain(" ")
+	}
+	if n.PlanDigest != "" {
+		ctx.WriteString(n.PlanDigest)
 	}
 	if n.Stmt != nil {
 		if err := n.Stmt.Restore(ctx); err != nil {
@@ -1391,41 +1397,6 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type ChangeStmt struct {
-	stmtNode
-
-	NodeType string
-	State    string
-	NodeID   string
-}
-
-// Restore implements Node interface.
-func (n *ChangeStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CHANGE ")
-	ctx.WriteKeyWord(n.NodeType)
-	ctx.WriteKeyWord(" TO NODE_STATE ")
-	ctx.WritePlain("=")
-	ctx.WriteString(n.State)
-	ctx.WriteKeyWord(" FOR NODE_ID ")
-	ctx.WriteString(n.NodeID)
-	return nil
-}
-
-// SecureText implements SensitiveStatement interface.
-func (n *ChangeStmt) SecureText() string {
-	return fmt.Sprintf("change %s to node_state='%s' for node_id '%s'", strings.ToLower(n.NodeType), n.State, n.NodeID)
-}
-
-// Accept implements Node Accept interface.
-func (n *ChangeStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ChangeStmt)
-	return v.Leave(n)
-}
-
 // SetRoleStmtType is the type for FLUSH statement.
 type SetRoleStmtType int
 
@@ -2566,6 +2537,8 @@ const (
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
 	AdminWorkloadRepoCreate
+	// adminTpCount is the total number of admin statement types.
+	adminTpCount
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -3500,6 +3473,8 @@ const (
 	BRIEKindShowJob
 	BRIEKindShowQuery
 	BRIEKindShowBackupMeta
+	// brieKindCount is the total number of BRIE kinds.
+	brieKindCount
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
 	BRIEOptionConcurrency

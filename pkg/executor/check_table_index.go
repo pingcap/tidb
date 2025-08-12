@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -64,7 +63,6 @@ type CheckTableExec struct {
 	indexInfos []*model.IndexInfo
 	srcs       []*IndexLookUpExecutor
 	done       bool
-	is         infoschema.InfoSchema
 	exitCh     chan struct{}
 	retCh      chan error
 	checkIndex bool
@@ -280,7 +278,6 @@ type FastCheckTableExec struct {
 	table      table.Table
 	indexInfos []*model.IndexInfo
 	done       bool
-	is         infoschema.InfoSchema
 	err        *atomic.Pointer[error]
 	wg         sync.WaitGroup
 	contextCtx context.Context
@@ -312,7 +309,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+	workerPool := workerpool.NewWorkerPool("checkIndex",
 		poolutil.CheckTable, 3, e.createWorker)
 	workerPool.Start(ctx)
 
@@ -369,7 +366,7 @@ type checkIndexWorker struct {
 	e          *FastCheckTableExec
 }
 
-func (w *checkIndexWorker) initSessCtx(ctx context.Context) (sessionctx.Context, func(), error) {
+func (w *checkIndexWorker) initSessCtx() (sessionctx.Context, func(), error) {
 	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
 		return nil, nil, err
@@ -378,19 +375,26 @@ func (w *checkIndexWorker) initSessCtx(ctx context.Context) (sessionctx.Context,
 	sessVars := se.GetSessionVars()
 	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
 	originMemQuotaQuery := sessVars.MemQuotaQuery
-	originSnapshotTS := sessVars.SnapshotTS
 
 	sessVars.OptimizerUseInvisibleIndexes = true
 	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
-	if w.e.Ctx().GetSessionVars().SnapshotTS != 0 {
-		sessVars.SnapshotTS = w.e.Ctx().GetSessionVars().SnapshotTS
+	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
+	if snapshot != 0 {
+		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
+		if err != nil {
+			logutil.BgLogger().Error("fail to set tidb_snapshot", zap.Error(err), zap.Uint64("snapshot ts", snapshot))
+		}
 	}
 
 	return se, func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
-		sessVars.SnapshotTS = originSnapshotTS
-		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
+		if snapshot != 0 {
+			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
+			if err != nil {
+				logutil.BgLogger().Error("fail to set tidb_snapshot to 0", zap.Error(err))
+			}
+		}
 	}, nil
 }
 
@@ -626,7 +630,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 	defer w.e.wg.Done()
 
 	ctx := kv.WithInternalSourceType(w.e.contextCtx, kv.InternalTxnAdmin)
-	se, restoreCtx, err := w.initSessCtx(ctx)
+	se, restoreCtx, err := w.initSessCtx()
 	if err != nil {
 		return err
 	}

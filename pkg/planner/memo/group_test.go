@@ -27,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -97,7 +98,7 @@ func TestGroupExists(t *testing.T) {
 }
 
 func TestGroupFingerPrint(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	p := parser.New()
 	stmt1, err := p.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
 	require.NoError(t, err)
@@ -201,7 +202,7 @@ func TestGetInsertGroupImpl(t *testing.T) {
 	emptyProp := &property.PhysicalProperty{}
 	require.Nil(t, g.GetImpl(emptyProp))
 
-	impl := &fakeImpl{plan: &plannercore.PhysicalLimit{}}
+	impl := &fakeImpl{plan: &physicalop.PhysicalLimit{}}
 	g.InsertImpl(emptyProp, impl)
 	require.Equal(t, impl, g.GetImpl(emptyProp))
 
@@ -229,7 +230,7 @@ func TestFirstElemAfterDelete(t *testing.T) {
 }
 
 func TestBuildKeyInfo(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	defer func() {

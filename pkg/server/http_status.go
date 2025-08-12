@@ -245,6 +245,9 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
+	// HTTP path for transaction GC states.
+	router.Handle("/txn-gc-states", tikvhandler.NewTxnGCStatesHandler(tikvHandlerTool.Store))
+
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
@@ -291,7 +294,7 @@ func (s *Server) startHTTPServer() {
 		}
 		baseURL := &url.URL{
 			Scheme: util.InternalHTTPSchema(),
-			Host:   fmt.Sprintf("%s:%s", host, port),
+			Host:   net.JoinHostPort(host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
@@ -299,6 +302,11 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("new failed", zap.Error(err))
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
+	}
+
+	if s.StandbyController != nil {
+		path, handler := s.StandbyController.Handler(s)
+		router.PathPrefix(path).Handler(handler)
 	}
 
 	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -583,17 +591,17 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	go util.WithRecovery(func() {
 		err := grpcServer.Serve(grpcL)
-		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
 		err := statusServer.Serve(httpL)
-		logutil.BgLogger().Error("http server error", zap.Error(err))
+		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("start status/rpc server error", zap.Error(err))
 	}
 }
 

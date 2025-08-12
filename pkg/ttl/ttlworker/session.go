@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -44,18 +44,6 @@ import (
 // `interface{}`) here is the same, I just pick one small enough interface.
 // Also, we cannot use the functions in `session/session.go` (to avoid cyclic dependency), so
 // registering function here is really needed.
-
-// AttachStatsCollector attaches the stats collector for the session.
-// this function is registered in BootstrapSession in /session/session.go
-var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
-	return s
-}
-
-// DetachStatsCollector removes the stats collector for the session
-// this function is registered in BootstrapSession in /session/session.go
-var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
-	return s
-}
 
 var allIsolationReadEngines = map[kv.StoreType]struct{}{
 	kv.TiKV:    {},
@@ -73,8 +61,8 @@ func withSession(pool syssession.Pool, fn func(session.Session) error) error {
 				}
 			}
 
-			exec := AttachStatsCollector(sctx.GetSQLExecutor())
-			defer DetachStatsCollector(exec)
+			exec := statshandle.AttachStatsCollector(sctx.GetSQLExecutor())
+			defer statshandle.DetachStatsCollector(exec)
 
 			se := session.NewSession(sctx, s.AvoidReuse)
 			restore, err := prepareSession(se)
@@ -97,7 +85,7 @@ func prepareSession(se session.Session) (func(), error) {
 	restore := func() {
 		_, err := se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
 		if err != nil {
-			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
+			logutil.BgLogger().Warn("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
 			se.AvoidReuse()
 			return
 		}
@@ -217,8 +205,9 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time) (*ttlTableSession, func() error, error) {
 	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
 	origPaging := se.GetSessionVars().EnablePaging
-
+	se.GetSessionVars().InternalSQLScanUserTable = true
 	restore := func() error {
+		se.GetSessionVars().InternalSQLScanUserTable = false
 		_, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=%?", origConcurrency)
 		terror.Log(err)
 		if err != nil {

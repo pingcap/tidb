@@ -21,7 +21,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -32,9 +33,10 @@ func randomPlanCacheKey() string {
 }
 
 func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
-	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &PhysicalTableScan{}, &PhysicalTableDual{}, &PhysicalTableReader{},
-		&PhysicalTableScan{}, &PhysicalIndexJoin{}, &PhysicalIndexHashJoin{}, &PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
-		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &PhysicalLimit{}}
+	plans := []base.Plan{&Insert{}, &Update{}, &Delete{}, &physicalop.PhysicalTableScan{}, &physicalop.PhysicalTableDual{}, &PhysicalTableReader{},
+		&physicalop.PhysicalTableScan{}, &physicalop.PhysicalIndexJoin{}, &physicalop.PhysicalIndexHashJoin{},
+		&PhysicalIndexMergeJoin{}, &PhysicalIndexMergeReader{},
+		&PhysicalIndexLookUpReader{}, &PhysicalApply{}, &PhysicalApply{}, &physicalop.PhysicalLimit{}}
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &PlanCacheValue{
 		Plan:       plans[random.Int()%len(plans)],
@@ -387,7 +389,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 		require.Equal(t, lru.MemoryUsage(), res)
 	}
 	// evict
-	p := &PhysicalTableScan{}
+	p := &physicalop.PhysicalTableScan{}
 	k := "key-3"
 	v := &PlanCacheValue{Plan: p}
 	opts := pTypes

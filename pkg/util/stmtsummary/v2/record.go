@@ -48,6 +48,8 @@ type StmtRecord struct {
 	NormalizedSQL string `json:"normalized_sql"`
 	TableNames    string `json:"table_names"`
 	IsInternal    bool   `json:"is_internal"`
+	BindingSQL    string `json:"binding_sql"`
+	BindingDigest string `json:"binding_digest"`
 	// Basic
 	SampleSQL        string   `json:"sample_sql"`
 	Charset          string   `json:"charset"`
@@ -158,6 +160,9 @@ type StmtRecord struct {
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
 
 	stmtsummary.StmtNetworkTrafficSummary
+
+	StorageKV  bool `json:"storage_kv"`  // query read from TiKV
+	StorageMPP bool `json:"storage_mpp"` // query read from TiFlash
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -195,6 +200,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	if len(binPlan) > MaxEncodedPlanSizeInBytes {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
+	bindingSQL, bindingDigest := info.LazyInfo.GetBindingSQLAndDigest()
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
@@ -203,6 +209,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		NormalizedSQL: info.NormalizedSQL,
 		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
+		BindingSQL:    bindingSQL,
+		BindingDigest: bindingDigest,
 		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
@@ -427,6 +435,9 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.StmtNetworkTrafficSummary.Add(info.TiKVExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail)
+
+	r.StorageKV = info.StmtCtx.IsTiKV.Load()
+	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
 }
 
 // Merge merges the statistics of another StmtRecord to this StmtRecord.
@@ -715,4 +726,8 @@ func (*mockLazyInfo) GetBinaryPlan() string {
 
 func (*mockLazyInfo) GetPlanDigest() string {
 	return ""
+}
+
+func (*mockLazyInfo) GetBindingSQLAndDigest() (sql string, digest string) {
+	return "", ""
 }
