@@ -402,7 +402,6 @@ func DoOptimize(
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }

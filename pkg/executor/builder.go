@@ -507,11 +507,8 @@ func colSupportFastCheck(col *model.ColumnInfo) bool {
 	if len(ExtractCastArrayExpr(col)) == 0 {
 		return true
 	}
-	ft := col.FieldType.Clone()
-	ft.SetArray(false)
-	evalType := ft.EvalType()
 
-	switch evalType {
+	switch col.FieldType.ArrayType().EvalType() {
 	case types.ETDatetime, types.ETDuration, types.ETString, types.ETInt, types.ETReal:
 		return true
 	}

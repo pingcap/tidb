@@ -3713,8 +3713,6 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	ctx = WithEnableMVIndexScan(ctx)
-	vars := b.ctx.GetSessionVars()
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -3764,7 +3762,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
 			} else if !b.buildingRecursivePartForCTE {
 				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
-				vars.StmtCtx.SetHintWarning(
+				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 					"Hint merge() is inapplicable. " +
 						"Please check whether the hint is used in the right place, " +
 						"you should use this hint inside the CTE.")
@@ -4683,12 +4681,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
 	names := make([]*types.FieldName, 0, countCnt)
 	for i, col := range columns {
-		retType := col.FieldType.Clone()
-		// TODO(joechenrh): we must discard array type when building DataSource, which is a bit ugly...
-		if enableMVIndexScan {
-			retType.SetArray(false)
-		}
-
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -4702,7 +4694,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  retType,
+			RetType:  col.FieldType.ArrayType(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
