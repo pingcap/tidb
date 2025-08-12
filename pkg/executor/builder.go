@@ -464,7 +464,7 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) exec.Executor {
 func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLookUpReader,
 	e *IndexLookUpExecutor,
 ) {
-	is := p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	fullColLen := len(is.Index.Columns) + len(p.CommonHandleCols)
 	if !e.isCommonHandle() {
 		fullColLen++
@@ -3448,7 +3448,7 @@ func (*executorBuilder) corColInAccess(p base.PhysicalPlan) bool {
 	switch x := p.(type) {
 	case *physicalop.PhysicalTableScan:
 		access = x.AccessCondition
-	case *plannercore.PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		access = x.AccessCondition
 	}
 	for _, cond := range access {
@@ -4090,9 +4090,9 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	if err != nil {
 		return nil, err
 	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	tbl, _ := b.is.TableByID(context.Background(), is.Table.ID)
-	isPartition, physicalTableID := is.IsPartition()
+	isPartition, physicalTableID := is.IsPartitionTable()
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
@@ -4145,7 +4145,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) exec.Executor {
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
@@ -4165,7 +4165,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 		return ret
 	}
 	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
-	if ok, _ := is.IsPartition(); ok {
+	if ok, _ := is.IsPartitionTable(); ok {
 		return ret
 	}
 
@@ -4222,7 +4222,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	}
 
 	indexReq.OutputOffsets = []uint32{}
-	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	idxScan := plans[0].(*physicalop.PhysicalIndexScan)
 	if len(idxScan.ByItems) != 0 {
 		schema := idxScan.Schema()
 		for _, item := range idxScan.ByItems {
@@ -4256,7 +4256,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	var handleLen int
 	if len(v.CommonHandleCols) != 0 {
 		handleLen = len(v.CommonHandleCols)
@@ -4336,7 +4336,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	if b.Ti != nil {
 		b.Ti.UseTableLookUp.Store(true)
 	}
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
@@ -4374,7 +4374,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 		return ret
 	}
-	if ok, _ := is.IsPartition(); ok {
+	if ok, _ := is.IsPartitionTable(); ok {
 		// Already pruned when translated to logical union.
 		return ret
 	}
@@ -4405,7 +4405,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		var tempReq *tipb.DAGRequest
 		var err error
 
-		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
@@ -4522,7 +4522,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	hasGlobalIndex := false
 	for i := range v.PartialPlans {
-		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
+		if is, ok := v.PartialPlans[i][0].(*physicalop.PhysicalIndexScan); ok {
 			ret.ranges = append(ret.ranges, is.Ranges)
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 			if is.Index.Global {
@@ -4960,7 +4960,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
 		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
@@ -5026,7 +5026,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return e, err
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is := v.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	if is.Index.Global {
 		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {

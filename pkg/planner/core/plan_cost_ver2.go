@@ -125,7 +125,8 @@ const (
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
-func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalIndexScan)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
@@ -1172,7 +1173,7 @@ func getTaskScanFactorVer2(p base.PhysicalPlan, storeType kv.StoreType, taskType
 		return defaultVer2Factors.TiFlashScan
 	default: // TiKV
 		var desc bool
-		if indexScan, ok := p.(*PhysicalIndexScan); ok {
+		if indexScan, ok := p.(*physicalop.PhysicalIndexScan); ok {
 			desc = indexScan.Desc
 		}
 		if tableScan, ok := p.(*physicalop.PhysicalTableScan); ok {
@@ -1226,7 +1227,7 @@ func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
 		return getTableInfo(x.partialPlans[0])
 	case *physicalop.PhysicalTableScan:
 		return x.Table
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		return x.Table
 	default:
 		if len(x.Children()) == 0 {

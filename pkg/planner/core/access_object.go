@@ -133,39 +133,6 @@ func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 }
 
 // AccessObject implements DataAccesser interface.
-func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
-	res := &access.ScanAccessObject{
-		Database: p.DBName.O,
-	}
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	res.Table = tblName
-	if p.isPartition {
-		pi := p.Table.GetPartitionInfo()
-		if pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			res.Partitions = []string{partitionName}
-		}
-	}
-	if len(p.Index.Columns) > 0 {
-		index := access.IndexAccess{
-			Name: p.Index.Name.O,
-		}
-		for _, idxCol := range p.Index.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
-			}
-		}
-		res.Indexes = []access.IndexAccess{index}
-	}
-	return res
-}
-
-// AccessObject implements DataAccesser interface.
 func (p *PointGetPlan) AccessObject() base.AccessObject {
 	res := &access.ScanAccessObject{
 		Database: p.dbName,
@@ -331,7 +298,7 @@ func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObj
 	return res
 }
 
-func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, p *physicalop.PhysPlanPartInfo) base.AccessObject {
+func getAccessObjectFromIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexScan, p *physicalop.PhysPlanPartInfo) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -348,12 +315,12 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
+	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*physicalop.PhysicalIndexScan), p.PlanPartInfo)
 }
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
+	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*physicalop.PhysicalIndexScan), p.PlanPartInfo)
 }
 
 // AccessObject implements PartitionAccesser interface.
