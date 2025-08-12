@@ -801,15 +801,17 @@ var logicalOps = map[string]struct{}{
 	ast.EQ:                 {},
 	ast.NE:                 {},
 	ast.UnaryNot:           {},
+	ast.Like:               {},
 	ast.LogicAnd:           {},
 	ast.LogicOr:            {},
 	ast.LogicXor:           {},
 	ast.In:                 {},
 	ast.IsNull:             {},
+	ast.IsFalsity:          {},
 	ast.IsTruthWithoutNull: {},
 	ast.IsTruthWithNull:    {},
-	ast.IsFalsity:          {},
-	ast.Like:               {},
+	ast.NullEQ:             {},
+	ast.Regexp:             {},
 }
 
 var oppositeOp = map[string]string{
