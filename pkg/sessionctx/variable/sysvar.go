@@ -1487,7 +1487,7 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableMDL, Value: BoolToOnOff(vardef.DefTiDBEnableMDL), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
-		if vardef.EnableMDL.Load() != TiDBOptOn(val) {
+		if vardef.IsMDLEnabled() != TiDBOptOn(val) {
 			err := SwitchMDL(TiDBOptOn(val))
 			if err != nil {
 				return err
@@ -1495,7 +1495,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}, GetGlobal: func(_ context.Context, vars *SessionVars) (string, error) {
-		return BoolToOnOff(vardef.EnableMDL.Load()), nil
+		return BoolToOnOff(vardef.IsMDLEnabled()), nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableDistTask, Value: BoolToOnOff(vardef.DefTiDBEnableDistTask), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		if vardef.EnableDistTask.Load() != TiDBOptOn(val) {
@@ -3072,7 +3072,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPessimisticTransactionFairLocking, Value: BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking), Type: vardef.TypeBool,
 		Validation: func(_ *SessionVars, val string, _ string, _ vardef.ScopeFlag) (string, error) {
 			if kerneltype.IsNextGen() && TiDBOptOn(val) {
-				return vardef.Off, errNotSupportedInNextGen.FastGenByArgs(vardef.TiDBPessimisticTransactionFairLocking)
+				return vardef.Off, ErrNotSupportedInNextGen.FastGenByArgs(vardef.TiDBPessimisticTransactionFairLocking)
 			}
 			return val, nil
 		},
