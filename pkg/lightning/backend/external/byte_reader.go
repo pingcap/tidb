@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -67,7 +68,8 @@ type byteReader struct {
 		reloadCnt int
 	}
 
-	logger *zap.Logger
+	logger             *zap.Logger
+	mergeSortReadBytes prometheus.Counter
 }
 
 func openStoreReaderAndSeek(
@@ -277,6 +279,13 @@ func (r *byteReader) reload() error {
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
 	// in read only false -> true is possible
+	if r.mergeSortReadBytes != nil {
+		defer func() {
+			for _, b := range r.curBuf {
+				r.mergeSortReadBytes.Add(float64(len(b)))
+			}
+		}()
+	}
 	if !now && to {
 		r.logger.Info("switch reader mode", zap.Bool("use concurrent mode", true))
 		err := r.switchToConcurrentReader()

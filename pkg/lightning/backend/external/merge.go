@@ -223,7 +223,7 @@ func mergeOverlappingFilesInternal(
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
 		key, value := iter.Key(), iter.Value()
-		metrics.MergeSortReadBytes.Add(float64(len(key) + len(value)))
+		metrics.MergeSortReadBytes1.Add(float64(len(key) + len(value)))
 		err = writer.WriteRow(ctx, key, value)
 		if err != nil {
 			return err

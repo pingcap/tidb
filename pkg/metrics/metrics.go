@@ -292,6 +292,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RetryableErrorCount)
 	prometheus.MustRegister(MergeSortWriteBytes)
 	prometheus.MustRegister(MergeSortReadBytes)
+	prometheus.MustRegister(MergeSortReadBytes1)
 
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)

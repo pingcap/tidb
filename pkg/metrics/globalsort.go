@@ -35,7 +35,8 @@ var (
 	// MergeSortWriteBytes records the bytes written in merge sort.
 	MergeSortWriteBytes prometheus.Counter
 	// MergeSortReadBytes records the bytes read in merge sort.
-	MergeSortReadBytes prometheus.Counter
+	MergeSortReadBytes  prometheus.Counter
+	MergeSortReadBytes1 prometheus.Counter
 )
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
@@ -102,6 +103,15 @@ func InitGlobalSortMetrics() {
 			Namespace: "tidb",
 			Subsystem: "global_sort",
 			Name:      "merge_sort_read_bytes",
+			Help:      "Counter of bytes read in merge sort.",
+		},
+	)
+
+	MergeSortReadBytes1 = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "global_sort",
+			Name:      "merge_sort_read_bytes_1",
 			Help:      "Counter of bytes read in merge sort.",
 		},
 	)
