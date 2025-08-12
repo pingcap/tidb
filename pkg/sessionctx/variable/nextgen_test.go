@@ -35,7 +35,7 @@ func TestTiDBPessimisticTransactionFairLocking(t *testing.T) {
 
 	val, err = sv.Validate(vars, "on", vardef.ScopeSession)
 	require.Error(t, err)
-	require.True(t, errNotSupportedInNextGen.Equal(err))
+	require.True(t, ErrNotSupportedInNextGen.Equal(err))
 	require.Equal(t, vardef.Off, val)
 	require.Nil(t, sv.SetSessionFromHook(vars, val))
 	require.False(t, vars.PessimisticTransactionFairLocking)

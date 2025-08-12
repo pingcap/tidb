@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.23.11
+go 1.23.12
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -112,7 +112,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.4.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20250707065624-97382455050a
+	github.com/tikv/client-go/v2 v2.0.8-0.20250708031306-557a4986e4c4
 	github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6

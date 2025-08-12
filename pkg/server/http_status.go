@@ -304,6 +304,11 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
 
+	if s.StandbyController != nil {
+		path, handler := s.StandbyController.Handler(s)
+		router.PathPrefix(path).Handler(handler)
+	}
+
 	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
 	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
@@ -581,7 +586,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 		}
 	}
 
-	s.statusServer = statusServer
+	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
 	go util.WithRecovery(func() {

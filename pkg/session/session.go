@@ -30,6 +30,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,8 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
-	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -882,8 +881,7 @@ func (s *session) tryReplaceWriteConflictError(ctx context.Context, oldErr error
 	inErr, _ := originErr.(*errors.Error)
 	// we don't want to modify the oldErr, so copy the args list
 	oldArgs := inErr.Args()
-	args := make([]any, len(oldArgs))
-	copy(args, oldArgs)
+	args := slices.Clone(oldArgs)
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	if is == nil {
 		return nil
@@ -1248,9 +1246,9 @@ func getSessionFactoryWithDom(store kv.Storage) func(*domain.Domain) (pools.Reso
 	return getSessionFactoryInternal(store, CreateSessionWithDomain)
 }
 
-func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string) pools.Factory {
+func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string, schemaValidator validatorapi.Validator) pools.Factory {
 	facWithDom := getSessionFactoryInternal(currKSStore, func(store kv.Storage, _ *domain.Domain) (*session, error) {
-		return createCrossKSSession(store, targetKS)
+		return createCrossKSSession(store, targetKS, schemaValidator)
 	})
 	return func() (pools.Resource, error) {
 		return facWithDom(nil)
@@ -1444,8 +1442,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
-	res := make([]ast.StmtNode, len(tmp))
-	copy(res, tmp)
+	res := slices.Clone(tmp)
 	return res, warn, err
 }
 
@@ -3420,7 +3417,7 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 	return nil
 }
 
@@ -3464,9 +3461,9 @@ func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 		return nil
 	})
 	if isNull || !enable {
-		vardef.EnableMDL.Store(false)
+		vardef.SetEnableMDL(false)
 	} else {
-		vardef.EnableMDL.Store(true)
+		vardef.SetEnableMDL(true)
 	}
 	return isNull, err
 }
@@ -3493,7 +3490,7 @@ func InitMDLVariable(store kv.Storage) error {
 		}
 		return nil
 	})
-	vardef.EnableMDL.Store(enable)
+	vardef.SetEnableMDL(enable)
 	return err
 }
 
@@ -3886,7 +3883,7 @@ func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, dom, dom.GetSchemaValidator(), dom.InfoCache(), nil)
 }
 
-func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, error) {
+func createCrossKSSession(currKSStore kv.Storage, targetKS string, validator validatorapi.Validator) (*session, error) {
 	if currKSStore.GetKeyspace() == targetKS {
 		return nil, errors.New("cannot create session for the same keyspace")
 	}
@@ -3905,7 +3902,7 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, er
 	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
-	return createSessionWithOpt(store, nil, isvalidator.NewNoop(), infoCache, nil)
+	return createSessionWithOpt(store, nil, validator, infoCache, nil)
 }
 
 func createSessionWithOpt(
@@ -4879,37 +4876,6 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		)
 	}
 	return true
-}
-
-// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
-func RemoveLockDDLJobs(s sessionapi.Session, jobs map[int64]*mdldef.JobMDL, printLog bool) {
-	sv := s.GetSessionVars()
-	if sv.InRestrictedSQL {
-		return
-	}
-	sv.TxnCtxMu.Lock()
-	defer sv.TxnCtxMu.Unlock()
-	if sv.TxnCtx == nil {
-		return
-	}
-	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
-		for jobID, jobMDL := range jobs {
-			if _, ok := jobMDL.TableIDs[tblID.(int64)]; ok && value.(int64) < jobMDL.Ver {
-				delete(jobs, jobID)
-				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
-				logFn := logutil.BgLogger().Debug
-				if elapsedTime > time.Minute && printLog {
-					logFn = logutil.BgLogger().Info
-				}
-				logFn("old running transaction block DDL",
-					zap.Int64("table ID", tblID.(int64)),
-					zap.Int64("jobID", jobID),
-					zap.Uint64("connection ID", sv.ConnectionID),
-					zap.Duration("elapsed time", elapsedTime))
-			}
-		}
-		return true
-	})
 }
 
 // GetDBNames gets the sql layer database names from the session.

@@ -252,7 +252,7 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tblInfo := &model.TableInfo{}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -287,7 +287,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	aggDescs := []*aggregation.AggFuncDesc{aggDesc1, aggDesc2}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -331,7 +331,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		TablePlans:     []base.PhysicalPlan{tableReader},
 		tablePlan:      tableScan,
 		ExtraHandleCol: col,
-		PushedLimit:    &PushedDownLimit{1, 2},
+		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
 	indexLookup = indexLookup.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
@@ -368,27 +368,25 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
-	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
+	streamAgg := &physicalop.PhysicalStreamAgg{BasePhysicalAgg: physicalop.BasePhysicalAgg{
 		AggFuncs:     aggDescs,
 		GroupByItems: []expression.Expression{col, cst},
 	}}
-	streamAgg = streamAgg.initForStream(ctx, stats, 0)
-	streamAgg.SetSchema(schema)
+	streamAgg = streamAgg.InitForStream(ctx, stats, 0, schema).(*physicalop.PhysicalStreamAgg)
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &PhysicalHashAgg{
-		basePhysicalAgg: basePhysicalAgg{
+	hashAgg := &physicalop.PhysicalHashAgg{
+		BasePhysicalAgg: physicalop.BasePhysicalAgg{
 			AggFuncs:     aggDescs,
 			GroupByItems: []expression.Expression{col, cst},
 		},
 	}
-	hashAgg = hashAgg.initForHash(ctx, stats, 0)
-	hashAgg.SetSchema(schema)
+	hashAgg = hashAgg.InitForHash(ctx, stats, 0, schema).(*physicalop.PhysicalHashAgg)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 
 	// hash join
-	hashJoin := &PhysicalHashJoin{
+	hashJoin := &physicalop.PhysicalHashJoin{
 		Concurrency:     4,
 		UseOuterToBuild: true,
 	}
@@ -397,7 +395,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(hashJoin))
 
 	// merge join
-	mergeJoin := &PhysicalMergeJoin{
+	mergeJoin := &physicalop.PhysicalMergeJoin{
 		CompareFuncs: []expression.CompareFunc{expression.CompareInt},
 		Desc:         true,
 	}
@@ -932,7 +930,7 @@ func TestTraffic(t *testing.T) {
 		require.NoError(t, err, test.sql)
 		traffic, ok := p.(*Traffic)
 		require.True(t, ok, test.sql)
-		require.Equal(t, test.cols, len(traffic.names), test.sql)
+		require.Equal(t, test.cols, len(traffic.OutputNames()), test.sql)
 		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
 	}
 }

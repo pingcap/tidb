@@ -227,9 +227,9 @@ func TestIssue32632(t *testing.T) {
 		tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 		tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-		statsTbl1 := h.GetTableStats(tbl1.Meta())
+		statsTbl1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
 		statsTbl1.RealtimeCount = 800000
-		statsTbl2 := h.GetTableStats(tbl2.Meta())
+		statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 		statsTbl2.RealtimeCount = 10000
 		var input []string
 		var output []struct {
@@ -439,15 +439,15 @@ func TestIssue52023(t *testing.T) {
 		testKit.MustQuery(`select * from t where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
 		testKit.MustQuery(`explain select * from t where a = 0x5`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:P4, clustered index:PRIMARY(a) "))
 		testKit.MustQuery(`explain format='brief' select * from t where a = 5`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:P4 data:Selection",
+			"TableReader 1.00 root partition:all data:Selection",
 			"└─Selection 1.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
 			"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 		testKit.MustQuery(`explain format='brief' select * from t where a IN (5,55)`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:P4 data:Selection",
+			"TableReader 1.00 root partition:all data:Selection",
 			"└─Selection 1.00 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
 			"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 		testKit.MustQuery(`explain format='brief' select * from t where a IN (0x5,55)`).Check(testkit.Rows(""+
-			"TableReader 1.00 root partition:P4 data:Selection",
+			"TableReader 1.00 root partition:all data:Selection",
 			"└─Selection 1.00 cop[tikv]  or(eq(test.t.a, \"0x05\"), eq(cast(test.t.a, double BINARY), 55))",
 			"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 	})

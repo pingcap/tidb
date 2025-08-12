@@ -139,8 +139,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
 	selfUsedCols := make([]*expression.Column, 0, 5)
 	for _, aggrFunc := range la.AggFuncs {
-		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
-
+		selfUsedCols = append(selfUsedCols, expression.ExtractColumnsFromExpressions(aggrFunc.Args, nil)...)
 		var cols []*expression.Column
 		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
 		selfUsedCols = append(selfUsedCols, cols...)

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package physicalop
 
 import (
 	"cmp"
@@ -105,7 +105,7 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	// Estimate the selectivity of each group and check if it is larger than the selectivityThreshold
 	var exprGroups []expressionGroup
 	for _, group := range groupMap {
-		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, group, nil)
+		selectivity, _, err := cardinality.Selectivity(sctx, ts.TblColHists, group, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -201,7 +201,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
-		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, mergedConds, nil)
+		selectivity, _, err := cardinality.Selectivity(sctx, ts.TblColHists, mergedConds, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -227,7 +227,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 	}
 	// add the pushed down conditions to table scan
 	ts.LateMaterializationFilterCondition = selectedConds
-	ts.lateMaterializationSelectivity = selectedSelectivity
+	ts.LateMaterializationSelectivity = selectedSelectivity
 }
 
 // isPredicateSimpleCompare is used to check if the condition is a simple comparison predicate
@@ -251,7 +251,7 @@ func isPredicateSimpleCompare(cond expression.Expression) bool {
 // 2. Whether to push down the conditions to the table scan.
 func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan, indexHints []*ast.IndexHint) {
 	// When the table is small, there is no need to push down the conditions.
-	if ts.tblColHists.RealtimeCount <= tiflashDataPackSize || ts.KeepOrder || len(ts.filterCondition) == 0 {
+	if ts.TblColHists.RealtimeCount <= tiflashDataPackSize || ts.KeepOrder || len(ts.FilterCondition) == 0 {
 		return
 	}
 
@@ -308,9 +308,9 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	}
 
 	selectedColumns := make(map[string]bool, len(indexedColumnNameToIndexInfoMap))
-	selectedConditions := make([]expression.Expression, 0, len(ts.filterCondition))
+	selectedConditions := make([]expression.Expression, 0, len(ts.FilterCondition))
 	columnNames := make([]string, 0, 4)
-	for _, cond := range ts.filterCondition {
+	for _, cond := range ts.FilterCondition {
 		// 1. The predicate only contains >, >=, =, !=, <=, <, in.
 		if !isPredicateSimpleCompare(cond) {
 			continue
@@ -333,7 +333,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			continue
 		}
 		// 3. The selectivity of the predicate is less than 60%.
-		selectivity, _, err := cardinality.Selectivity(pctx, ts.tblColHists, []expression.Expression{cond}, nil)
+		selectivity, _, err := cardinality.Selectivity(pctx, ts.TblColHists, []expression.Expression{cond}, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			continue
@@ -363,9 +363,9 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	}
 
 	// if EnableLateMaterialization is set, try to push down some predicates to table scan
-	if len(ts.filterCondition) > len(selectedConditions) && pctx.GetSessionVars().EnableLateMaterialization {
-		remaining := make([]expression.Expression, 0, len(ts.filterCondition)-len(selectedConditions))
-		for _, cond := range ts.filterCondition {
+	if len(ts.FilterCondition) > len(selectedConditions) && pctx.GetSessionVars().EnableLateMaterialization {
+		remaining := make([]expression.Expression, 0, len(ts.FilterCondition)-len(selectedConditions))
+		for _, cond := range ts.FilterCondition {
 			if !expression.Contains(pctx.GetExprCtx().GetEvalCtx(), selectedConditions, cond) {
 				remaining = append(remaining, cond)
 			}
@@ -376,7 +376,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	// Update the row count of table scan.
 	if len(selectedConditions)+len(ts.LateMaterializationFilterCondition) != 0 {
 		selectedConditions = append(selectedConditions, ts.LateMaterializationFilterCondition...)
-		selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.tblColHists, selectedConditions, nil)
+		selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.TblColHists, selectedConditions, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			selectivity = selectivityThreshold
