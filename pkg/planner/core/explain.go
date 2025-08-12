@@ -92,8 +92,3 @@ func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
 func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
 	return p.PhysicalIndexJoin.ExplainInfoInternal(true, true)
 }
-
-// ExplainInfo implements Plan interface.
-// These methods are defined in physicalop package.
-// func (p *PhysicalExchangeSender) ExplainInfo() string
-// func (p *PhysicalExchangeReceiver) ExplainInfo() (res string)
