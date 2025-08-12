@@ -339,7 +339,6 @@ func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOptio
 	store = schematracker.UnwrapStorage(store)
 	_ = store.(helper.Storage)
 	if kerneltype.IsNextGen() {
-		kvstore.SetSystemStorage(nil)
 		kvstore.SetSystemStorage(store)
 	}
 	return store, dom
