@@ -1040,13 +1040,6 @@ type PhysicalCTE struct {
 	storageSender  *PhysicalExchangeSender
 }
 
-// PhysicalCTETable is for CTE table.
-type PhysicalCTETable struct {
-	physicalop.PhysicalSchemaProducer
-
-	IDForStorage int
-}
-
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := coreusage.ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
@@ -1133,20 +1126,6 @@ func (p *PhysicalCTE) MemoryUsage() (sum int64) {
 		sum += p.CTE.MemoryUsage()
 	}
 	return
-}
-
-// ExplainInfo overrides the ExplainInfo
-func (p *PhysicalCTETable) ExplainInfo() string {
-	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
-}
-
-// MemoryUsage return the memory usage of PhysicalCTETable
-func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt
 }
 
 // CTEDefinition is CTE definition for explain.

@@ -3446,7 +3446,7 @@ func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.Physica
 		return base.InvalidTask, 0, nil
 	}
 
-	pcteTable := PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
+	pcteTable := physicalop.PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
 	pcteTable.SetSchema(p.Schema())
 	rt := &RootTask{}
 	rt.SetPlan(pcteTable)
