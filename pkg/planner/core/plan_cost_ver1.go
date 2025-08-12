@@ -429,7 +429,7 @@ func getPlanCostVer14PhysicalTableScan(pp base.PhysicalPlan, option *optimizetra
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func getPlanCostVer14PhysicalIndexScan(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func getPlanCostVer14PhysicalIndexScan(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
 	p := pp.(*physicalop.PhysicalIndexScan)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
