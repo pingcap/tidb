@@ -676,7 +676,6 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 	}
 
 	indexCtx := plannercore.WithEnableMVIndexScan(w.e.contextCtx)
-	tableCtx := w.e.contextCtx
 
 	var (
 		checkTimes         = 0
@@ -703,7 +702,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 
 		tableQuery = fmt.Sprintf(tableChecksumSQL, groupByKey, whereKey, groupByKey)
 		indexQuery = fmt.Sprintf(indexChecksumSQL, groupByKey, whereKey, groupByKey)
-		verifyCheckQuery(tableCtx, se, tableQuery, true)
+		verifyCheckQuery(indexCtx, se, tableQuery, true)
 		verifyCheckQuery(indexCtx, se, indexQuery, false)
 
 		logutil.BgLogger().Info(
@@ -716,7 +715,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		)
 
 		// compute table side checksum.
-		tableChecksum, err := getGroupChecksum(tableCtx, se, tableQuery)
+		tableChecksum, err := getGroupChecksum(indexCtx, se, tableQuery)
 		if err != nil {
 			return err
 		}
@@ -784,7 +783,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		groupByKey := fmt.Sprintf("((CAST(%s AS SIGNED) - %d) MOD %d)", md5Handle, offset, mod)
 		tableQuery = fmt.Sprintf(tableCheckSQL, groupByKey)
 		indexQuery = fmt.Sprintf(indexCheckSQL, groupByKey)
-		verifyCheckQuery(tableCtx, se, tableQuery, true)
+		verifyCheckQuery(indexCtx, se, tableQuery, true)
 		verifyCheckQuery(indexCtx, se, indexQuery, false)
 
 		var (
@@ -797,7 +796,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 			return err
 		}
 
-		if tblRecords, err = getRecordWithChecksum(tableCtx, se, tableQuery, tblInfo.IsCommonHandle, pkTypes, indexColTypes); err != nil {
+		if tblRecords, err = getRecordWithChecksum(indexCtx, se, tableQuery, tblInfo.IsCommonHandle, pkTypes, indexColTypes); err != nil {
 			return err
 		}
 
@@ -835,7 +834,6 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 			} else {
 				err = ir.ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord.RecordData, nil)
 			}
-
 		} else {
 			// Both sides have same rows, but no error detected, this shouldn't happen.
 			err = errors.Errorf("no error detected during row comparison, but an error is detected in the previous round")
@@ -891,6 +889,8 @@ func verifyCheckQuery(ctx context.Context, se sessionctx.Context, sql string, us
 			isTableScan = true
 		} else if strings.Contains(op, "IndexFullScan") {
 			isIndexScan = true
+		} else if strings.Contains(op, "IndexLookUp") {
+			isIndexScan = false
 		}
 	}
 

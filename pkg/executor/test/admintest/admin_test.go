@@ -2223,36 +2223,81 @@ func TestAdminCheckMVIndex(t *testing.T) {
 	executor.LookupCheckThreshold = 1
 
 	type testCase struct {
-		tableSQL    string
-		insertValue string
+		indexSQLs     []string
+		insertValue   []string
+		corruptHandle kv.Handle
+		corruptValue  []any
 	}
 
-	testSQLs := []testCase{
-		{"CREATE TABLE t(i INT, j JSON, INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
-		{"CREATE TABLE t(i INT, j JSON, UNIQUE INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
-		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
-		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, UNIQUE INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
-
-		{"CREATE TABLE t(i INT, j JSON, INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
-		{"CREATE TABLE t(i INT, j JSON, UNIQUE INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
-		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
-		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, UNIQUE INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
+	testCases := []testCase{
+		{
+			indexSQLs:     []string{"INDEX mvi((CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5.5", "7"]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{"3"},
+		},
+		{
+			indexSQLs:     []string{"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `NULL`},
+			corruptHandle: kv.IntHandle(2),
+			corruptValue:  []any{2, "2", "3"},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{3},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{1, "b", "1"},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			corruptHandle: testutil.MustNewCommonHandle(t, 1, "1"),
+			corruptValue:  []any{3},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
+			corruptHandle: testutil.MustNewCommonHandle(t, 2, "2"),
+			corruptValue:  []any{2, "2", "3"},
+		},
 	}
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	for _, sql := range testSQLs {
+	for _, tc := range testCases {
 		tk.MustExec("DROP TABLE IF EXISTS t")
-		tk.MustExec(sql.tableSQL)
+		tk.MustExec("CREATE TABLE t(i1 INT, i2 CHAR(16), j JSON)")
+		for _, sql := range tc.indexSQLs {
+			tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD %s", sql))
+		}
 
-		for i := range 16 {
-			tk.MustExec(fmt.Sprintf("INSERT INTO t(i, j) VALUES (%d, %s)", i+1, fmt.Sprintf(sql.insertValue, i+1)))
+		for i, value := range tc.insertValue {
+			tk.MustExec(fmt.Sprintf("INSERT INTO t(i1, i2, j) VALUES (%d, %d, %s)", i, i, value))
 		}
 
 		tk.MustExec("ADMIN CHECK TABLE t")
 
-		// Make some corrupted index. Build the index information.
+		// Make some corrupted index. Build the index information
+		// and simulate inconsistent index values on MVI
 		sctx := mock.NewContext()
 		sctx.Store = store
 		ctx := sctx.GetTableCtx()
@@ -2262,18 +2307,19 @@ func TestAdminCheckMVIndex(t *testing.T) {
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
-		idxInfo := tblInfo.Indices[0]
-		tk.Session().GetSessionVars().IndexLookupSize = 3
-		tk.Session().GetSessionVars().MaxChunkSize = 3
+		for _, idxInfo := range tblInfo.Indices {
+			if idxInfo.Primary {
+				continue
+			}
 
-		// Simulate inconsistent index column
-		indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-		txn, err := store.Begin()
-		require.NoError(t, err)
-		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(0), kv.IntHandle(1), nil)
-		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
+			indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			_, err = indexOpr.Create(ctx, txn, types.MakeDatums(tc.corruptValue...), tc.corruptHandle, nil)
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+		}
 
 		for _, fastCheck := range []bool{false, true} {
 			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
@@ -2283,7 +2329,7 @@ func TestAdminCheckMVIndex(t *testing.T) {
 			// The output of error message is different whether fast check is enabled,
 			// and we just check error message for fast check.
 			if fastCheck {
-				require.EqualError(t, err, "[admin:8223]data inconsistency in table: t, index: mvi, handle: 1, index-values:\"handle: 1, values: [KindMysqlJSON [0, 1]]\" != record-values:\"handle: 1, values: [KindMysqlJSON [1]]\"")
+				require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: t, index: mvi")
 			}
 		}
 	}
