@@ -200,6 +200,9 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 		}
 	}
 	simplifiedPredicate = shortCircuitLogicalConstants(sctx, simplifiedPredicate)
+	for i, cond := range simplifiedPredicate {
+		simplifiedPredicate[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+	}
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
