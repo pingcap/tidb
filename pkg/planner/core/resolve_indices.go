@@ -259,42 +259,6 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 	return p.ResolveIndicesItself()
 }
 
-// ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalExpand) ResolveIndicesItself() (err error) {
-	// for version 1
-	for _, gs := range p.GroupingSets {
-		for _, groupingExprs := range gs {
-			for k, groupingExpr := range groupingExprs {
-				gExpr, err := groupingExpr.ResolveIndices(p.Children()[0].Schema())
-				if err != nil {
-					return err
-				}
-				groupingExprs[k] = gExpr
-			}
-		}
-	}
-	// for version 2
-	for i, oneLevel := range p.LevelExprs {
-		for j, expr := range oneLevel {
-			// expr in expand level-projections only contains column ref and literal constant projection.
-			p.LevelExprs[i][j], err = expr.ResolveIndices(p.Children()[0].Schema())
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalExpand) ResolveIndices() (err error) {
-	err = p.PhysicalSchemaProducer.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	return p.ResolveIndicesItself()
-}
-
 // resolveIndicesForSort is a helper function to resolve indices for sort operators.
 func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
 	p := pp.(*physicalop.BasePhysicalPlan)
@@ -398,51 +362,8 @@ func resolveIndices4PhysicalLimit(pp base.PhysicalPlan) (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalApply) ResolveIndices() (err error) {
-	err = p.PhysicalHashJoin.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	// p.OuterSchema may have duplicated CorrelatedColumns,
-	// we deduplicate it here.
-	dedupCols := make(map[int64]*expression.CorrelatedColumn, len(p.OuterSchema))
-	for _, col := range p.OuterSchema {
-		dedupCols[col.UniqueID] = col
-	}
-	p.OuterSchema = make([]*expression.CorrelatedColumn, 0, len(dedupCols))
-	for _, col := range dedupCols {
-		newCol, err := col.Column.ResolveIndices(p.Children()[0].Schema())
-		if err != nil {
-			return err
-		}
-		col.Column = *newCol.(*expression.Column)
-		p.OuterSchema = append(p.OuterSchema, col)
-	}
-	// Resolve index for equal conditions again, because apply is different from
-	// hash join on the fact that equal conditions are evaluated against the join result,
-	// so columns from equal conditions come from merged schema of children, instead of
-	// single child's schema.
-	joinedSchema := expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema())
-	for i, cond := range p.PhysicalHashJoin.EqualConditions {
-		newSf, err := cond.ResolveIndices(joinedSchema)
-		if err != nil {
-			return err
-		}
-		p.PhysicalHashJoin.EqualConditions[i] = newSf.(*expression.ScalarFunction)
-	}
-	for i, cond := range p.PhysicalHashJoin.NAEqualConditions {
-		newSf, err := cond.ResolveIndices(joinedSchema)
-		if err != nil {
-			return err
-		}
-		p.PhysicalHashJoin.NAEqualConditions[i] = newSf.(*expression.ScalarFunction)
-	}
-	return
-}
-
-// ResolveIndices implements Plan interface.
 func (p *Update) ResolveIndices() (err error) {
-	err = p.baseSchemaProducer.ResolveIndices()
+	err = p.SimpleSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -463,7 +384,7 @@ func (p *Update) ResolveIndices() (err error) {
 
 // ResolveIndices implements Plan interface.
 func (p *Insert) ResolveIndices() (err error) {
-	err = p.baseSchemaProducer.ResolveIndices()
+	err = p.SimpleSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
 	}
@@ -498,9 +419,5 @@ func (p *Insert) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	return
-}
-
-func (*baseSchemaProducer) ResolveIndices() (err error) {
 	return
 }

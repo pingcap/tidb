@@ -77,7 +77,7 @@ func rebuildRange(p base.Plan) error {
 	sctx := p.SCtx()
 	var err error
 	switch x := p.(type) {
-	case *PhysicalIndexHashJoin:
+	case *physicalop.PhysicalIndexHashJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
 	case *PhysicalIndexMergeJoin:
 		return rebuildRange(&x.PhysicalIndexJoin)
@@ -337,7 +337,7 @@ func buildRangesForBatchGet(sctx base.PlanContext, x *BatchPointGetPlan) (err er
 			var unsignedIntHandle bool
 			if x.TblInfo.PKIsHandle {
 				if pkColInfo := x.TblInfo.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+					pkCol = expression.ColInfo2Col(x.Schema().Columns, pkColInfo)
 				}
 				if !x.TblInfo.IsCommonHandle {
 					unsignedIntHandle = true

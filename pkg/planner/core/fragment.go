@@ -280,7 +280,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			if _, ok := stack[i].(*physicalop.PhysicalUnionAll); ok {
 				continue
 			}
-			if _, ok := stack[i].(*PhysicalSequence); ok {
+			if _, ok := stack[i].(*physicalop.PhysicalSequence); ok {
 				continue
 			}
 			ch, err := stack[i].Clone(e.ctx.GetPlanCtx())
@@ -311,7 +311,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 				return errors.Trace(err)
 			}
 		}
-	case *PhysicalSequence:
+	case *physicalop.PhysicalSequence:
 		lastChildIdx := len(x.Children()) - 1
 		// except the last child, those previous ones are all cte producer.
 		for i := range lastChildIdx {

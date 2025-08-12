@@ -19,27 +19,33 @@ import (
 	"encoding/json"
 	"strconv"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var _ scheduler.CleanUpRoutine = (*ImportCleanUpS3)(nil)
+var _ scheduler.CleanUpRoutine = (*ImportCleanUp)(nil)
 
-// ImportCleanUpS3 implements scheduler.CleanUpRoutine.
-type ImportCleanUpS3 struct {
+// ImportCleanUp implements scheduler.CleanUpRoutine.
+type ImportCleanUp struct {
 }
 
 func newImportCleanUpS3() scheduler.CleanUpRoutine {
-	return &ImportCleanUpS3{}
+	return &ImportCleanUp{}
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
 	taskMeta := &TaskMeta{}
@@ -48,7 +54,19 @@ func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 		return err
 	}
 	defer redactSensitiveInfo(task, taskMeta)
-	// Not use cloud storage, no need to clean up.
+
+	if kerneltype.IsClassic() {
+		taskManager, err := storage.GetTaskManager()
+		if err != nil {
+			return err
+		}
+		if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			return ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, taskMeta.Plan.DBID, taskMeta.Plan.TableInfo.ID)
+		}); err != nil {
+			return err
+		}
+	}
+	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {
 		return nil
 	}

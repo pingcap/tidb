@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -81,7 +82,9 @@ type Syncer interface {
 	Restart(ctx context.Context) error
 	// WaitVersionSynced wait until all servers' current schema version are equal
 	// or greater than latestVer.
-	WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error
+	// If checkAssumedSvr is true, it will check and wait the assumed keyspace
+	// servers too. it's only used on nextgen where MDL is always enabled.
+	WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, checkAssumedSvr bool) error
 	// SyncJobSchemaVerLoop syncs the schema versions on all TiDB nodes for DDL jobs.
 	SyncJobSchemaVerLoop(ctx context.Context)
 	// Close ends Syncer.
@@ -279,7 +282,7 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 	ver := strconv.FormatInt(version, 10)
 	var err error
 	var path string
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		// If jobID is 0, it doesn't need to put into etcd `DDLAllSchemaVersionsByJob` key.
 		if jobID == 0 {
 			return nil
@@ -320,9 +323,9 @@ func (s *etcdSyncer) removeSelfVersionPath() error {
 }
 
 // WaitVersionSynced implements Syncer.WaitVersionSynced interface.
-func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64) error {
+func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVer int64, checkAssumedSvr bool) error {
 	startTime := time.Now()
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		time.Sleep(CheckVersFirstWaitTime)
 	}
 	notMatchVerCnt := 0
@@ -345,8 +348,8 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 			return errors.Trace(err)
 		}
 
-		if vardef.EnableMDL.Load() {
-			serverInfos, err := infosync.GetAllServerInfo(ctx)
+		if vardef.IsMDLEnabled() {
+			serverInfos, err := infosync.GetServersForISSync(ctx, checkAssumedSvr)
 			if err != nil {
 				return err
 			}
@@ -361,18 +364,18 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 					if info.StartTimestamp > serverInfos[id].StartTimestamp {
 						// Replace it.
 						delete(updatedMap, id)
-						updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
+						updatedMap[info.ID] = getSvrInfoForLog(info)
 						instance2id[instance] = info.ID
 					}
 				} else {
-					updatedMap[info.ID] = fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
+					updatedMap[info.ID] = getSvrInfoForLog(info)
 					instance2id[instance] = info.ID
 				}
 			}
 		}
 
 		// Check all schema versions.
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			notifyCh := make(chan struct{})
 			var unmatchedNodeInfo atomic.Pointer[string]
 			matchFn := func(nodeVersions map[string]int64) bool {
@@ -586,4 +589,11 @@ func (s *etcdSyncer) Close() {
 	if err != nil {
 		logutil.DDLLogger().Error("remove self version path failed", zap.Error(err))
 	}
+}
+
+func getSvrInfoForLog(info *serverinfo.ServerInfo) string {
+	if info.IsAssumed() {
+		return fmt.Sprintf("instance ip %s, port %d, id %s, origin keyspace %s", info.IP, info.Port, info.ID, info.Keyspace)
+	}
+	return fmt.Sprintf("instance ip %s, port %d, id %s", info.IP, info.Port, info.ID)
 }
