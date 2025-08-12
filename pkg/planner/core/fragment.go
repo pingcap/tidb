@@ -117,6 +117,7 @@ type mppTaskGenerator struct {
 	cache      map[int]tasksAndFrags
 
 	// fragMap maps ExchangeReceiver to its fragments
+	// TODO(hawkingrei): after refactor to remove this
 	fragMap map[*physicalop.PhysicalExchangeReceiver][]*Fragment
 
 	CTEGroups map[int]*cteGroupInFragment
