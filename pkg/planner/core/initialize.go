@@ -26,77 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
-// Init initializes PhysicalSelection.
-func (p PhysicalSelection) Init(ctx base.PlanContext, stats *property.StatsInfo, qbOffset int, props ...*property.PhysicalProperty) *PhysicalSelection {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalProjection.
-func (p PhysicalProjection) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProjection {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalUnionAll.
-func (p PhysicalUnionAll) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionAll {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeUnion, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalSort.
-func (p PhysicalSort) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalSort {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeSort, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes NominalSort.
-func (p NominalSort) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *NominalSort {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeSort, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalTopN.
-func (p PhysicalTopN) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalTopN {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeTopN, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalLimit.
-func (p PhysicalLimit) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalLimit {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeLimit, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalTableDual.
-func (p PhysicalTableDual) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalTableDual {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init initializes PhysicalMaxOneRow.
-func (p PhysicalMaxOneRow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalMaxOneRow {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMaxOneRow, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalWindow.
 func (p PhysicalWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalWindow {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeWindow, &p, offset)
@@ -187,13 +116,6 @@ func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndex
 	return &p
 }
 
-// Init initializes PhysicalMemTable.
-func (p PhysicalMemTable) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int) *PhysicalMemTable {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalHashJoin.
 func (p PhysicalHashJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalHashJoin {
 	tp := plancodec.TypeHashJoin
@@ -241,14 +163,6 @@ func (p PhysicalApply) Init(ctx base.PlanContext, stats *property.StatsInfo, off
 	return &p
 }
 
-// Init initializes PhysicalUnionScan.
-func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionScan {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeUnionScan, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 func (p *PhysicalIndexLookUpReader) adjustReadReqType(_ base.PlanContext) {
 	if p.IndexStoreType == kv.TiFlash {
 		_, ok := p.indexPlan.(*PhysicalExchangeSender)
@@ -265,8 +179,8 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *Physi
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.schema = p.tablePlan.Schema()
 	p.IndexStoreType = p.IndexPlans[0].(*PhysicalIndexScan).StoreType
+	p.SetSchema(p.tablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	return &p
 }
@@ -291,15 +205,15 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
-		p.schema = p.tablePlan.Schema()
+		p.SetSchema(p.tablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
 		switch p.PartialPlans[0][0].(type) {
 		case *PhysicalTableScan:
-			p.schema = p.PartialPlans[0][0].Schema()
+			p.SetSchema(p.PartialPlans[0][0].Schema())
 		default:
 			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
-			p.schema = is.dataSourceSchema
+			p.SetSchema(is.dataSourceSchema)
 		}
 	}
 	if p.KeepOrder {
@@ -336,7 +250,7 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 			case 1:
 				for _, plan := range p.TablePlans {
 					switch plan.(type) {
-					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+					case *PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalTopN:
 						p.ReadReqType = BatchCop
 						return
 					}
@@ -356,7 +270,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 		return &p
 	}
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.schema = p.tablePlan.Schema()
+	p.SetSchema(p.tablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
 		setMppOrBatchCopForTableScan(p.tablePlan)
@@ -377,7 +291,7 @@ func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
+	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool
 	if p.TableSampleInfo != nil {
 		sum += p.TableSampleInfo.MemoryUsage()
 	}
@@ -388,14 +302,6 @@ func (p *PhysicalTableSample) MemoryUsage() (sum int64) {
 func (p PhysicalIndexReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
 	p.SetSchema(nil)
-	return &p
-}
-
-// Init initializes PhysicalIndexJoin.
-func (p PhysicalIndexJoin) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalIndexJoin {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexJoin, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
 	return &p
 }
 
@@ -462,7 +368,7 @@ func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.P
 func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	plans := make([]base.PhysicalPlan, 0, 5)
 	plans = flattenTreePlan(p, plans)
-	for i := 0; i < len(plans)/2; i++ {
+	for i := range len(plans) / 2 {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
 	}

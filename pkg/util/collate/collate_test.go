@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/stretchr/testify/require"
 )
 
@@ -216,4 +217,33 @@ func TestGetCollator(t *testing.T) {
 	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &gbkBinCollator{}, GetCollator("gbk_bin"))
 	require.IsType(t, &gbkBinCollator{}, GetCollatorByID(87))
+}
+
+type collator interface {
+	Compare(a, b string) int
+	Key(str string) []byte
+}
+
+func TestCampareInvalidUTF8Rune(t *testing.T) {
+	collaters := []collator{
+		&generalCICollator{},                                   // index: 0
+		&unicode0900AICICollator{},                             // index: 1
+		&unicodeCICollator{},                                   // index: 2
+		&gbkChineseCICollator{},                                // index: 3
+		&gb18030BinCollator{charset.NewCustomGB18030Encoder()}, // index: 4
+		&gbkBinCollator{charset.NewCustomGBKEncoder()},         // index: 5
+	}
+
+	for i, c := range collaters {
+		require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xff})), 0)
+		require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xfe})), 0)
+		// For `gbk_bin` and `gb18030_bin`, it will use 0x3f instead of invalid utf8 rune.
+		if i < 4 {
+			require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xff, 0x3e})), 0)
+			require.Equal(t, c.Compare(string([]byte{0x3e, 0xff}), string([]byte{0x3e, 0xff, 0x3e})), 0)
+		}
+		require.NotNil(t, c.Key(string([]byte{0xff})))
+		require.NotNil(t, c.Key(string([]byte{0x3e, 0xff})))
+		require.NotNil(t, c.Key(string([]byte{0x3e, 0xff, 0x3e})))
+	}
 }

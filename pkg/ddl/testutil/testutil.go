@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -73,7 +73,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 }
 
 // ExtractAllTableHandles extracts all handles of a given table.
-func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]int64, error) {
+func ExtractAllTableHandles(se sessionapi.Session, dbName, tbName string) ([]int64, error) {
 	dom := domain.GetDomain(se)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tbName))
 	if err != nil {
@@ -186,4 +186,40 @@ func SetTableMode(
 	}
 
 	return err
+}
+
+// GetTableInfoByTxn get table info by transaction.
+func GetTableInfoByTxn(t *testing.T, store kv.Storage, dbID int64, tableID int64) *model.TableInfo {
+	var (
+		tableInfo *model.TableInfo
+		err       error
+	)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		_, err = m.GetDatabase(dbID)
+		require.NoError(t, err)
+		tableInfo, err = m.GetTable(dbID, tableID)
+		require.NoError(t, err)
+		require.NotNil(t, tableInfo)
+		return nil
+	})
+	return tableInfo
+}
+
+// RefreshMeta sets the table mode of a table in the store.
+func RefreshMeta(
+	ctx sessionctx.Context,
+	t *testing.T,
+	de ddl.Executor,
+	dbID, tableID int64,
+	dbName, tableName string,
+) {
+	args := &model.RefreshMetaArgs{
+		SchemaID:      dbID,
+		TableID:       tableID,
+		InvolvedDB:    dbName,
+		InvolvedTable: tableName,
+	}
+	err := de.RefreshMeta(ctx, args)
+	require.NoError(t, err)
 }

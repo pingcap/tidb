@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -52,6 +53,10 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/sync/singleflight"
 )
+
+// PlanIDFunc is used to get the plan ID from stmt.plan.
+// This function is used to avoid import cycle between planner and sessionctx.
+var PlanIDFunc func(plan any) (planID int, ok bool)
 
 var taskIDAlloc uint64
 
@@ -257,7 +262,6 @@ type StatementContext struct {
 	ExplainFormat          string
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
 	contextutil.PlanCacheTracker
@@ -309,6 +313,7 @@ type StatementContext struct {
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -761,7 +766,7 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 
 // GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
 func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
-	tagger := kv.NewResourceGroupTagBuilder().SetPlanDigest(sc.planDigest)
+	tagger := kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
 	if len(normalized) > 0 {
 		tagger.SetSQLDigest(digest)
@@ -836,15 +841,6 @@ func (sc *StatementContext) SetIndexForce() {
 
 // PlanCacheType is the flag of plan cache
 type PlanCacheType int
-
-const (
-	// DefaultNoCache no cache
-	DefaultNoCache PlanCacheType = iota
-	// SessionPrepared session prepared plan cache
-	SessionPrepared
-	// SessionNonPrepared session non-prepared plan cache
-	SessionNonPrepared
-)
 
 // SetHintWarning sets the hint warning and records the reason.
 func (sc *StatementContext) SetHintWarning(reason string) {
@@ -1217,7 +1213,10 @@ func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
 	if sc.SetVarHintRestore == nil {
 		sc.SetVarHintRestore = make(map[string]string)
 	}
-	sc.SetVarHintRestore[name] = val
+
+	if _, found := sc.SetVarHintRestore[name]; !found {
+		sc.SetVarHintRestore[name] = val
+	}
 }
 
 // GetUsedStatsInfo returns the map for recording the used stats during query.
@@ -1281,6 +1280,18 @@ func (sc *StatementContext) GetOrInitBuildPBCtxFromCache(create func() any) any 
 	})
 
 	return sc.buildPBCtxCache.bctx
+}
+
+// GetResultRowsCount returns the number of result rows from the runtime stats collection.
+func (sc *StatementContext) GetResultRowsCount() (resultRows int64) {
+	if sc == nil || sc.RuntimeStatsColl == nil {
+		return 0
+	}
+	planID, ok := PlanIDFunc(sc.GetPlan())
+	if !ok {
+		return 0
+	}
+	return sc.RuntimeStatsColl.GetPlanActRows(planID)
 }
 
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {

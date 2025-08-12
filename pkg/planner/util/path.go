@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -128,6 +129,8 @@ type AccessPath struct {
 	FullText     bool
 	QueryColumns []*expression.Column
 	QueryJSONStr string
+
+	FtsQueryInfo *tipb.FTSQueryInfo
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -182,7 +185,7 @@ func (path *AccessPath) Clone() *AccessPath {
 
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath. Including tiflash table scan.
 func (path *AccessPath) IsTablePath() bool {
-	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && !path.Index.IsFulltextIndex() && path.StoreType == kv.TiFlash)
+	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && path.StoreType == kv.TiFlash)
 }
 
 // IsTiKVTablePath returns true if it's IntHandlePath or CommonHandlePath. And the store type is TiKV.
@@ -201,7 +204,7 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters...) {
 		return nil, path.TableFilters
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)

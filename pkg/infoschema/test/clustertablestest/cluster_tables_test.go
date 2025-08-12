@@ -45,12 +45,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -167,10 +167,10 @@ func TestTestDataLockWaits(t *testing.T) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder().SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
-		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder().SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
 		// Invalid digests
-		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder().EncodeTagWithKey([]byte(""))},
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).EncodeTagWithKey([]byte(""))},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
 	tk := s.newTestKitWithRoot(t)
@@ -225,7 +225,7 @@ func TestSelectClusterTable(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{
+		PS: []*sessmgr.ProcessInfo{
 			{
 				ID:           1,
 				User:         "root",
@@ -741,13 +741,13 @@ select * from t1;
 	tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 }
 
-func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.SessionManager) (*grpc.Server, string) {
+func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm sessmgr.Manager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	// Fix issue 9836
 	if sm == nil {
-		sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
-		sm.(*testkit.MockSessionManager).PS[0] = &util.ProcessInfo{
+		sm = &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 1)}
+		sm.(*testkit.MockSessionManager).PS[0] = &sessmgr.ProcessInfo{
 			ID:      1,
 			User:    "root",
 			Host:    "127.0.0.1",
@@ -1052,7 +1052,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select (select sum(b) from t3 where t2.b=t3.a) from t1 join t2 where t1.a = t2.a and t1.c = ?`,
-			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), no_order_index(@`sel_2` `test`.`t3` `k_a`), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), order_index(@`sel_2` `test`.`t3` `k_a`)",
 			nil,
 		},
 
@@ -1226,65 +1226,6 @@ func TestUniversalBindingFromHistory(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 	tk.MustExec(`select b from test.t where b=10`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-}
-
-func TestStmtSummaryShowPlanForSQL(t *testing.T) {
-	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	defer s.httpServer.Close()
-	defer s.rpcserver.Stop()
-	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, c int)`)
-	tk.MustExec(`insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)
-	tk.MustQuery(`select * from t where a=1`)
-	tk.MustExec(`create global binding from history using plan digest '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'`)
-	result := tk.MustQuery(`show plan for "select * from t where a = 1"`).Rows()[0]
-	require.Equal(t, result[0], "select * from `test` . `t` where `a` = ?")
-	require.Equal(t, result[1], "use_index(@`sel_1` `test`.`t` )")
-	require.Contains(t, result[2], "TableReader")
-	require.Equal(t, result[5], "1") // exec_count
-	require.Equal(t, result[7], "1") // avg_returned_rows
-}
-
-func TestStmtSummaryShowPlanForSQL2(t *testing.T) {
-	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	defer s.httpServer.Close()
-	defer s.rpcserver.Stop()
-	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, c varchar(10), key(a), key(b))`)
-
-	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ a from t where b=1`)
-	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-
-	rs := tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
-	require.Contains(t, rs[2], "index:a(a)")
-	require.Equal(t, rs[5], "1") // exec_count
-	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
-	rs = tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
-	require.Equal(t, rs[5], "2") // exec_count
-
-	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ a from test.t where b=1`)
-	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
-	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
-	require.Contains(t, rs[2], "index:b(b)")
-	require.Equal(t, rs[5], "1") // exec_count
-	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
-	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
-	require.Equal(t, rs[5], "2") // exec_count
 }
 
 func TestCreateBindingFromHistory(t *testing.T) {

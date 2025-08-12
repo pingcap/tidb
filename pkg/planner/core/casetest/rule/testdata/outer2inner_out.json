@@ -298,8 +298,8 @@
         "Plan": [
           "Projection 6393.60 root  Column#21, minus(test.t2.b2, 5)->Column#22",
           "└─Selection 6393.60 root  gt(minus(test.t2.b2, 5), 1)",
-          "  └─HashAgg 7992.00 root  group by:Column#27, funcs:count(Column#25)->Column#21, funcs:firstrow(Column#26)->test.t2.b2",
-          "    └─Projection 12487.50 root  test.t2.a2->Column#25, test.t2.b2->Column#26, minus(test.t2.b2, 5)->Column#27",
+          "  └─HashAgg 7992.00 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
+          "    └─Projection 12487.50 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
           "      └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a1, test.t2.a2)]",
           "        ├─TableReader(Build) 9990.00 root  data:Selection",
           "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
@@ -415,13 +415,12 @@
       {
         "SQL": "select * from t2 left outer join t1 on a1=a2 where true OR b1 = 5; -- negative case with OR and one branch is TRUE",
         "Plan": [
-          "Selection 9990.00 root  or(1, eq(test.t1.b1, 5))",
-          "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.a2, test.t1.a1)]",
-          "  ├─TableReader(Build) 9990.00 root  data:Selection",
-          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -515,8 +514,7 @@
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:inner_t1 keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.ti.i, test.ti.i)]",
-          "  ├─Selection(Build) 0.00 root  not(isnull(test.ti.i))",
-          "  │ └─TableDual 0.00 root  rows:0",
+          "  ├─TableDual(Build) 0.00 root  rows:0",
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:ti keep order:false, stats:pseudo"
         ]

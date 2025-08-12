@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -39,9 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -79,7 +81,7 @@ type DataSource struct {
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
-	PhysicalTableID int64
+	PhysicalTableID int64 `hash64-equals:"true"`
 	PartitionNames  []ast.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
@@ -155,9 +157,8 @@ func (ds *DataSource) ExplainInfo() string {
 // HashCode inherits BaseLogicalPlan.<0th> interface.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
-	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
-	predicates = constraint.DeleteTrueExprs(ds, predicates)
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+	predicates = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), predicates, true)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = utilfuncp.AddPrefix4ShardIndexes(ds, ds.SCtx(), predicates)
@@ -165,11 +166,23 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt 
 	dual := Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {
 		AppendTableDualTraceStep(ds, dual, predicates, opt)
-		return nil, dual
+		return nil, dual, nil
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
-	return predicates, ds
+	if ds.SCtx().HasFTSFunc() {
+		err := ds.analyzeFTSFunc()
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			// If there's no fts filters, we should remove all the fts index paths.
+			// They're not suitable do normal scan.
+			return path.Index != nil && path.Index.FullTextInfo != nil
+		})
+	}
+	return predicates, ds, nil
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
@@ -199,6 +212,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 				continue
 			}
 			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
+			// TODO: investigate why we cannot use slices.Delete for these two:
 			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
@@ -293,8 +307,8 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 // PredicateSimplification implements the base.LogicalPlan.<7th> interface.
 func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.Self().(*DataSource)
-	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds)
-	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds)
+	p.PushedDownConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.PushedDownConds, true)
+	p.AllConds = utilfuncp.ApplyPredicateSimplification(p.SCtx(), p.AllConds, true)
 	return p
 }
 
@@ -620,4 +634,107 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// analyzeFTSFunc checks whether FTS function is used and is a valid one.
+// Then convert the function to index call because it can not be executed without the index.
+func (ds *DataSource) analyzeFTSFunc() error {
+	ticiIdx2FastCheck := make(map[*model.IndexInfo]intset.FastIntSet)
+	idSetForCheck := intset.NewFastIntSet()
+	for _, path := range ds.AllPossibleAccessPaths {
+		if path.Index != nil && path.Index.FullTextInfo != nil {
+			s := intset.NewFastIntSet()
+			for _, col := range path.Index.Columns {
+				s.Insert(int(ds.TableInfo.Columns[col.Offset].ID))
+			}
+			ticiIdx2FastCheck[path.Index] = s
+		}
+	}
+	var matchedIdx *model.IndexInfo
+	var matchedFunc *expression.ScalarFunction
+	var matchedCondPos int
+	matchedColumns := make([]*expression.Column, 0, 2)
+	for i, cond := range ds.PushedDownConds {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.FTSMatchWord {
+			if expression.ContainsFullTextSearchFn(cond) {
+				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
+			}
+			continue
+		}
+		idSetForCheck.Clear()
+		for i := 1; i < len(sf.GetArgs()); i++ {
+			col := sf.GetArgs()[i].(*expression.Column)
+			idSetForCheck.Insert(int(col.ID))
+		}
+		// Check TiCI version first.
+		var currentIndex *model.IndexInfo
+		for idx, set := range ticiIdx2FastCheck {
+			// The used columns in the FTS function should be a subset of the index columns.
+			if idSetForCheck.SubsetOf(set) {
+				currentIndex = idx
+				goto finalCheck
+			}
+		}
+	finalCheck:
+		// If the index is not found, it means that the FTS function is not valid.
+		if currentIndex == nil {
+			return errors.New("Full text search can only be used with a matching fulltext index and a columnar storage")
+		}
+		// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
+		if matchedIdx != nil {
+			return errors.New("Current TiDB doesn't support multiple fulltext search functions used with multiple index calls")
+		}
+		matchedIdx = currentIndex
+		matchedFunc = sf
+		matchedCondPos = i
+		matchedColumns = matchedColumns[:0]
+		for i := 1; i < len(sf.GetArgs()); i++ {
+			col := sf.GetArgs()[i].(*expression.Column)
+			matchedColumns = append(matchedColumns, col)
+		}
+	}
+
+	if matchedIdx == nil {
+		// If no FTS function is found, we should remove all the FTS index
+		// paths from PossibleAccessPaths.
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return path.Index != nil && path.Index.FullTextInfo != nil
+		})
+		return nil
+	}
+
+	// Remove the matched condition from PushedDownConds.
+	ds.PushedDownConds = slices.Delete(ds.PushedDownConds, matchedCondPos, matchedCondPos+1)
+	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedFunc)
+}
+
+func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
+	index *model.IndexInfo,
+	ftsFunc *expression.ScalarFunction,
+) error {
+	// Fulltext index must be used. So we prune all other possible access paths.
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.Index == nil || path.Index.ID != index.ID
+	})
+
+	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+	client := ds.SCtx().GetBuildPBCtx().Client
+	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
+	pbExpr := pbConverter.ExprToPB(ftsFunc)
+	if pbExpr == nil {
+		// If the expression is not converted to PB, we should return an error.
+		return errors.New("Failed to convert FTS function to PB expression")
+	}
+
+	// Build tipb protobuf info for the matched index.
+	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
+		QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
+		IndexId:        index.ID,
+		QueryTokenizer: string(index.FullTextInfo.ParserType),
+		MatchExpr:      []tipb.Expr{*pbExpr},
+	}
+
+	ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
+	return nil
 }

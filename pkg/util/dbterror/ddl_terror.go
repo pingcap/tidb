@@ -521,7 +521,7 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrTiKVServerBusy:            {},
 	mysql.ErrResolveLockTimeout:        {},
 	mysql.ErrRegionUnavailable:         {},
-	mysql.ErrGCTooEarly:                {},
+	mysql.ErrTxnAbortedByGC:            {},
 	mysql.ErrWriteConflict:             {},
 	mysql.ErrTiKVStoreLimit:            {},
 	mysql.ErrTiKVStaleCommand:          {},

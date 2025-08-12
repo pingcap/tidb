@@ -22,11 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -110,7 +109,7 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	require.False(t, changed)
 }
 
-func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *types.FieldType {
+func colDefStrToColInfo(t *testing.T, str string, ctx *metabuild.Context) *model.ColumnInfo {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
@@ -118,7 +117,7 @@ func colDefStrToFieldType(t *testing.T, str string, ctx *metabuild.Context) *typ
 	chs, coll := charset.GetDefaultCharsetAndCollate()
 	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
-	return &col.FieldType
+	return col.ToInfo()
 }
 
 func TestModifyColumn(t *testing.T) {
@@ -151,9 +150,9 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin, ctx)
-		ftB := colDefStrToFieldType(t, tt.to, ctx)
-		err := checkModifyTypes(ftA, ftB, false)
+		colA := colDefStrToColInfo(t, tt.origin, ctx)
+		colB := colDefStrToColInfo(t, tt.to, ctx)
+		err := checkModifyTypes(colA, colB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
@@ -241,7 +240,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	keyRanges := getTableDataKeyRanges([]int64{})
 	require.Len(t, keyRanges, 1)
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
-	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 2, insert a execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3})
@@ -249,7 +248,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[0].StartKey, tablecodec.EncodeTablePrefix(0))
 	require.Equal(t, keyRanges[0].EndKey, tablecodec.EncodeTablePrefix(3))
 	require.Equal(t, keyRanges[1].StartKey, tablecodec.EncodeTablePrefix(4))
-	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[1].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 
 	// case 3, insert some execluded table ID
 	keyRanges = getTableDataKeyRanges([]int64{3, 5, 9})
@@ -261,7 +260,7 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[2].StartKey, tablecodec.EncodeTablePrefix(6))
 	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
 	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
-	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(meta.MaxGlobalID))
+	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
 }
 
 func TestMergeContinuousKeyRanges(t *testing.T) {
@@ -402,11 +401,11 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 
 	d.etcdCli = &clientv3.Client{}
 	mockGetAllServerInfo := func(t *testing.T, versions ...string) {
-		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
+		serverInfos := make(map[string]*serverinfo.ServerInfo, len(versions))
 		for i, v := range versions {
-			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
-				StaticServerInfo: infosync.StaticServerInfo{
-					ServerVersionInfo: infosync.ServerVersionInfo{Version: v},
+			serverInfos[fmt.Sprintf("node%d", i)] = &serverinfo.ServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
+					VersionInfo: serverinfo.VersionInfo{Version: v},
 				}}
 		}
 		bytes, err := json.Marshal(serverInfos)

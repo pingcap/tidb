@@ -98,30 +98,13 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return errors.Errorf("local backend not found")
 	}
 
-	var (
-		currentIdx *model.IndexInfo
-		idxID      int64
-	)
-	switch len(sm.EleIDs) {
-	case 1:
-		for _, idx := range e.indexes {
-			if idx.ID == sm.EleIDs[0] {
-				currentIdx = idx
-				idxID = idx.ID
-				break
-			}
-		}
-	case 0:
-		// maybe this subtask is generated from an old version TiDB
-		if len(e.indexes) == 1 {
-			currentIdx = e.indexes[0]
-		}
-		idxID = e.indexes[0].ID
-	default:
-		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
+	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, e.indexes)
+	if err != nil {
+		return err
 	}
 
 	_, engineUUID := backend.MakeUUID(e.ptbl.Meta().Name.L, idxID)
+	engineID := int32(common.IndexEngineID)
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -153,7 +136,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})
@@ -162,10 +145,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	if currentIdx != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			return local.ConvertToErrFoundConflictRecords(err, e.ptbl)
-		}
-		return err
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, e.ptbl.Meta())
 	}
 
 	// cannot fill the index name for subtask generated from an old version TiDB
@@ -199,4 +179,26 @@ func (*cloudImportExecutor) TaskMetaModified(_ context.Context, _ []byte) error 
 func (*cloudImportExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
 	// Will be added in the future PR
 	return nil
+}
+
+func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {
+	switch len(eleIDs) {
+	case 1:
+		for _, idx := range indexes {
+			if idx.ID == eleIDs[0] {
+				currentIdx = idx
+				idxID = idx.ID
+				break
+			}
+		}
+	case 0:
+		// maybe this subtask is generated from an old version TiDB
+		if len(indexes) == 1 {
+			currentIdx = indexes[0]
+		}
+		idxID = indexes[0].ID
+	default:
+		return nil, 0, errors.Errorf("unexpected EleIDs count %v", eleIDs)
+	}
+	return
 }

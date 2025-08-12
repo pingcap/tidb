@@ -310,6 +310,131 @@ func TestIsLocal(t *testing.T) {
 	}
 }
 
+func TestS3ProfileOption(t *testing.T) {
+	// Test parsing profile from URL query parameter
+	testProfile := "my-test-profile"
+	s, err := ParseBackend(
+		fmt.Sprintf("s3://bucket/prefix/?profile=%s", url.QueryEscape(testProfile)),
+		nil,
+	)
+	require.NoError(t, err)
+	s3 := s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "bucket", s3.Bucket)
+	require.Equal(t, "prefix", s3.Prefix)
+	require.Equal(t, testProfile, s3.Profile)
+
+	// Test with BackendOptions
+	s3opt := &BackendOptions{
+		S3: S3BackendOptions{
+			Profile: "profile-from-options",
+		},
+	}
+	s, err = ParseBackend("s3://bucket2/prefix/", s3opt)
+	require.NoError(t, err)
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "bucket2", s3.Bucket)
+	require.Equal(t, "prefix", s3.Prefix)
+	require.Equal(t, "profile-from-options", s3.Profile)
+
+	// Test profile with other S3 options
+	s, err = ParseBackend(
+		"s3://bucket3/prefix/?profile=dev-profile&region=us-west-2&endpoint=https://s3.example.com",
+		nil,
+	)
+	require.NoError(t, err)
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "bucket3", s3.Bucket)
+	require.Equal(t, "prefix", s3.Prefix)
+	require.Equal(t, "dev-profile", s3.Profile)
+	require.Equal(t, "us-west-2", s3.Region)
+	require.Equal(t, "https://s3.example.com", s3.Endpoint)
+
+	// Test empty profile (should remain empty)
+	s, err = ParseBackend("s3://bucket4/prefix/", nil)
+	require.NoError(t, err)
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "bucket4", s3.Bucket)
+	require.Equal(t, "prefix", s3.Prefix)
+	require.Equal(t, "", s3.Profile) // Should be empty when not specified
+}
+
+func TestS3ProfileCredentialsValidation(t *testing.T) {
+	// Test that profile makes credentials optional in URL parsing
+
+	// Case 1: Profile without credentials - should be allowed
+	s, err := ParseBackend("s3://bucket/prefix/?profile=production&region=us-west-2", nil)
+	require.NoError(t, err, "Should not require credentials when using profile")
+	s3 := s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "production", s3.Profile)
+	require.Equal(t, "us-west-2", s3.Region)
+	require.Equal(t, "", s3.AccessKey)
+	require.Equal(t, "", s3.SecretAccessKey)
+
+	// Case 2: Profile with partial credentials - should be allowed
+	s, err = ParseBackend("s3://bucket/prefix/?profile=dev&access-key=override-key", nil)
+	require.NoError(t, err, "Should allow partial credentials with profile")
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "dev", s3.Profile)
+	require.Equal(t, "override-key", s3.AccessKey)
+	require.Equal(t, "", s3.SecretAccessKey) // No secret key, but should be OK with profile
+
+	// Case 3: Profile with explicit credentials override
+	s, err = ParseBackend("s3://bucket/prefix/?profile=staging&access-key=explicit-access&secret-access-key=explicit-secret", nil)
+	require.NoError(t, err)
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "staging", s3.Profile)
+	require.Equal(t, "explicit-access", s3.AccessKey)
+	require.Equal(t, "explicit-secret", s3.SecretAccessKey)
+}
+
+func TestS3NoProfileCredentialsValidation(t *testing.T) {
+	// Test that without profile, credential validation still applies
+
+	// Case 1: No profile, partial credentials - should fail
+	s3opt := &BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey: "only-access-key",
+			// Missing SecretAccessKey
+		},
+	}
+	_, err := ParseBackend("s3://bucket/prefix/", s3opt)
+	require.Error(t, err, "Should fail when access key provided without secret key")
+	require.Contains(t, err.Error(), "secret_access_key not found")
+
+	// Case 2: No profile, both credentials - should be valid
+	s3opt2 := &BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       "test-access",
+			SecretAccessKey: "test-secret",
+		},
+	}
+	s, err := ParseBackend("s3://bucket/prefix/", s3opt2)
+	require.NoError(t, err)
+	s3Backend2 := s.GetS3()
+	require.Equal(t, "test-access", s3Backend2.AccessKey)
+	require.Equal(t, "test-secret", s3Backend2.SecretAccessKey)
+
+	// Case 3: No profile, no credentials - should be valid (IAM role, etc.)
+	s3opt3 := &BackendOptions{
+		S3: S3BackendOptions{
+			Region: "us-east-1",
+			// No credentials
+		},
+	}
+	s, err = ParseBackend("s3://bucket/prefix/", s3opt3)
+	require.NoError(t, err, "Should allow no credentials when no profile (for IAM roles, etc.)")
+	s3Backend3 := s.GetS3()
+	require.Equal(t, "", s3Backend3.AccessKey)
+	require.Equal(t, "", s3Backend3.SecretAccessKey)
+}
+
 func TestParseBackend(t *testing.T) {
 	{
 		backendOptions := &BackendOptions{
@@ -415,4 +540,16 @@ func TestParseBackend(t *testing.T) {
 			EncryptionScope: "test",
 		}, *retBackend3.AzureBlobStorage)
 	}
+}
+
+func TestS3DefaultForceStylePath(t *testing.T) {
+	s, err := ParseBackend(`s3://bucket3/prefix/path?endpoint=http://xxx.amazonaws.com`, nil)
+	require.NoError(t, err)
+	require.False(t, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=false`, nil)
+	require.NoError(t, err)
+	require.False(t, s.GetS3().ForcePathStyle)
+	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=true`, nil)
+	require.NoError(t, err)
+	require.True(t, s.GetS3().ForcePathStyle)
 }

@@ -67,13 +67,19 @@ func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client k
 
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
-	client kv.Client
-	ctx    EvalContext
+	client     kv.Client
+	ctx        EvalContext
+	isTiCIExpr bool
 }
 
 // NewPBConverter creates a PbConverter.
 func NewPBConverter(client kv.Client, ctx EvalContext) PbConverter {
 	return PbConverter{client: client, ctx: ctx}
+}
+
+// NewPBConverterForTiCI creates a PbConverter for TiCI usage.
+func NewPBConverterForTiCI(client kv.Client, ctx EvalContext) PbConverter {
+	return PbConverter{client: client, ctx: ctx, isTiCIExpr: true}
 }
 
 // ExprToPB converts Expression to TiPB.
@@ -231,7 +237,7 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 		}
 	}
 
-	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
+	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) && !pc.isTiCIExpr {
 		return &tipb.Expr{
 			Tp:        tipb.ExprType_ColumnRef,
 			Val:       codec.EncodeInt(nil, int64(column.Index)),

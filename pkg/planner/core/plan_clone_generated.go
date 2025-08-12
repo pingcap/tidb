@@ -19,6 +19,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
@@ -26,18 +27,18 @@ import (
 func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableScan)
 	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.physicalSchemaProducer = *basePlan
+	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
 	cloned.filterCondition = cloneExpressionsForPlanCache(op.filterCondition, nil)
 	cloned.LateMaterializationFilterCondition = cloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
 	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
@@ -59,11 +60,11 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexScan)
 	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.physicalSchemaProducer = *basePlan
+	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
 	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
@@ -81,59 +82,9 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	}
 	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
 	copy(cloned.constColsByCond, op.constColsByCond)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalSelection)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
+	if op.FtsQueryInfo != nil {
 		return nil, false
 	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions, nil)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalProjection)
-	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.physicalSchemaProducer = *basePlan
-	cloned.Exprs = cloneExpressionsForPlanCache(op.Exprs, nil)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalSort)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTopN)
-	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.physicalSchemaProducer = *basePlan
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
 	return cloned, true
 }
 
@@ -165,11 +116,11 @@ func (op *PhysicalHashAgg) CloneForPlanCache(newCtx base.PlanContext) (base.Plan
 func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalHashJoin)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalJoin = *basePlan
+	cloned.BasePhysicalJoin = *basePlan
 	cloned.EqualConditions = cloneScalarFunctionsForPlanCache(op.EqualConditions, nil)
 	cloned.NAEqualConditions = cloneScalarFunctionsForPlanCache(op.NAEqualConditions, nil)
 	if op.runtimeFilterList != nil {
@@ -182,11 +133,11 @@ func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 func (op *PhysicalMergeJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalMergeJoin)
 	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.basePhysicalJoin = *basePlan
+	cloned.BasePhysicalJoin = *basePlan
 	return cloned, true
 }
 
@@ -194,11 +145,11 @@ func (op *PhysicalMergeJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableReader)
 	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.physicalSchemaProducer = *basePlan
+	cloned.PhysicalSchemaProducer = *basePlan
 	if op.tablePlan != nil {
 		tablePlan, ok := op.tablePlan.CloneForPlanCache(newCtx)
 		if !ok {
@@ -218,11 +169,11 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexReader)
 	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.physicalSchemaProducer = *basePlan
+	cloned.PhysicalSchemaProducer = *basePlan
 	if op.indexPlan != nil {
 		indexPlan, ok := op.indexPlan.CloneForPlanCache(newCtx)
 		if !ok {
@@ -291,46 +242,6 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalLimit)
-	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.physicalSchemaProducer = *basePlan
-	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexJoin)
-	*cloned = *op
-	basePlan, baseOK := op.basePhysicalJoin.cloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.basePhysicalJoin = *basePlan
-	if op.innerPlan != nil {
-		innerPlan, ok := op.innerPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.innerPlan = innerPlan.(base.PhysicalPlan)
-	}
-	cloned.Ranges = op.Ranges.CloneForPlanCache()
-	cloned.KeyOff2IdxOff = make([]int, len(op.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, op.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.CompareFilters = op.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = cloneColumnsForPlanCache(op.OuterHashKeys, nil)
-	cloned.InnerHashKeys = cloneColumnsForPlanCache(op.InnerHashKeys, nil)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexHashJoin)
 	*cloned = *op
@@ -338,7 +249,7 @@ func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (bas
 	if !ok {
 		return nil, false
 	}
-	cloned.PhysicalIndexJoin = *inlj.(*PhysicalIndexJoin)
+	cloned.PhysicalIndexJoin = *inlj.(*physicalop.PhysicalIndexJoin)
 	cloned.Self = cloned
 	return cloned, true
 }
@@ -347,11 +258,11 @@ func (op *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (bas
 func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexLookUpReader)
 	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.physicalSchemaProducer = *basePlan
+	cloned.PhysicalSchemaProducer = *basePlan
 	if op.indexPlan != nil {
 		indexPlan, ok := op.indexPlan.CloneForPlanCache(newCtx)
 		if !ok {
@@ -385,11 +296,11 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexMergeReader)
 	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.physicalSchemaProducer = *basePlan
+	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.PushedLimit = op.PushedLimit.Clone()
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	partialPlans, ok := clonePhysicalPlansForPlanCache(newCtx, op.partialPlans)
@@ -411,7 +322,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
+		cloned.HandleCols = op.HandleCols.Clone()
 	}
 	return cloned, true
 }
@@ -495,7 +406,7 @@ func (op *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	if op.TblID2Handle != nil {
 		cloned.TblID2Handle = make(map[int64][]util.HandleCols, len(op.TblID2Handle))
 		for k, v := range op.TblID2Handle {
-			cloned.TblID2Handle[k] = util.CloneHandleCols(newCtx.GetSessionVars().StmtCtx, v)
+			cloned.TblID2Handle[k] = util.CloneHandleCols(v)
 		}
 	}
 	if op.TblID2PhysTblIDCol != nil {
@@ -504,33 +415,5 @@ func (op *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 			cloned.TblID2PhysTblIDCol[k] = v.Clone().(*expression.Column)
 		}
 	}
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalUnionScan)
-	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions, nil)
-	if op.HandleCols != nil {
-		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
-	}
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalUnionAll) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalUnionAll)
-	*cloned = *op
-	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.physicalSchemaProducer = *basePlan
 	return cloned, true
 }

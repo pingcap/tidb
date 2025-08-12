@@ -1,39 +1,71 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
-
-go_library(
-    name = "indexer",
-    srcs = [
-        "indexer.pb.go",
-        "indexer_grpc.pb.go",
-        "tici.pb.go",
-        "tici_grpc.pb.go",
-    ],
-    importpath = "github.com/pingcap/tidb/pkg/indexer",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//status",
-        "@org_golang_google_protobuf//reflect/protoreflect",
-        "@org_golang_google_protobuf//runtime/protoimpl",
-    ],
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "tici",
     srcs = [
-        "indexer.pb.go",
-        "indexer_grpc.pb.go",
         "tici.pb.go",
+        "tici_file_writer.go",
         "tici_grpc.pb.go",
+        "tici_manager_client.go",
+        "tici_write.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/tici",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/storage",
+        "//pkg/domain/infosync",
+        "//pkg/kv",
+        "//pkg/lightning/membuf",
+        "//pkg/meta/model",
+        "//pkg/metrics",
+        "//pkg/parser/mysql",
+        "//pkg/util/dbterror",
+        "//pkg/util/etcd",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
         "@org_golang_google_protobuf//reflect/protoreflect",
         "@org_golang_google_protobuf//runtime/protoimpl",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "tici_test",
+    timeout = "short",
+    srcs = [
+        "tici_file_writer_test.go",
+        "tici_manager_client_test.go",
+        "tici_write_test.go",
+    ],
+    embed = [":tici"],
+    flaky = True,
+    shard_count = 34,
+    deps = [
+        "//br/pkg/storage",
+        "//pkg/kv",
+        "//pkg/lightning/membuf",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/types",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest",
     ],
 )

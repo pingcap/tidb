@@ -27,7 +27,10 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/coverage"
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
@@ -242,6 +245,9 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
+	// HTTP path for transaction GC states.
+	router.Handle("/txn-gc-states", tikvhandler.NewTxnGCStatesHandler(tikvHandlerTool.Store))
+
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
@@ -288,7 +294,7 @@ func (s *Server) startHTTPServer() {
 		}
 		baseURL := &url.URL{
 			Scheme: util.InternalHTTPSchema(),
-			Host:   fmt.Sprintf("%s:%s", host, port),
+			Host:   net.JoinHostPort(host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
@@ -304,6 +310,64 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+
+	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/zip")
+		writer.Header().Set("Content-Disposition", "attachment; filename=files.zip")
+
+		dir := os.Getenv("TIDB_GOCOVERDIR")
+		if dir == "" {
+			serveError(writer, http.StatusInternalServerError, "TIDB_GOCOVERDIR is not set")
+			return
+		}
+		err := coverage.WriteMetaDir(dir)
+		if err != nil {
+			logutil.BgLogger().Warn("write coverage meta failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "write coverage meta failed")
+			return
+		}
+		err = coverage.WriteCountersDir(dir)
+		if err != nil {
+			logutil.BgLogger().Warn("write coverage counters failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "write coverage counters failed")
+			return
+		}
+
+		zipWriter := zip.NewWriter(writer)
+
+		err = filepath.Walk(dir, func(file string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if fi.IsDir() {
+				return nil
+			}
+			relPath, err := filepath.Rel(dir, file)
+			if err != nil {
+				return err
+			}
+			writer, err := zipWriter.Create(relPath)
+			if err != nil {
+				return err
+			}
+			srcFile, err := os.Open(filepath.Clean(file))
+			if err != nil {
+				return err
+			}
+			defer func() {
+				_ = srcFile.Close()
+			}()
+			_, err = io.Copy(writer, srcFile)
+			return err
+		})
+		if err != nil {
+			logutil.BgLogger().Warn("zip coverage files failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "zip coverage files failed")
+			return
+		}
+		err = zipWriter.Close()
+		terror.Log(err)
+	})
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
@@ -522,17 +586,17 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	go util.WithRecovery(func() {
 		err := grpcServer.Serve(grpcL)
-		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
 		err := statusServer.Serve(httpL)
-		logutil.BgLogger().Error("http server error", zap.Error(err))
+		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
+		logutil.BgLogger().Warn("start status/rpc server error", zap.Error(err))
 	}
 }
 

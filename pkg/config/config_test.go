@@ -1424,3 +1424,11 @@ enforce-mpp = 1
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
 }
+
+func TestKeyspaceName(t *testing.T) {
+	conf := NewConfig()
+	conf.KeyspaceName = "#!"
+	require.ErrorContains(t, conf.Valid(), "is invalid")
+	conf.KeyspaceName = "abc"
+	require.NoError(t, conf.Valid())
+}

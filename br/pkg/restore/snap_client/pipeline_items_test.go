@@ -23,22 +23,27 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	brmock "github.com/pingcap/tidb/br/pkg/mock"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func generateMockCreatedTables(tableCount int) []*snapclient.CreatedTable {
-	createdTables := make([]*snapclient.CreatedTable, 0, tableCount)
+func generateMockCreatedTables(tableCount int) []*restoreutils.CreatedTable {
+	createdTables := make([]*restoreutils.CreatedTable, 0, tableCount)
 	for i := 1; i <= 100; i += 1 {
-		createdTables = append(createdTables, &snapclient.CreatedTable{
+		createdTables = append(createdTables, &restoreutils.CreatedTable{
 			Table: &model.TableInfo{ID: int64(i)},
 		})
 	}
@@ -48,14 +53,14 @@ func generateMockCreatedTables(tableCount int) []*snapclient.CreatedTable {
 func TestPipelineConcurrentHandler1(t *testing.T) {
 	handlerBuilder := &snapclient.PipelineConcurrentBuilder{}
 
-	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		ct.Table.ID += 10000
 		return nil
 	}, func(ctx context.Context) error {
 		return nil
 	})
 	totalID := int64(0)
-	handlerBuilder.RegisterPipelineTask("task2", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task2", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&totalID, ct.Table.ID)
 		return nil
 	}, func(ctx context.Context) error {
@@ -72,7 +77,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 	handlerBuilder := &snapclient.PipelineConcurrentBuilder{}
 
 	count1, count2, count3 := int64(0), int64(0), int64(0)
-	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task1", 4, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count1, 1)
 		time.Sleep(time.Millisecond * 10)
 		return nil
@@ -80,7 +85,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 		return nil
 	})
 	concurrency := uint(4)
-	handlerBuilder.RegisterPipelineTask("task2", concurrency, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task2", concurrency, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count2, 1)
 		if ct.Table.ID > int64(concurrency) {
 			return errors.Errorf("failed in task2")
@@ -89,7 +94,7 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 	}, func(ctx context.Context) error {
 		return nil
 	})
-	handlerBuilder.RegisterPipelineTask("task3", concurrency, func(ctx context.Context, ct *snapclient.CreatedTable) error {
+	handlerBuilder.RegisterPipelineTask("task3", concurrency, func(ctx context.Context, ct *restoreutils.CreatedTable) error {
 		atomic.AddInt64(&count3, 1)
 		<-ctx.Done()
 		return errors.Annotate(ctx.Err(), "failed in task3")
@@ -190,11 +195,11 @@ func generateStatsIndices(hasGlobalIndex bool) []*model.IndexInfo {
 	}
 }
 
-func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs ...int64) *snapclient.CreatedTable {
+func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs ...int64) *restoreutils.CreatedTable {
 	downPart, upPart := generateStatsPartition(partitionIDs)
 	indices := generateStatsIndices(hasGlobalIndex)
 	files := generateStatsFiles(tableID, partitionIDs, hasGlobalIndex)
-	return &snapclient.CreatedTable{
+	return &restoreutils.CreatedTable{
 		Table: &model.TableInfo{
 			ID:        tableID,
 			Partition: downPart,
@@ -231,7 +236,7 @@ func TestUpdateStatsMeta(t *testing.T) {
 	client.SetDomain(dom)
 	builder := &snapclient.PipelineConcurrentBuilder{}
 	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1)
-	err = builder.StartPipelineTask(ctx, []*snapclient.CreatedTable{
+	err = builder.StartPipelineTask(ctx, []*restoreutils.CreatedTable{
 		generateStatsCreatedTables(false, 100, 101, 102, 103),
 		generateStatsCreatedTables(true, 104, 105, 106, 107),
 		generateStatsCreatedTables(false, 116),
@@ -250,4 +255,142 @@ func TestUpdateStatsMeta(t *testing.T) {
 		116: 233,
 		117: 235,
 	}, rows)
+}
+
+func TestReplaceTables(t *testing.T) {
+	ctx := context.Background()
+	brmk, err := brmock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, brmk.Start())
+	defer brmk.Stop()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(brmk.PDClient, brmk.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err = client.InitConnections(g, brmk.Storage)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, brmk.Storage)
+
+	tk.MustExec("create database __TiDB_BR_Temporary_mysql")
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.global_priv (" +
+		"Host CHAR(255) NOT NULL DEFAULT ''," +
+		"User CHAR(80) NOT NULL DEFAULT ''," +
+		"Priv LONGTEXT NOT NULL," +
+		"PRIMARY KEY (Host, User)," +
+		"KEY i_user (User))",
+	)
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.stats_meta (" +
+		"version 					BIGINT(64) UNSIGNED NOT NULL," +
+		"table_id 					BIGINT(64) NOT NULL," +
+		"modify_count				BIGINT(64) NOT NULL DEFAULT 0," +
+		"count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0," +
+		"snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0," +
+		"INDEX idx_ver(version)," +
+		"UNIQUE INDEX tbl(table_id));",
+	)
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.global_priv values ('%', 'test', '')")
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.stats_meta values (4, 4, 4, 4, 4)")
+
+	count, err := client.ReplaceTables(ctx, []*restoreutils.CreatedTable{
+		{
+			OldTable: &metautil.Table{
+				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: ast.NewCIStr("stats_meta")},
+			},
+		},
+		{
+			OldTable: &metautil.Table{
+				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: ast.NewCIStr("global_priv")},
+			},
+		},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   1,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 5,
+	}, 123, true, true, nil, false, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+	rows := tk.MustQuery("select * from mysql.global_priv").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "%", rows[0][0])
+	require.Equal(t, "test", rows[0][1])
+	require.Equal(t, "", rows[0][2])
+	rows = tk.MustQuery("select * from mysql.stats_meta").Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 6)
+	require.Equal(t, "4", rows[0][0])
+	require.Equal(t, "4", rows[0][1])
+	require.Equal(t, "4", rows[0][2])
+	require.Equal(t, "4", rows[0][3])
+	require.Equal(t, "4", rows[0][4])
+	require.Equal(t, "<nil>", rows[0][5])
+}
+
+func TestReplaceTablesDowngrade(t *testing.T) {
+	ctx := context.Background()
+	brmk, err := brmock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, brmk.Start())
+	defer brmk.Stop()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(brmk.PDClient, brmk.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	err = client.InitConnections(g, brmk.Storage)
+	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, brmk.Storage)
+
+	tk.MustExec("create database __TiDB_BR_Temporary_mysql")
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.global_priv (" +
+		"Host CHAR(255) NOT NULL DEFAULT ''," +
+		"User CHAR(80) NOT NULL DEFAULT ''," +
+		"Priv LONGTEXT NOT NULL," +
+		"PRIMARY KEY (Host, User)," +
+		"KEY i_user (User))",
+	)
+	tk.MustExec("create table __TiDB_BR_Temporary_mysql.stats_meta (" +
+		"version 					BIGINT(64) UNSIGNED NOT NULL," +
+		"table_id 					BIGINT(64) NOT NULL," +
+		"modify_count				BIGINT(64) NOT NULL DEFAULT 0," +
+		"count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0," +
+		"snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0," +
+		"last_stats_histograms_version BIGINT(64) unsigned DEFAULT NULL," +
+		"INDEX idx_ver(version)," +
+		"UNIQUE INDEX tbl(table_id));",
+	)
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.global_priv values ('%', 'test', '')")
+	tk.MustExec("insert into __TiDB_BR_Temporary_mysql.stats_meta values (4, 4, 4, 4, 4, 4)")
+
+	count, err := client.ReplaceTables(ctx, []*restoreutils.CreatedTable{
+		{
+			OldTable: &metautil.Table{
+				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: ast.NewCIStr("stats_meta")},
+			},
+		},
+		{
+			OldTable: &metautil.Table{
+				DB:   &model.DBInfo{Name: ast.NewCIStr("__TiDB_BR_Temporary_mysql")},
+				Info: &model.TableInfo{Name: ast.NewCIStr("global_priv")},
+			},
+		},
+	}, snapclient.SchemaVersionPairT{
+		UpstreamVersionMajor:   8,
+		UpstreamVersionMinor:   5,
+		DownstreamVersionMajor: 8,
+		DownstreamVersionMinor: 1,
+	}, 123, true, true, nil, false, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+	rows := tk.MustQuery("select * from mysql.global_priv").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "%", rows[0][0])
+	require.Equal(t, "test", rows[0][1])
+	require.Equal(t, "", rows[0][2])
+	rows = tk.MustQuery("select * from mysql.stats_meta").Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 5)
+	require.Equal(t, "4", rows[0][0])
+	require.Equal(t, "4", rows[0][1])
+	require.Equal(t, "4", rows[0][2])
+	require.Equal(t, "4", rows[0][3])
+	require.Equal(t, "4", rows[0][4])
 }

@@ -642,3 +642,55 @@ func TestRemoveDuplicatesMoreThan2(t *testing.T) {
 		})
 	}
 }
+
+func TestDivideMergeSortDataFilesBasic(t *testing.T) {
+	testCases := []struct {
+		fileCnt       int
+		nodeCnt       int
+		expectedSizes []int
+	}{
+		{31, 3, []int{31}},
+		{64, 2, []int{32, 32}},
+		{64, 3, []int{32, 32}},
+		{127, 3, []int{43, 42, 42}},
+		{128, 3, []int{43, 43, 42}},
+		{4000, 6, []int{667, 667, 667, 667, 666, 666}},
+		{4000, 7, []int{572, 572, 572, 571, 571, 571, 571}},
+		{40000, 7, []int{4000, 4000, 4000, 4000, 4000, 4000, 4000, 1715, 1715, 1714, 1714, 1714, 1714, 1714}},
+		{31000, 7, []int{4000, 4000, 4000, 4000, 4000, 4000, 4000, 429, 429, 429, 429, 428, 428, 428}},
+		{28100, 7, []int{4000, 4000, 4000, 4000, 4000, 4000, 4000, 34, 33, 33}},
+		{28031, 7, []int{4000, 4000, 4000, 4000, 4000, 4000, 4000, 31}},
+	}
+	for _, tc := range testCases {
+		name := fmt.Sprintf("distribute %d files to %d nodes", tc.fileCnt, tc.nodeCnt)
+		t.Run(name, func(t *testing.T) {
+			items := make([]string, tc.fileCnt)
+			result, err := DivideMergeSortDataFiles(items, tc.nodeCnt, 16)
+			require.NoError(t, err)
+			actualSizes := make([]int, len(result))
+			for i, batch := range result {
+				actualSizes[i] = len(batch)
+			}
+			require.EqualValues(t, tc.expectedSizes, actualSizes)
+		})
+	}
+}
+
+func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {
+	const Concurrency = 16
+	for _, fileCount := range []int{3000, 4000, 40000, 400000, 712345, 1000000} {
+		for _, nodeCount := range []int{1, 3, 7, 16, 30, 60, 97} {
+			dataFiles := make([]string, fileCount)
+			dataFilesGroup, err := DivideMergeSortDataFiles(dataFiles, nodeCount, Concurrency)
+			require.NoError(t, err)
+			var totalTargetFileCount int
+			for _, dataFiles := range dataFilesGroup {
+				totalTargetFileCount += len(splitDataFiles(dataFiles, Concurrency))
+			}
+			t.Logf("nodeCount: %d, fileCount: %d, subtaskCount:%d, totalTargetFileCount: %d",
+				nodeCount, fileCount, len(dataFilesGroup), totalTargetFileCount)
+			require.LessOrEqual(t, len(dataFilesGroup), 250)
+			require.LessOrEqual(t, totalTargetFileCount, 4000)
+		}
+	}
+}

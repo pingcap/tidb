@@ -28,6 +28,7 @@ go_library(
         "//pkg/planner/util/debugtrace",
         "//pkg/planner/util/fixcontrol",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/tablecodec",
         "//pkg/types",
@@ -59,7 +60,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 35,
     deps = [
         "//pkg/config",
         "//pkg/domain",

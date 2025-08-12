@@ -20,7 +20,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	"path"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,16 +27,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -139,7 +137,7 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -224,6 +222,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
+		SetOnDup(engineapi.OnDuplicateKeyError).
 		Build(memStore, "/test", "0")
 	kvCount := 20
 	for i := range kvCount {
@@ -236,63 +235,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		require.NoError(t, err)
 	}
 	err := writer.Close(ctx)
-	require.NoError(t, err)
-
-	// test MergeOverlappingFiles will not change duplicate detection functionality.
-	err = mergeOverlappingFilesImpl(
-		ctx,
-		[]string{"/test/0/0"},
-		memStore,
-		100,
-		"/test2",
-		"mergeID",
-		1000,
-		1000,
-		8*1024,
-		1*size.MB,
-		2,
-		nil,
-		false,
-	)
-	require.NoError(t, err)
-
-	kvs := make([]kvPair, 0, kvCount)
-
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
-	require.NoError(t, err)
-	for range kvCount {
-		key, value, err := kvReader.nextKV()
-		require.NoError(t, err)
-		clonedKey := make([]byte, len(key))
-		copy(clonedKey, key)
-		clonedVal := make([]byte, len(value))
-		copy(clonedVal, value)
-		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
-	}
-	_, _, err = kvReader.nextKV()
-	require.ErrorIs(t, err, io.EOF)
-	require.NoError(t, kvReader.Close())
-
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
-	data := &MemoryIngestData{
-		keyAdapter:         common.NoopKeyAdapter{},
-		duplicateDetection: true,
-		duplicateDB:        db,
-		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		kvs:                kvs,
-		ts:                 123,
-	}
-	pool := membuf.NewPool()
-	defer pool.Destroy()
-	iter := data.NewIter(ctx, nil, nil, pool)
-
-	for iter.First(); iter.Valid(); iter.Next() {
-	}
-	err = iter.Error()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "found duplicate key")
+	require.ErrorContains(t, err, "found duplicate key")
 }
 
 func TestMultiFileStat(t *testing.T) {
@@ -598,16 +541,20 @@ func TestFlushKVsRetry(t *testing.T) {
 }
 
 func TestGetAdjustedIndexBlockSize(t *testing.T) {
-	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB))
-	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
+	// our block size is calculated based on MaxTxnEntrySizeLimit, if you want to
+	// change it, contact with us please.
+	require.EqualValues(t, 120*units.MiB, tidbconfig.MaxTxnEntrySizeLimit)
+
+	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB, DefaultBlockSize))
 }
 
 func readKVFile(t *testing.T, store storage.ExternalStorage, filename string) []kvPair {
 	t.Helper()
-	reader, err := newKVReader(context.Background(), filename, store, 0, units.KiB)
+	reader, err := NewKVReader(context.Background(), filename, store, 0, units.KiB)
 	require.NoError(t, err)
 	kvs := make([]kvPair, 0)
 	for {
@@ -887,4 +834,28 @@ func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(s
 		require.EqualValues(t, 0, summary.ConflictInfo.Count)
 		require.Empty(t, summary.ConflictInfo.Files)
 	})
+}
+
+func TestGetAdjustedMergeSortOverlapThresholdAndMergeSortFileCountStep(t *testing.T) {
+	tests := []struct {
+		concurrency int
+		want        int64
+	}{
+		{1, 250},
+		{2, 500},
+		{4, 1000},
+		{6, 1500},
+		{8, 2000},
+		{16, 4000},
+		{17, 4000},
+		{32, 4000},
+	}
+	for _, tt := range tests {
+		if got := GetAdjustedMergeSortOverlapThreshold(tt.concurrency); got != tt.want {
+			t.Errorf("GetAdjustedMergeSortOverlapThreshold() = %v, want %v", got, tt.want)
+		}
+		if got := GetAdjustedMergeSortFileCountStep(tt.concurrency); got != int(tt.want) {
+			t.Errorf("GetAdjustedMergeSortFileCountStep() = %v, want %v", got, tt.want)
+		}
+	}
 }

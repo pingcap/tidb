@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -35,14 +36,14 @@ var (
 
 // InitLogBackupMetrics initializes log backup metrics.
 func InitLogBackupMetrics() {
-	LastCheckpoint = NewGaugeVec(prometheus.GaugeOpts{
+	LastCheckpoint = metricscommon.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "last_checkpoint",
 		Help:      "The last global checkpoint of log backup.",
 	}, []string{"task"})
 
-	AdvancerOwner = NewGauge(prometheus.GaugeOpts{
+	AdvancerOwner = metricscommon.NewGauge(prometheus.GaugeOpts{
 		Namespace:   "tidb",
 		Subsystem:   "log_backup",
 		Name:        "advancer_owner",
@@ -50,7 +51,7 @@ func InitLogBackupMetrics() {
 		ConstLabels: map[string]string{},
 	})
 
-	AdvancerTickDuration = NewHistogramVec(prometheus.HistogramOpts{
+	AdvancerTickDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "advancer_tick_duration_sec",
@@ -58,7 +59,7 @@ func InitLogBackupMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.01, 3.0, 8),
 	}, []string{"step"})
 
-	GetCheckpointBatchSize = NewHistogramVec(prometheus.HistogramOpts{
+	GetCheckpointBatchSize = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "advancer_batch_size",
@@ -66,21 +67,21 @@ func InitLogBackupMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(1, 2.0, 12),
 	}, []string{"type"})
 
-	RegionCheckpointRequest = NewCounterVec(prometheus.CounterOpts{
+	RegionCheckpointRequest = metricscommon.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_request",
 		Help:      "The failure / success stat requesting region checkpoints.",
 	}, []string{"result"})
 
-	RegionCheckpointFailure = NewCounterVec(prometheus.CounterOpts{
+	RegionCheckpointFailure = metricscommon.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_request_failure",
 		Help:      "The failure reasons of requesting region checkpoints.",
 	}, []string{"reason"})
 
-	RegionCheckpointSubscriptionEvent = NewHistogramVec(prometheus.HistogramOpts{
+	RegionCheckpointSubscriptionEvent = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "region_checkpoint_event",
@@ -88,13 +89,13 @@ func InitLogBackupMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(8, 2.0, 12),
 	}, []string{"store"})
 
-	LogBackupCurrentLastRegionID = NewGauge(prometheus.GaugeOpts{
+	LogBackupCurrentLastRegionID = metricscommon.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "current_last_region_id",
 		Help:      "The id of the region have minimal checkpoint ts in the current running task.",
 	})
-	LogBackupCurrentLastRegionLeaderStoreID = NewGauge(prometheus.GaugeOpts{
+	LogBackupCurrentLastRegionLeaderStoreID = metricscommon.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "current_last_region_leader_store_id",

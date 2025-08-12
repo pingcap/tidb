@@ -404,6 +404,11 @@ func (d *Checker) AlterTableMode(ctx sessionctx.Context, args *model.AlterTableM
 	return d.realExecutor.AlterTableMode(ctx, args)
 }
 
+// RefreshMeta implements the DDL interface.
+func (d *Checker) RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error {
+	return d.realExecutor.RefreshMeta(ctx, args)
+}
+
 // CleanupTableLock implements the DDL interface.
 func (d *Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	return d.realExecutor.CleanupTableLock(ctx, tables)

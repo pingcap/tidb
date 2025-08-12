@@ -29,7 +29,7 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	// Empty table.
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
@@ -94,7 +94,7 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	// Empty table.
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)

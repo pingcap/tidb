@@ -30,6 +30,7 @@ const (
 	FlagConstantPropagation
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
+	FlagFTSQuickValidation
 	FlagEliminateOuterJoin
 	FlagPartitionProcessor
 	FlagCollectPredicateColumnsPoint
@@ -41,6 +42,8 @@ const (
 	FlagJoinReOrder
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
+	FlagEliminateUnionAllDualItem
+	FlagEmptySelectionEliminator
 	FlagResolveExpand
 )
 

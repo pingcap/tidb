@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -36,7 +36,7 @@ import (
 type mergeSortExecutor struct {
 	taskexecutor.BaseStepExecutor
 	jobID         int64
-	idxNum        int
+	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
 
@@ -46,13 +46,13 @@ type mergeSortExecutor struct {
 
 func newMergeSortExecutor(
 	jobID int64,
-	idxNum int,
+	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
-		idxNum:        idxNum,
+		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
 	}, nil
@@ -100,6 +100,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
+		external.NewMergeCollector(ctx, nil),
 		int(res.CPU.Capacity()),
 		true,
 		engineapi.OnDuplicateKeyError,
@@ -108,8 +109,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		err = context.DeadlineExceeded
 	})
 	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			return local.ConvertToErrFoundConflictRecords(err, m.ptbl)
+		currentIdx, _, err2 := getIndexInfoAndID(sm.EleIDs, m.indexes)
+		if err2 == nil {
+			return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
 		}
 		return errors.Trace(err)
 	}

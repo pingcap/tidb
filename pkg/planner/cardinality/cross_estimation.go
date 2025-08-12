@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -35,7 +36,7 @@ const SelectionFactor = 0.8
 // should be adjusted by the limit number 1, because only one row is returned.
 func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 	dsStatsInfo, dsTableStats *property.StatsInfo, dsStatisticTable *statistics.Table,
-	path *util.AccessPath, expectedCnt float64, desc bool) float64 {
+	path *util.AccessPath, expectedCnt float64, isMatchProp, desc bool) float64 {
 	rowCount := path.CountAfterAccess
 	if expectedCnt < dsStatsInfo.RowCount {
 		selectivity := dsStatsInfo.RowCount / path.CountAfterAccess
@@ -57,6 +58,16 @@ func AdjustRowCountForTableScanByLimit(sctx planctx.PlanContext,
 		} else if abs := math.Abs(corr); abs < 1 {
 			correlationFactor := math.Pow(1-abs, float64(sctx.GetSessionVars().CorrelationExpFactor))
 			rowCount = min(path.CountAfterAccess, uniformEst/correlationFactor)
+		}
+	}
+
+	if isMatchProp && path.CountAfterAccess > rowCount {
+		// if orderRatio is enabled, we use it to recognize that we must scan more rows to find the first row.
+		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+		// Record the variable usage for explain explore.
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+		if orderRatio > 0 {
+			rowCount += max(0, path.CountAfterAccess-rowCount) * orderRatio
 		}
 	}
 	return rowCount
@@ -95,6 +106,7 @@ func AdjustRowCountForIndexScanByLimit(sctx planctx.PlanContext,
 		// This formula is to bias away from non-filtering (or poorly filtering) indexes that provide order due, where filtering exists
 		// outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
 		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio >= 0 {
 			rowsToMeetFirst := (((path.CountAfterAccess - path.CountAfterIndex) * orderRatio) + (path.CountAfterIndex - dsStatsInfo.RowCount)) * orderRatio
 			rowCount = rowsToMeetFirst + expectedCnt

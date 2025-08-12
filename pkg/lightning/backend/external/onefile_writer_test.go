@@ -20,14 +20,13 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	"path"
 	"slices"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -74,7 +73,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -137,7 +136,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -186,12 +185,14 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		Build(memStore, "/test", "0")
 
 	kvCount := 2000000
+	kvSize := 0
 	for i := range kvCount {
 		v := i
 		if v == kvCount/2 {
 			v-- // insert a duplicate key.
 		}
 		key, val := []byte{byte(v)}, []byte{byte(v)}
+		kvSize += len(key) + len(val)
 		require.NoError(t, writer.WriteRow(ctx, key, val, dbkv.IntHandle(i)))
 	}
 	require.NoError(t, writer.Close(ctx))
@@ -203,6 +204,9 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	})
 	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
+
+	collector := &execute.TestCollector{}
+
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2"},
@@ -212,13 +216,17 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		"mergeID",
 		1000,
 		nil,
+		collector,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
 	))
 
+	require.EqualValues(t, kvCount, collector.Rows.Load())
+	require.EqualValues(t, kvSize, collector.Bytes.Load())
+
 	kvs := make([]kvPair, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
+	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
 	require.NoError(t, err)
 	for range kvCount {
 		key, value, err := kvReader.nextKV()
@@ -233,16 +241,9 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	dir := t.TempDir()
-	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
-	require.NoError(t, err)
 	data := &MemoryIngestData{
-		keyAdapter:         common.NoopKeyAdapter{},
-		duplicateDetection: true,
-		duplicateDB:        db,
-		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		kvs:                kvs,
-		ts:                 123,
+		kvs: kvs,
+		ts:  123,
 	}
 	pool := membuf.NewPool()
 	defer pool.Destroy()
@@ -251,8 +252,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	for iter.First(); iter.Valid(); iter.Next() {
 	}
 	err = iter.Error()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "found duplicate key")
+	require.NoError(t, err)
 }
 
 func TestOnefileWriterManyRows(t *testing.T) {
@@ -316,12 +316,13 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		"mergeID",
 		1000,
 		onClose,
+		nil,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
 	))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
 		key, value, err := kvReader.nextKV()
@@ -433,7 +434,7 @@ func TestOnefileWriterDupError(t *testing.T) {
 
 	kvCnt := 10
 	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
+	for i := range kvCnt {
 		kvs[i].Key = []byte(strconv.Itoa(i))
 		kvs[i].Val = []byte(strconv.Itoa(i * i))
 	}

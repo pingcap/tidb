@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -142,7 +143,7 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 // FetchRemoteDBModels implements the `backend.TargetInfoGetter` interface.
 func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
 	results := []*model.DBInfo{}
-	logger := log.FromContext(ctx)
+	logger := log.Wrap(logutil.Logger(ctx))
 	s := common.SQLWithRetry{
 		DB:     b.db,
 		Logger: logger,
@@ -184,7 +185,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 	tableNames []string,
 ) (map[string]*model.TableInfo, error) {
 	tableInfos := make([]*model.TableInfo, len(tableNames))
-	logger := log.FromContext(ctx)
+	logger := log.Wrap(logutil.Logger(ctx))
 	s := common.SQLWithRetry{
 		DB:     b.db,
 		Logger: logger,
@@ -321,7 +322,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
 // It implements the `backend.TargetInfoGetter` interface.
 func (*targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
-	log.FromContext(ctx).Info("skipping check requirements for tidb backend")
+	logutil.Logger(ctx).Info("skipping check requirements for tidb backend")
 	return nil
 }
 
@@ -381,7 +382,7 @@ func NewTiDBBackend(
 			onDuplicate = config.ErrorOnDup
 		}
 	default:
-		log.FromContext(ctx).Warn("unsupported conflict strategy for TiDB backend, overwrite with `error`")
+		logutil.Logger(ctx).Warn("unsupported conflict strategy for TiDB backend, overwrite with `error`")
 		onDuplicate = config.ErrorOnDup
 	}
 	var stmtCache *kvcache.SimpleLRUCache
@@ -670,7 +671,7 @@ func EncodeRowForRecord(ctx context.Context, encTable table.Table, sqlMode mysql
 	enc := tidbEncoder{
 		tbl:    encTable,
 		mode:   sqlMode,
-		logger: log.FromContext(ctx),
+		logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	resRow, err := enc.Encode(row, 0, columnPermutation, 0)
 	if err != nil {
@@ -707,7 +708,7 @@ func (*tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (*tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error {
+func (*tidbBackend) ImportEngine(context.Context, uuid.UUID, int32, int64, int64) error {
 	return nil
 }
 
@@ -894,7 +895,7 @@ stmtLoop:
 			}
 
 			if !common.IsContextCanceledError(err) {
-				log.FromContext(ctx).Error("execute statement failed",
+				logutil.Logger(ctx).Error("execute statement failed",
 					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(query)), zap.Error(err))
 			}
 			// It's batch mode, just return the error. Caller will fall back to row-by-row mode.
@@ -913,7 +914,7 @@ stmtLoop:
 			if be.conflictCfg.Strategy == config.ErrorOnDup {
 				be.errorMgr.RecordDuplicateOnce(
 					ctx,
-					log.FromContext(ctx),
+					log.Wrap(logutil.Logger(ctx)),
 					tableName,
 					firstRow.path,
 					firstRow.offset,
@@ -925,7 +926,7 @@ stmtLoop:
 			}
 			err = be.errorMgr.RecordDuplicate(
 				ctx,
-				log.FromContext(ctx),
+				log.Wrap(logutil.Logger(ctx)),
 				tableName,
 				firstRow.path,
 				firstRow.offset,
@@ -936,7 +937,7 @@ stmtLoop:
 		} else {
 			err = be.errorMgr.RecordTypeError(
 				ctx,
-				log.FromContext(ctx),
+				log.Wrap(logutil.Logger(ctx)),
 				tableName,
 				firstRow.path,
 				firstRow.offset,

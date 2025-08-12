@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	"github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -93,9 +94,14 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease))
-		factory := createSessionFunc(store)
-		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory, etcdClient)
+		factory := getSessionFactory(store)
+		sysFactory := getSessionFactoryWithDom(store)
+		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory,
+			func(targetKS string) pools.Factory {
+				return getCrossKSSessionFactory(store, targetKS)
+			},
+			etcdClient,
+		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
@@ -357,7 +363,7 @@ func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSe
 }
 
 // ResultSetToStringSlice changes the RecordSet to [][]string.
-func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.RecordSet) ([][]string, error) {
+func ResultSetToStringSlice(ctx context.Context, s sessionapi.Session, rs sqlexec.RecordSet) ([][]string, error) {
 	rows, err := GetRows4Test(ctx, s, rs)
 	if err != nil {
 		return nil, err

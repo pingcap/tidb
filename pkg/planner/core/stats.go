@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -181,6 +180,10 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	path.CorrCountAfterAccess = 0
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	if path.Index.FullTextInfo != nil {
+		path.TableFilters = slices.Clone(conds)
+		return nil
+	}
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.GetPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
@@ -205,6 +208,14 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	}
 	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
 	return err
+}
+
+func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
+	}
+	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
@@ -309,7 +320,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
 				if rOk {
 					path.AccessConds = append(path.AccessConds, filter)
-					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
+					path.TableFilters = slices.Delete(path.TableFilters, i, i+1)
 					corColInAccessConds = true
 					break
 				}
@@ -319,7 +330,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
 				if lOk {
 					path.AccessConds = append(path.AccessConds, filter)
-					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
+					path.TableFilters = slices.Delete(path.TableFilters, i, i+1)
 					corColInAccessConds = true
 					break
 				}
@@ -472,7 +483,7 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 					break
 				}
 			}
-			if match {
+			if match && idx.IsEssentialStatsLoaded() {
 				ndv := property.GroupNDV{
 					Cols: idxCols,
 					NDV:  float64(idx.NDV),
@@ -490,11 +501,11 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
-	is := domain.GetDomain(sctx).InfoSchema()
+	is := sctx.GetLatestISWithoutSessExt()
 	var tbl table.Table
 	var partDef *model.PartitionDefinition
 
-	tbl, partDef = infoschema.FindTableByTblOrPartID(is, id)
+	tbl, partDef = infoschema.FindTableByTblOrPartID(is.(infoschema.InfoSchema), id)
 	if tbl == nil || tbl.Meta() == nil {
 		return
 	}
@@ -600,6 +611,9 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 				return err
 			}
 			path.IsSingleScan = true
+		} else if path.FtsQueryInfo != nil {
+			deriveSearchPathStats(ds, path)
+			path.IsSingleScan = false
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
 			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)

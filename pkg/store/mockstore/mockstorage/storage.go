@@ -45,7 +45,12 @@ type mockStorage struct {
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore, keyspaceMeta *keyspacepb.KeyspaceMeta) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
+	security := config.DefaultConfig().Security
+	tlsConfig, err := security.ToTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	coprStore, err := copr.NewStore(tikvStore, tlsConfig, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -167,4 +172,15 @@ type MockLockWaitSetter interface {
 
 func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
 	s.LockWaits = lockWaits
+}
+
+func (s *mockStorage) GetClusterID() uint64 {
+	return 1
+}
+
+func (s *mockStorage) GetKeyspace() string {
+	if s.keyspaceMeta == nil {
+		return ""
+	}
+	return s.keyspaceMeta.Name
 }

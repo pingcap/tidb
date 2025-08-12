@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -204,7 +205,7 @@ type Backend interface {
 	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
 	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
 	// It's safe to reset or cleanup this engine.
-	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
+	ImportEngine(ctx context.Context, engineUUID uuid.UUID, engineID int32, regionSplitSize, regionSplitKeys int64) error
 
 	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -263,7 +264,7 @@ func (be EngineManager) OpenEngine(
 	engineID int32,
 ) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, int64(engineID))
-	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
+	logger := makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID)
 
 	if err := be.backend.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
@@ -344,7 +345,7 @@ func (be EngineManager) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *Engi
 	engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
 		backend: be.backend,
-		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
+		logger:  makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID),
 		uuid:    engineUUID,
 		id:      id,
 	}.unsafeClose(ctx, cfg)
@@ -394,7 +395,7 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionS
 
 	for i := range importMaxRetryTimes {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
-		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
+		err = engine.backend.ImportEngine(ctx, engine.uuid, engine.id, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				task.End(zap.WarnLevel, err)

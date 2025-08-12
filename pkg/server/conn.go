@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -109,7 +110,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -381,6 +381,7 @@ func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
+	metrics.DDLClearTempIndexWrite(cc.connectionID)
 	return closeConn(cc)
 }
 
@@ -540,13 +541,13 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	var pos int
 
 	if len(data) < 2 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Warn("got malformed handshake response", zap.ByteString("packetData", data))
 		return mysql.ErrMalformPacket
 	}
 
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
 	if capability&mysql.ClientProtocol41 <= 0 {
-		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
+		logutil.Logger(ctx).Warn("ClientProtocol41 flag is not set, please upgrade client")
 		return servererr.ErrNotSupportedAuthMode
 	}
 	pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
@@ -706,18 +707,18 @@ func (cc *clientConn) authSha(ctx context.Context, resp handshake.Response41) ([
 	// This triggers the client to send the full response.
 	err := cc.writePacket([]byte{0, 0, 0, 0, shaCommand, fastAuthFail})
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet write failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet write failed", zap.Error(err))
 		return nil, err
 	}
 	err = cc.flush(ctx)
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet flush failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet flush failed", zap.Error(err))
 		return nil, err
 	}
 
 	data, err := cc.readPacket()
 	if err != nil {
-		logutil.Logger(ctx).Error("authSha packet read failed", zap.Error(err))
+		logutil.Logger(ctx).Warn("authSha packet read failed", zap.Error(err))
 		return nil, err
 	}
 	return bytes.Trim(data, "\x00"), nil
@@ -1717,8 +1718,14 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	var stmts []ast.StmtNode
 	cc.ctx.GetSessionVars().SetAlloc(cc.chunkAlloc)
+
+	warnCountBeforeParse := len(sc.GetWarnings())
 	if stmts, err = cc.ctx.Parse(ctx, sql); err != nil {
 		cc.onExtensionSQLParseFailed(sql, err)
+
+		// If an error happened, we'll need to remove the warnings in previous execution because the `ResetContextOfStmt` will not be called.
+		// Ref https://github.com/pingcap/tidb/issues/59132
+		sc.SetWarnings(sc.GetWarnings()[warnCountBeforeParse:])
 		return err
 	}
 
@@ -2003,7 +2010,7 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	normalized, digest := parser.NormalizeDigest(sqls)
 	topsql.AttachAndRegisterSQLInfo(context.Background(), normalized, digest, false)
 	if len(normalized) != 0 {
-		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder().SetSQLDigest(digest))
+		snapshot.SetOption(kv.ResourceGroupTagger, kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(digest))
 	}
 }
 
@@ -2013,9 +2020,7 @@ func (cc *clientConn) handleStmt(
 	ctx context.Context, stmt ast.StmtNode,
 	warns []contextutil.SQLWarn, lastStmt bool,
 ) (bool, error) {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
-	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
 

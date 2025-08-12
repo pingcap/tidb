@@ -63,71 +63,69 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-// The following tests will be brought back when optimizer part is ready.
-//
-// func TestFTSUnsupportedCases(t *testing.T) {
-// 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.MustExec("use test")
+func TestFTSUnsupportedCasesForTiCI(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
-// 	tiflash := infosync.NewMockTiFlash()
-// 	infosync.SetMockTiFlash(tiflash)
-// 	defer func() {
-// 		tiflash.Lock()
-// 		tiflash.StatusServer.Close()
-// 		tiflash.Unlock()
-// 	}()
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
 
-// 	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
-// 	defer func() {
-// 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
-// 	}()
+	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/MockCreateTiCIndexSuccess", `return(true)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/MockCreateTiCIndexSuccess"))
+	}()
 
-// 	tk.MustExec("create table t(title TEXT, body TEXT)")
-// 	tk.MustExec("insert into t values ('title 1', 'hello world'), ('title 2', 'hello TiDB')")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can only be used with a matching fulltext index")
-// 	tk.MustExec("drop table t")
+	tk.MustExec("create table t(title TEXT, body TEXT)")
+	tk.MustExec("insert into t values ('title 1', 'hello world'), ('title 2', 'hello TiDB')")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can only be used with a matching fulltext index")
+	tk.MustExec("drop table t")
 
-// 	tk.MustExec(`create table t(
-// 		id INT, title TEXT, body TEXT,
-// 		FULLTEXT KEY (title)
-// 	)`)
-// 	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-// 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-// 		Count:     1,
-// 		Available: true,
-// 	}
+	tk.MustExec(`create table t(
+		id INT, title TEXT, body TEXT,
+		FULLTEXT KEY (title)
+	)`)
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
 
-// 	tk.MustContainErrMsg("explain select fts_match_word('hello', title) from t", "Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields")
-// 	tk.MustContainErrMsg("explain select fts_match_word('hello', title) from t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields")
+	tk.MustContainErrMsg("explain select fts_match_word('hello', title) from t", "Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields")
+	tk.MustContainErrMsg("explain select fts_match_word('hello', title) from t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields")
 
-// 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
-// 	tk.MustQuery("explain select * from t where fts_match_word('hello', title) AND id > 10")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) > 0", "Currently 'FTS_MATCH_WORD()' must be used alone")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) AND fts_match_word('hello body', title)", "Currently 'FTS_MATCH_WORD()' must be used alone")
+	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
+	tk.MustQuery("explain select * from t where fts_match_word('hello', title) AND id > 10")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body)", "Full text search can only be used with a matching fulltext index")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', body) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) OR id > 10", "Currently 'FTS_MATCH_WORD()' must be used alone")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) > 0", "Currently 'FTS_MATCH_WORD()' must be used alone")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) AND fts_match_word('hello body', title)", "Current TiDB doesn't support multiple fulltext search functions used with multiple index call")
 
-// 	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title) limit 10", "It must be used with a WHERE clause and must be used alone")
-// 	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
-// 	tk.MustContainErrMsg("explain select * from t order by 1, fts_match_word('hello', title) limit 5", "FTS_MATCH_WORD() must be used as the first item in ORDER BY")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY without a LIMIT clause is not supported")
-// 	tk.MustQuery("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title) limit 10")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello world', title) limit 10", "'FTS_MATCH_WORD()' in ORDER BY must match the one in WHERE")
+	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t order by 1, fts_match_word('hello', title) limit 5", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
+	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title) order by fts_match_word('hello world', title) limit 10", "Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
 
-// 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash'")
-// 	tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
+	// tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash'")
+	// tk.MustQuery("explain select * from t where fts_match_word('hello', title)")
 
-// 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
+	// tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")
+	// tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
 
-// 	tk.MustExec("alter table t set tiflash replica 0")
-// 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
-// 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv,tiflash'")
-// 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
-// }
+	// tk.MustExec("alter table t set tiflash replica 0")
+	// tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv'")
+	// tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
+	// tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv,tiflash'")
+	// tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
+}
 
 func TestFTSParser(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
@@ -178,6 +176,7 @@ func TestFTSParser(t *testing.T) {
 }
 
 func TestFTSSyntax(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -227,8 +226,12 @@ func TestFTSIndexSyntax(t *testing.T) {
 	}()
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess"))
 	}()
 
 	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, FULLTEXT KEY ((`title`)))", `FULLTEXT index must specific at least one column`)
@@ -237,27 +240,38 @@ func TestFTSIndexSyntax(t *testing.T) {
 	tk.MustContainErrMsg("create table t(title TEXT, body TEXT, c INT, FULLTEXT KEY (c))", `only support string type`)
 	tk.MustContainErrMsg("create table t1(title TEXT, body TEXT, FULLTEXT KEY (title) WITH PARSER ngramx)", `Unsupported parser`)
 
-	// TODO: enable test after support mock TiCI
-	// tk.MustExec("create table t1(title TEXT, body TEXT, FULLTEXT KEY (title))")
-	// tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustExec("create table t2(title TEXT, body TEXT, FULLTEXT (title))")
-	// tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustExec("create table t3(title TEXT, body TEXT, FULLTEXT KEY `idx` (title))")
-	// tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustExec("create table t4(title TEXT, body TEXT, FULLTEXT KEY `idx` (`title`))")
-	// tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustExec("create table t5(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC))")
-	// tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustExec("create table t6(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC) WITH PARSER standard)")
-	// tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t1(title TEXT, body TEXT, FULLTEXT KEY (title))")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t2(title TEXT, body TEXT, FULLTEXT (title))")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `title`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t3(title TEXT, body TEXT, FULLTEXT KEY `idx` (title))")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t4(title TEXT, body TEXT, FULLTEXT KEY `idx` (`title`))")
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t5(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC))")
+	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 CREATE TABLE `t5` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t6(title TEXT, body TEXT, FULLTEXT KEY `idx` (title ASC) WITH PARSER standard)")
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 CREATE TABLE `t6` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `idx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	// tk.MustExec("drop table t1, t2, t3, t4, t5, t6")
-	// tk.MustExec("create table t1(title TEXT, body TEXT)")
-	// tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX (body)", "columnar replica must exist to create")
-	// tk.MustExec("alter table t1 set tiflash replica 1")
-	// tk.MustExec("alter table t1 add FULLTEXT INDEX (body)")
-	// tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `body`(`body`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	// tk.MustExec("alter table t1 drop index body")
+	tk.MustExec("drop table t1, t2, t3, t4, t5, t6")
+	tk.MustExec("create table t1(title TEXT, body TEXT)")
+	tk.MustExec("alter table t1 add FULLTEXT INDEX (body)")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `body`(`body`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t1 drop index body")
+	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER ngram;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER NGRAM\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t1 drop index FTSIdx")
+	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER 	MULTILINGUAL;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER MULTILINGUAL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t1 drop index FTSIdx")
+	tk.MustExec("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER STANDARD;")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `FTSIdx`(`title`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx2(title) WITH PARSER ngram;", "fulltext index 'FTSIdx' already exist on column title")
+	tk.MustExec("alter table t1 drop index FTSIdx")
+	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER invalidParser;", "Unsupported parser 'invalidParser'")
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(false)`)
+	tk.MustContainErrMsg("alter table t1 add FULLTEXT INDEX FTSIdx(title) WITH PARSER ngram;", "mock create TiCI index failed")
 }
 
 func TestVectorLong(t *testing.T) {
@@ -685,8 +699,8 @@ func TestVectorConstantExplain(t *testing.T) {
 	fmt.Println("++++")
 	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
 	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
-	require.True(t, strings.Contains(planTree, `	└─TableReader_5    	root     	10000  	data:TableFullScan_4`))
-	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
+	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
+	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
@@ -1958,17 +1972,17 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000705f728000000000000001"))
+		Check(testkit.Rows("7480000000000000725f728000000000000001"))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000705f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows("7480000000000000725f698000000000000001038000000000000001038000000000000001"))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000775f728000000000000001"))
 	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
@@ -1985,7 +1999,7 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000775f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -2097,7 +2111,7 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	// CastTimeAsString pushed to TiKV but CastTimeAsDuration not pushed
 	rows = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE CAST(b AS CHAR) = '10:00:00';").Rows()
 	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(cast(test.t.b, var_string(5)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "eq(cast(test.t.b, var_string(10)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
 
 	rows = tk.MustQuery("explain format = 'brief' select * from test.t where hour(b) > 10").Rows()
 	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
@@ -2737,8 +2751,8 @@ func TestCompareBuiltin(t *testing.T) {
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval

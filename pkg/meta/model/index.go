@@ -290,12 +290,13 @@ func (index *IndexInfo) IsPublic() bool {
 // IsColumnarIndex checks whether the index is a columnar index.
 // Columnar index only exists in TiFlash, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsColumnarIndex() bool {
-	return index.VectorInfo != nil || index.InvertedInfo != nil || index.FullTextInfo != nil
+	// Exclude the tiflash fulltext index temporarily.
+	return index.VectorInfo != nil || index.InvertedInfo != nil // || index.FullTextInfo != nil
 }
 
-// IsFulltextIndex checks whether the index is a fulltext index.
+// IsFulltextIndexOnTiCI checks whether the index is a fulltext index.
 // Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
-func (index *IndexInfo) IsFulltextIndex() bool {
+func (index *IndexInfo) IsFulltextIndexOnTiCI() bool {
 	return index.FullTextInfo != nil
 }
 

@@ -1430,6 +1430,11 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr, arg.ColumnarIndexType}
 	}
+	// Add Full text index
+	if job.Type == ActionAddFullTextIndex {
+		arg := a.IndexArgs[0]
+		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption}
+	}
 
 	// Add primary key
 	if job.Type == ActionAddPrimaryKey {
@@ -1478,6 +1483,8 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeAddIndexV1(job)
 	case ActionAddColumnarIndex:
 		err = a.decodeAddColumnarIndexV1(job)
+	case ActionAddFullTextIndex:
+		err = a.decodeAddFullTextIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1581,6 +1588,26 @@ func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 		FuncExpr:                funcExpr,
 		IsColumnar:              true,
 		ColumnarIndexType:       columnarIndexType,
+	}}
+	return nil
+}
+
+func (a *ModifyIndexArgs) decodeAddFullTextIndexV1(job *Job) error {
+	var (
+		indexName              ast.CIStr
+		indexPartSpecification *ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+	)
+
+	if err := job.decodeArgs(
+		&indexName, &indexPartSpecification, &indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	a.IndexArgs = []*IndexArg{{
+		IndexName:               indexName,
+		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexOption:             indexOption,
 	}}
 	return nil
 }
@@ -1784,4 +1811,27 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 		}, nil
 	}
 	return getOrDecodeArgsV2[*ModifyColumnArgs](job)
+}
+
+// RefreshMetaArgs is the argument for RefreshMeta.
+// InvolvedDB/InvolvedTable used for setting InvolvingSchemaInfo to
+// indicates the schema info involved in the DDL job.
+type RefreshMetaArgs struct {
+	SchemaID      int64  `json:"schema_id,omitempty"`
+	TableID       int64  `json:"table_id,omitempty"`
+	InvolvedDB    string `json:"involved_db,omitempty"`
+	InvolvedTable string `json:"involved_table,omitempty"`
+}
+
+func (a *RefreshMetaArgs) getArgsV1(*Job) []any {
+	return []any{a}
+}
+
+func (a *RefreshMetaArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(a))
+}
+
+// GetRefreshMetaArgs get the refresh meta argument.
+func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
+	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
 }

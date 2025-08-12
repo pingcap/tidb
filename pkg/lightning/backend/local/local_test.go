@@ -43,6 +43,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1780,6 +1782,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	extEngine := external.NewExternalEngine(
+		ctx,
 		memStore,
 		dataFiles,
 		statFiles,
@@ -1787,10 +1790,6 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		[]byte{10},
 		keys,
 		[][]byte{{1}, {11}},
-		common.NoopKeyAdapter{},
-		false,
-		nil,
-		common.DupDetectOpt{},
 		10,
 		123,
 		456,
@@ -1852,7 +1851,7 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 		},
 		{
 			ingest: injectedIngestBehaviour{
-				err: &ingestAPIError{err: common.ErrKVEpochNotMatch},
+				err: &ingestcli.IngestAPIError{Err: errdef.ErrKVEpochNotMatch},
 			},
 		},
 	}
@@ -2337,6 +2336,7 @@ func TestExternalEngine(t *testing.T) {
 		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
+	engineID := int32(common.IndexEngineID) // dummy engine ID, marked as an index engine
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
@@ -2369,7 +2369,7 @@ func TestExternalEngine(t *testing.T) {
 			engineUUID,
 		)
 		require.NoError(t, err2)
-		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		err2 = local.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
 		close(done)
 	}()

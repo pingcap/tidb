@@ -20,6 +20,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
+        "//pkg/parser/terror",
         "//pkg/server",
         "//pkg/server/internal/column",
         "//pkg/server/internal/resultset",

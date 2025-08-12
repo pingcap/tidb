@@ -26,14 +26,16 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/driver"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -53,13 +55,6 @@ var (
 
 	// PDAddr is the address of PD.
 	PDAddr = "127.0.0.1:2379"
-
-	// KeyspaceName is an option to specify the name of keyspace that the tests run on,
-	// this option is only valid while the flag WithRealTiKV is set.
-	KeyspaceName = flag.String("keyspace-name", "", "the name of keyspace that the tests run on")
-
-	// RetainOldData is used to control whether a new realtikv store should remove old tables.
-	RetainOldData = false
 )
 
 // RunTestMain run common setups for all real tikv tests.
@@ -104,14 +99,39 @@ func RunTestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
+type realtikvStoreOption struct {
+	retainData bool
+	keyspace   string
+}
+
+// RealTiKVStoreOption is the config option for creating a real TiKV store.
+type RealTiKVStoreOption func(opt *realtikvStoreOption)
+
+// WithRetainData allows the store to retain old data when creating a new store.
+func WithRetainData() RealTiKVStoreOption {
+	return func(opt *realtikvStoreOption) {
+		opt.retainData = true
+	}
+}
+
+// WithKeyspaceName allows the store to use a specific keyspace name.
+func WithKeyspaceName(name string) RealTiKVStoreOption {
+	return func(opt *realtikvStoreOption) {
+		opt.keyspace = name
+	}
+}
+
 // CreateMockStoreAndSetup return a new kv.Storage.
-func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
+func CreateMockStoreAndSetup(t *testing.T, opts ...RealTiKVStoreOption) kv.Storage {
 	store, _ := CreateMockStoreAndDomainAndSetup(t, opts...)
 	return store
 }
 
-// CreateMockStoreAndDomainAndSetup return a new kv.Storage and *domain.Domain.
-func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain) {
+// CreateMockStoreAndDomainAndSetup initializes a kv.Storage and a domain.Domain.
+func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption) (kv.Storage, *domain.Domain) {
+	//nolint: errcheck
+	_ = kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
+	kvstore.SetSystemStorage(nil)
 	// set it to 5 seconds for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff.Store(500)
@@ -120,47 +140,71 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	var dom *domain.Domain
 	var err error
 
+	option := &realtikvStoreOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
+	var ks string
+	if kerneltype.IsNextGen() {
+		if option.keyspace == "" {
+			// in nextgen kernel, SYSTEM keyspace must be bootstrapped first, if we
+			// don't specify a keyspace which normally is not specified, we use SYSTEM
+			// keyspace as default to make sure test cases can run correctly.
+			ks = keyspace.System
+		} else {
+			ks = option.keyspace
+		}
+		t.Log("create realtikv store with keyspace:", ks)
+	}
 	session.SetSchemaLease(500 * time.Millisecond)
 
-	if *WithRealTiKV {
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-			conf.KeyspaceName = *KeyspaceName
-			conf.Store = config.StoreTypeTiKV
+	path := *TiKVPath
+	if len(ks) > 0 {
+		path += "&keyspaceName=" + ks
+	}
+	var d driver.TiKVDriver
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches.Enabled = false
+		conf.KeyspaceName = ks
+		conf.Store = config.StoreTypeTiKV
+	})
+	store, err = d.Open(path)
+	require.NoError(t, err)
+	if kerneltype.IsNextGen() && ks != keyspace.System {
+		sysPath := *TiKVPath + "&keyspaceName=" + keyspace.System
+		sysStore, err := d.Open(sysPath)
+		require.NoError(t, err)
+		kvstore.SetSystemStorage(sysStore)
+		t.Cleanup(func() {
+			require.NoError(t, sysStore.Close())
 		})
-		store, err = d.Open(*TiKVPath)
-		require.NoError(t, err)
-		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
-		dom, err = session.BootstrapSession(store)
-		require.NoError(t, err)
-		sm := testkit.MockSessionManager{}
-		dom.InfoSyncer().SetSessionManager(&sm)
-		tk := testkit.NewTestKit(t, store)
-		// set it to default value.
-		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", vardef.DefInnodbLockWaitTimeout))
-		tk.MustExec("use test")
-		if !RetainOldData {
-			rs := tk.MustQuery("show tables")
-			tables := []string{}
-			for _, row := range rs.Rows() {
-				tables = append(tables, fmt.Sprintf("`%v`", row[0]))
-			}
-			for _, table := range tables {
-				tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
-			}
-			if len(tables) > 0 {
-				tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
-			}
+	}
+	require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	sm := testkit.MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	tk := testkit.NewTestKit(t, store)
+	// set it to default value.
+	tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", vardef.DefInnodbLockWaitTimeout))
+	tk.MustExec("use test")
+
+	if !option.retainData {
+		tk.MustExec("delete from mysql.tidb_global_task;")
+		tk.MustExec("delete from mysql.tidb_background_subtask;")
+		tk.MustExec("delete from mysql.tidb_ddl_job;")
+		rs := tk.MustQuery("show tables")
+		tables := []string{}
+		for _, row := range rs.Rows() {
+			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
 		}
-	} else {
-		store, err = mockstore.NewMockStore(opts...)
-		require.NoError(t, err)
-		session.DisableStats4Test()
-		dom, err = session.BootstrapSession(store)
-		sm := testkit.MockSessionManager{}
-		dom.InfoSyncer().SetSessionManager(&sm)
-		require.NoError(t, err)
+		for _, table := range tables {
+			tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+		}
+		if len(tables) > 0 {
+			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+		}
+		t.Log("cleaned up ddl and tables")
 	}
 
 	t.Cleanup(func() {
