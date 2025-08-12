@@ -63,6 +63,10 @@ func TestShowStatsMeta(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "test2", result.Rows()[0][0])
 	require.Equal(t, "t", result.Rows()[0][1])
+	result = tk.MustQuery("show stats_meta like 'test2'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
 }
 
 func TestShowStatsLocked(t *testing.T) {
