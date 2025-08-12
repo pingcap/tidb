@@ -3461,15 +3461,6 @@ func appendCandidate(lp base.LogicalPlan, task base.Task, prop *property.Physica
 	appendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
 }
 
-// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
-// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
-func pushDownNot(ctx expression.BuildContext, conds []expression.Expression) []expression.Expression {
-	for i, cond := range conds {
-		conds[i] = expression.PushDownNot(ctx, cond)
-	}
-	return conds
-}
-
 func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) error {
 	if err != nil {
 		return err
