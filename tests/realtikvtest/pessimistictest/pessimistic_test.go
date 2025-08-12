@@ -2367,6 +2367,9 @@ func TestAsyncCommitCalTSFail(t *testing.T) {
 }
 
 func TestAsyncCommitAndForeignKey(t *testing.T) {
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The retry of foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
+	}
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
@@ -2391,6 +2394,9 @@ func TestAsyncCommitAndForeignKey(t *testing.T) {
 func TestTransactionIsolationAndForeignKey(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("The test only support test with tikv.")
+	}
+	if kerneltype.TestIsNextGen() {
+		t.Skip("The retry of foreign key dml may miss locking row key, see https://github.com/pingcap/tidb/issues/62982")
 	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
