@@ -145,12 +145,33 @@ func TestCloseFileWriter_CloseFail(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestTiCIDataWriterGroup_CreateFail(t *testing.T) {
+	ctx := context.Background()
+	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
+		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
+	}}
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR}, nil).
+		Once()
+	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
+	assert.Nil(t, group)
+}
+
 func TestTiCIDataWriterGroup_WriteHeader(t *testing.T) {
 	ctx := context.Background()
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
 		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
 	}}
-	group := newTiCIDataWriterGroupForTest(ctx, nil, tbl, "testdb")
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		Once()
+	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
 		mockFileWriter, _ := newStubTICIFileWriter(t, false)
 		w.ticiFileWriter = mockFileWriter
@@ -169,7 +190,13 @@ func TestTiCIDataWriterGroup_WritePairs(t *testing.T) {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
 		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
 	}}
-	group := newTiCIDataWriterGroupForTest(ctx, nil, tbl, "testdb")
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		Once()
+	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
 		mockFileWriter, _ := newStubTICIFileWriter(t, false)
 		w.ticiFileWriter = mockFileWriter
@@ -188,7 +215,13 @@ func TestTiCIDataWriterGroup_WritePairs_Fail(t *testing.T) {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
 		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
 	}}
-	group := newTiCIDataWriterGroupForTest(ctx, nil, tbl, "testdb")
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		Once()
+	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
 		mockFileWriter, mockWriter := newStubTICIFileWriter(t, false)
 		mockWriter.fail = true
@@ -208,7 +241,13 @@ func TestSetTiCIDataWriterGroupWritable(t *testing.T) {
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
 		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
 	}}
-	group := newTiCIDataWriterGroupForTest(ctx, nil, tbl, "testdb")
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		Once()
+	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	engineUUID := uuid.New()
 	SetTiCIDataWriterGroupWritable(ctx, group, engineUUID, 0)
 	assert.True(t, group.writable.Load())
@@ -225,35 +264,25 @@ func TestTiCIDataWriterGroup_InitTICIFileWriters_NotWritable(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestTiCIDataWriterGroup_FetchCloudStoragePath_NotWritable(t *testing.T) {
+func TestTiCIDataWriterGroup_FinishPartitionUpload_NotWritable(t *testing.T) {
 	ctx := context.Background()
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("GetCloudStoragePath", mock.Anything, mock.Anything).
-		Return(&GetCloudStoragePathResponse{Status: 0}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
 		Once()
-	group := &DataWriterGroup{mgrCtx: ticiMgr}
-	group.writable.Store(false)
-	err := group.FetchCloudStoragePath(ctx, nil, nil)
-	assert.NoError(t, err)
-}
-
-func TestTiCIDataWriterGroup_MarkPartitionUploadFinished_NotWritable(t *testing.T) {
-	ctx := context.Background()
-	mockClient := new(MockMetaServiceClient)
-	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("MarkPartitionUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkPartitionUploadFinishedResponse{Status: 0}, nil).
+		On("FinishImportPartitionUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
 	group := &DataWriterGroup{mgrCtx: ticiMgr}
 	group.writable.Store(false)
-	err := group.MarkPartitionUploadFinished(ctx)
+	err := group.FinishPartitionUpload(ctx, nil, nil)
 	assert.NoError(t, err)
 }
 
-func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
+func TestTiCIDataWriterGroup_FinishIndexUpload(t *testing.T) {
 	ctx := context.Background()
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
 		{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
@@ -261,8 +290,11 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 	mockClient := new(MockMetaServiceClient)
 	ticiMgr := newTestTiCIManagerCtx(mockClient)
 	mockClient.
-		On("MarkTableUploadFinished", mock.Anything, mock.Anything).
-		Return(&MarkTableUploadFinishedResponse{Status: 0}, nil).
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil)
+	mockClient.
+		On("FinishImportIndexUpload", mock.Anything, mock.Anything).
+		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	for _, w := range group.writers {
@@ -273,7 +305,7 @@ func TestTiCIDataWriterGroup_MarkTableUploadFinished(t *testing.T) {
 		}
 	}
 
-	err := group.MarkTableUploadFinished(ctx)
+	err := group.FinishIndexUpload(ctx)
 	assert.NoError(t, err)
 }
 
