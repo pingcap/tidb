@@ -807,21 +807,22 @@ var logicalOps = map[string]struct{}{
 	ast.In:                 {},
 	ast.IsNull:             {},
 	ast.IsTruthWithoutNull: {},
+	ast.IsTruthWithNull:    {},
 	ast.IsFalsity:          {},
 	ast.Like:               {},
 }
 
 var oppositeOp = map[string]string{
-	ast.LT:              ast.GE,
-	ast.GE:              ast.LT,
-	ast.GT:              ast.LE,
-	ast.LE:              ast.GT,
-	ast.EQ:              ast.NE,
-	ast.NE:              ast.EQ,
-	ast.LogicOr:         ast.LogicAnd,
-	ast.LogicAnd:        ast.LogicOr,
-	ast.IsTruthWithNull: ast.IsFalsity,
-	ast.IsFalsity:       ast.IsTruthWithNull,
+	ast.LT:                 ast.GE,
+	ast.GE:                 ast.LT,
+	ast.GT:                 ast.LE,
+	ast.LE:                 ast.GT,
+	ast.EQ:                 ast.NE,
+	ast.NE:                 ast.EQ,
+	ast.LogicOr:            ast.LogicAnd,
+	ast.LogicAnd:           ast.LogicOr,
+	ast.IsTruthWithoutNull: ast.IsFalsity,
+	ast.IsFalsity:          ast.IsTruthWithoutNull,
 }
 
 // a op b is equal to b symmetricOp a
@@ -1010,7 +1011,7 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 				return expr, false
 			}
 			return childExpr, true
-		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE, ast.IsTruthWithNull, ast.IsFalsity:
+		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE, ast.IsFalsity, ast.IsTruthWithoutNull:
 			if not {
 				return NewFunctionInternal(ctx, oppositeOp[f.FuncName.L], f.GetType(ctx.GetEvalCtx()), f.GetArgs()...), true
 			}
