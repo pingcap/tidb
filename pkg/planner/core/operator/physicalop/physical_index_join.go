@@ -15,10 +15,7 @@
 package physicalop
 
 import (
-	"bytes"
-	"fmt"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,17 +23,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/task"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
@@ -59,7 +55,7 @@ type PhysicalIndexJoin struct {
 	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b+10
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
-	CompareFilters *ColWithCmpFuncManager
+	CompareFilters *task.ColWithCmpFuncManager
 	// OuterHashKeys indicates the outer keys used to build hash table during
 	// execution. OuterJoinKeys is the prefix of OuterHashKeys.
 	OuterHashKeys []*expression.Column
@@ -98,7 +94,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
+	cloned.CompareFilters = p.CompareFilters.CloneForPlanCache()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
 	return cloned, nil
@@ -227,7 +223,7 @@ func (p *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
 	cloned.IdxColLens = make([]int, len(p.IdxColLens))
 	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
+	cloned.CompareFilters = p.CompareFilters.CloneForPlanCache()
 	cloned.OuterHashKeys = utilfuncp.CloneColumnsForPlanCache(p.OuterHashKeys, nil)
 	cloned.InnerHashKeys = utilfuncp.CloneColumnsForPlanCache(p.InnerHashKeys, nil)
 	return cloned, true
@@ -241,140 +237,6 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost flo
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexJoin(p, taskType, option)
-}
-
-// ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
-// It stores the compare functions and build ranges in execution phase.
-type ColWithCmpFuncManager struct {
-	TargetCol         *expression.Column
-	ColLength         int
-	OpType            []string
-	opArg             []expression.Expression
-	TmpConstant       []*expression.Constant
-	AffectedColSchema *expression.Schema  `plan-cache-clone:"shallow"`
-	compareFuncs      []chunk.CompareFunc `plan-cache-clone:"shallow"`
-}
-
-func (cwc *ColWithCmpFuncManager) cloneForPlanCache() *ColWithCmpFuncManager {
-	if cwc == nil {
-		return nil
-	}
-	cloned := new(ColWithCmpFuncManager)
-	if cwc.TargetCol != nil {
-		if cwc.TargetCol.SafeToShareAcrossSession() {
-			cloned.TargetCol = cwc.TargetCol
-		} else {
-			cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.ColLength = cwc.ColLength
-	cloned.OpType = make([]string, len(cwc.OpType))
-	copy(cloned.OpType, cwc.OpType)
-	cloned.opArg = utilfuncp.CloneExpressionsForPlanCache(cwc.opArg, nil)
-	cloned.TmpConstant = utilfuncp.CloneConstantsForPlanCache(cwc.TmpConstant, nil)
-	cloned.AffectedColSchema = cwc.AffectedColSchema
-	cloned.compareFuncs = cwc.compareFuncs
-	return cloned
-}
-
-// AppendNewExpr appends a new expression to ColWithCmpFuncManager.
-func (cwc *ColWithCmpFuncManager) AppendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
-	cwc.OpType = append(cwc.OpType, opName)
-	cwc.opArg = append(cwc.opArg, arg)
-	cwc.TmpConstant = append(cwc.TmpConstant, &expression.Constant{RetType: cwc.TargetCol.RetType})
-	for _, col := range affectedCols {
-		if cwc.AffectedColSchema.Contains(col) {
-			continue
-		}
-		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
-		cwc.AffectedColSchema.Append(col)
-	}
-}
-
-// CompareRow compares the rows for deduplicate.
-func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
-	for i, col := range cwc.AffectedColSchema.Columns {
-		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
-		if ret != 0 {
-			return ret
-		}
-	}
-	return 0
-}
-
-// BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
-func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx *rangerctx.RangerContext, row chunk.Row) ([]*ranger.Range, error) {
-	exprs := make([]expression.Expression, len(cwc.OpType))
-	exprCtx := ctx.ExprCtx
-	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(exprCtx.GetEvalCtx(), row)
-		if err != nil {
-			return nil, err
-		}
-		cwc.TmpConstant[i].Value = constantArg
-		newExpr, err := expression.NewFunction(exprCtx, opType, types.NewFieldType(mysql.TypeTiny), cwc.TargetCol, cwc.TmpConstant[i])
-		if err != nil {
-			return nil, err
-		}
-		exprs = append(exprs, newExpr) // nozero
-	}
-	// We already limit range mem usage when buildTemplateRange for inner table of IndexJoin in optimizer phase, so we
-	// don't need and shouldn't limit range mem usage when we refill inner ranges during the execution phase.
-	ranges, _, _, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.ColLength, 0)
-	if err != nil {
-		return nil, err
-	}
-	return ranges, nil
-}
-
-func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
-	for i := range cwc.opArg {
-		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// String implements Stringer interface.
-func (cwc *ColWithCmpFuncManager) String() string {
-	buffer := bytes.NewBufferString("")
-	for i := range cwc.OpType {
-		fmt.Fprintf(buffer, "%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i])
-		if i < len(cwc.OpType)-1 {
-			buffer.WriteString(" ")
-		}
-	}
-	return buffer.String()
-}
-
-const emptyColWithCmpFuncManagerSize = int64(unsafe.Sizeof(ColWithCmpFuncManager{}))
-
-// MemoryUsage return the memory usage of ColWithCmpFuncManager
-func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
-	if cwc == nil {
-		return
-	}
-
-	sum = emptyColWithCmpFuncManagerSize + int64(cap(cwc.compareFuncs))*size.SizeOfFunc
-	if cwc.TargetCol != nil {
-		sum += cwc.TargetCol.MemoryUsage()
-	}
-	if cwc.AffectedColSchema != nil {
-		sum += cwc.AffectedColSchema.MemoryUsage()
-	}
-
-	for _, str := range cwc.OpType {
-		sum += int64(len(str))
-	}
-	for _, expr := range cwc.opArg {
-		sum += expr.MemoryUsage()
-	}
-	for _, cst := range cwc.TmpConstant {
-		sum += cst.MemoryUsage()
-	}
-	return
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -430,7 +292,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 		}
 	}
 	if p.CompareFilters != nil {
-		err = p.CompareFilters.resolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
+		err = p.CompareFilters.ResolveIndices(p.Children()[1-p.InnerChildIdx].Schema())
 		if err != nil {
 			return err
 		}

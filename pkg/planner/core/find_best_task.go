@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/task"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -131,7 +132,7 @@ func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.Physic
 	dual.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
-	rt := &RootTask{}
+	rt := &task.RootTask{}
 	rt.SetPlan(dual)
 	return rt, 1, nil
 }
@@ -165,7 +166,7 @@ func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalPro
 	pShow := physicalop.PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	planCounter.Dec(1)
-	rt := &RootTask{}
+	rt := &task.RootTask{}
 	rt.SetPlan(pShow)
 	return rt, 1, nil
 }
@@ -199,7 +200,7 @@ func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.Phys
 	pShow := physicalop.PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
 	pShow.SetSchema(p.Schema())
 	planCounter.Dec(1)
-	rt := &RootTask{}
+	rt := &task.RootTask{}
 	rt.SetPlan(pShow)
 	return rt, 1, nil
 }
@@ -323,7 +324,7 @@ func enumeratePhysicalPlans4Task(
 		}
 
 		// An optimal task could not satisfy the property, so it should be converted here.
-		if _, ok := curTask.(*RootTask); !ok && prop.TaskTp == property.RootTaskType {
+		if _, ok := curTask.(*task.RootTask); !ok && prop.TaskTp == property.RootTaskType {
 			curTask = curTask.ConvertToRootTask(baseLP.SCtx())
 		}
 
@@ -391,7 +392,7 @@ func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.T
 		// to make sure let it walk through the following logic.
 		return true
 	}
-	_, isRoot := childTask.(*RootTask)
+	_, isRoot := childTask.(*task.RootTask)
 	_, isCop := childTask.(*CopTask)
 	_, isMpp := childTask.(*MppTask)
 	switch propRequired.TaskTp {
@@ -656,7 +657,7 @@ func getTaskPlanCost(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (float6
 		indexPartialCost float64
 	)
 	switch t.(type) {
-	case *RootTask:
+	case *task.RootTask:
 		taskType = property.RootTaskType
 	case *CopTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
 		cop := t.(*CopTask)
@@ -1023,7 +1024,7 @@ func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.Physica
 	memTable.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	appendCandidate4PhysicalOptimizeOp(opt, p, memTable, prop)
-	rt := &RootTask{}
+	rt := &task.RootTask{}
 	rt.SetPlan(memTable)
 	return rt, 1, nil
 }
@@ -1039,7 +1040,7 @@ func tryToGetDualTask(ds *logicalop.DataSource) (base.Task, error) {
 			if !result {
 				dual := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
 				dual.SetSchema(ds.Schema())
-				rt := &RootTask{}
+				rt := &task.RootTask{}
 				rt.SetPlan(dual)
 				return rt, nil
 			}
@@ -1881,7 +1882,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			dual.SetSchema(ds.Schema())
 			cntPlan++
 			planCounter.Dec(1)
-			t := &RootTask{}
+			t := &task.RootTask{}
 			t.SetPlan(dual)
 			appendCandidate(ds, t, prop, opt)
 			return t, cntPlan, nil
@@ -2589,7 +2590,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
-	} else if _, ok := task.(*RootTask); ok {
+	} else if _, ok := task.(*task.RootTask); ok {
 		return base.InvalidTask, nil
 	}
 	return task, nil
@@ -3065,7 +3066,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
-	} else if _, ok := task.(*RootTask); ok {
+	} else if _, ok := task.(*task.RootTask); ok {
 		return base.InvalidTask, nil
 	}
 	return task, nil
@@ -3090,7 +3091,7 @@ func convertToSampleTable(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		Desc:            candidate.isMatchProp && prop.SortItems[0].Desc,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	p.SetSchema(ds.Schema())
-	rt := &RootTask{}
+	rt := &task.RootTask{}
 	rt.SetPlan(p)
 	return rt, nil
 }
@@ -3122,7 +3123,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
 	pointGetPlan.PartitionNames = ds.PartitionNames
-	rTsk := &RootTask{}
+	rTsk := &task.RootTask{}
 	rTsk.SetPlan(pointGetPlan)
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
@@ -3196,7 +3197,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
 	}
-	rTsk := &RootTask{}
+	rTsk := &task.RootTask{}
 	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
@@ -3409,7 +3410,7 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 			tblColHists: p.StatsInfo().HistColl,
 		}
 	} else {
-		rt := &RootTask{}
+		rt := &task.RootTask{}
 		rt.SetPlan(pcte)
 		t = rt
 	}
@@ -3448,7 +3449,7 @@ func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.Physica
 
 	pcteTable := PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
 	pcteTable.SetSchema(p.Schema())
-	rt := &RootTask{}
+	rt := &task.RootTask{}
 	rt.SetPlan(pcteTable)
 	t = rt
 	return t, 1, nil
