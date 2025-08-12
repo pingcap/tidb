@@ -896,7 +896,7 @@ func verifyCheckQuery(ctx context.Context, se sessionctx.Context, sql string, us
 
 	if (useTableScan && !isTableScan) || (!useTableScan && !isIndexScan) {
 		panic(fmt.Sprintf("check query %s error, table scan: %t, index scan: %t",
-			sql, "table", isTableScan, isIndexScan))
+			sql, isTableScan, isIndexScan))
 	}
 }
 
