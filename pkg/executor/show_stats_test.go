@@ -49,6 +49,20 @@ func TestShowStatsMeta(t *testing.T) {
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "t", result.Rows()[0][1])
+
+	// Create different database to test the like pattern.
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("analyze table t all columns")
+	// Test it works under different database.
+	tk.MustExec("use test")
+	// Test it is not case sensitive.
+	result = tk.MustQuery("show stats_meta like 'Test2%'")
+	require.Len(t, result.Rows(), 1)
+	require.Equal(t, "test2", result.Rows()[0][0])
+	require.Equal(t, "t", result.Rows()[0][1])
 }
 
 func TestShowStatsLocked(t *testing.T) {
