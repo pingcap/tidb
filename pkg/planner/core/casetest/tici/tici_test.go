@@ -28,9 +28,9 @@ import (
 )
 
 func TestTiCISearchExplain(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/MockCreateTiCIIndexSuccess")
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
 		require.NoError(t, err)
 	}()
 
