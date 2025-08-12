@@ -257,9 +257,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("wwz")
-		}
 		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true, p.canPropagateConstantWithInnerJoinOrSemiJoin)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
