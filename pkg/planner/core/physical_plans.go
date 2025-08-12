@@ -61,7 +61,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalIndexScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableScan{}
 	_ base.PhysicalPlan = &PhysicalTableReader{}
-	_ base.PhysicalPlan = &PhysicalIndexReader{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexReader{}
 	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashAgg{}
@@ -203,15 +203,6 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	}
 }
 
-// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
-	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.SetStats(stats)
-	reader.SetSchema(schema)
-	reader.SetChildrenReqProps(props)
-	return reader
-}
-
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
@@ -274,112 +265,6 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
 	appendChildCandidate(p, p.tablePlan, op)
-}
-
-// PhysicalIndexReader is the index reader in tidb.
-type PhysicalIndexReader struct {
-	physicalop.PhysicalSchemaProducer
-
-	// IndexPlans flats the indexPlan to construct executor pb.
-	indexPlan  base.PhysicalPlan
-	IndexPlans []base.PhysicalPlan
-
-	// OutputColumns represents the columns that index reader should return.
-	OutputColumns []*expression.Column
-
-	// Used by partition table.
-	PlanPartInfo *physicalop.PhysPlanPartInfo
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexReader)
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	if cloned.indexPlan, err = p.indexPlan.Clone(newCtx); err != nil {
-		return nil, err
-	}
-	if cloned.IndexPlans, err = clonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
-		return nil, err
-	}
-	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
-	return cloned, err
-}
-
-// SetSchema overrides op.PhysicalPlan SetSchema interface.
-func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
-	if p.indexPlan != nil {
-		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-		switch p.indexPlan.(type) {
-		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
-			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
-		default:
-			is := p.IndexPlans[0].(*PhysicalIndexScan)
-			p.PhysicalSchemaProducer.SetSchema(is.dataSourceSchema)
-		}
-		p.OutputColumns = p.Schema().Clone().Columns
-	}
-}
-
-// SetChildren overrides op.PhysicalPlan SetChildren interface.
-func (p *PhysicalIndexReader) SetChildren(children ...base.PhysicalPlan) {
-	p.indexPlan = children[0]
-	p.SetSchema(nil)
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
-	for _, child := range p.IndexPlans {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.indexPlan != nil {
-		rp.Children = append(rp.Children, p.indexPlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.indexPlan != nil {
-		appendChildCandidate(p, p.indexPlan, op)
-	}
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexReader
-func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + p.PlanPartInfo.MemoryUsage()
-	if p.indexPlan != nil {
-		p.indexPlan.MemoryUsage()
-	}
-
-	for _, plan := range p.IndexPlans {
-		sum += plan.MemoryUsage()
-	}
-	for _, col := range p.OutputColumns {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
-// LoadTableStats preloads the stats data for the physical table
-func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
-	is := p.IndexPlans[0].(*PhysicalIndexScan)
-	loadTableStats(ctx, is.Table, is.physicalTableID)
 }
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
@@ -1001,8 +886,8 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 	switch copPlan := plan.(type) {
 	case *PhysicalTableReader:
 		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
-	case *PhysicalIndexReader:
-		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+	case *physicalop.PhysicalIndexReader:
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
 	case *PhysicalIndexLookUpReader:
 		// For index loop up, only the indexPlan is necessary,
 		// because they use the same stats and we do not set the stats info for tablePlan.

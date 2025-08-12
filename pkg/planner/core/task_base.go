@@ -498,7 +498,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.QueryBlockOffset())
+		p := physicalop.PhysicalIndexReader{IndexPlan: t.indexPlan}.Init(ctx, t.indexPlan.QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
 		p.SetStats(t.indexPlan.StatsInfo())
 		newTask.SetPlan(p)
