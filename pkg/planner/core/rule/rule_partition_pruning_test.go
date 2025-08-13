@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package rule_test
 
 import (
 	"math"
@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // for init the expression.BuildSimpleExpression
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/testkit/ddlhelper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -41,16 +43,16 @@ func TestCanBePrune(t *testing.T) {
 	// SELECT * FROM t1 WHERE recdate > '2018-03-08 00:00:00';
 
 	tc := prepareTestCtx(t, "create table t (d datetime not null)", "to_days(d)")
-	lessThan := lessThanDataInt{data: []int64{733108, 733132}, maxvalue: false}
-	pruner := &rangePruner{lessThan, tc.col, tc.fn, monotoneModeNonStrict}
+	lessThan := rule.LessThanDataInt{Data: []int64{733108, 733132}, Maxvalue: false}
+	pruner := &rule.RangePruner{lessThan, tc.col, tc.fn, rule.MonotoneModeNonStrict}
 
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
-	result := partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
-	require.True(t, slices.Equal(result, partitionRangeOR{{0, 1}}))
+	result := rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
+	require.True(t, slices.Equal(result, rule.PartitionRangeOR{{0, 1}}))
 
 	queryExpr = tc.expr("d > '2018-03-08 00:00:00'")
-	result = partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
-	require.True(t, slices.Equal(result, partitionRangeOR{}))
+	result = rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
+	require.True(t, slices.Equal(result, rule.PartitionRangeOR{}))
 
 	// For the following case:
 	// CREATE TABLE quarterly_report_status (
@@ -64,105 +66,105 @@ func TestCanBePrune(t *testing.T) {
 	// 	PARTITION p3 VALUES LESS THAN (MAXVALUE)
 	// );
 	tc = prepareTestCtx(t, "create table t (report_updated timestamp)", "unix_timestamp(report_updated)")
-	lessThan = lessThanDataInt{data: []int64{1199145600, 1207008000, 1262304000, 0}, maxvalue: true}
-	pruner = &rangePruner{lessThan, tc.col, tc.fn, monotoneModeStrict}
+	lessThan = rule.LessThanDataInt{Data: []int64{1199145600, 1207008000, 1262304000, 0}, Maxvalue: true}
+	pruner = &rule.RangePruner{lessThan, tc.col, tc.fn, rule.MonotoneModeStrict}
 
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
-	result = partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
-	require.True(t, slices.Equal(result, partitionRangeOR{{2, 4}}))
+	result = rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
+	require.True(t, slices.Equal(result, rule.PartitionRangeOR{{2, 4}}))
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
-	partitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, fullRange(len(lessThan.data)))
+	rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
 	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
-	// require.True(t, slices.Equal(result, partitionRangeOR{{2, 4}}))
+	// require.True(t, slices.Equal(result,rule.PartitionRangeOR{{2, 4}}))
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
 	// Because unix_timestamp('2008-05-01 00:00:00') is fold to constant int 1564761600, and compare it with timestamp (report_updated)
 	// need to convert 1564761600 to a timestamp, during that step, an error happen and the result is set to <nil>
 }
 
 func TestPruneUseBinarySearchSigned(t *testing.T) {
-	lessThan := lessThanDataInt{data: []int64{-3, 4, 7, 11, 14, 17, 0}, maxvalue: true, unsigned: false}
+	lessThan := rule.LessThanDataInt{Data: []int64{-3, 4, 7, 11, 14, 17, 0}, Maxvalue: true, Unsigned: false}
 	cases := []struct {
-		input  dataForPrune
-		result partitionRange
+		input  rule.DataForPrune
+		result rule.PartitionRange
 	}{
-		{dataForPrune{ast.EQ, 66, false}, partitionRange{6, 7}},
-		{dataForPrune{ast.EQ, 14, false}, partitionRange{5, 6}},
-		{dataForPrune{ast.EQ, 10, false}, partitionRange{3, 4}},
-		{dataForPrune{ast.EQ, 3, false}, partitionRange{1, 2}},
-		{dataForPrune{ast.EQ, -4, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.LT, 66, false}, partitionRange{0, 7}},
-		{dataForPrune{ast.LT, 14, false}, partitionRange{0, 5}},
-		{dataForPrune{ast.LT, 10, false}, partitionRange{0, 4}},
-		{dataForPrune{ast.LT, 3, false}, partitionRange{0, 2}},
-		{dataForPrune{ast.LT, -4, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.GE, 66, false}, partitionRange{6, 7}},
-		{dataForPrune{ast.GE, 14, false}, partitionRange{5, 7}},
-		{dataForPrune{ast.GE, 10, false}, partitionRange{3, 7}},
-		{dataForPrune{ast.GE, 3, false}, partitionRange{1, 7}},
-		{dataForPrune{ast.GE, -4, false}, partitionRange{0, 7}},
-		{dataForPrune{ast.GT, 66, false}, partitionRange{6, 7}},
-		{dataForPrune{ast.GT, 14, false}, partitionRange{5, 7}},
-		{dataForPrune{ast.GT, 10, false}, partitionRange{4, 7}},
-		{dataForPrune{ast.GT, 3, false}, partitionRange{2, 7}},
-		{dataForPrune{ast.GT, 2, false}, partitionRange{1, 7}},
-		{dataForPrune{ast.GT, -4, false}, partitionRange{1, 7}},
-		{dataForPrune{ast.LE, 66, false}, partitionRange{0, 7}},
-		{dataForPrune{ast.LE, 14, false}, partitionRange{0, 6}},
-		{dataForPrune{ast.LE, 10, false}, partitionRange{0, 4}},
-		{dataForPrune{ast.LE, 3, false}, partitionRange{0, 2}},
-		{dataForPrune{ast.LE, -4, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.IsNull, 0, false}, partitionRange{0, 1}},
-		{dataForPrune{"illegal", 0, false}, partitionRange{0, 7}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 66}, result: rule.PartitionRange{Start: 6, End: 7}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 14}, result: rule.PartitionRange{Start: 5, End: 6}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 10}, result: rule.PartitionRange{Start: 3, End: 4}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 3}, result: rule.PartitionRange{Start: 1, End: 2}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: -4}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 66}, result: rule.PartitionRange{End: 7}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 14}, result: rule.PartitionRange{End: 5}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 10}, result: rule.PartitionRange{End: 4}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 3}, result: rule.PartitionRange{End: 2}},
+		{input: rule.DataForPrune{Op: ast.LT, C: -4}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 66}, result: rule.PartitionRange{Start: 6, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 14}, result: rule.PartitionRange{Start: 5, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 10}, result: rule.PartitionRange{Start: 3, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 3}, result: rule.PartitionRange{Start: 1, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GE, C: -4}, result: rule.PartitionRange{End: 7}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 66}, result: rule.PartitionRange{Start: 6, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 14}, result: rule.PartitionRange{Start: 5, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 10}, result: rule.PartitionRange{Start: 4, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 3}, result: rule.PartitionRange{Start: 2, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 2}, result: rule.PartitionRange{Start: 1, End: 7}},
+		{input: rule.DataForPrune{Op: ast.GT, C: -4}, result: rule.PartitionRange{Start: 1, End: 7}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 66}, result: rule.PartitionRange{End: 7}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 14}, result: rule.PartitionRange{End: 6}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 10}, result: rule.PartitionRange{End: 4}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 3}, result: rule.PartitionRange{End: 2}},
+		{input: rule.DataForPrune{Op: ast.LE, C: -4}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.IsNull}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: "illegal"}, result: rule.PartitionRange{End: 7}},
 	}
 
 	for i, ca := range cases {
-		start, end := pruneUseBinarySearch(lessThan, ca.input)
-		require.Equalf(t, ca.result.start, start, "fail = %d", i)
-		require.Equalf(t, ca.result.end, end, "fail = %d", i)
+		start, end := rule.PruneUseBinarySearch(lessThan, ca.input)
+		require.Equalf(t, ca.result.Start, start, "fail = %d", i)
+		require.Equalf(t, ca.result.End, end, "fail = %d", i)
 	}
 }
 
 func TestPruneUseBinarySearchUnSigned(t *testing.T) {
-	lessThan := lessThanDataInt{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true, unsigned: true}
+	lessThan := rule.LessThanDataInt{Data: []int64{4, 7, 11, 14, 17, 0}, Maxvalue: true, Unsigned: true}
 	cases := []struct {
-		input  dataForPrune
-		result partitionRange
+		input  rule.DataForPrune
+		result rule.PartitionRange
 	}{
-		{dataForPrune{ast.EQ, 66, false}, partitionRange{5, 6}},
-		{dataForPrune{ast.EQ, 14, false}, partitionRange{4, 5}},
-		{dataForPrune{ast.EQ, 10, false}, partitionRange{2, 3}},
-		{dataForPrune{ast.EQ, 3, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.EQ, -3, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.LT, 66, false}, partitionRange{0, 6}},
-		{dataForPrune{ast.LT, 14, false}, partitionRange{0, 4}},
-		{dataForPrune{ast.LT, 10, false}, partitionRange{0, 3}},
-		{dataForPrune{ast.LT, 3, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.LT, -3, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.GE, 66, false}, partitionRange{5, 6}},
-		{dataForPrune{ast.GE, 14, false}, partitionRange{4, 6}},
-		{dataForPrune{ast.GE, 10, false}, partitionRange{2, 6}},
-		{dataForPrune{ast.GE, 3, false}, partitionRange{0, 6}},
-		{dataForPrune{ast.GE, -3, false}, partitionRange{0, 6}},
-		{dataForPrune{ast.GT, 66, false}, partitionRange{5, 6}},
-		{dataForPrune{ast.GT, 14, false}, partitionRange{4, 6}},
-		{dataForPrune{ast.GT, 10, false}, partitionRange{3, 6}},
-		{dataForPrune{ast.GT, 3, false}, partitionRange{1, 6}},
-		{dataForPrune{ast.GT, 2, false}, partitionRange{0, 6}},
-		{dataForPrune{ast.GT, -3, false}, partitionRange{0, 6}},
-		{dataForPrune{ast.LE, 66, false}, partitionRange{0, 6}},
-		{dataForPrune{ast.LE, 14, false}, partitionRange{0, 5}},
-		{dataForPrune{ast.LE, 10, false}, partitionRange{0, 3}},
-		{dataForPrune{ast.LE, 3, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.LE, -3, false}, partitionRange{0, 1}},
-		{dataForPrune{ast.IsNull, 0, false}, partitionRange{0, 1}},
-		{dataForPrune{"illegal", 0, false}, partitionRange{0, 6}},
+		{rule.DataForPrune{ast.EQ, 66, false}, rule.PartitionRange{5, 6}},
+		{rule.DataForPrune{ast.EQ, 14, false}, rule.PartitionRange{4, 5}},
+		{rule.DataForPrune{ast.EQ, 10, false}, rule.PartitionRange{2, 3}},
+		{rule.DataForPrune{ast.EQ, 3, false}, rule.PartitionRange{0, 1}},
+		{rule.DataForPrune{ast.EQ, -3, false}, rule.PartitionRange{0, 1}},
+		{rule.DataForPrune{ast.LT, 66, false}, rule.PartitionRange{0, 6}},
+		{rule.DataForPrune{ast.LT, 14, false}, rule.PartitionRange{0, 4}},
+		{rule.DataForPrune{ast.LT, 10, false}, rule.PartitionRange{0, 3}},
+		{rule.DataForPrune{ast.LT, 3, false}, rule.PartitionRange{0, 1}},
+		{rule.DataForPrune{ast.LT, -3, false}, rule.PartitionRange{0, 1}},
+		{rule.DataForPrune{ast.GE, 66, false}, rule.PartitionRange{5, 6}},
+		{rule.DataForPrune{ast.GE, 14, false}, rule.PartitionRange{4, 6}},
+		{rule.DataForPrune{ast.GE, 10, false}, rule.PartitionRange{2, 6}},
+		{rule.DataForPrune{ast.GE, 3, false}, rule.PartitionRange{0, 6}},
+		{rule.DataForPrune{ast.GE, -3, false}, rule.PartitionRange{0, 6}},
+		{rule.DataForPrune{ast.GT, 66, false}, rule.PartitionRange{5, 6}},
+		{rule.DataForPrune{ast.GT, 14, false}, rule.PartitionRange{4, 6}},
+		{rule.DataForPrune{ast.GT, 10, false}, rule.PartitionRange{3, 6}},
+		{rule.DataForPrune{ast.GT, 3, false}, rule.PartitionRange{1, 6}},
+		{rule.DataForPrune{ast.GT, 2, false}, rule.PartitionRange{0, 6}},
+		{rule.DataForPrune{ast.GT, -3, false}, rule.PartitionRange{0, 6}},
+		{rule.DataForPrune{ast.LE, 66, false}, rule.PartitionRange{0, 6}},
+		{rule.DataForPrune{ast.LE, 14, false}, rule.PartitionRange{0, 5}},
+		{rule.DataForPrune{ast.LE, 10, false}, rule.PartitionRange{0, 3}},
+		{rule.DataForPrune{ast.LE, 3, false}, rule.PartitionRange{0, 1}},
+		{rule.DataForPrune{ast.LE, -3, false}, rule.PartitionRange{0, 1}},
+		{rule.DataForPrune{ast.IsNull, 0, false}, rule.PartitionRange{0, 1}},
+		{rule.DataForPrune{"illegal", 0, false}, rule.PartitionRange{0, 6}},
 	}
 
 	for i, ca := range cases {
-		start, end := pruneUseBinarySearch(lessThan, ca.input)
-		require.Equalf(t, ca.result.start, start, "fail = %d", i)
-		require.Equalf(t, ca.result.end, end, "fail = %d", i)
+		start, end := rule.PruneUseBinarySearch(lessThan, ca.input)
+		require.Equalf(t, ca.result.Start, start, "fail = %d", i)
+		require.Equalf(t, ca.result.End, end, "fail = %d", i)
 	}
 }
 
@@ -193,7 +195,7 @@ func prepareBenchCtx(createTable string, partitionExpr string) *testCtx {
 	}
 	schema := expression.NewSchema(columns...)
 
-	col, fn, _, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
+	col, fn, _, err := rule.MakePartitionByFnCol(sctx, columns, names, partitionExpr)
 	if err != nil {
 		return nil
 	}
@@ -219,7 +221,7 @@ func prepareTestCtx(t *testing.T, createTable string, partitionExpr string) *tes
 	require.NoError(t, err)
 	schema := expression.NewSchema(columns...)
 
-	col, fn, _, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
+	col, fn, _, err := rule.MakePartitionByFnCol(sctx, columns, names, partitionExpr)
 	require.NoError(t, err)
 	return &testCtx{
 		require: require.New(t),
@@ -240,94 +242,94 @@ func (tc *testCtx) expr(expr string) expression.Expression {
 
 func TestPartitionRangeForExpr(t *testing.T) {
 	tc := prepareTestCtx(t, "create table t (a int)", "a")
-	lessThan := lessThanDataInt{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
-	pruner := &rangePruner{lessThan, tc.columns[0], nil, monotoneModeInvalid}
+	lessThan := rule.LessThanDataInt{Data: []int64{4, 7, 11, 14, 17, 0}, Maxvalue: true}
+	pruner := &rule.RangePruner{lessThan, tc.columns[0], nil, rule.MonotoneModeInvalid}
 	cases := []struct {
 		input  string
-		result partitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{"a < 2 and a > 10", partitionRangeOR{}},
-		{"a > 3", partitionRangeOR{{1, 6}}},
-		{"a < 3", partitionRangeOR{{0, 1}}},
-		{"a >= 11", partitionRangeOR{{3, 6}}},
-		{"a > 11", partitionRangeOR{{3, 6}}},
-		{"a < 11", partitionRangeOR{{0, 3}}},
-		{"a = 16", partitionRangeOR{{4, 5}}},
-		{"a > 66", partitionRangeOR{{5, 6}}},
-		{"a > 2 and a < 10", partitionRangeOR{{0, 3}}},
-		{"a < 2 or a >= 15", partitionRangeOR{{0, 1}, {4, 6}}},
-		{"a is null", partitionRangeOR{{0, 1}}},
-		{"12 > a", partitionRangeOR{{0, 4}}},
-		{"4 <= a", partitionRangeOR{{1, 6}}},
+		{"a < 2 and a > 10", rule.PartitionRangeOR{}},
+		{"a > 3", rule.PartitionRangeOR{{1, 6}}},
+		{"a < 3", rule.PartitionRangeOR{{0, 1}}},
+		{"a >= 11", rule.PartitionRangeOR{{3, 6}}},
+		{"a > 11", rule.PartitionRangeOR{{3, 6}}},
+		{"a < 11", rule.PartitionRangeOR{{0, 3}}},
+		{"a = 16", rule.PartitionRangeOR{{4, 5}}},
+		{"a > 66", rule.PartitionRangeOR{{5, 6}}},
+		{"a > 2 and a < 10", rule.PartitionRangeOR{{0, 3}}},
+		{"a < 2 or a >= 15", rule.PartitionRangeOR{{0, 1}, {4, 6}}},
+		{"a is null", rule.PartitionRangeOR{{0, 1}}},
+		{"12 > a", rule.PartitionRangeOR{{0, 4}}},
+		{"4 <= a", rule.PartitionRangeOR{{1, 6}}},
 	}
 
 	for _, ca := range cases {
 		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
 		require.NoError(t, err)
-		result := fullRange(lessThan.length())
-		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
+		result := rule.GetFullRange(lessThan.Length())
+		result = rule.PartitionRangeForExpr(tc.sctx, expr, pruner, result)
 		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v", ca.input)
 	}
 }
 
 func TestPartitionRangeOperation(t *testing.T) {
 	testIntersectionRange := []struct {
-		input1 partitionRangeOR
-		input2 partitionRange
-		result partitionRangeOR
+		input1 rule.PartitionRangeOR
+		input2 rule.PartitionRange
+		result rule.PartitionRangeOR
 	}{
-		{input1: partitionRangeOR{{0, 3}, {6, 12}},
-			input2: partitionRange{4, 7},
-			result: partitionRangeOR{{6, 7}}},
-		{input1: partitionRangeOR{{0, 5}},
-			input2: partitionRange{6, 7},
-			result: partitionRangeOR{}},
-		{input1: partitionRangeOR{{0, 4}, {6, 7}, {8, 11}},
-			input2: partitionRange{3, 9},
-			result: partitionRangeOR{{3, 4}, {6, 7}, {8, 9}}},
+		{input1: rule.PartitionRangeOR{{0, 3}, {6, 12}},
+			input2: rule.PartitionRange{Start: 4, End: 7},
+			result: rule.PartitionRangeOR{{6, 7}}},
+		{input1: rule.PartitionRangeOR{{0, 5}},
+			input2: rule.PartitionRange{Start: 6, End: 7},
+			result: rule.PartitionRangeOR{}},
+		{input1: rule.PartitionRangeOR{{0, 4}, {6, 7}, {8, 11}},
+			input2: rule.PartitionRange{Start: 3, End: 9},
+			result: rule.PartitionRangeOR{{3, 4}, {6, 7}, {8, 9}}},
 	}
 	for i, ca := range testIntersectionRange {
-		result := ca.input1.intersectionRange(ca.input2.start, ca.input2.end)
+		result := ca.input1.IntersectionRange(ca.input2.Start, ca.input2.End)
 		require.Truef(t, slices.Equal(ca.result, result), "fail = %d", i)
 	}
 
 	testIntersection := []struct {
-		input1 partitionRangeOR
-		input2 partitionRangeOR
-		result partitionRangeOR
+		input1 rule.PartitionRangeOR
+		input2 rule.PartitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{input1: partitionRangeOR{{0, 3}, {6, 12}},
-			input2: partitionRangeOR{{4, 7}},
-			result: partitionRangeOR{{6, 7}}},
-		{input1: partitionRangeOR{{4, 7}},
-			input2: partitionRangeOR{{0, 3}, {6, 12}},
-			result: partitionRangeOR{{6, 7}}},
-		{input1: partitionRangeOR{{4, 7}, {8, 10}},
-			input2: partitionRangeOR{{0, 5}, {6, 12}},
-			result: partitionRangeOR{{4, 5}, {6, 7}, {8, 10}}},
+		{input1: rule.PartitionRangeOR{{0, 3}, {6, 12}},
+			input2: rule.PartitionRangeOR{{4, 7}},
+			result: rule.PartitionRangeOR{{6, 7}}},
+		{input1: rule.PartitionRangeOR{{4, 7}},
+			input2: rule.PartitionRangeOR{{0, 3}, {6, 12}},
+			result: rule.PartitionRangeOR{{6, 7}}},
+		{input1: rule.PartitionRangeOR{{4, 7}, {8, 10}},
+			input2: rule.PartitionRangeOR{{0, 5}, {6, 12}},
+			result: rule.PartitionRangeOR{{4, 5}, {6, 7}, {8, 10}}},
 	}
 	for i, ca := range testIntersection {
-		result := ca.input1.intersection(ca.input2)
+		result := ca.input1.Intersection(ca.input2)
 		require.Truef(t, slices.Equal(ca.result, result), "fail = %d", i)
 	}
 
 	testUnion := []struct {
-		input1 partitionRangeOR
-		input2 partitionRangeOR
-		result partitionRangeOR
+		input1 rule.PartitionRangeOR
+		input2 rule.PartitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{input1: partitionRangeOR{{0, 1}, {2, 7}},
-			input2: partitionRangeOR{{3, 5}},
-			result: partitionRangeOR{{0, 1}, {2, 7}}},
-		{input1: partitionRangeOR{{2, 7}},
-			input2: partitionRangeOR{{0, 3}, {4, 12}},
-			result: partitionRangeOR{{0, 12}}},
-		{input1: partitionRangeOR{{4, 7}, {8, 10}},
-			input2: partitionRangeOR{{0, 5}},
-			result: partitionRangeOR{{0, 7}, {8, 10}}},
+		{input1: rule.PartitionRangeOR{{0, 1}, {2, 7}},
+			input2: rule.PartitionRangeOR{{3, 5}},
+			result: rule.PartitionRangeOR{{0, 1}, {2, 7}}},
+		{input1: rule.PartitionRangeOR{{2, 7}},
+			input2: rule.PartitionRangeOR{{0, 3}, {4, 12}},
+			result: rule.PartitionRangeOR{{0, 12}}},
+		{input1: rule.PartitionRangeOR{{4, 7}, {8, 10}},
+			input2: rule.PartitionRangeOR{{0, 5}},
+			result: rule.PartitionRangeOR{{0, 7}, {8, 10}}},
 	}
 	for i, ca := range testUnion {
-		result := ca.input1.union(ca.input2)
+		result := ca.input1.Union(ca.input2)
 		require.Truef(t, slices.Equal(ca.result, result), "fail = %d", i)
 	}
 }
@@ -348,31 +350,31 @@ func TestPartitionRangePruner2VarChar(t *testing.T) {
 		lessThan[i] = e
 	}
 
-	pruner := &rangeColumnsPruner{lessThan, tc.columns}
+	pruner := &rule.RangeColumnsPruner{lessThan, tc.columns}
 	cases := []struct {
 		input  string
-		result partitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{"a > 'g'", partitionRangeOR{{2, 6}}},
-		{"a < 'h'", partitionRangeOR{{0, 3}}},
-		{"a >= 'm'", partitionRangeOR{{4, 6}}},
-		{"a > 'm'", partitionRangeOR{{4, 6}}},
-		{"a < 'f'", partitionRangeOR{{0, 2}}},
-		{"a = 'c'", partitionRangeOR{{1, 2}}},
-		{"a > 't'", partitionRangeOR{{5, 6}}},
-		{"a > 'c' and a < 'q'", partitionRangeOR{{1, 5}}},
-		{"a < 'l' or a >= 'w'", partitionRangeOR{{0, 4}, {5, 6}}},
-		{"a is null", partitionRangeOR{{0, 1}}},
-		{"'mm' > a", partitionRangeOR{{0, 5}}},
-		{"'f' <= a", partitionRangeOR{{2, 6}}},
-		{"'f' >= a", partitionRangeOR{{0, 3}}},
+		{"a > 'g'", rule.PartitionRangeOR{{2, 6}}},
+		{"a < 'h'", rule.PartitionRangeOR{{0, 3}}},
+		{"a >= 'm'", rule.PartitionRangeOR{{4, 6}}},
+		{"a > 'm'", rule.PartitionRangeOR{{4, 6}}},
+		{"a < 'f'", rule.PartitionRangeOR{{0, 2}}},
+		{"a = 'c'", rule.PartitionRangeOR{{1, 2}}},
+		{"a > 't'", rule.PartitionRangeOR{{5, 6}}},
+		{"a > 'c' and a < 'q'", rule.PartitionRangeOR{{1, 5}}},
+		{"a < 'l' or a >= 'w'", rule.PartitionRangeOR{{0, 4}, {5, 6}}},
+		{"a is null", rule.PartitionRangeOR{{0, 1}}},
+		{"'mm' > a", rule.PartitionRangeOR{{0, 5}}},
+		{"'f' <= a", rule.PartitionRangeOR{{2, 6}}},
+		{"'f' >= a", rule.PartitionRangeOR{{0, 3}}},
 	}
 
 	for _, ca := range cases {
 		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
 		require.NoError(t, err)
-		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
+		result := rule.GetFullRange(len(lessThan))
+		result = rule.PartitionRangeForExpr(tc.sctx, expr, pruner, result)
 		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v", ca.input)
 	}
 }
@@ -396,33 +398,33 @@ func TestPartitionRangePruner2CharWithCollation(t *testing.T) {
 		lessThan[i] = e
 	}
 
-	pruner := &rangeColumnsPruner{lessThan, tc.columns}
+	pruner := &rule.RangeColumnsPruner{LessThan: lessThan, PartCols: tc.columns}
 	cases := []struct {
 		input  string
-		result partitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{"a > 'G'", partitionRangeOR{{2, 6}}},
-		{"a > 'g'", partitionRangeOR{{2, 6}}},
-		{"a < 'h'", partitionRangeOR{{0, 3}}},
-		{"a >= 'M'", partitionRangeOR{{4, 6}}},
-		{"a > 'm'", partitionRangeOR{{4, 6}}},
-		{"a < 'F'", partitionRangeOR{{0, 2}}},
-		{"a = 'C'", partitionRangeOR{{1, 2}}},
-		{"a > 't'", partitionRangeOR{{5, 6}}},
-		{"a > 'C' and a < 'q'", partitionRangeOR{{1, 5}}},
-		{"a > 'c' and a < 'Q'", partitionRangeOR{{1, 5}}},
-		{"a < 'l' or a >= 'W'", partitionRangeOR{{0, 4}, {5, 6}}},
-		{"a is null", partitionRangeOR{{0, 1}}},
-		{"'Mm' > a", partitionRangeOR{{0, 5}}},
-		{"'f' <= a", partitionRangeOR{{2, 6}}},
-		{"'f' >= a", partitionRangeOR{{0, 3}}},
+		{"a > 'G'", rule.PartitionRangeOR{{2, 6}}},
+		{"a > 'g'", rule.PartitionRangeOR{{2, 6}}},
+		{"a < 'h'", rule.PartitionRangeOR{{0, 3}}},
+		{"a >= 'M'", rule.PartitionRangeOR{{4, 6}}},
+		{"a > 'm'", rule.PartitionRangeOR{{4, 6}}},
+		{"a < 'F'", rule.PartitionRangeOR{{0, 2}}},
+		{"a = 'C'", rule.PartitionRangeOR{{1, 2}}},
+		{"a > 't'", rule.PartitionRangeOR{{5, 6}}},
+		{"a > 'C' and a < 'q'", rule.PartitionRangeOR{{1, 5}}},
+		{"a > 'c' and a < 'Q'", rule.PartitionRangeOR{{1, 5}}},
+		{"a < 'l' or a >= 'W'", rule.PartitionRangeOR{{0, 4}, {5, 6}}},
+		{"a is null", rule.PartitionRangeOR{{0, 1}}},
+		{"'Mm' > a", rule.PartitionRangeOR{{0, 5}}},
+		{"'f' <= a", rule.PartitionRangeOR{{2, 6}}},
+		{"'f' >= a", rule.PartitionRangeOR{{0, 3}}},
 	}
 
 	for _, ca := range cases {
 		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
 		require.NoError(t, err)
-		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
+		result := rule.GetFullRange(len(lessThan))
+		result = rule.PartitionRangeForExpr(tc.sctx, expr, pruner, result)
 		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
@@ -453,32 +455,32 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 		lessThan[i] = e
 	}
 
-	pruner := &rangeColumnsPruner{lessThan, tc.columns}
+	pruner := &rule.RangeColumnsPruner{LessThan: lessThan, PartCols: tc.columns}
 	cases := []struct {
 		input  string
-		result partitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{"a < '1943-02-12'", partitionRangeOR{{0, 1}}},
-		{"a >= '19690213'", partitionRangeOR{{0, 7}}},
-		{"a > '2003-03-13'", partitionRangeOR{{2, 7}}},
-		{"a < '2006-02-03'", partitionRangeOR{{0, 3}}},
-		{"a = '20070707'", partitionRangeOR{{2, 3}}},
-		{"a > '1949-10-10'", partitionRangeOR{{0, 7}}},
-		{"a > '2016-02-01' and a < '20000103'", partitionRangeOR{}},
-		{"a < '19691112' or a >= '2019-09-18'", partitionRangeOR{{0, 1}, {5, 7}}},
-		{"a is null", partitionRangeOR{{0, 1}}},
-		{"'2003-02-27' >= a", partitionRangeOR{{0, 3}}},
-		{"'20141024' < a", partitionRangeOR{{4, 7}}},
-		{"'2003-03-30' > a", partitionRangeOR{{0, 3}}},
-		{"'2003-03-30' < a AND a < '20080808'", partitionRangeOR{{2, 4}}},
-		{"a between '2003-03-30' AND '20080808'", partitionRangeOR{{2, 4}}},
+		{"a < '1943-02-12'", rule.PartitionRangeOR{{0, 1}}},
+		{"a >= '19690213'", rule.PartitionRangeOR{{0, 7}}},
+		{"a > '2003-03-13'", rule.PartitionRangeOR{{2, 7}}},
+		{"a < '2006-02-03'", rule.PartitionRangeOR{{0, 3}}},
+		{"a = '20070707'", rule.PartitionRangeOR{{2, 3}}},
+		{"a > '1949-10-10'", rule.PartitionRangeOR{{0, 7}}},
+		{"a > '2016-02-01' and a < '20000103'", rule.PartitionRangeOR{}},
+		{"a < '19691112' or a >= '2019-09-18'", rule.PartitionRangeOR{{0, 1}, {5, 7}}},
+		{"a is null", rule.PartitionRangeOR{{0, 1}}},
+		{"'2003-02-27' >= a", rule.PartitionRangeOR{{0, 3}}},
+		{"'20141024' < a", rule.PartitionRangeOR{{4, 7}}},
+		{"'2003-03-30' > a", rule.PartitionRangeOR{{0, 3}}},
+		{"'2003-03-30' < a AND a < '20080808'", rule.PartitionRangeOR{{2, 4}}},
+		{"a between '2003-03-30' AND '20080808'", rule.PartitionRangeOR{{2, 4}}},
 	}
 
 	for _, ca := range cases {
 		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
 		require.NoError(t, err)
-		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr, pruner, result)
+		result := rule.GetFullRange(len(lessThan))
+		result = rule.PartitionRangeForExpr(tc.sctx, expr, pruner, result)
 		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v, %v != %v", ca.input, ca.result, result)
 	}
 }
@@ -516,49 +518,49 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		}
 		lessThan = append(lessThan, l)
 	}
-	pruner := &rangeColumnsPruner{lessThan, tc.columns[:2]}
+	pruner := &rule.RangeColumnsPruner{LessThan: lessThan, PartCols: tc.columns[:2]}
 	cases := []struct {
 		input  string
-		result partitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{"a < 1 and a > 1", partitionRangeOR{}},
-		{"c = 3", partitionRangeOR{{0, len(partDefs)}}},
-		{"b > 3 AND c = 3", partitionRangeOR{{0, len(partDefs)}}},
-		{"a = 5 AND c = 3", partitionRangeOR{{9, 10}}},
-		{"a = 4 AND c = 3", partitionRangeOR{{1, 9}}},
-		{"b > 3", partitionRangeOR{{0, len(partDefs)}}},
-		{"a > 3", partitionRangeOR{{1, len(partDefs)}}},
-		{"a < 3", partitionRangeOR{{0, 1}}},
-		{"a >= 11", partitionRangeOR{{10, len(partDefs)}}},
-		{"a > 11", partitionRangeOR{{11, len(partDefs)}}},
-		{"a > 4", partitionRangeOR{{9, len(partDefs)}}},
-		{"a >= 4", partitionRangeOR{{1, len(partDefs)}}},
-		{"a < 11", partitionRangeOR{{0, 11}}},
-		{"a = 16", partitionRangeOR{{12, 13}}},
-		{"a > 66", partitionRangeOR{{13, 14}}},
-		{"a > 2 and a < 10", partitionRangeOR{{0, 11}}},
-		{"a < 2 or a >= 15", partitionRangeOR{{0, 1}, {12, 14}}},
-		{"a is null", partitionRangeOR{{0, 1}}},
-		{"12 > a", partitionRangeOR{{0, 12}}},
-		{"4 <= a", partitionRangeOR{{1, 14}}},
-		{"(a,b) < (4,4)", partitionRangeOR{{0, 4}}},
-		{"(a,b) = (4,4)", partitionRangeOR{{4, 5}}},
-		{"a < 4 OR (a = 4 AND b < 4)", partitionRangeOR{{0, 4}}},
-		{"(a,b,c) < (4,4,4)", partitionRangeOR{{0, 5}}},
-		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", partitionRangeOR{{0, 5}}},
-		{"(a,b,c) >= (4,7,4)", partitionRangeOR{{5, len(partDefs)}}},
-		{"a > 4 or (a= 4 and b > 7) or (a = 4 and b = 7 and c >= 4)", partitionRangeOR{{5, len(partDefs)}}},
-		{"(a,b,c) = (4,7,4)", partitionRangeOR{{5, 6}}},
-		{"a < 2 and a > 10", partitionRangeOR{}},
-		{"a < 1 and a > 1", partitionRangeOR{}},
+		{"a < 1 and a > 1", rule.PartitionRangeOR{}},
+		{"c = 3", rule.PartitionRangeOR{{0, len(partDefs)}}},
+		{"b > 3 AND c = 3", rule.PartitionRangeOR{{0, len(partDefs)}}},
+		{"a = 5 AND c = 3", rule.PartitionRangeOR{{9, 10}}},
+		{"a = 4 AND c = 3", rule.PartitionRangeOR{{1, 9}}},
+		{"b > 3", rule.PartitionRangeOR{{0, len(partDefs)}}},
+		{"a > 3", rule.PartitionRangeOR{{1, len(partDefs)}}},
+		{"a < 3", rule.PartitionRangeOR{{0, 1}}},
+		{"a >= 11", rule.PartitionRangeOR{{10, len(partDefs)}}},
+		{"a > 11", rule.PartitionRangeOR{{11, len(partDefs)}}},
+		{"a > 4", rule.PartitionRangeOR{{9, len(partDefs)}}},
+		{"a >= 4", rule.PartitionRangeOR{{1, len(partDefs)}}},
+		{"a < 11", rule.PartitionRangeOR{{0, 11}}},
+		{"a = 16", rule.PartitionRangeOR{{12, 13}}},
+		{"a > 66", rule.PartitionRangeOR{{13, 14}}},
+		{"a > 2 and a < 10", rule.PartitionRangeOR{{0, 11}}},
+		{"a < 2 or a >= 15", rule.PartitionRangeOR{{0, 1}, {12, 14}}},
+		{"a is null", rule.PartitionRangeOR{{0, 1}}},
+		{"12 > a", rule.PartitionRangeOR{{0, 12}}},
+		{"4 <= a", rule.PartitionRangeOR{{1, 14}}},
+		{"(a,b) < (4,4)", rule.PartitionRangeOR{{0, 4}}},
+		{"(a,b) = (4,4)", rule.PartitionRangeOR{{4, 5}}},
+		{"a < 4 OR (a = 4 AND b < 4)", rule.PartitionRangeOR{{0, 4}}},
+		{"(a,b,c) < (4,4,4)", rule.PartitionRangeOR{{0, 5}}},
+		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", rule.PartitionRangeOR{{0, 5}}},
+		{"(a,b,c) >= (4,7,4)", rule.PartitionRangeOR{{5, len(partDefs)}}},
+		{"a > 4 or (a= 4 and b > 7) or (a = 4 and b = 7 and c >= 4)", rule.PartitionRangeOR{{5, len(partDefs)}}},
+		{"(a,b,c) = (4,7,4)", rule.PartitionRangeOR{{5, 6}}},
+		{"a < 2 and a > 10", rule.PartitionRangeOR{}},
+		{"a < 1 and a > 1", rule.PartitionRangeOR{}},
 	}
 
 	for _, ca := range cases {
 		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
 		require.NoError(t, err)
-		result := fullRange(len(lessThan))
+		result := rule.GetFullRange(len(lessThan))
 		e := expression.SplitCNFItems(expr)
-		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
+		result = rule.PartitionRangeForCNFExpr(tc.sctx, e, pruner, result)
 		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
@@ -586,33 +588,33 @@ func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
 		}
 		lessThan = append(lessThan, l)
 	}
-	pruner := &rangeColumnsPruner{lessThan, tc.columns[:2]}
+	pruner := &rule.RangeColumnsPruner{LessThan: lessThan, PartCols: tc.columns[:2]}
 	cases := []struct {
 		input  string
-		result partitionRangeOR
+		result rule.PartitionRangeOR
 	}{
-		{"a = 'q'", partitionRangeOR{{1, 2}}},
-		{"a = 'Q'", partitionRangeOR{{1, 2}}},
-		{"a = 'a'", partitionRangeOR{{0, 1}}},
-		{"a = 'A'", partitionRangeOR{{0, 1}}},
-		{"a > 'a'", partitionRangeOR{{0, 2}}},
-		{"a > 'q'", partitionRangeOR{{1, 2}}},
-		{"a = 'i' and b = 'q'", partitionRangeOR{{1, 2}}},
-		{"a = 'i' and b = 'Q'", partitionRangeOR{{1, 2}}},
-		{"a = 'i' and b = 'a'", partitionRangeOR{{0, 1}}},
-		{"a = 'i' and b = 'A'", partitionRangeOR{{0, 1}}},
-		{"a = 'i' and b > 'a'", partitionRangeOR{{0, 2}}},
-		{"a = 'i' and b > 'q'", partitionRangeOR{{1, 2}}},
-		{"a = 'i' or a = 'h'", partitionRangeOR{{0, 2}}},
-		{"a = 'h' and a = 'j'", partitionRangeOR{}},
+		{"a = 'q'", rule.PartitionRangeOR{{1, 2}}},
+		{"a = 'Q'", rule.PartitionRangeOR{{1, 2}}},
+		{"a = 'a'", rule.PartitionRangeOR{{0, 1}}},
+		{"a = 'A'", rule.PartitionRangeOR{{0, 1}}},
+		{"a > 'a'", rule.PartitionRangeOR{{0, 2}}},
+		{"a > 'q'", rule.PartitionRangeOR{{1, 2}}},
+		{"a = 'i' and b = 'q'", rule.PartitionRangeOR{{1, 2}}},
+		{"a = 'i' and b = 'Q'", rule.PartitionRangeOR{{1, 2}}},
+		{"a = 'i' and b = 'a'", rule.PartitionRangeOR{{0, 1}}},
+		{"a = 'i' and b = 'A'", rule.PartitionRangeOR{{0, 1}}},
+		{"a = 'i' and b > 'a'", rule.PartitionRangeOR{{0, 2}}},
+		{"a = 'i' and b > 'q'", rule.PartitionRangeOR{{1, 2}}},
+		{"a = 'i' or a = 'h'", rule.PartitionRangeOR{{0, 2}}},
+		{"a = 'h' and a = 'j'", rule.PartitionRangeOR{}},
 	}
 
 	for _, ca := range cases {
 		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
 		require.NoError(t, err)
-		result := fullRange(len(lessThan))
+		result := rule.GetFullRange(len(lessThan))
 		e := expression.SplitCNFItems(expr)
-		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
+		result = rule.PartitionRangeForCNFExpr(tc.sctx, e, pruner, result)
 		require.Truef(t, slices.Equal(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
 }
@@ -642,19 +644,19 @@ func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
 		}
 		lessThan = append(lessThan, []*expression.Expression{e})
 	}
-	pruner := &rangeColumnsPruner{lessThan, tc.columns[:1]}
+	pruner := &rule.RangeColumnsPruner{LessThan: lessThan, PartCols: tc.columns[:1]}
 
 	expr, err := expression.ParseSimpleExpr(tc.sctx, "a > 11000", expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
 	if err != nil {
 		panic(err.Error())
 	}
-	result := fullRange(len(lessThan))
+	result := rule.GetFullRange(len(lessThan))
 	e := expression.SplitCNFItems(expr)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		result[0] = partitionRange{0, parts}
+		result[0] = rule.PartitionRange{End: parts}
 		result = result[:1]
-		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
+		result = rule.PartitionRangeForCNFExpr(tc.sctx, e, pruner, result)
 	}
 }
 
