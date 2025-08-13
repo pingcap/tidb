@@ -77,6 +77,7 @@ const (
 	flagConcurrencyPerStore      = "tikv-max-restore-concurrency"
 	flagAllowPITRFromIncremental = "allow-pitr-from-incremental"
 	flagFixCloudAdmin            = "fix-cloud-admin"
+	flagJustStuck                = "just-stuck"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -262,6 +263,8 @@ type RestoreConfig struct {
 
 	FixCloudAdmin string `json:"fix-cloud-admin" toml:"fix-cloud-admin"`
 
+	JustStuck bool `json:"just-stuck" toml:"just-stuck"`
+
 	// FullBackupStorage is used to  run `restore full` before `restore log`.
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
@@ -353,6 +356,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
 	flags.String(FlagKeyspaceName, "", "correspond to tidb config keyspace-name")
 	flags.String(flagFixCloudAdmin, "", "fix cloud admin")
+	flags.Bool(flagJustStuck, false, "stuck and exit")
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
@@ -438,6 +442,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	}
 
 	cfg.FixCloudAdmin, err = flags.GetString(flagFixCloudAdmin)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.JustStuck, err = flags.GetBool(flagJustStuck)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -863,6 +872,12 @@ func printRestoreMetrics() {
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
+	if cfg.JustStuck {
+		log.Info("stuck")
+		<-c.Done()
+		log.Info("exit")
+		return nil
+	}
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
