@@ -16,6 +16,7 @@ package physicalop
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	pkgutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -447,7 +449,7 @@ func (p *PhysicalIndexScan) AddSelectionConditionForGlobalIndex(ds *logicalop.Da
 	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
 	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
 	// For truncate/drop partitions, we should only return indexes where partitions still in public state.
-	idxArr, err := utilfuncp.PartitionPruning(ds.SCtx(), ds.Table.GetPartitionedTable(),
+	idxArr, err := partitionpruning.PartitionPruning(ds.SCtx(), ds.Table.GetPartitionedTable(),
 		physPlanPartInfo.PruningConds,
 		physPlanPartInfo.PartitionNames,
 		physPlanPartInfo.Columns,
@@ -580,7 +582,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          utilfuncp.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+		Columns:          pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIDs,
 	}

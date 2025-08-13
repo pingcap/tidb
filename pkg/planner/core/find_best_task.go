@@ -1718,7 +1718,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 		}
 		tblName := ds.TableInfo.Name
-		ds.PossibleAccessPaths, err = filterPathByIsolationRead(ds.SCtx(), ds.PossibleAccessPaths, tblName, ds.DBName)
+		ds.PossibleAccessPaths, err = util.FilterPathByIsolationRead(ds.SCtx(), ds.PossibleAccessPaths, tblName, ds.DBName)
 		if err != nil {
 			return nil, 1, err
 		}

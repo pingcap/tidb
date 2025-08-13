@@ -19,15 +19,15 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -406,6 +406,9 @@ var GetPlanCostVer14PhysicalApply func(pp base.PhysicalPlan, taskType property.T
 var GetPlanCostVer24PhysicalApply func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption) (costusage.CostVer2, error)
 
+// Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
+var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
@@ -421,6 +424,10 @@ var GetTaskPlanCost func(t base.Task, pop *optimizetrace.PhysicalOptimizeOp) (fl
 // CompareTaskCost export the compareTaskCost from core pkg for cascades usage.
 var CompareTaskCost func(curTask, bestTask base.Task, op *optimizetrace.PhysicalOptimizeOp) (
 	curIsBetter bool, err error)
+
+// GetPossibleAccessPaths is used in static pruning, when it is not needed, remove this func pointer.
+var GetPossibleAccessPaths func(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint,
+	tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error)
 
 // **************************************** plan clone related ********************************************
 
@@ -445,15 +452,3 @@ var DoOptimize func(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error)
-
-// Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
-var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
-
-// PartitionPruning is used to prune partitions of a physical plan.
-var PartitionPruning func(ctx base.PlanContext, tbl table.PartitionedTable,
-	conds []expression.Expression, partitionNames []ast.CIStr,
-	columns []*expression.Column, names types.NameSlice) ([]int, error)
-
-// ColumnsToProto is used to convert columns to proto.
-var ColumnsToProto func(columns []*model.ColumnInfo, pkIsHandle bool,
-	forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo

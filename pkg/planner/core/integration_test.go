@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -162,7 +162,7 @@ func TestPartitionPruningForEQ(t *testing.T) {
 		require.NoError(t, err)
 		// Even the partition is not monotonous, EQ condition should be prune!
 		// select * from t where a = '2020-01-01 00:00:00'
-		res, err := core.PartitionPruning(testKit.Session().GetPlanCtx(), pt, []expression.Expression{query}, nil, columns, names)
+		res, err := partitionpruning.PartitionPruning(testKit.Session().GetPlanCtx(), pt, []expression.Expression{query}, nil, columns, names)
 		require.NoError(t, err)
 		require.Len(t, res, 1)
 		require.Equal(t, 0, res[0])

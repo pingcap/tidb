@@ -17,6 +17,8 @@ package core
 import (
 	"cmp"
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -504,14 +506,14 @@ func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*
 
 func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []ast.CIStr,
 	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
-	idxArr, err := PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
+	idxArr, err := partitionpruning.PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
 	if err != nil {
 		return nil, err
 	}
 
 	pi := tbl.Meta().GetPartitionInfo()
 	var ret []table.PhysicalTable
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
+	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
 		ret = make([]table.PhysicalTable, 0, len(pi.Definitions))
 		for _, def := range pi.Definitions {
 			p := tbl.GetPartition(def.ID)

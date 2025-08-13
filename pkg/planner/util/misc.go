@@ -17,9 +17,13 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"iter"
 	"math"
 	"reflect"
+	"slices"
 	"time"
 	"unsafe"
 
@@ -378,4 +382,51 @@ func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
 	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(),
 		bctx.InExplainStmt, bctx.WarnHandler, bctx.ExtraWarnghandler, bctx.GroupConcatMaxLen)
+}
+
+// FilterPathByIsolationRead filter out AccessPath by isolation read engine requirement.
+func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblName ast.CIStr, dbName ast.CIStr) ([]*AccessPath, error) {
+	// TODO: filter paths with isolation read locations.
+	if metadef.IsSystemRelatedDB(dbName.L) {
+		return paths, nil
+	}
+	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
+	availableEngine := map[kv.StoreType]struct{}{}
+	var availableEngineStr string
+	for i := len(paths) - 1; i >= 0; i-- {
+		// availableEngineStr is for warning message.
+		if _, ok := availableEngine[paths[i].StoreType]; !ok {
+			availableEngine[paths[i].StoreType] = struct{}{}
+			if availableEngineStr != "" {
+				availableEngineStr += ", "
+			}
+			availableEngineStr += paths[i].StoreType.Name()
+		}
+		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
+			paths = slices.Delete(paths, i, i+1)
+		}
+	}
+	var err error
+	engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
+	if len(paths) == 0 {
+		helpMsg := ""
+		if engineVals == "tiflash" {
+			helpMsg = ". Please check tiflash replica"
+			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+				helpMsg += " or check if the query is not readonly and sql mode is strict"
+			}
+		}
+		err = plannererrors.ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
+			vardef.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
+	}
+	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
+		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
+				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", vardef.TiDBIsolationReadEngines, engineVals))
+		}
+	}
+	return paths, err
 }

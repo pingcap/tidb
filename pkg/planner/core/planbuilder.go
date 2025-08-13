@@ -1377,52 +1377,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	return available, nil
 }
 
-func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, tblName ast.CIStr, dbName ast.CIStr) ([]*util.AccessPath, error) {
-	// TODO: filter paths with isolation read locations.
-	if metadef.IsSystemRelatedDB(dbName.L) {
-		return paths, nil
-	}
-	isolationReadEngines := ctx.GetSessionVars().GetIsolationReadEngines()
-	availableEngine := map[kv.StoreType]struct{}{}
-	var availableEngineStr string
-	for i := len(paths) - 1; i >= 0; i-- {
-		// availableEngineStr is for warning message.
-		if _, ok := availableEngine[paths[i].StoreType]; !ok {
-			availableEngine[paths[i].StoreType] = struct{}{}
-			if availableEngineStr != "" {
-				availableEngineStr += ", "
-			}
-			availableEngineStr += paths[i].StoreType.Name()
-		}
-		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
-			paths = slices.Delete(paths, i, i+1)
-		}
-	}
-	var err error
-	engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
-	if len(paths) == 0 {
-		helpMsg := ""
-		if engineVals == "tiflash" {
-			helpMsg = ". Please check tiflash replica"
-			if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
-				helpMsg += " or check if the query is not readonly and sql mode is strict"
-			}
-		}
-		err = plannererrors.ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
-			vardef.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
-	}
-	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
-		if ctx.GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
-			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
-		} else {
-			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", vardef.TiDBIsolationReadEngines, engineVals))
-		}
-	}
-	return paths, err
-}
-
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths

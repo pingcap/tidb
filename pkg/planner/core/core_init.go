@@ -21,7 +21,6 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/atomic"
 )
@@ -134,11 +133,9 @@ func init() {
 	// for physical sequence
 	utilfuncp.Attach2Task4PhysicalSequence = attach2Task4PhysicalSequence
 
-	// for physicalIndexscan.
+	// for physicalIndexScan.
 	utilfuncp.GetPlanCostVer14PhysicalIndexScan = getPlanCostVer14PhysicalIndexScan
 	utilfuncp.GetPlanCostVer24PhysicalIndexScan = getPlanCostVer24PhysicalIndexScan
-	utilfuncp.PartitionPruning = PartitionPruning
-	utilfuncp.ColumnsToProto = util.ColumnsToProto
 	// for physical PhysicalTableScan
 	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
 	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan
@@ -150,6 +147,7 @@ func init() {
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
+	utilfuncp.GetPossibleAccessPaths = getPossibleAccessPaths
 
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource

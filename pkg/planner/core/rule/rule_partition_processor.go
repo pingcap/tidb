@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rule
 
 import (
 	"bytes"
@@ -222,7 +222,7 @@ func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
 				if rangeScalar < uint64(numPartitions) && !highIsNull && !lowIsNull {
 					for i := range rangeScalar + 1 {
 						idx := mathutil.Abs((posLow + int64(i)) % int64(numPartitions))
-						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+						if len(partitionNames) > 0 && !s.FindByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
 						used = append(used, int(idx))
@@ -266,7 +266,7 @@ func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
 			pos = 0
 		}
 		idx := mathutil.Abs(pos % int64(pi.Num))
-		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+		if len(partitionNames) > 0 && !s.FindByName(partitionNames, pi.Definitions[idx].Name.L) {
 			continue
 		}
 		used = append(used, int(idx))
@@ -347,7 +347,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 							// Keys maybe in a same partition, we should skip.
 							continue
 						}
-						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+						if len(partitionNames) > 0 && !s.FindByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
 						used = append(used, idx)
@@ -372,7 +372,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 			continue
 		}
 
-		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+		if len(partitionNames) > 0 && !s.FindByName(partitionNames, pi.Definitions[idx].Name.L) {
 			continue
 		}
 		// TODO: Also return an array of the column values, to avoid doing it again for static prune mode
@@ -404,14 +404,15 @@ func (s *PartitionProcessor) findUsedPartitions(ctx base.PlanContext,
 
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		return s.convertToIntSlice(or, pi, partitionNames), nil
+		return s.ConvertToIntSlice(or, pi, partitionNames), nil
 	}
 	slices.Sort(used)
 	used = slices.Compact(used)
 	return used, nil
 }
 
-func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []ast.CIStr) []int {
+// ConvertToIntSlice convert partition requirement to int slices.
+func (s *PartitionProcessor) ConvertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []ast.CIStr) []int {
 	if len(or) == 1 && or[0].start == 0 && or[0].end == len(pi.Definitions) {
 		if len(partitionNames) == 0 {
 			if len(pi.Definitions) == 1 {
@@ -424,7 +425,7 @@ func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 	ret := make([]int, 0, len(or))
 	for i := range or {
 		for pos := or[i].start; pos < or[i].end; pos++ {
-			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
+			if len(partitionNames) > 0 && !s.FindByName(partitionNames, pi.Definitions[pos].Name.L) {
 				continue
 			}
 			ret = append(ret, pos)
@@ -444,8 +445,8 @@ func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
 	return ret
 }
 
-// pruneHashOrKeyPartition is used to prune hash or key partition tables
-func (s *PartitionProcessor) pruneHashOrKeyPartition(ctx base.PlanContext, tbl table.Table, partitionNames []ast.CIStr,
+// PruneHashOrKeyPartition is used to prune hash or key partition tables
+func (s *PartitionProcessor) PruneHashOrKeyPartition(ctx base.PlanContext, tbl table.Table, partitionNames []ast.CIStr,
 	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	used, err := s.findUsedPartitions(ctx, tbl, partitionNames, conds, columns, names)
 	if err != nil {
@@ -507,7 +508,7 @@ func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource,
 		return nil, err
 	}
 
-	used, err := s.pruneHashOrKeyPartition(ds.SCtx(), ds.Table, ds.PartitionNames, ds.AllConds, ds.TblCols, names)
+	used, err := s.PruneHashOrKeyPartition(ds.SCtx(), ds.Table, ds.PartitionNames, ds.AllConds, ds.TblCols, names)
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +719,7 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 					}
 				}
 				if len(l.partitionNames) > 0 {
-					if l.findByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
+					if l.FindByName(l.partitionNames, l.pi.Definitions[pg.PartIdx].Name.L) {
 						helper.UnionPartitionGroup(pg)
 					}
 				} else {
@@ -803,7 +804,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 			if idx == -1 {
 				continue
 			}
-			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[idx].Name.L) {
+			if len(l.partitionNames) > 0 && !l.FindByName(l.partitionNames, l.pi.Definitions[idx].Name.L) {
 				continue
 			}
 			used[idx] = struct{}{}
@@ -831,7 +832,7 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 	if _, ok := used[FullRange]; ok {
 		ret := make([]int, 0, len(pi.Definitions))
 		for i := range pi.Definitions {
-			if len(partitionNames) > 0 && !listPruner.findByName(partitionNames, pi.Definitions[i].Name.L) {
+			if len(partitionNames) > 0 && !listPruner.FindByName(partitionNames, pi.Definitions[i].Name.L) {
 				continue
 			}
 			if i != pi.GetOverlappingDroppingPartitionIdx(i) {
@@ -855,7 +856,8 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 	return ret, nil
 }
 
-func (s *PartitionProcessor) pruneListPartition(ctx base.PlanContext, tbl table.Table, partitionNames []ast.CIStr,
+// PruneListPartition prune list partitions.
+func (s *PartitionProcessor) PruneListPartition(ctx base.PlanContext, tbl table.Table, partitionNames []ast.CIStr,
 	conds []expression.Expression, columns []*expression.Column) ([]int, error) {
 	used, err := s.findUsedListPartitions(ctx, tbl, partitionNames, conds, columns)
 	if err != nil {
@@ -903,8 +905,8 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
-// findByName checks whether object name exists in list.
-func (*PartitionProcessor) findByName(partitionNames []ast.CIStr, partitionName string) bool {
+// FindByName checks whether object name exists in list.
+func (*PartitionProcessor) FindByName(partitionNames []ast.CIStr, partitionName string) bool {
 	for _, s := range partitionNames {
 		if s.L == partitionName {
 			return true
@@ -1037,7 +1039,8 @@ func intersectionRange(start, end, newStart, newEnd int) (s int, e int) {
 	return s, e
 }
 
-func (s *PartitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
+// PruneRangePartition prune range partitions.
+func (s *PartitionProcessor) PruneRangePartition(ctx base.PlanContext, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
 	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
 	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 
@@ -1074,7 +1077,7 @@ func (s *PartitionProcessor) pruneRangePartition(ctx base.PlanContext, pi *model
 }
 
 func (s *PartitionProcessor) processRangePartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used, err := s.pruneRangePartition(ds.SCtx(), pi, ds.Table.(table.PartitionedTable), ds.AllConds, ds.TblCols, ds.OutputNames())
+	used, err := s.PruneRangePartition(ds.SCtx(), pi, ds.Table.(table.PartitionedTable), ds.AllConds, ds.TblCols, ds.OutputNames())
 	if err != nil {
 		return nil, err
 	}
@@ -1082,7 +1085,7 @@ func (s *PartitionProcessor) processRangePartition(ds *logicalop.DataSource, pi 
 }
 
 func (s *PartitionProcessor) processListPartition(ds *logicalop.DataSource, pi *model.PartitionInfo, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	used, err := s.pruneListPartition(ds.SCtx(), ds.Table, ds.PartitionNames, ds.AllConds, ds.TblCols)
+	used, err := s.PruneListPartition(ds.SCtx(), ds.Table, ds.PartitionNames, ds.AllConds, ds.TblCols)
 	if err != nil {
 		return nil, err
 	}
@@ -1750,13 +1753,13 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start in
 }
 
 func (*PartitionProcessor) resolveAccessPaths(ds *logicalop.DataSource) error {
-	possiblePaths, err := getPossibleAccessPaths(
+	possiblePaths, err := utilfuncp.GetPossibleAccessPaths(
 		ds.SCtx(), &h.PlanHints{IndexMergeHintList: ds.IndexMergeHints, IndexHintList: ds.IndexHints},
 		ds.AstIndexHints, ds.Table, ds.DBName, ds.TableInfo.Name, ds.IsForUpdateRead, true)
 	if err != nil {
 		return err
 	}
-	possiblePaths, err = filterPathByIsolationRead(ds.SCtx(), possiblePaths, ds.TableInfo.Name, ds.DBName)
+	possiblePaths, err = util.FilterPathByIsolationRead(ds.SCtx(), possiblePaths, ds.TableInfo.Name, ds.DBName)
 	if err != nil {
 		return err
 	}
@@ -1881,7 +1884,7 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
 			if len(ds.PartitionNames) != 0 {
-				if !s.findByName(ds.PartitionNames, pi.Definitions[partIdx].Name.L) {
+				if !s.FindByName(ds.PartitionNames, pi.Definitions[partIdx].Name.L) {
 					continue
 				}
 			}

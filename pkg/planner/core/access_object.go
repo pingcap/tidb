@@ -17,6 +17,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"sort"
 	"strconv"
 	"strings"
@@ -226,13 +228,13 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	idxArr, err := PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
+	idxArr, err := partitionpruning.PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
 		res.err = "partition pruning error:" + err.Error()
 		return res
 	}
 
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
+	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
 		res.AllPartitions = true
 		return res
 	}

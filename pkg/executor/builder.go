@@ -19,6 +19,8 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"math"
 	"slices"
 	"strconv"
@@ -5674,7 +5676,7 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPa
 		columns = planPartInfo.Columns
 		columnNames = planPartInfo.ColumnNames
 	}
-	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, pruningConds, partitionNames, columns, columnNames)
+	idxArr, err := partitionpruning.PartitionPruning(ctx.GetPlanCtx(), tbl, pruningConds, partitionNames, columns, columnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -5702,7 +5704,7 @@ func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTa
 	if physPlanPartInfo == nil {
 		return nil, errors.New("physPlanPartInfo in getPartitionIDsAfterPruning must not be nil")
 	}
-	idxArr, err := plannercore.PartitionPruning(ctx.GetPlanCtx(), tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
+	idxArr, err := partitionpruning.PartitionPruning(ctx.GetPlanCtx(), tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -5726,7 +5728,7 @@ func getPartitionIDsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTa
 }
 
 func fullRangePartition(idxArr []int) bool {
-	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
+	return len(idxArr) == 1 && idxArr[0] == rule.FullRange
 }
 
 type emptySampler struct{}
