@@ -105,7 +105,7 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
+		tk.MustExec("set @@globa.tidb_redact_log=0;")
 	}()
 
 	tk.MustExec(`use test`)
@@ -145,7 +145,7 @@ func TestSlowQueryMisc(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
+		tk.MustExec("set @@global.tidb_redact_log=0;")
 	}()
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
@@ -157,7 +157,7 @@ func TestSlowQueryMisc(t *testing.T) {
 		"where query like 'select%sleep%' order by time desc limit 1").
 		Check(testkit.Rows("select sleep(?), 1 [arguments: 0.01];"))
 
-	tk.MustExec("set tidb_redact_log=1;")
+	tk.MustExec("set @@global.tidb_redact_log=1;")
 	tk.MustExec(`prepare mystmt2 from 'select sleep(?), 2';`)
 	tk.MustExec("execute mystmt2 using @num;")
 	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
@@ -167,7 +167,7 @@ func TestSlowQueryMisc(t *testing.T) {
 	// Test 3 kinds of stale-read query.
 	tk.MustExec("create table test.t_stale_read (a int)")
 	time.Sleep(time.Second + time.Millisecond*10)
-	tk.MustExec("set tidb_redact_log=0;")
+	tk.MustExec("set @@global.tidb_redact_log=0;")
 	tk.MustExec("set @@tidb_read_staleness='-1'")
 	tk.MustQuery("select a from test.t_stale_read")
 	tk.MustExec("set @@tidb_read_staleness='0'")
@@ -222,7 +222,7 @@ func TestSlowQuerySessionAlias(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
+		tk.MustExec("set @@global.tidb_redact_log=0;")
 	}()
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
