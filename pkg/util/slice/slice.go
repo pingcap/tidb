@@ -14,12 +14,9 @@
 
 package slice
 
-import "reflect"
-
 // AnyOf returns true if any element in the slice matches the predict func.
-func AnyOf(s any, p func(int) bool) bool {
-	l := reflect.ValueOf(s).Len()
-	for i := range l {
+func AnyOf[E any](s []E, p func(int) bool) bool {
+	for i := range s {
 		if p(i) {
 			return true
 		}
@@ -28,14 +25,13 @@ func AnyOf(s any, p func(int) bool) bool {
 }
 
 // NoneOf returns true if no element in the slice matches the predict func.
-func NoneOf(s any, p func(int) bool) bool {
+func NoneOf[E any](s []E, p func(int) bool) bool {
 	return !AnyOf(s, p)
 }
 
 // AllOf returns true if all elements in the slice match the predict func.
-func AllOf(s any, p func(int) bool) bool {
-	np := func(i int) bool {
+func AllOf[E any](s []E, p func(int) bool) bool {
+	return !AnyOf(s, func(i int) bool {
 		return !p(i)
-	}
-	return NoneOf(s, np)
+	})
 }
