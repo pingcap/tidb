@@ -93,7 +93,7 @@ type BaseScheduler struct {
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID))
+	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
