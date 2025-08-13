@@ -288,6 +288,10 @@ func (s *etcdSyncer) UpdateSelfVersion(ctx context.Context, jobID int64, version
 			clientv3.WithLease(s.loadSession().Lease()))
 	}
 
+	if err == nil {
+		logutil.DDLLogger().Info("syncer update self version", zap.Any("jobID", jobID), zap.Any("version", version), zap.String("time", time.Since(startTime).String()))
+	}
+
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
@@ -505,6 +509,7 @@ func (s *etcdSyncer) handleJobSchemaVerKV(kv *mvccpb.KeyValue, tp mvccpb.Event_E
 		logutil.DDLLogger().Error("invalid job version kv", zap.Stringer("kv", kv), zap.Stringer("type", tp))
 		return
 	}
+	logutil.DDLLogger().Info("handle job schema version kv", zap.Any("jobID", jobID), zap.String("tidbID", tidbID), zap.Int64("schemaVer", schemaVer), zap.Stringer("type", tp))
 	if tp == mvccpb.PUT {
 		s.mu.Lock()
 		item, exists := s.jobNodeVersions[jobID]
