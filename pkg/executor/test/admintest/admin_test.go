@@ -2192,6 +2192,11 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	tk.Session().GetSessionVars().IndexLookupSize = 3
 	tk.Session().GetSessionVars().MaxChunkSize = 3
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMeetErrorInCheckTable", "return(true)")
+	tk.MustExec("set tidb_enable_fast_table_check = true")
+	err = tk.ExecToErr("admin check table t")
+	require.ErrorContains(t, err, "no error detected during row comparison")
+
 	// Simulate inconsistent index column
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	txn, err := store.Begin()
@@ -2203,9 +2208,129 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockMeetErrorInCheckTable", "return(false)")
 	for _, enabled := range []bool{false, true} {
 		tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", enabled))
 		err = tk.ExecToErr("admin check table t")
 		require.Error(t, err)
+	}
+}
+
+func TestAdminCheckMVIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	executor.CheckTableFastBucketSize.Store(4)
+	executor.LookupCheckThreshold = 1
+
+	type testCase struct {
+		indexSQLs     []string
+		insertValue   []string
+		corruptHandle kv.Handle
+		corruptValue  []any
+	}
+
+	testCases := []testCase{
+		{
+			indexSQLs:     []string{"INDEX mvi((CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5.5", "7"]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{"3"},
+		},
+		{
+			indexSQLs:     []string{"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))"},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `NULL`},
+			corruptHandle: kv.IntHandle(2),
+			corruptValue:  []any{2, "2", "3"},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{3},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`},
+			corruptHandle: kv.IntHandle(1),
+			corruptValue:  []any{1, "b", "1"},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi((CAST(j AS UNSIGNED ARRAY)))",
+			},
+			insertValue:   []string{`'[1, 2]'`, `'[]'`, `'[3]'`},
+			corruptHandle: testutil.MustNewCommonHandle(t, 1, "1"),
+			corruptValue:  []any{3},
+		},
+		{
+			indexSQLs: []string{
+				"PRIMARY KEY (i1, i2)",
+				"INDEX mvi(i1, (UPPER(i2)), (CAST(j AS CHAR(10) ARRAY)))",
+			},
+			insertValue:   []string{`'["1,1", "2.2"]'`, `'["5", "7"]'`, `'[]'`, `NULL`},
+			corruptHandle: testutil.MustNewCommonHandle(t, 2, "2"),
+			corruptValue:  []any{2, "2", "3"},
+		},
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tc := range testCases {
+		tk.MustExec("DROP TABLE IF EXISTS t")
+		tk.MustExec("CREATE TABLE t(i1 INT, i2 CHAR(16), j JSON)")
+		for _, sql := range tc.indexSQLs {
+			tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD %s", sql))
+		}
+
+		for i, value := range tc.insertValue {
+			tk.MustExec(fmt.Sprintf("INSERT INTO t(i1, i2, j) VALUES (%d, %d, %s)", i, i, value))
+		}
+
+		tk.MustExec("ADMIN CHECK TABLE t")
+
+		// Make some corrupted index. Build the index information
+		// and simulate inconsistent index values on MVI
+		sctx := mock.NewContext()
+		sctx.Store = store
+		ctx := sctx.GetTableCtx()
+		is := domain.InfoSchema()
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("t")
+		tbl, err := is.TableByName(context.Background(), dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		for _, idxInfo := range tblInfo.Indices {
+			if idxInfo.Primary {
+				continue
+			}
+
+			indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			_, err = indexOpr.Create(ctx, txn, types.MakeDatums(tc.corruptValue...), tc.corruptHandle, nil)
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+		}
+
+		for _, fastCheck := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
+			err = tk.ExecToErr("admin check table t")
+			require.Error(t, err)
+
+			// The output of error message is different whether fast check is enabled,
+			// and we just check error message for fast check.
+			if fastCheck {
+				require.ErrorContains(t, err, "[admin:8223]data inconsistency in table: t, index: mvi")
+			}
+		}
 	}
 }

@@ -508,24 +508,39 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	}
 }
 
+func colSupportFastCheck(col *model.ColumnInfo) bool {
+	// Not array exprssion, return true
+	if len(ExtractCastArrayExpr(col)) == 0 {
+		return true
+	}
+
+	switch col.FieldType.ArrayType().EvalType() {
+	case types.ETDatetime, types.ETDuration, types.ETString, types.ETInt, types.ETReal:
+		return true
+	}
+
+	return false
+}
+
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	noMVIndexOrPrefixIndexOrColumnarIndex := true
+	supportFastAdminCheck := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.IsColumnarIndex() {
-			noMVIndexOrPrefixIndexOrColumnarIndex = false
+		if idx.IsColumnarIndex() {
+			supportFastAdminCheck = false
 			break
 		}
 		for _, col := range idx.Columns {
-			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrColumnarIndex = false
+			tblCol := v.Table.Meta().Columns[col.Offset]
+			if !colSupportFastCheck(tblCol) || col.Length != types.UnspecifiedLength {
+				supportFastAdminCheck = false
 				break
 			}
 		}
-		if !noMVIndexOrPrefixIndexOrColumnarIndex {
+		if !supportFastAdminCheck {
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrColumnarIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && supportFastAdminCheck {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
