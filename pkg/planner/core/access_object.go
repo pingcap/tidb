@@ -276,61 +276,6 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	return res
 }
 
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return DynamicPartitionAccessObjects(nil)
-	}
-	if len(p.TableScanAndPartitionInfos) == 0 {
-		ts, ok := p.TablePlans[0].(*physicalop.PhysicalTableScan)
-		if !ok {
-			return OtherAccessObject("")
-		}
-		asName := ""
-		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-			asName = ts.TableAsName.O
-		}
-		res := getDynamicAccessPartition(sctx, ts.Table, p.PlanPartInfo, asName)
-		if res == nil {
-			return DynamicPartitionAccessObjects(nil)
-		}
-		return DynamicPartitionAccessObjects{res}
-	}
-	if len(p.TableScanAndPartitionInfos) == 1 {
-		tp := p.TableScanAndPartitionInfos[0]
-		ts := tp.TableScan
-		asName := ""
-		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-			asName = ts.TableAsName.O
-		}
-		res := getDynamicAccessPartition(sctx, ts.Table, tp.PhysPlanPartInfo, asName)
-		if res == nil {
-			return DynamicPartitionAccessObjects(nil)
-		}
-		return DynamicPartitionAccessObjects{res}
-	}
-
-	res := make(DynamicPartitionAccessObjects, 0)
-	for _, info := range p.TableScanAndPartitionInfos {
-		if info.TableScan.Table.GetPartitionInfo() == nil {
-			continue
-		}
-		ts := info.TableScan
-		asName := ""
-		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-			asName = ts.TableAsName.O
-		}
-		accessObj := getDynamicAccessPartition(sctx, ts.Table, info.PhysPlanPartInfo, asName)
-		if accessObj != nil {
-			res = append(res, accessObj)
-		}
-	}
-	if len(res) == 0 {
-		return DynamicPartitionAccessObjects(nil)
-	}
-	return res
-}
-
 func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, p *physicalop.PhysPlanPartInfo) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)

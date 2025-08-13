@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -299,7 +300,7 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	tableReader := physicalTree
 	for ; len(tableReader.Children()) > 0; tableReader = tableReader.Children()[0] {
 	}
-	castedTableReader, ok := tableReader.(*core.PhysicalTableReader)
+	castedTableReader, ok := tableReader.(*physicalop.PhysicalTableReader)
 	require.True(t, ok)
 	tableScan, err := castedTableReader.GetTableScan()
 	require.NoError(t, err)

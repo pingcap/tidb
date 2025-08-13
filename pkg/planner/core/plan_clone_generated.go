@@ -52,30 +52,6 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 }
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableReader)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if op.tablePlan != nil {
-		tablePlan, ok := op.tablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
-	if op.TableScanAndPartitionInfos != nil {
-		return nil, false
-	}
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalIndexReader)
 	*cloned = *op

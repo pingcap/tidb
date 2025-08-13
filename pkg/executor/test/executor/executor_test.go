@@ -793,7 +793,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&physicalop.PhysicalMergeJoin{},
 		&physicalop.PhysicalIndexJoin{},
 		&physicalop.PhysicalIndexHashJoin{},
-		&plannercore.PhysicalTableReader{},
+		&physicalop.PhysicalTableReader{},
 		&plannercore.PhysicalIndexReader{},
 		&plannercore.PhysicalIndexLookUpReader{},
 		&plannercore.PhysicalIndexMergeReader{},

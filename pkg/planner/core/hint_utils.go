@@ -92,7 +92,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				HintName: ast.NewCIStr(h.HintLimitToCop),
 			})
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		tbl, ok := pp.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
 			return res
@@ -500,7 +500,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 		return nil, nil
 	}
 	switch x := p.(type) {
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		ts := x.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if ts.TableAsName != nil && ts.TableAsName.L != "" {
 			return &ts.DBName, ts.TableAsName

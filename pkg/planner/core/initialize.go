@@ -16,7 +16,6 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -108,57 +107,6 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 		case *PhysicalIndexScan:
 			p.ByItems = x.ByItems
 		}
-	}
-	return &p
-}
-
-func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
-	if p.StoreType == kv.TiFlash {
-		_, ok := p.tablePlan.(*PhysicalExchangeSender)
-		if ok {
-			p.ReadReqType = MPP
-			return
-		}
-		tableScans := p.GetTableScans()
-		// When PhysicalTableReader's store type is tiflash, has table scan
-		// and all table scans contained are not keepOrder, try to use batch cop.
-		if len(tableScans) > 0 {
-			for _, tableScan := range tableScans {
-				if tableScan.KeepOrder {
-					return
-				}
-			}
-
-			// When allow batch cop is 1, only agg / topN uses batch cop.
-			// When allow batch cop is 2, every query uses batch cop.
-			switch ctx.GetSessionVars().AllowBatchCop {
-			case 1:
-				for _, plan := range p.TablePlans {
-					switch plan.(type) {
-					case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalTopN:
-						p.ReadReqType = BatchCop
-						return
-					}
-				}
-			case 2:
-				p.ReadReqType = BatchCop
-			}
-		}
-	}
-}
-
-// Init initializes PhysicalTableReader.
-func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTableReader {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
-	p.ReadReqType = Cop
-	if p.tablePlan == nil {
-		return &p
-	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.SetSchema(p.tablePlan.Schema())
-	p.adjustReadReqType(ctx)
-	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
-		setMppOrBatchCopForTableScan(p.tablePlan)
 	}
 	return &p
 }

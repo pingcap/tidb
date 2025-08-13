@@ -132,6 +132,9 @@ func init() {
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
 	// for physical sequence
 	utilfuncp.Attach2Task4PhysicalSequence = attach2Task4PhysicalSequence
+	// for physical PhysicalTableReader
+	utilfuncp.GetPlanCostVer14PhysicalTableReader = getPlanCostVer14PhysicalTableReader
+	utilfuncp.GetPlanCostVer24PhysicalTableReader = getPlanCostVer24PhysicalTableReader
 	// for physical PhysicalTableScan
 	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
 	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/utils"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1350,7 +1351,7 @@ func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree, brie
 		for i, op := range ops {
 			operators[i].BriefName = op.ExplainID().String()
 			switch op.Origin.(type) {
-			case *PhysicalTableReader, *PhysicalIndexReader, *physicalop.PhysicalHashJoin,
+			case *physicalop.PhysicalTableReader, *PhysicalIndexReader, *physicalop.PhysicalHashJoin,
 				*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalMergeJoin:
 				operators[i].BriefOperatorInfo = op.Origin.ExplainInfo()
 			}
@@ -1392,11 +1393,11 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 		out.TaskType = tipb.TaskType_root
 	} else {
 		switch fop.ReqType {
-		case Cop:
+		case utils.Cop:
 			out.TaskType = tipb.TaskType_cop
-		case BatchCop:
+		case utils.BatchCop:
 			out.TaskType = tipb.TaskType_batchCop
-		case MPP:
+		case utils.MPP:
 			out.TaskType = tipb.TaskType_mpp
 		}
 	}
@@ -1493,9 +1494,9 @@ func (e *Explain) prepareTaskDot(pa *pair, taskTp string, buffer *bytes.Buffer) 
 	for planQueue := []*pair{pa}; len(planQueue) > 0; planQueue = planQueue[1:] {
 		curPair := planQueue[0]
 		switch copPlan := curPair.physicalPlan.(type) {
-		case *PhysicalTableReader:
-			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
-			copTasks = append(copTasks, &pair{physicalPlan: copPlan.tablePlan})
+		case *physicalop.PhysicalTableReader:
+			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.TablePlan.ExplainID()))
+			copTasks = append(copTasks, &pair{physicalPlan: copPlan.TablePlan})
 		case *PhysicalIndexReader:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, &pair{physicalPlan: copPlan.indexPlan})
@@ -1549,7 +1550,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	case *PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx())
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		tableScan, ok := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
 			return false

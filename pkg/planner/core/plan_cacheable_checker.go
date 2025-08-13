@@ -549,7 +549,7 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		if paramNum > 0 {
 			return false, "get a TableDual plan"
 		}
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		if x.StoreType == kv.TiFlash {
 			return false, "TiFlash plan is un-cacheable"
 		}

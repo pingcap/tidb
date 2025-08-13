@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/utils"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"go.uber.org/zap"
@@ -126,7 +127,7 @@ type FlatOperator struct {
 	IsRoot    bool
 	StoreType kv.StoreType
 	// ReqType is only meaningful when IsRoot is false.
-	ReqType ReadReqType
+	ReqType utils.ReadReqType
 
 	// The below two fields are mainly for text tree formatting. See texttree.PrettyIdentifier().
 	TextTreeIndent string
@@ -177,7 +178,7 @@ type operatorCtx struct {
 	label       OperatorLabel
 	isRoot      bool
 	storeType   kv.StoreType
-	reqType     ReadReqType
+	reqType     utils.ReadReqType
 	indent      string
 	isLastChild bool
 	// IsINLProbeChild indicates whether this operator is in indexLookupReader or indexMergeReader inner side.
@@ -337,17 +338,17 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 	// For part of physical operators and some special operators, we need some special logic to get their "children".
 	// For PhysicalCTE, we need to add the plan tree into flatTree.ctesToFlatten.
 	switch plan := p.(type) {
-	case *PhysicalTableReader:
+	case *physicalop.PhysicalTableReader:
 		childCtx.isRoot = false
 		childCtx.storeType = plan.StoreType
 		childCtx.reqType = plan.ReadReqType
 		childCtx.label = Empty
 		childCtx.isLastChild = true
-		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.TablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexReader:
 		childCtx.isRoot = false
-		childCtx.reqType = Cop
+		childCtx.reqType = utils.Cop
 		childCtx.storeType = kv.TiKV
 		childCtx.label = Empty
 		childCtx.isLastChild = true
@@ -355,7 +356,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexLookUpReader:
 		childCtx.isRoot = false
-		childCtx.reqType = Cop
+		childCtx.reqType = utils.Cop
 		childCtx.storeType = kv.TiKV
 		childCtx.label = BuildSide
 		childCtx.isLastChild = false
@@ -369,7 +370,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexMergeReader:
 		childCtx.isRoot = false
-		childCtx.reqType = Cop
+		childCtx.reqType = utils.Cop
 		childCtx.storeType = kv.TiKV
 		for _, pchild := range plan.partialPlans {
 			childCtx.label = BuildSide
