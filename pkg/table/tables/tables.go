@@ -1773,7 +1773,7 @@ func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []
 	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, false),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, true),
 		PrimaryColumnIds: pkColIDs,
 		IsFastScan:       &fastScan,
 	}

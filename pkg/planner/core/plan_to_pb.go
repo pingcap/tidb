@@ -179,7 +179,7 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())
 	tableColumns := p.Table.Cols()
 	for _, col := range p.Schema().Columns {
@@ -198,7 +198,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, storeType == kv.TiFlash),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIDs,
 	}
