@@ -2184,7 +2184,7 @@ func appendNoPartitionChildTraceStep(ds *logicalop.DataSource, dual base.Logical
 
 // PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
 // 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
-func pushDownNot(ctx expression.BuildContext, conds []expression.Expression) []expression.Expression {
+func PushDownNot(ctx expression.BuildContext, conds []expression.Expression) []expression.Expression {
 	if len(conds) == 0 {
 		return conds
 	}
