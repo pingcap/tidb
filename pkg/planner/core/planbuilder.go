@@ -2113,8 +2113,12 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 			cols.data[id] = struct{}{}
 		}
 	}
-	cols.calculated = true
-	return cols.data, nil
+	// For predicate columns, we also need to add the columns that make up those generated columns.
+	result, err := b.getMustAnalyzedColumns(tbl, cols)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func getAnalyzeColumnList(specifiedColumns []ast.CIStr, tbl *resolve.TableNameW) ([]*model.ColumnInfo, error) {
@@ -2373,6 +2377,30 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 		}
 		result = append(result, colInfo)
 	}
+	skipColNameMap := make(map[string]struct{}, len(skipCol))
+	for _, colInfo := range skipCol {
+		skipColNameMap[colInfo.Name.L] = struct{}{}
+	}
+
+	// Filter out generated columns that depend on skipped columns
+	filteredResult := make([]*model.ColumnInfo, 0, len(result))
+	for _, colInfo := range result {
+		shouldSkip := false
+		if colInfo.IsGenerated() {
+			// Check if any dependency is in the skip list
+			for depName := range colInfo.Dependences {
+				if _, exists := skipColNameMap[depName]; exists {
+					skipCol = append(skipCol, colInfo)
+					shouldSkip = true
+					break
+				}
+			}
+		}
+		if !shouldSkip {
+			filteredResult = append(filteredResult, colInfo)
+		}
+	}
+	result = filteredResult
 	return
 }
 
