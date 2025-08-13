@@ -16,7 +16,6 @@ package physicalop
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
