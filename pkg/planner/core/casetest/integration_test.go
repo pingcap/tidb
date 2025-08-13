@@ -314,14 +314,14 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				testKit.MustExec("set session tidb_redact_log=off")
+				testKit.MustExec("set global tidb_redact_log=off")
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-				testKit.MustExec("set session tidb_redact_log=on")
+				testKit.MustExec("set global tidb_redact_log=on")
 				output[i].Redact = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 			})
-			testKit.MustExec("set session tidb_redact_log=off")
+			testKit.MustExec("set global tidb_redact_log=off")
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-			testKit.MustExec("set session tidb_redact_log=on")
+			testKit.MustExec("set global tidb_redact_log=on")
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Redact...))
 		}
 	})
