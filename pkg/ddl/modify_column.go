@@ -429,6 +429,22 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
+func printTableInfo(tblInfo *model.TableInfo) {
+	for _, col := range tblInfo.Columns {
+		logutil.DDLLogger().Info("column", zap.Int64("id", col.ID), zap.String("name", col.Name.O))
+	}
+
+	for _, idx := range tblInfo.Indices {
+		idxCols := make([]string, 0, len(idx.Columns))
+		for _, idxCol := range idx.Columns {
+			idxCols = append(idxCols, idxCol.Name.O)
+		}
+
+		logutil.DDLLogger().Info("index", zap.Int64("id", idx.ID),
+			zap.String("name", idx.Name.O), zap.Strings("idxCols", idxCols))
+	}
+}
+
 func (w *worker) doModifyColumnTypeWithData(
 	jobCtx *jobContext,
 	job *model.Job,
@@ -444,6 +460,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	targetCol := changingCol.Clone()
 	targetCol.Name = colName
 	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
+	printTableInfo(tblInfo)
 	switch changingCol.State {
 	case model.StateNone:
 		err = validatePosition(tblInfo, oldCol, pos)
