@@ -44,7 +44,7 @@ func TestCanBePrune(t *testing.T) {
 
 	tc := prepareTestCtx(t, "create table t (d datetime not null)", "to_days(d)")
 	lessThan := rule.LessThanDataInt{Data: []int64{733108, 733132}, Maxvalue: false}
-	pruner := &rule.RangePruner{lessThan, tc.col, tc.fn, rule.MonotoneModeNonStrict}
+	pruner := &rule.RangePruner{LessThan: lessThan, Col: tc.col, PartFn: tc.fn, Monotonous: rule.MonotoneModeNonStrict}
 
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
 	result := rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
@@ -67,7 +67,7 @@ func TestCanBePrune(t *testing.T) {
 	// );
 	tc = prepareTestCtx(t, "create table t (report_updated timestamp)", "unix_timestamp(report_updated)")
 	lessThan = rule.LessThanDataInt{Data: []int64{1199145600, 1207008000, 1262304000, 0}, Maxvalue: true}
-	pruner = &rule.RangePruner{lessThan, tc.col, tc.fn, rule.MonotoneModeStrict}
+	pruner = &rule.RangePruner{LessThan: lessThan, Col: tc.col, PartFn: tc.fn, Monotonous: rule.MonotoneModeStrict}
 
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
 	result = rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
@@ -131,34 +131,34 @@ func TestPruneUseBinarySearchUnSigned(t *testing.T) {
 		input  rule.DataForPrune
 		result rule.PartitionRange
 	}{
-		{rule.DataForPrune{ast.EQ, 66, false}, rule.PartitionRange{5, 6}},
-		{rule.DataForPrune{ast.EQ, 14, false}, rule.PartitionRange{4, 5}},
-		{rule.DataForPrune{ast.EQ, 10, false}, rule.PartitionRange{2, 3}},
-		{rule.DataForPrune{ast.EQ, 3, false}, rule.PartitionRange{0, 1}},
-		{rule.DataForPrune{ast.EQ, -3, false}, rule.PartitionRange{0, 1}},
-		{rule.DataForPrune{ast.LT, 66, false}, rule.PartitionRange{0, 6}},
-		{rule.DataForPrune{ast.LT, 14, false}, rule.PartitionRange{0, 4}},
-		{rule.DataForPrune{ast.LT, 10, false}, rule.PartitionRange{0, 3}},
-		{rule.DataForPrune{ast.LT, 3, false}, rule.PartitionRange{0, 1}},
-		{rule.DataForPrune{ast.LT, -3, false}, rule.PartitionRange{0, 1}},
-		{rule.DataForPrune{ast.GE, 66, false}, rule.PartitionRange{5, 6}},
-		{rule.DataForPrune{ast.GE, 14, false}, rule.PartitionRange{4, 6}},
-		{rule.DataForPrune{ast.GE, 10, false}, rule.PartitionRange{2, 6}},
-		{rule.DataForPrune{ast.GE, 3, false}, rule.PartitionRange{0, 6}},
-		{rule.DataForPrune{ast.GE, -3, false}, rule.PartitionRange{0, 6}},
-		{rule.DataForPrune{ast.GT, 66, false}, rule.PartitionRange{5, 6}},
-		{rule.DataForPrune{ast.GT, 14, false}, rule.PartitionRange{4, 6}},
-		{rule.DataForPrune{ast.GT, 10, false}, rule.PartitionRange{3, 6}},
-		{rule.DataForPrune{ast.GT, 3, false}, rule.PartitionRange{1, 6}},
-		{rule.DataForPrune{ast.GT, 2, false}, rule.PartitionRange{0, 6}},
-		{rule.DataForPrune{ast.GT, -3, false}, rule.PartitionRange{0, 6}},
-		{rule.DataForPrune{ast.LE, 66, false}, rule.PartitionRange{0, 6}},
-		{rule.DataForPrune{ast.LE, 14, false}, rule.PartitionRange{0, 5}},
-		{rule.DataForPrune{ast.LE, 10, false}, rule.PartitionRange{0, 3}},
-		{rule.DataForPrune{ast.LE, 3, false}, rule.PartitionRange{0, 1}},
-		{rule.DataForPrune{ast.LE, -3, false}, rule.PartitionRange{0, 1}},
-		{rule.DataForPrune{ast.IsNull, 0, false}, rule.PartitionRange{0, 1}},
-		{rule.DataForPrune{"illegal", 0, false}, rule.PartitionRange{0, 6}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 66}, result: rule.PartitionRange{Start: 5, End: 6}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 14}, result: rule.PartitionRange{Start: 4, End: 5}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 10}, result: rule.PartitionRange{Start: 2, End: 3}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: 3}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.EQ, C: -3}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 66}, result: rule.PartitionRange{End: 6}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 14}, result: rule.PartitionRange{End: 4}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 10}, result: rule.PartitionRange{End: 3}},
+		{input: rule.DataForPrune{Op: ast.LT, C: 3}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.LT, C: -3}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 66}, result: rule.PartitionRange{Start: 5, End: 6}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 14}, result: rule.PartitionRange{Start: 4, End: 6}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 10}, result: rule.PartitionRange{Start: 2, End: 6}},
+		{input: rule.DataForPrune{Op: ast.GE, C: 3}, result: rule.PartitionRange{End: 6}},
+		{input: rule.DataForPrune{Op: ast.GE, C: -3}, result: rule.PartitionRange{End: 6}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 66}, result: rule.PartitionRange{Start: 5, End: 6}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 14}, result: rule.PartitionRange{Start: 4, End: 6}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 10}, result: rule.PartitionRange{Start: 3, End: 6}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 3}, result: rule.PartitionRange{Start: 1, End: 6}},
+		{input: rule.DataForPrune{Op: ast.GT, C: 2}, result: rule.PartitionRange{End: 6}},
+		{input: rule.DataForPrune{Op: ast.GT, C: -3}, result: rule.PartitionRange{End: 6}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 66}, result: rule.PartitionRange{End: 6}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 14}, result: rule.PartitionRange{End: 5}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 10}, result: rule.PartitionRange{End: 3}},
+		{input: rule.DataForPrune{Op: ast.LE, C: 3}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.LE, C: -3}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: ast.IsNull}, result: rule.PartitionRange{End: 1}},
+		{input: rule.DataForPrune{Op: "illegal"}, result: rule.PartitionRange{End: 6}},
 	}
 
 	for i, ca := range cases {
@@ -243,7 +243,7 @@ func (tc *testCtx) expr(expr string) expression.Expression {
 func TestPartitionRangeForExpr(t *testing.T) {
 	tc := prepareTestCtx(t, "create table t (a int)", "a")
 	lessThan := rule.LessThanDataInt{Data: []int64{4, 7, 11, 14, 17, 0}, Maxvalue: true}
-	pruner := &rule.RangePruner{lessThan, tc.columns[0], nil, rule.MonotoneModeInvalid}
+	pruner := &rule.RangePruner{LessThan: lessThan, Col: tc.columns[0], Monotonous: rule.MonotoneModeInvalid}
 	cases := []struct {
 		input  string
 		result rule.PartitionRangeOR
@@ -350,7 +350,7 @@ func TestPartitionRangePruner2VarChar(t *testing.T) {
 		lessThan[i] = e
 	}
 
-	pruner := &rule.RangeColumnsPruner{lessThan, tc.columns}
+	pruner := &rule.RangeColumnsPruner{LessThan: lessThan, PartCols: tc.columns}
 	cases := []struct {
 		input  string
 		result rule.PartitionRangeOR
