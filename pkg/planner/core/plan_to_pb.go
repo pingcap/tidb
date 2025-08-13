@@ -183,11 +183,12 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	columns := make([]*model.ColumnInfo, 0, p.Schema().Len())
 	tableColumns := p.Table.Cols()
 	for _, col := range p.Schema().Columns {
-		if col.ID == model.ExtraHandleID {
+		switch col.ID {
+		case model.ExtraHandleID:
 			columns = append(columns, model.NewExtraHandleColInfo())
-		} else if col.ID == model.ExtraPhysTblID {
+		case model.ExtraPhysTblID:
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
-		} else {
+		default:
 			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
 	}
@@ -198,7 +199,7 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 	idxExec := &tipb.IndexScan{
 		TableId:          p.Table.ID,
 		IndexId:          p.Index.ID,
-		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+		Columns:          util.ColumnsToProto(columns, p.Table.PKIsHandle, true, false /*IndexScan doesn't support TiFlash*/),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIDs,
 	}
