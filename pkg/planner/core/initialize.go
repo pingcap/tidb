@@ -231,13 +231,6 @@ func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *Phys
 	return &p
 }
 
-// Init only assigns type and context.
-func (p PhysicalCTETable) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTETable {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes FKCheck.
 func (p FKCheck) Init(ctx base.PlanContext) *FKCheck {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)

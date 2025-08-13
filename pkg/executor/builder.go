@@ -319,7 +319,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildSelectInto(v)
 	case *plannercore.PhysicalCTE:
 		return b.buildCTE(v)
-	case *plannercore.PhysicalCTETable:
+	case *physicalop.PhysicalCTETable:
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
@@ -5863,7 +5863,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 	}
 }
 
-func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) exec.Executor {
+func (b *executorBuilder) buildCTETableReader(v *physicalop.PhysicalCTETable) exec.Executor {
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
