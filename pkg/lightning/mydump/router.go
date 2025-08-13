@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/slice"
 	"go.uber.org/zap"
 )
 
@@ -411,9 +411,9 @@ func (regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string) error {
 			if number > pat.NumSubexp() {
 				return errors.Errorf("sub pattern capture '%s' out of range", subVar)
 			}
-		} else if !slice.AnyOf(pat.SubexpNames(), func(i int) bool {
+		} else if !slices.ContainsFunc(pat.SubexpNames(), func(name string) bool {
 			// FIXME: we should use re.SubexpIndex here, but not supported in go1.13 yet
-			return pat.SubexpNames()[i] == tmplName
+			return name == tmplName
 		}) {
 			return errors.Errorf("invalid named capture '%s'", subVar)
 		}

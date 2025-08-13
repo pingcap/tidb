@@ -4903,8 +4903,8 @@ func checkPartitionExprArgs(_ expression.BuildContext, tblInfo *model.TableInfo,
 			return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
 		}
 	case ast.DateDiff:
-		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(i int) bool {
-			return hasDateArgs(argsType[i])
+		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(arg byte) bool {
+			return hasDateArgs(arg)
 		})))
 
 	case ast.Abs, ast.Ceiling, ast.Floor, ast.Mod:
@@ -4934,26 +4934,26 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 }
 
 func hasDateArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDate || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDate || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDuration || argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDuration || t == mysql.TypeDatetime
 	})
 }
 
 func hasTimestampArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeTimestamp
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeTimestamp
 	})
 }
 
 func hasDatetimeArgs(argsType ...byte) bool {
-	return slice.AnyOf(argsType, func(i int) bool {
-		return argsType[i] == mysql.TypeDatetime
+	return slices.ContainsFunc(argsType, func(t byte) bool {
+		return t == mysql.TypeDatetime
 	})
 }
 

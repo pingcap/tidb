@@ -964,25 +964,33 @@ func TestOwnerRandomDown(t *testing.T) {
 
 		// new owner elected
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
+			for i := range workers {
 				workers[i].Lock()
-				defer workers[i].Unlock()
-				return workers[i].cancel != nil &&
+				isNewOwner := workers[i].cancel != nil &&
 					workers[i].owner.IsOwner() && i != oldOwnerIdx
-			})
+				workers[i].Unlock()
+				if isNewOwner {
+					return true
+				}
+			}
+			return false
 		}, time.Minute, 100*time.Millisecond)
 
 		// new snapshot taken
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
+			for i := range workers {
 				workers[i].Lock()
-				defer workers[i].Unlock()
-				if workers[i].cancel == nil {
-					return false
+				hasNewSnapshot := false
+				if workers[i].cancel != nil {
+					newSnapID, err := workers[i].getSnapID(ctx)
+					hasNewSnapshot = err == nil && newSnapID > prevSnapID
 				}
-				newSnapID, err := workers[i].getSnapID(ctx)
-				return err == nil && newSnapID > prevSnapID
-			})
+				workers[i].Unlock()
+				if hasNewSnapshot {
+					return true
+				}
+			}
+			return false
 		}, time.Minute, 100*time.Millisecond)
 
 		// recover stopped owner
@@ -993,11 +1001,11 @@ func TestOwnerRandomDown(t *testing.T) {
 			}
 		}
 		require.Eventually(t, func() bool {
-			return slice.AllOf(workers, func(i int) bool {
-				workers[i].Lock()
-				defer workers[i].Unlock()
-				return workers[i].cancel != nil &&
-					workers[i].owner != nil
+			return slice.AllOf(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner != nil
 			})
 		}, time.Minute, 100*time.Millisecond)
 	}
