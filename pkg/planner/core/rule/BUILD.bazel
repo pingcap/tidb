@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "rule",
@@ -35,5 +35,23 @@ go_library(
         "//pkg/util/zeropool",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_tipb//go-tipb",
+    ],
+)
+
+go_test(
+    name = "rule_test",
+    timeout = "short",
+    srcs = ["rule_partition_pruning_test.go"],
+    embed = [":rule"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/testkit/ddlhelper",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
     ],
 )
