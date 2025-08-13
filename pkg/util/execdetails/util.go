@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/influxdata/tdigest"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -47,6 +48,7 @@ func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails,
 		ruDetails = ruDetailsVal.(*util.RUDetails)
 	} else {
 		ruDetails = util.NewRUDetails()
+		intest.Assert(false, "ruDetails should not be nil in execdetails")
 	}
 
 	return
