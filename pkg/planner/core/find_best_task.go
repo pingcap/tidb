@@ -1601,7 +1601,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				isDNFOnlyEqualPredicates := c.hasOnlyEqualPredicatesInDNF()
+				isDNFOnlyEqualPredicates := ds.TableInfo.GetPartitionInfo() == nil && c.hasOnlyEqualPredicatesInDNF()
 				if preferMerge || isDNFOnlyEqualPredicates || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
@@ -1622,6 +1622,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 
 // hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
 func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
+	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return false
 	}
