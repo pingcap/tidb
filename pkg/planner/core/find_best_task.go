@@ -1629,16 +1629,16 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 
 	// Check if all access conditions are equal predicates
 	for _, cond := range c.path.AccessConds {
-		if sf, ok := cond.(*expression.ScalarFunction); ok {
-			if sf.FuncName.L == ast.LogicOr {
-				continue
-			}
-			// Check if it's an equal predicate (eq) or IN predicate (in)
-			if sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In {
-				return false
-			}
-		} else {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok {
 			// If it's not a scalar function, it's not an equal predicate
+			return false
+		}
+		if sf.FuncName.L == ast.LogicOr {
+			continue
+		}
+		// Check if it's an equal predicate (eq) or IN predicate (in)
+		if sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In {
 			return false
 		}
 	}
