@@ -344,7 +344,7 @@ func TestAnalyzeColumnarIndex(t *testing.T) {
 			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 
 		statsHandle := dom.StatsHandle()
-		statsTbl := statsHandle.GetTableStats(tblInfo)
+		statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 		require.True(t, statsTbl.LastAnalyzeVersion > 0)
 		// int col
 		col := statsTbl.GetCol(1)
