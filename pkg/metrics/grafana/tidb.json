@@ -24956,10 +24956,10 @@
               "refId": "D"
             },
             {
-              "expr": "sum(rate(tidb_ddl_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\"}[1m]))/1024.0/1024.0",
+              "expr": "sum(rate(tidb_global_sort_merge_sort_write_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\"}[1m]))/1024.0/1024.0",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "merge_sort",
+              "legendFormat": "merge-sort",
               "range": true,
               "refId": "E"
             }
