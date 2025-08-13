@@ -8,6 +8,7 @@ go_test(
         "ingest_test.go",
         "main_test.go",
         "operator_test.go",
+        "temp_index_test.go",
     ],
     flaky = True,
     deps = [

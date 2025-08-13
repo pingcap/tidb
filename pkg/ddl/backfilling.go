@@ -484,15 +484,15 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 // It returns up to `limit` ranges.
 func loadTableRanges(
 	ctx context.Context,
-	t table.PhysicalTable,
+	pid int64,
 	store kv.Storage,
 	startKey, endKey kv.Key,
 	splitKeys []kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
 	if len(startKey) == 0 && len(endKey) == 0 {
-		logutil.DDLLogger().Info("load noop table range",
-			zap.Int64("physicalTableID", t.GetPhysicalID()))
+		logutil.DDLLogger().Info("load empty range",
+			zap.Int64("physicalTableID", pid))
 		return []kv.KeyRange{}, nil
 	}
 
@@ -501,7 +501,7 @@ func loadTableRanges(
 		// Only support split ranges in tikv.Storage now.
 		logutil.DDLLogger().Info("load table ranges failed, unsupported storage",
 			zap.String("storage", fmt.Sprintf("%T", store)),
-			zap.Int64("physicalTableID", t.GetPhysicalID()))
+			zap.Int64("physicalTableID", pid))
 		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 	}
 	failpoint.Inject("setLimitForLoadTableRanges", func(val failpoint.Value) {
@@ -520,7 +520,7 @@ func loadTableRanges(
 	})
 	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
 		logutil.DDLLogger().Info("load table ranges from PD",
-			zap.Int64("physicalTableID", t.GetPhysicalID()),
+			zap.Int64("physicalTableID", pid),
 			zap.String("start key", hex.EncodeToString(startKey)),
 			zap.String("end key", hex.EncodeToString(endKey)))
 		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
@@ -548,7 +548,7 @@ func loadTableRanges(
 	}
 	ranges = splitRangesByKeys(ranges, splitKeys)
 	logutil.DDLLogger().Info("load table ranges from PD done",
-		zap.Int64("physicalTableID", t.GetPhysicalID()),
+		zap.Int64("physicalTableID", pid),
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
 		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
 		zap.Int("range count", len(ranges)))
@@ -1054,7 +1054,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := loadTableRanges(egCtx, t, dc.store, start, end, splitKeys, backfillTaskChanSize)
+			kvRanges, err2 := loadTableRanges(egCtx, t.GetPhysicalID(), dc.store, start, end, splitKeys, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}

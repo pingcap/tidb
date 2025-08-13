@@ -64,12 +64,13 @@ var testKitIDGenerator atomic.Uint64
 
 // TestKit is a utility to run sql test.
 type TestKit struct {
-	require *require.Assertions
-	assert  *assert.Assertions
-	t       testing.TB
-	store   kv.Storage
-	session sessionapi.Session
-	alloc   chunk.Allocator
+	require  *require.Assertions
+	assert   *assert.Assertions
+	t        testing.TB
+	store    kv.Storage
+	session  sessionapi.Session
+	alloc    chunk.Allocator
+	comments []any
 }
 
 // NewTestKit returns a new *TestKit.
@@ -119,6 +120,12 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessionapi.Session
 	}
 }
 
+// WithComments adds comments to the testkit.
+func (tk *TestKit) WithComments(comments ...any) *TestKit {
+	tk.comments = comments
+	return tk
+}
+
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
@@ -153,10 +160,11 @@ func (tk *TestKit) MustExec(sql string, args ...any) {
 func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...any) {
 	res, err := tk.ExecWithContext(ctx, sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
-	tk.require.NoError(err, comment)
+	cmts := append([]any{comment}, tk.comments...)
+	tk.require.NoError(err, cmts...)
 
 	if res != nil {
-		tk.require.NoError(res.Close())
+		tk.require.NoError(res.Close(), cmts...)
 	}
 }
 
@@ -220,21 +228,22 @@ func (tk *TestKit) EventuallyMustQueryAndCheck(sql string, args []any,
 	tk.require.Eventually(func() bool {
 		res := tk.MustQueryWithContext(context.Background(), sql, args...)
 		return res.Equal(expected)
-	}, waitFor, tick)
+	}, waitFor, tick, tk.comments...)
 }
 
 // MustQueryToErr query the sql statement and must return Error.
 func (tk *TestKit) MustQueryToErr(sql string, args ...any) {
 	err := tk.QueryToErr(sql, args...)
-	tk.require.Error(err)
+	tk.require.Error(err, tk.comments...)
 }
 
 // MustQueryWithContext query the statements and returns result rows.
 func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ...any) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	cmts := append([]any{comment}, tk.comments...)
 	rs, err := tk.ExecWithContext(ctx, sql, args...)
-	tk.require.NoError(err, comment)
-	tk.require.NotNil(rs, comment)
+	tk.require.NoError(err, cmts)
+	tk.require.NotNil(rs, cmts)
 	return tk.ResultSetToResultWithCtx(ctx, rs, comment)
 }
 
@@ -266,18 +275,19 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...any) *Re
 			ok = true
 		}
 	}
-	tk.require.True(ok)
+	tk.require.True(ok, tk.comments...)
 	return tk.MustQuery(sql, args...)
 }
 
 // QueryToErr executes a sql statement and discard results.
 func (tk *TestKit) QueryToErr(sql string, args ...any) error {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	cmts := append([]any{comment}, tk.comments...)
 	res, err := tk.Exec(sql, args...)
-	tk.require.NoError(err, comment)
-	tk.require.NotNil(res, comment)
+	tk.require.NoError(err, cmts)
+	tk.require.NotNil(res, cmts)
 	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
-	tk.require.NoError(res.Close())
+	tk.require.NoError(res.Close(), cmts)
 	return resErr
 }
 
@@ -453,7 +463,7 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any)
 func (tk *TestKit) ExecToErr(sql string, args ...any) error {
 	res, err := tk.Exec(sql, args...)
 	if res != nil {
-		tk.require.NoError(res.Close())
+		tk.require.NoError(res.Close(), tk.comments...)
 	}
 	return err
 }
@@ -462,9 +472,9 @@ func (tk *TestKit) ExecToErr(sql string, args ...any) error {
 func (tk *TestKit) MustExecToErr(sql string, args ...any) {
 	res, err := tk.Exec(sql, args...)
 	if res != nil {
-		tk.require.NoError(res.Close())
+		tk.require.NoError(res.Close(), tk.comments...)
 	}
-	tk.require.Error(err)
+	tk.require.Error(err, tk.comments...)
 }
 
 // NewSession creates a new session environment for test.
@@ -515,8 +525,8 @@ func (tk *TestKit) MustContainErrMsg(sql string, errStr any) {
 // MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
 func (tk *TestKit) MustMatchErrMsg(sql string, errRx any) {
 	err := tk.ExecToErr(sql)
-	tk.require.Error(err)
-	tk.require.Regexp(errRx, err.Error())
+	tk.require.Error(err, tk.comments...)
+	tk.require.Regexp(errRx, err.Error(), tk.comments...)
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
@@ -553,8 +563,8 @@ func (tk *TestKit) MustUseIndexForConnection(connID string, index string) {
 
 // CheckExecResult checks the affected rows and the insert id after executing MustExec.
 func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
-	tk.require.Equal(int64(tk.Session().AffectedRows()), affectedRows)
-	tk.require.Equal(int64(tk.Session().LastInsertID()), insertID)
+	tk.require.Equal(int64(tk.Session().AffectedRows()), affectedRows, tk.comments...)
+	tk.require.Equal(int64(tk.Session().LastInsertID()), insertID, tk.comments...)
 }
 
 // MustPointGet checks whether the plan for the sql is Point_Get.
