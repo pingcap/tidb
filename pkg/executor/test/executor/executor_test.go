@@ -2003,9 +2003,10 @@ func TestLowResolutionTSORead(t *testing.T) {
 	defer func() {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
 	}()
-	err = tk.ExecToErr("select * from low_resolution_tso where a = 1 for update")
-	require.Error(t, err)
-	err = tk.ExecToErr("select * from low_resolution_tso for update")
+	tk.MustQuery("select * from low_resolution_tso where a = 1 for update")
+	tk.MustQuery("select * from low_resolution_tso for update")
+
+	err = tk.ExecToErr("update low_resolution_tso set a = 3")
 	require.Error(t, err)
 }
 
