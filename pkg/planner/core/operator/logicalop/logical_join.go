@@ -1264,13 +1264,25 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 	return false
 }
 
+// canPropagateConstantWithInnerJoinOrSemiJoin is to It is used to determine whether the newly created expression
+// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
+// we will remove it.
+// This function is only used with inner join and semi join.
 func (p *LogicalJoin) canPropagateConstantWithInnerJoinOrSemiJoin(expr expression.Expression) bool {
 	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, true, true)
+	// If otherCond is empty, we may consider this expression to be useful.
+	// This expression is created by the constant propagation
 	return len(otherCond) == 0
 }
 
+// canPropagateConstantForJoinPropConst is to It is used to determine whether the newly created expression
+// during constant propagation can be pushed down to the child nodes. If the new expression cannot be pushed down,
+// we will remove it.
+// This function is only used in LogicalJoin.joinPropConst.
 func (p *LogicalJoin) canPropagateConstantForJoinPropConst(expr expression.Expression) bool {
 	_, _, _, otherCond := p.extractOnCondition([]expression.Expression{expr}, false, false)
+	// If otherCond is empty, we may consider this expression to be useful.
+	// This expression is created by the constant propagation
 	return len(otherCond) == 0
 }
 
