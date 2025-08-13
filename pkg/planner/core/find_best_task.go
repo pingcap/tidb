@@ -1601,7 +1601,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if !c.path.IsFullScanRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				isDNFOnlyEqualPredicates := c.hasOnlyEqualPredicatesInDNF()
+				if preferMerge || isDNFOnlyEqualPredicates || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1617,6 +1618,30 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	}
 
 	return candidates
+}
+
+// hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
+func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
+	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
+		return false
+	}
+
+	// Check if all access conditions are equal predicates
+	for _, cond := range c.path.AccessConds {
+		if sf, ok := cond.(*expression.ScalarFunction); ok {
+			if sf.FuncName.L == ast.LogicOr {
+				continue
+			}
+			// Check if it's an equal predicate (eq) or IN predicate (in)
+			if sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In {
+				return false
+			}
+		} else {
+			// If it's not a scalar function, it's not an equal predicate
+			return false
+		}
+	}
+	return true
 }
 
 func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop *property.PhysicalProperty) string {
