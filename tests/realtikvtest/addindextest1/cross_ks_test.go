@@ -32,11 +32,8 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 		t.Skip("This test is only for nextgen kernel, skip it in classic kernel")
 	}
 
-	// bootstrap SYSTEM and user keyspace
-	realtikvtest.CreateMockStoreAndSetup(t)
-	userStore := realtikvtest.CreateMockStoreAndSetup(t,
-		realtikvtest.WithKeyspaceName("keyspace1"), realtikvtest.WithKeepSystemStore(true))
-
+	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1")
+	userStore := runtimes["keyspace1"].Store
 	// submit add index sql on user keyspace
 	tk := testkit.NewTestKit(t, userStore)
 	tk.MustExec("use test")

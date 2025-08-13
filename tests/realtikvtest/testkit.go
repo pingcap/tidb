@@ -108,6 +108,7 @@ type realtikvStoreOption struct {
 	// some routine might report errors, and we don't want close twice as the storage
 	// driver will cache store.
 	keepSystemStore bool
+	keepSelfStore   bool
 }
 
 // RealTiKVStoreOption is the config option for creating a real TiKV store.
@@ -132,6 +133,45 @@ func WithKeepSystemStore(keep bool) RealTiKVStoreOption {
 	return func(opt *realtikvStoreOption) {
 		opt.keepSystemStore = keep
 	}
+}
+
+// WithKeepSelfStore allows the store to keep the self store.
+func WithKeepSelfStore(keep bool) RealTiKVStoreOption {
+	return func(opt *realtikvStoreOption) {
+		opt.keepSelfStore = keep
+	}
+}
+
+// KSRuntime is a runtime environment for a keyspace.
+type KSRuntime struct {
+	Store kv.Storage
+	Dom   *domain.Domain
+}
+
+// PrepareForCrossKSTest prepares the environment for cross keyspace tests.
+func PrepareForCrossKSTest(t *testing.T, userKSs ...string) map[string]*KSRuntime {
+	if !kerneltype.IsNextGen() {
+		t.Fail()
+	}
+	res := make(map[string]*KSRuntime, len(userKSs)+1)
+	// stores are cached, we want to make sure stores are closed after domain,
+	// else some routine might be blocked.
+	t.Cleanup(func() {
+		for _, runtime := range res {
+			require.NoError(t, runtime.Store.Close())
+		}
+	})
+
+	ksList := append([]string{keyspace.System}, userKSs...)
+	for _, ks := range ksList {
+		store, dom := CreateMockStoreAndDomainAndSetup(t, WithKeyspaceName(ks),
+			WithKeepSystemStore(true), WithKeepSelfStore(true))
+		res[ks] = &KSRuntime{
+			Store: store,
+			Dom:   dom,
+		}
+	}
+	return res
 }
 
 // CreateMockStoreAndSetup return a new kv.Storage.
@@ -228,7 +268,9 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 	t.Cleanup(func() {
 		dom.Close()
 		ddl.CloseOwnerManager(store)
-		require.NoError(t, store.Close())
+		if !option.keepSelfStore {
+			require.NoError(t, store.Close())
+		}
 		transaction.PrewriteMaxBackoff.Store(20000)
 		view.Stop()
 	})
