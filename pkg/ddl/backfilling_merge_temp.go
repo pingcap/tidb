@@ -65,14 +65,14 @@ func newMergeTempIndexExecutor(job *model.Job, store kv.Storage, ptbl table.Phys
 	}, nil
 }
 
-func (e *mergeTempIndexExecutor) Init(ctx context.Context) error {
+func (*mergeTempIndexExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge temp index executor init subtask exec env")
 	return nil
 }
 
 func (e *mergeTempIndexExecutor) initializeByMeta(ctx context.Context, meta *BackfillSubTaskMeta) error {
-	bfMs := []time.Duration{1, 50, 250, 500, 1000, 2000}
-	ticker := time.NewTicker(bfMs[0] * time.Millisecond)
+	bfMs := []int{1, 50, 250, 500, 1000, 2000}
+	ticker := time.NewTicker(time.Duration(bfMs[0]) * time.Millisecond)
 	defer ticker.Stop()
 
 	attempts := 0
@@ -102,7 +102,8 @@ func (e *mergeTempIndexExecutor) initializeByMeta(ctx context.Context, meta *Bac
 					zap.Stringer("currentState", idxInfo.BackfillState),
 				)
 				attempts++
-				ticker.Reset(bfMs[min(attempts, len(bfMs)-1)] * time.Millisecond)
+				bfMsIdx := min(attempts, len(bfMs)-1)
+				ticker.Reset(time.Duration(bfMs[bfMsIdx]) * time.Millisecond)
 				continue
 			}
 			e.ptbl = tbl.(table.PhysicalTable)
@@ -117,7 +118,7 @@ func (e *mergeTempIndexExecutor) initializeByMeta(ctx context.Context, meta *Bac
 		}
 	}
 	e.mergeCounter = metrics.GetBackfillTotalByLabel(
-		fmt.Sprintf("%s", metrics.LblMergeTmpIdxRate),
+		metrics.LblMergeTmpIdxRate,
 		e.job.SchemaName, e.ptbl.Meta().Name.String(), e.idxInfo.Name.L)
 	e.conflictCounter = metrics.GetBackfillTotalByLabel(
 		fmt.Sprintf("%s-conflict", metrics.LblMergeTmpIdxRate),
