@@ -48,7 +48,7 @@ func TestCanBePrune(t *testing.T) {
 
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
 	result := rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
-	require.True(t, slices.Equal(result, rule.PartitionRangeOR{{0, 1}}))
+	require.True(t, slices.Equal(result, rule.PartitionRangeOR{{Start: 0, End: 1}}))
 
 	queryExpr = tc.expr("d > '2018-03-08 00:00:00'")
 	result = rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
@@ -249,18 +249,18 @@ func TestPartitionRangeForExpr(t *testing.T) {
 		result rule.PartitionRangeOR
 	}{
 		{"a < 2 and a > 10", rule.PartitionRangeOR{}},
-		{"a > 3", rule.PartitionRangeOR{{1, 6}}},
-		{"a < 3", rule.PartitionRangeOR{{0, 1}}},
-		{"a >= 11", rule.PartitionRangeOR{{3, 6}}},
-		{"a > 11", rule.PartitionRangeOR{{3, 6}}},
-		{"a < 11", rule.PartitionRangeOR{{0, 3}}},
-		{"a = 16", rule.PartitionRangeOR{{4, 5}}},
-		{"a > 66", rule.PartitionRangeOR{{5, 6}}},
-		{"a > 2 and a < 10", rule.PartitionRangeOR{{0, 3}}},
-		{"a < 2 or a >= 15", rule.PartitionRangeOR{{0, 1}, {4, 6}}},
-		{"a is null", rule.PartitionRangeOR{{0, 1}}},
-		{"12 > a", rule.PartitionRangeOR{{0, 4}}},
-		{"4 <= a", rule.PartitionRangeOR{{1, 6}}},
+		{"a > 3", rule.PartitionRangeOR{{Start: 1, End: 6}}},
+		{"a < 3", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"a >= 11", rule.PartitionRangeOR{{Start: 3, End: 6}}},
+		{"a > 11", rule.PartitionRangeOR{{Start: 3, End: 6}}},
+		{"a < 11", rule.PartitionRangeOR{{Start: 0, End: 3}}},
+		{"a = 16", rule.PartitionRangeOR{{Start: 4, End: 5}}},
+		{"a > 66", rule.PartitionRangeOR{{Start: 5, End: 6}}},
+		{"a > 2 and a < 10", rule.PartitionRangeOR{{Start: 0, End: 3}}},
+		{"a < 2 or a >= 15", rule.PartitionRangeOR{{Start: 0, End: 1}, {Start: 4, End: 6}}},
+		{"a is null", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"12 > a", rule.PartitionRangeOR{{Start: 0, End: 4}}},
+		{"4 <= a", rule.PartitionRangeOR{{Start: 1, End: 6}}},
 	}
 
 	for _, ca := range cases {
@@ -278,15 +278,15 @@ func TestPartitionRangeOperation(t *testing.T) {
 		input2 rule.PartitionRange
 		result rule.PartitionRangeOR
 	}{
-		{input1: rule.PartitionRangeOR{{0, 3}, {6, 12}},
+		{input1: rule.PartitionRangeOR{{Start: 0, End: 3}, {Start: 6, End: 12}},
 			input2: rule.PartitionRange{Start: 4, End: 7},
-			result: rule.PartitionRangeOR{{6, 7}}},
-		{input1: rule.PartitionRangeOR{{0, 5}},
+			result: rule.PartitionRangeOR{{Start: 6, End: 7}}},
+		{input1: rule.PartitionRangeOR{{Start: 0, End: 5}},
 			input2: rule.PartitionRange{Start: 6, End: 7},
 			result: rule.PartitionRangeOR{}},
-		{input1: rule.PartitionRangeOR{{0, 4}, {6, 7}, {8, 11}},
+		{input1: rule.PartitionRangeOR{{Start: 0, End: 4}, {Start: 6, End: 7}, {Start: 8, End: 11}},
 			input2: rule.PartitionRange{Start: 3, End: 9},
-			result: rule.PartitionRangeOR{{3, 4}, {6, 7}, {8, 9}}},
+			result: rule.PartitionRangeOR{{Start: 3, End: 4}, {Start: 6, End: 7}, {Start: 8, End: 9}}},
 	}
 	for i, ca := range testIntersectionRange {
 		result := ca.input1.IntersectionRange(ca.input2.Start, ca.input2.End)
@@ -298,15 +298,15 @@ func TestPartitionRangeOperation(t *testing.T) {
 		input2 rule.PartitionRangeOR
 		result rule.PartitionRangeOR
 	}{
-		{input1: rule.PartitionRangeOR{{0, 3}, {6, 12}},
-			input2: rule.PartitionRangeOR{{4, 7}},
-			result: rule.PartitionRangeOR{{6, 7}}},
-		{input1: rule.PartitionRangeOR{{4, 7}},
-			input2: rule.PartitionRangeOR{{0, 3}, {6, 12}},
-			result: rule.PartitionRangeOR{{6, 7}}},
-		{input1: rule.PartitionRangeOR{{4, 7}, {8, 10}},
-			input2: rule.PartitionRangeOR{{0, 5}, {6, 12}},
-			result: rule.PartitionRangeOR{{4, 5}, {6, 7}, {8, 10}}},
+		{input1: rule.PartitionRangeOR{{Start: 0, End: 3}, {Start: 6, End: 12}},
+			input2: rule.PartitionRangeOR{{Start: 4, End: 7}},
+			result: rule.PartitionRangeOR{{Start: 6, End: 7}}},
+		{input1: rule.PartitionRangeOR{{Start: 4, End: 7}},
+			input2: rule.PartitionRangeOR{{Start: 0, End: 3}, {Start: 6, End: 12}},
+			result: rule.PartitionRangeOR{{Start: 6, End: 7}}},
+		{input1: rule.PartitionRangeOR{{Start: 4, End: 7}, {Start: 8, End: 10}},
+			input2: rule.PartitionRangeOR{{Start: 0, End: 5}, {Start: 6, End: 12}},
+			result: rule.PartitionRangeOR{{Start: 4, End: 5}, {Start: 6, End: 7}, {Start: 8, End: 10}}},
 	}
 	for i, ca := range testIntersection {
 		result := ca.input1.Intersection(ca.input2)
@@ -318,15 +318,15 @@ func TestPartitionRangeOperation(t *testing.T) {
 		input2 rule.PartitionRangeOR
 		result rule.PartitionRangeOR
 	}{
-		{input1: rule.PartitionRangeOR{{0, 1}, {2, 7}},
-			input2: rule.PartitionRangeOR{{3, 5}},
-			result: rule.PartitionRangeOR{{0, 1}, {2, 7}}},
-		{input1: rule.PartitionRangeOR{{2, 7}},
-			input2: rule.PartitionRangeOR{{0, 3}, {4, 12}},
-			result: rule.PartitionRangeOR{{0, 12}}},
-		{input1: rule.PartitionRangeOR{{4, 7}, {8, 10}},
-			input2: rule.PartitionRangeOR{{0, 5}},
-			result: rule.PartitionRangeOR{{0, 7}, {8, 10}}},
+		{input1: rule.PartitionRangeOR{{Start: 0, End: 1}, {Start: 2, End: 7}},
+			input2: rule.PartitionRangeOR{{Start: 3, End: 5}},
+			result: rule.PartitionRangeOR{{Start: 0, End: 1}, {Start: 2, End: 7}}},
+		{input1: rule.PartitionRangeOR{{Start: 2, End: 7}},
+			input2: rule.PartitionRangeOR{{Start: 0, End: 3}, {Start: 4, End: 12}},
+			result: rule.PartitionRangeOR{{Start: 0, End: 12}}},
+		{input1: rule.PartitionRangeOR{{Start: 4, End: 7}, {Start: 8, End: 10}},
+			input2: rule.PartitionRangeOR{{Start: 0, End: 5}},
+			result: rule.PartitionRangeOR{{Start: 0, End: 7}, {Start: 8, End: 10}}},
 	}
 	for i, ca := range testUnion {
 		result := ca.input1.Union(ca.input2)
@@ -355,19 +355,19 @@ func TestPartitionRangePruner2VarChar(t *testing.T) {
 		input  string
 		result rule.PartitionRangeOR
 	}{
-		{"a > 'g'", rule.PartitionRangeOR{{2, 6}}},
-		{"a < 'h'", rule.PartitionRangeOR{{0, 3}}},
-		{"a >= 'm'", rule.PartitionRangeOR{{4, 6}}},
-		{"a > 'm'", rule.PartitionRangeOR{{4, 6}}},
-		{"a < 'f'", rule.PartitionRangeOR{{0, 2}}},
-		{"a = 'c'", rule.PartitionRangeOR{{1, 2}}},
-		{"a > 't'", rule.PartitionRangeOR{{5, 6}}},
-		{"a > 'c' and a < 'q'", rule.PartitionRangeOR{{1, 5}}},
-		{"a < 'l' or a >= 'w'", rule.PartitionRangeOR{{0, 4}, {5, 6}}},
-		{"a is null", rule.PartitionRangeOR{{0, 1}}},
-		{"'mm' > a", rule.PartitionRangeOR{{0, 5}}},
-		{"'f' <= a", rule.PartitionRangeOR{{2, 6}}},
-		{"'f' >= a", rule.PartitionRangeOR{{0, 3}}},
+		{"a > 'g'", rule.PartitionRangeOR{{Start: 2, End: 6}}},
+		{"a < 'h'", rule.PartitionRangeOR{{Start: 0, End: 3}}},
+		{"a >= 'm'", rule.PartitionRangeOR{{Start: 4, End: 6}}},
+		{"a > 'm'", rule.PartitionRangeOR{{Start: 4, End: 6}}},
+		{"a < 'f'", rule.PartitionRangeOR{{Start: 0, End: 2}}},
+		{"a = 'c'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a > 't'", rule.PartitionRangeOR{{Start: 5, End: 6}}},
+		{"a > 'c' and a < 'q'", rule.PartitionRangeOR{{Start: 1, End: 5}}},
+		{"a < 'l' or a >= 'w'", rule.PartitionRangeOR{{Start: 0, End: 4}, {Start: 5, End: 6}}},
+		{"a is null", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"'mm' > a", rule.PartitionRangeOR{{Start: 0, End: 5}}},
+		{"'f' <= a", rule.PartitionRangeOR{{Start: 2, End: 6}}},
+		{"'f' >= a", rule.PartitionRangeOR{{Start: 0, End: 3}}},
 	}
 
 	for _, ca := range cases {
@@ -403,21 +403,21 @@ func TestPartitionRangePruner2CharWithCollation(t *testing.T) {
 		input  string
 		result rule.PartitionRangeOR
 	}{
-		{"a > 'G'", rule.PartitionRangeOR{{2, 6}}},
-		{"a > 'g'", rule.PartitionRangeOR{{2, 6}}},
-		{"a < 'h'", rule.PartitionRangeOR{{0, 3}}},
-		{"a >= 'M'", rule.PartitionRangeOR{{4, 6}}},
-		{"a > 'm'", rule.PartitionRangeOR{{4, 6}}},
-		{"a < 'F'", rule.PartitionRangeOR{{0, 2}}},
-		{"a = 'C'", rule.PartitionRangeOR{{1, 2}}},
-		{"a > 't'", rule.PartitionRangeOR{{5, 6}}},
-		{"a > 'C' and a < 'q'", rule.PartitionRangeOR{{1, 5}}},
-		{"a > 'c' and a < 'Q'", rule.PartitionRangeOR{{1, 5}}},
-		{"a < 'l' or a >= 'W'", rule.PartitionRangeOR{{0, 4}, {5, 6}}},
-		{"a is null", rule.PartitionRangeOR{{0, 1}}},
-		{"'Mm' > a", rule.PartitionRangeOR{{0, 5}}},
-		{"'f' <= a", rule.PartitionRangeOR{{2, 6}}},
-		{"'f' >= a", rule.PartitionRangeOR{{0, 3}}},
+		{"a > 'G'", rule.PartitionRangeOR{{Start: 2, End: 6}}},
+		{"a > 'g'", rule.PartitionRangeOR{{Start: 2, End: 6}}},
+		{"a < 'h'", rule.PartitionRangeOR{{Start: 0, End: 3}}},
+		{"a >= 'M'", rule.PartitionRangeOR{{Start: 4, End: 6}}},
+		{"a > 'm'", rule.PartitionRangeOR{{Start: 4, End: 6}}},
+		{"a < 'F'", rule.PartitionRangeOR{{Start: 0, End: 2}}},
+		{"a = 'C'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a > 't'", rule.PartitionRangeOR{{Start: 5, End: 6}}},
+		{"a > 'C' and a < 'q'", rule.PartitionRangeOR{{Start: 1, End: 5}}},
+		{"a > 'c' and a < 'Q'", rule.PartitionRangeOR{{Start: 1, End: 5}}},
+		{"a < 'l' or a >= 'W'", rule.PartitionRangeOR{{Start: 0, End: 4}, {Start: 5, End: 6}}},
+		{"a is null", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"'Mm' > a", rule.PartitionRangeOR{{Start: 0, End: 5}}},
+		{"'f' <= a", rule.PartitionRangeOR{{Start: 2, End: 6}}},
+		{"'f' >= a", rule.PartitionRangeOR{{Start: 0, End: 3}}},
 	}
 
 	for _, ca := range cases {
@@ -460,20 +460,20 @@ func TestPartitionRangePruner2Date(t *testing.T) {
 		input  string
 		result rule.PartitionRangeOR
 	}{
-		{"a < '1943-02-12'", rule.PartitionRangeOR{{0, 1}}},
-		{"a >= '19690213'", rule.PartitionRangeOR{{0, 7}}},
-		{"a > '2003-03-13'", rule.PartitionRangeOR{{2, 7}}},
-		{"a < '2006-02-03'", rule.PartitionRangeOR{{0, 3}}},
-		{"a = '20070707'", rule.PartitionRangeOR{{2, 3}}},
-		{"a > '1949-10-10'", rule.PartitionRangeOR{{0, 7}}},
+		{"a < '1943-02-12'", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"a >= '19690213'", rule.PartitionRangeOR{{Start: 0, End: 7}}},
+		{"a > '2003-03-13'", rule.PartitionRangeOR{{Start: 2, End: 7}}},
+		{"a < '2006-02-03'", rule.PartitionRangeOR{{Start: 0, End: 3}}},
+		{"a = '20070707'", rule.PartitionRangeOR{{Start: 2, End: 3}}},
+		{"a > '1949-10-10'", rule.PartitionRangeOR{{Start: 0, End: 7}}},
 		{"a > '2016-02-01' and a < '20000103'", rule.PartitionRangeOR{}},
-		{"a < '19691112' or a >= '2019-09-18'", rule.PartitionRangeOR{{0, 1}, {5, 7}}},
-		{"a is null", rule.PartitionRangeOR{{0, 1}}},
-		{"'2003-02-27' >= a", rule.PartitionRangeOR{{0, 3}}},
-		{"'20141024' < a", rule.PartitionRangeOR{{4, 7}}},
-		{"'2003-03-30' > a", rule.PartitionRangeOR{{0, 3}}},
-		{"'2003-03-30' < a AND a < '20080808'", rule.PartitionRangeOR{{2, 4}}},
-		{"a between '2003-03-30' AND '20080808'", rule.PartitionRangeOR{{2, 4}}},
+		{"a < '19691112' or a >= '2019-09-18'", rule.PartitionRangeOR{{Start: 0, End: 1}, {Start: 5, End: 7}}},
+		{"a is null", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"'2003-02-27' >= a", rule.PartitionRangeOR{{Start: 0, End: 3}}},
+		{"'20141024' < a", rule.PartitionRangeOR{{Start: 4, End: 7}}},
+		{"'2003-03-30' > a", rule.PartitionRangeOR{{Start: 0, End: 3}}},
+		{"'2003-03-30' < a AND a < '20080808'", rule.PartitionRangeOR{{Start: 2, End: 4}}},
+		{"a between '2003-03-30' AND '20080808'", rule.PartitionRangeOR{{Start: 2, End: 4}}},
 	}
 
 	for _, ca := range cases {
@@ -524,33 +524,33 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		result rule.PartitionRangeOR
 	}{
 		{"a < 1 and a > 1", rule.PartitionRangeOR{}},
-		{"c = 3", rule.PartitionRangeOR{{0, len(partDefs)}}},
-		{"b > 3 AND c = 3", rule.PartitionRangeOR{{0, len(partDefs)}}},
-		{"a = 5 AND c = 3", rule.PartitionRangeOR{{9, 10}}},
-		{"a = 4 AND c = 3", rule.PartitionRangeOR{{1, 9}}},
-		{"b > 3", rule.PartitionRangeOR{{0, len(partDefs)}}},
-		{"a > 3", rule.PartitionRangeOR{{1, len(partDefs)}}},
-		{"a < 3", rule.PartitionRangeOR{{0, 1}}},
-		{"a >= 11", rule.PartitionRangeOR{{10, len(partDefs)}}},
-		{"a > 11", rule.PartitionRangeOR{{11, len(partDefs)}}},
-		{"a > 4", rule.PartitionRangeOR{{9, len(partDefs)}}},
-		{"a >= 4", rule.PartitionRangeOR{{1, len(partDefs)}}},
-		{"a < 11", rule.PartitionRangeOR{{0, 11}}},
-		{"a = 16", rule.PartitionRangeOR{{12, 13}}},
-		{"a > 66", rule.PartitionRangeOR{{13, 14}}},
-		{"a > 2 and a < 10", rule.PartitionRangeOR{{0, 11}}},
-		{"a < 2 or a >= 15", rule.PartitionRangeOR{{0, 1}, {12, 14}}},
-		{"a is null", rule.PartitionRangeOR{{0, 1}}},
-		{"12 > a", rule.PartitionRangeOR{{0, 12}}},
-		{"4 <= a", rule.PartitionRangeOR{{1, 14}}},
-		{"(a,b) < (4,4)", rule.PartitionRangeOR{{0, 4}}},
-		{"(a,b) = (4,4)", rule.PartitionRangeOR{{4, 5}}},
-		{"a < 4 OR (a = 4 AND b < 4)", rule.PartitionRangeOR{{0, 4}}},
-		{"(a,b,c) < (4,4,4)", rule.PartitionRangeOR{{0, 5}}},
-		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", rule.PartitionRangeOR{{0, 5}}},
-		{"(a,b,c) >= (4,7,4)", rule.PartitionRangeOR{{5, len(partDefs)}}},
-		{"a > 4 or (a= 4 and b > 7) or (a = 4 and b = 7 and c >= 4)", rule.PartitionRangeOR{{5, len(partDefs)}}},
-		{"(a,b,c) = (4,7,4)", rule.PartitionRangeOR{{5, 6}}},
+		{"c = 3", rule.PartitionRangeOR{{Start: 0, End: len(partDefs)}}},
+		{"b > 3 AND c = 3", rule.PartitionRangeOR{{Start: 0, End: len(partDefs)}}},
+		{"a = 5 AND c = 3", rule.PartitionRangeOR{{Start: 9, End: 10}}},
+		{"a = 4 AND c = 3", rule.PartitionRangeOR{{Start: 1, End: 9}}},
+		{"b > 3", rule.PartitionRangeOR{{Start: 0, End: len(partDefs)}}},
+		{"a > 3", rule.PartitionRangeOR{{Start: 1, End: len(partDefs)}}},
+		{"a < 3", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"a >= 11", rule.PartitionRangeOR{{Start: 10, End: len(partDefs)}}},
+		{"a > 11", rule.PartitionRangeOR{{Start: 11, End: len(partDefs)}}},
+		{"a > 4", rule.PartitionRangeOR{{Start: 9, End: len(partDefs)}}},
+		{"a >= 4", rule.PartitionRangeOR{{Start: 1, End: len(partDefs)}}},
+		{"a < 11", rule.PartitionRangeOR{{Start: 0, End: 11}}},
+		{"a = 16", rule.PartitionRangeOR{{Start: 12, End: 13}}},
+		{"a > 66", rule.PartitionRangeOR{{Start: 13, End: 14}}},
+		{"a > 2 and a < 10", rule.PartitionRangeOR{{Start: 0, End: 11}}},
+		{"a < 2 or a >= 15", rule.PartitionRangeOR{{Start: 0, End: 1}, {Start: 12, End: 14}}},
+		{"a is null", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"12 > a", rule.PartitionRangeOR{{Start: 0, End: 12}}},
+		{"4 <= a", rule.PartitionRangeOR{{Start: 1, End: 14}}},
+		{"(a,b) < (4,4)", rule.PartitionRangeOR{{Start: 0, End: 4}}},
+		{"(a,b) = (4,4)", rule.PartitionRangeOR{{Start: 4, End: 5}}},
+		{"a < 4 OR (a = 4 AND b < 4)", rule.PartitionRangeOR{{Start: 0, End: 4}}},
+		{"(a,b,c) < (4,4,4)", rule.PartitionRangeOR{{Start: 0, End: 5}}},
+		{"a < 4 OR (a = 4 AND b < 4) OR (a = 4 AND b = 4 AND c < 4)", rule.PartitionRangeOR{{Start: 0, End: 5}}},
+		{"(a,b,c) >= (4,7,4)", rule.PartitionRangeOR{{Start: 5, End: len(partDefs)}}},
+		{"a > 4 or (a= 4 and b > 7) or (a = 4 and b = 7 and c >= 4)", rule.PartitionRangeOR{{Start: 5, End: len(partDefs)}}},
+		{"(a,b,c) = (4,7,4)", rule.PartitionRangeOR{{Start: 5, End: 6}}},
 		{"a < 2 and a > 10", rule.PartitionRangeOR{}},
 		{"a < 1 and a > 1", rule.PartitionRangeOR{}},
 	}
@@ -593,19 +593,19 @@ func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
 		input  string
 		result rule.PartitionRangeOR
 	}{
-		{"a = 'q'", rule.PartitionRangeOR{{1, 2}}},
-		{"a = 'Q'", rule.PartitionRangeOR{{1, 2}}},
-		{"a = 'a'", rule.PartitionRangeOR{{0, 1}}},
-		{"a = 'A'", rule.PartitionRangeOR{{0, 1}}},
-		{"a > 'a'", rule.PartitionRangeOR{{0, 2}}},
-		{"a > 'q'", rule.PartitionRangeOR{{1, 2}}},
-		{"a = 'i' and b = 'q'", rule.PartitionRangeOR{{1, 2}}},
-		{"a = 'i' and b = 'Q'", rule.PartitionRangeOR{{1, 2}}},
-		{"a = 'i' and b = 'a'", rule.PartitionRangeOR{{0, 1}}},
-		{"a = 'i' and b = 'A'", rule.PartitionRangeOR{{0, 1}}},
-		{"a = 'i' and b > 'a'", rule.PartitionRangeOR{{0, 2}}},
-		{"a = 'i' and b > 'q'", rule.PartitionRangeOR{{1, 2}}},
-		{"a = 'i' or a = 'h'", rule.PartitionRangeOR{{0, 2}}},
+		{"a = 'q'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a = 'Q'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a = 'a'", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"a = 'A'", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"a > 'a'", rule.PartitionRangeOR{{Start: 0, End: 2}}},
+		{"a > 'q'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a = 'i' and b = 'q'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a = 'i' and b = 'Q'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a = 'i' and b = 'a'", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"a = 'i' and b = 'A'", rule.PartitionRangeOR{{Start: 0, End: 1}}},
+		{"a = 'i' and b > 'a'", rule.PartitionRangeOR{{Start: 0, End: 2}}},
+		{"a = 'i' and b > 'q'", rule.PartitionRangeOR{{Start: 1, End: 2}}},
+		{"a = 'i' or a = 'h'", rule.PartitionRangeOR{{Start: 0, End: 2}}},
 		{"a = 'h' and a = 'j'", rule.PartitionRangeOR{}},
 	}
 
@@ -654,7 +654,7 @@ func benchmarkRangeColumnsPruner(b *testing.B, parts int) {
 	e := expression.SplitCNFItems(expr)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		result[0] = rule.PartitionRange{End: parts}
+		result[0] = rule.PartitionRange{Start: 0, End: parts}
 		result = result[:1]
 		result = rule.PartitionRangeForCNFExpr(tc.sctx, e, pruner, result)
 	}
