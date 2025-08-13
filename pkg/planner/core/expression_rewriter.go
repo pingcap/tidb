@@ -1527,6 +1527,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.JSONSumCrc32Expr:
+		if !model.GetUseMVIdxScan(er.ctx) {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("JSON_SUM_CRC32 is only allowed to be used internally")
+			return retNode, false
+		}
+
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		jsonSumFunction, err := expression.BuildJSONSumCrc32FunctionWithCheck(er.sctx, arg, v.Tp)
 		if err != nil {
@@ -2464,7 +2469,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
 		// When MVIndexScan is enabled, we may use virtual columns directly in selection.
-		if column.IsHidden && !GetEnableMVIndexScan(er.ctx) {
+		if column.IsHidden && !model.GetUseMVIdxScan(er.ctx) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}

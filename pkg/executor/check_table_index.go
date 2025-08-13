@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -675,7 +674,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		return err
 	}
 
-	indexCtx := plannercore.WithEnableMVIndexScan(w.e.contextCtx)
+	indexCtx := model.WithUseMVIdxScan(w.e.contextCtx)
 
 	var (
 		checkTimes         = 0
@@ -702,8 +701,10 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 
 		tableQuery = fmt.Sprintf(tableChecksumSQL, groupByKey, whereKey, groupByKey)
 		indexQuery = fmt.Sprintf(indexChecksumSQL, groupByKey, whereKey, groupByKey)
-		verifyCheckQuery(indexCtx, se, tableQuery, true)
-		verifyCheckQuery(indexCtx, se, indexQuery, false)
+		if idxInfo.MVIndex {
+			verifyCheckQuery(indexCtx, se, tableQuery, true)
+			verifyCheckQuery(indexCtx, se, indexQuery, false)
+		}
 
 		logutil.BgLogger().Info(
 			"fast check table by group",
@@ -783,8 +784,10 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		groupByKey := fmt.Sprintf("((CAST(%s AS SIGNED) - %d) MOD %d)", md5Handle, offset, mod)
 		tableQuery = fmt.Sprintf(tableCheckSQL, groupByKey)
 		indexQuery = fmt.Sprintf(indexCheckSQL, groupByKey)
-		verifyCheckQuery(indexCtx, se, tableQuery, true)
-		verifyCheckQuery(indexCtx, se, indexQuery, false)
+		if idxInfo.MVIndex {
+			verifyCheckQuery(indexCtx, se, tableQuery, true)
+			verifyCheckQuery(indexCtx, se, indexQuery, false)
+		}
 
 		var (
 			lastTableRecord *recordWithChecksum
