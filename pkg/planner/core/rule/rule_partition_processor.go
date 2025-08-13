@@ -1531,8 +1531,11 @@ func partitionRangeForInExpr(sctx base.PlanContext, args []expression.Expression
 type monotoneMode int
 
 const (
+	// MonotoneModeInvalid indicate the invalid mode.
 	MonotoneModeInvalid monotoneMode = iota
+	// MonotoneModeStrict indicate the strict mode.
 	MonotoneModeStrict
+	// MonotoneModeNonStrict indicate the non-strict mode.
 	MonotoneModeNonStrict
 )
 

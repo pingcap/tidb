@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
