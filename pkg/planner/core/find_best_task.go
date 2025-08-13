@@ -2110,7 +2110,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		tblColHists:       ds.TblColHists,
 	}
 	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
@@ -2535,7 +2535,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
 	cop.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
@@ -3040,7 +3040,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			tblColHists: ds.TblColHists,
 		}
 		ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
-			PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+			PruningConds:   ds.AllConds,
 			PartitionNames: ds.PartitionNames,
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.OutputNames(),
@@ -3071,7 +3071,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		tblColHists:       ds.TblColHists,
 	}
 	copTask.physPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.AllConds),
+		PruningConds:   ds.AllConds,
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
@@ -3492,15 +3492,6 @@ func appendCandidate(lp base.LogicalPlan, task base.Task, prop *property.Physica
 		return
 	}
 	appendCandidate4PhysicalOptimizeOp(opt, lp, task.Plan(), prop)
-}
-
-// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
-// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
-func pushDownNot(ctx expression.BuildContext, conds []expression.Expression) []expression.Expression {
-	for i, cond := range conds {
-		conds[i] = expression.PushDownNot(ctx, cond)
-	}
-	return conds
 }
 
 func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) error {
