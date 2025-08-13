@@ -1133,7 +1133,6 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
-	// TODO: riskResult is not added to sum to limit change to existing logic. Further testing required.
 	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
