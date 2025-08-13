@@ -36,7 +36,7 @@ import (
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
 	var structures = []any{core.PhysicalIndexScan{}, core.PhysicalTableReader{},
-		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
+		core.PointGetPlan{}, core.BatchPointGetPlan{},
 		core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
 		core.Update{}, core.Delete{}, core.Insert{}}
 
@@ -83,7 +83,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			"core.PhysicalIndexMergeReader.TablePlans":
 			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
 			continue
-		case "core.PhysicalIndexReader.IndexPlans", "core.PhysicalIndexLookUpReader.IndexPlans":
+		case "core.PhysicalIndexLookUpReader.IndexPlans":
 			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":

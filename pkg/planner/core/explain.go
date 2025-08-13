@@ -157,16 +157,6 @@ func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainInfo() string {
-	return "index:" + p.indexPlan.ExplainID().String()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return "index:" + p.indexPlan.TP()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	var str strings.Builder
 	// The children can be inferred by the relation symbol.

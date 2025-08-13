@@ -316,8 +316,8 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(indexScan))
 
 	// index reader
-	indexReader := &PhysicalIndexReader{
-		indexPlan:     indexScan,
+	indexReader := &physicalop.PhysicalIndexReader{
+		IndexPlan:     indexScan,
 		IndexPlans:    []base.PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},
 	}

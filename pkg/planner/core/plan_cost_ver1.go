@@ -208,8 +208,9 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer1(_ property.TaskType, option 
 	return p.PlanCost, nil
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexReader) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+// getPlanCostVer14PhysicalIndexReader calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer14PhysicalIndexReader(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalIndexReader)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -218,20 +219,20 @@ func (p *PhysicalIndexReader) GetPlanCostVer1(_ property.TaskType, option *optim
 	var rowCount, rowSize, netFactor, indexPlanCost, netSeekCost float64
 	sqlScanConcurrency := p.SCtx().GetSessionVars().DistSQLScanConcurrency()
 	// child's cost
-	childCost, err := p.indexPlan.GetPlanCostVer1(property.CopSingleReadTaskType, option)
+	childCost, err := p.IndexPlan.GetPlanCostVer1(property.CopSingleReadTaskType, option)
 	if err != nil {
 		return 0, err
 	}
 	indexPlanCost = childCost
 	p.PlanCost = indexPlanCost
 	// net I/O cost: rows * row-size * net-factor
-	tblStats := getTblStats(p.indexPlan)
-	rowSize = cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.indexPlan.Schema().Columns, true, false)
-	rowCount = getCardinality(p.indexPlan, costFlag)
-	netFactor = getTableNetFactor(p.indexPlan)
+	tblStats := getTblStats(p.IndexPlan)
+	rowSize = cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.IndexPlan.Schema().Columns, true, false)
+	rowCount = getCardinality(p.IndexPlan, costFlag)
+	netFactor = getTableNetFactor(p.IndexPlan)
 	p.PlanCost += rowCount * rowSize * netFactor
 	// net seek cost
-	netSeekCost = estimateNetSeekCost(p.indexPlan)
+	netSeekCost = estimateNetSeekCost(p.IndexPlan)
 	p.PlanCost += netSeekCost
 	// consider concurrency
 	p.PlanCost /= float64(sqlScanConcurrency)
@@ -241,13 +242,6 @@ func (p *PhysicalIndexReader) GetPlanCostVer1(_ property.TaskType, option *optim
 	}
 	p.PlanCostInit = true
 	return p.PlanCost, nil
-}
-
-// GetNetDataSize calculates the cost of the plan in network data transfer.
-func (p *PhysicalIndexReader) GetNetDataSize() float64 {
-	tblStats := getTblStats(p.indexPlan)
-	rowSize := cardinality.GetAvgRowSize(p.SCtx(), tblStats, p.indexPlan.Schema().Columns, true, false)
-	return p.indexPlan.StatsCount() * rowSize
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.

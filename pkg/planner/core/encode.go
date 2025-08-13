@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -236,8 +237,8 @@ func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, 
 	switch copPlan := selectPlan.(type) {
 	case *PhysicalTableReader:
 		pn.encodePlan(copPlan.tablePlan, false, copPlan.StoreType, depth)
-	case *PhysicalIndexReader:
-		pn.encodePlan(copPlan.indexPlan, false, store, depth)
+	case *physicalop.PhysicalIndexReader:
+		pn.encodePlan(copPlan.IndexPlan, false, store, depth)
 	case *PhysicalIndexLookUpReader:
 		pn.encodePlan(copPlan.indexPlan, false, store, depth)
 		pn.encodePlan(copPlan.tablePlan, false, store, depth)
@@ -351,8 +352,8 @@ func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		d.normalizePlan(x.tablePlan, false, x.StoreType, depth, false)
-	case *PhysicalIndexReader:
-		d.normalizePlan(x.indexPlan, false, store, depth, false)
+	case *physicalop.PhysicalIndexReader:
+		d.normalizePlan(x.IndexPlan, false, store, depth, false)
 	case *PhysicalIndexLookUpReader:
 		d.normalizePlan(x.indexPlan, false, store, depth, false)
 		d.normalizePlan(x.tablePlan, false, store, depth, true)
