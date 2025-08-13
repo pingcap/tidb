@@ -74,8 +74,8 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		return true
 	}
 	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
-	statsTable, ok := s.statsHandle.GetNonPseudoPhysicalTableStats(id)
-	if !ok || statsTable.RealtimeCount == 0 ||
+	statsTable, found := s.statsHandle.GetNonPseudoPhysicalTableStats(id)
+	if !found || statsTable == nil || statsTable.RealtimeCount == 0 ||
 		float64(item.Count)/float64(statsTable.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
