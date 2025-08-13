@@ -28,7 +28,6 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -87,9 +86,8 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger       *zap.Logger
-	partSize     int64
-	writtenBytes int64
+	logger   *zap.Logger
+	partSize int64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -256,11 +254,6 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	w.writtenBytes += int64(length)
-	if w.writtenBytes >= 16*units.MiB {
-		metrics.MergeSortWriteBytes.Add(float64(w.writtenBytes))
-		w.writtenBytes = 0
-	}
 	return nil
 }
 

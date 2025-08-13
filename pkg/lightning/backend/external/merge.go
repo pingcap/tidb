@@ -228,7 +228,7 @@ func mergeOverlappingFilesInternal(
 		}
 
 		if collector != nil {
-			collector.Add(int64(len(key)+len(value)), 1)
+			collector.Add(int64(len(key)+len(value)+lengthBytes*2), 1)
 		}
 	}
 	return iter.Error()

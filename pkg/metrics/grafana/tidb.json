@@ -24956,10 +24956,10 @@
               "refId": "D"
             },
             {
-              "expr": "rate(tidb_global_sort_merge_sort_write_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\", instance=~\"$instance\"}[1m])/1024.0/1024.0",
+              "expr": "sum(rate(tidb_ddl_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=~\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (job_id)/1024.0/1024.0",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "merge-sort",
+              "legendFormat": "merge_sort-{{job_id}}",
               "range": true,
               "refId": "E"
             }

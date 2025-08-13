@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -91,6 +93,8 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	res := m.GetResource()
 	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
+	metric := metrics.RegisterLightningCommonMetricsForDDL(m.jobID)
+	ctx = lightningmetric.WithCommonMetric(ctx, metric)
 
 	err = external.MergeOverlappingFiles(
 		ctx,
