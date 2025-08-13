@@ -1126,29 +1126,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
 	if statsTbl != nil {
-		lhsPseudo, rhsPseudo, tablePseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
-		if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-			if !lhsFullScan && lhs.path.Index != nil {
-				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
-					lhsPseudo = false // We have statistics for the lhs index
-				} else {
-					lhsPseudo = true
-				}
-			}
-			if !rhsFullScan && rhs.path.Index != nil {
-				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
-					rhsPseudo = false // We have statistics on the rhs index
-				} else {
-					rhsPseudo = true
-				}
-			}
-		}
+		tablePseudo = statsTbl.HistColl.Pseudo
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
 	}
-
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	// TODO: riskResult is not added to sum to limit change to existing logic. Further testing required.
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 
@@ -1171,11 +1154,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
 			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
-				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
+				(lhs.path.EqOrInCondCount > 1 || isFullIndexMatch(lhs)) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
 			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
-				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
+				(rhs.path.EqOrInCondCount > 1 || isFullIndexMatch(rhs)) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
 		}
@@ -1220,6 +1203,31 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
+}
+
+func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
+		if !lhsFullScan && lhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+				lhsPseudo = false // We have statistics for the lhs index
+			} else {
+				lhsPseudo = true
+			}
+		}
+		if !rhsFullScan && rhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+				rhsPseudo = false // We have statistics on the rhs index
+			} else {
+				rhsPseudo = true
+			}
+		}
+	}
+	return lhsPseudo, rhsPseudo
+}
+
+func isFullIndexMatch(candidate *candidatePath) bool {
+	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
