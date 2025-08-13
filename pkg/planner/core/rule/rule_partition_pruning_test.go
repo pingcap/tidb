@@ -71,12 +71,12 @@ func TestCanBePrune(t *testing.T) {
 
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
 	result = rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
-	require.True(t, slices.Equal(result, rule.PartitionRangeOR{{2, 4}}))
+	require.True(t, slices.Equal(result, rule.PartitionRangeOR{{Start: 2, End: 4}}))
 
 	queryExpr = tc.expr("report_updated > unix_timestamp('2008-05-01 00:00:00')")
 	rule.PartitionRangeForCNFExpr(tc.sctx, []expression.Expression{queryExpr}, pruner, rule.GetFullRange(len(lessThan.Data)))
 	// TODO: Uncomment the check after fixing issue https://github.com/pingcap/tidb/issues/12028
-	// require.True(t, slices.Equal(result,rule.PartitionRangeOR{{2, 4}}))
+	// require.True(t, slices.Equal(result, rule.PartitionRangeOR{{Start: 2, End: 4}}))
 	// report_updated > unix_timestamp('2008-05-01 00:00:00') is converted to gt(t.t.report_updated, <nil>)
 	// Because unix_timestamp('2008-05-01 00:00:00') is fold to constant int 1564761600, and compare it with timestamp (report_updated)
 	// need to convert 1564761600 to a timestamp, during that step, an error happen and the result is set to <nil>
