@@ -212,7 +212,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 
 		if !canAlloc {
 			// try to run tasks of low ranking
-			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
+			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 			continue
 		}
 		failpoint.InjectCall("beforeCallStartTaskExecutor", task.TaskBase)
@@ -294,12 +294,14 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	// TODO: remove it when we can create task executor with task base.
 	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
 	if err != nil {
-		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
+		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID),
+			zap.String("task-key", taskBase.Key), zap.Error(err))
 		return false
 	}
 	if !m.slotManager.alloc(&task.TaskBase) {
 		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
-			zap.Int64("task-id", taskBase.ID), zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int64("task-id", taskBase.ID), zap.String("task-key", taskBase.Key),
+			zap.Int("concurrency", taskBase.Concurrency),
 			zap.Int("remaining-slots", m.slotManager.availableSlots()))
 		return false
 	}
@@ -329,12 +331,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		return false
 	}
 	m.addTaskExecutor(executor)
-	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
+	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
 		zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
-			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key),
 				zap.Stringer("type", task.Type))
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)
