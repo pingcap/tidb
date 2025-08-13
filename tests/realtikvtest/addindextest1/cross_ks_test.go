@@ -21,8 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -54,4 +57,96 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	sysKSTk.MustQuery(taskQuerySQL).Check(testkit.Rows("1"))
 	// reverse check
 	tk.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
+}
+
+func TestCrossKSInfoSchemaSync(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for nextgen kernel, skip it in classic kernel")
+	}
+	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1", "keyspace2")
+	sysDom := runtimes[keyspace.System].Dom
+	ks1Store, ks1Dom := runtimes["keyspace1"].Store, runtimes["keyspace1"].Dom
+	ks2Store, ks2Dom := runtimes["keyspace2"].Store, runtimes["keyspace2"].Dom
+
+	t.Run("cross keyspace is lazily initialized in SYSTEM ks", func(t *testing.T) {
+		require.Empty(t, sysDom.GetCrossKSMgr().GetAllKeyspace())
+	})
+
+	t.Run("cross keyspace is eagerly initialized in user ks", func(t *testing.T) {
+		require.Len(t, ks1Dom.GetCrossKSMgr().GetAllKeyspace(), 1)
+		require.Contains(t, ks1Dom.GetCrossKSMgr().GetAllKeyspace(), keyspace.System)
+		require.Len(t, ks2Dom.GetCrossKSMgr().GetAllKeyspace(), 1)
+		require.Contains(t, ks2Dom.GetCrossKSMgr().GetAllKeyspace(), keyspace.System)
+	})
+
+	t.Run("skip syncing user table of user keyspace in cross keyspace", func(t *testing.T) {
+		ks1TK := testkit.NewTestKit(t, ks1Store)
+		ks1TK.PrepareDB("crossks")
+		ks1TK.MustExec("create table t (a int);")
+		ks1TK.MustExec("insert into t values (1);")
+		ks1TK.MustExec("alter table t add index idx_a (a);")
+		// now initialized cross ks for ks1 in SYSTEM.
+		require.Len(t, sysDom.GetCrossKSMgr().GetAllKeyspace(), 1)
+		require.Contains(t, sysDom.GetCrossKSMgr().GetAllKeyspace(), "keyspace1")
+		var sum *schemaver.SyncSummary
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitVersionSynced", func(inSum *schemaver.SyncSummary) {
+			sum = inSum
+		})
+		ks1TK.MustExec("create table t1 (a int);")
+		require.EqualValues(t, 1, sum.ServerCount)
+		require.EqualValues(t, 0, sum.AssumedServerCount)
+	})
+
+	t.Run("skip syncing user table of SYSTEM keyspace in cross keyspace", func(t *testing.T) {
+		sysTK := testkit.NewTestKit(t, kvstore.GetSystemStorage())
+		sysTK.PrepareDB("crossks")
+		var sum *schemaver.SyncSummary
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitVersionSynced", func(inSum *schemaver.SyncSummary) {
+			sum = inSum
+		})
+		sysTK.MustExec("create table t (a int);")
+		require.EqualValues(t, 1, sum.ServerCount)
+		require.EqualValues(t, 0, sum.AssumedServerCount)
+	})
+
+	t.Run("syncing system tables of user keyspace in cross keyspace", func(t *testing.T) {
+		ks1TK := testkit.NewTestKit(t, ks1Store)
+		ks1TK.PrepareDB("crossks")
+		ks1TK.MustExec("create table t (a int);")
+		ks1TK.MustExec("insert into t values (1);")
+		ks1TK.MustExec("alter table t add index idx_a (a);")
+		// now initialized cross ks for ks1 in SYSTEM.
+		require.Len(t, sysDom.GetCrossKSMgr().GetAllKeyspace(), 1)
+		require.Contains(t, sysDom.GetCrossKSMgr().GetAllKeyspace(), "keyspace1")
+		var sum *schemaver.SyncSummary
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitVersionSynced", func(inSum *schemaver.SyncSummary) {
+			sum = inSum
+		})
+		ks1TK.MustExec("alter table mysql.user add index(file_priv)")
+		require.EqualValues(t, 2, sum.ServerCount)
+		require.EqualValues(t, 1, sum.AssumedServerCount)
+	})
+
+	t.Run("for uninitialized cross ks, system tables of user keyspace is not synced", func(t *testing.T) {
+		require.NotContains(t, sysDom.GetCrossKSMgr().GetAllKeyspace(), "keyspace2")
+		ks2TK := testkit.NewTestKit(t, ks2Store)
+		var sum *schemaver.SyncSummary
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitVersionSynced", func(inSum *schemaver.SyncSummary) {
+			sum = inSum
+		})
+		ks2TK.MustExec("alter table mysql.user add index(file_priv)")
+		require.EqualValues(t, 1, sum.ServerCount)
+		require.EqualValues(t, 0, sum.AssumedServerCount)
+	})
+
+	t.Run("syncing system tables of SYSTEM keyspace in cross keyspace", func(t *testing.T) {
+		sysTK := testkit.NewTestKit(t, kvstore.GetSystemStorage())
+		var sum *schemaver.SyncSummary
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitVersionSynced", func(inSum *schemaver.SyncSummary) {
+			sum = inSum
+		})
+		sysTK.MustExec("alter table mysql.user add index(file_priv)")
+		require.EqualValues(t, 3, sum.ServerCount)
+		require.EqualValues(t, 2, sum.AssumedServerCount)
+	})
 }

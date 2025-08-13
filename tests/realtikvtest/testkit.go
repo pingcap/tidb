@@ -44,6 +44,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.opencensus.io/stats/view"
+	uberatomic "go.uber.org/atomic"
 	"go.uber.org/goleak"
 )
 
@@ -56,6 +57,8 @@ var (
 
 	// PDAddr is the address of PD.
 	PDAddr = "127.0.0.1:2379"
+
+	mockPortAlloc = uberatomic.NewInt32(4000)
 )
 
 // RunTestMain run common setups for all real tikv tests.
@@ -220,6 +223,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		conf.TxnLocalLatches.Enabled = false
 		conf.KeyspaceName = ks
 		conf.Store = config.StoreTypeTiKV
+		conf.Port = uint(mockPortAlloc.Add(1))
 	})
 	if ks == keyspace.System {
 		UpdateTiDBConfig()
@@ -245,7 +249,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 	tk := testkit.NewTestKit(t, store)
 	// set it to default value.
 	tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", vardef.DefInnodbLockWaitTimeout))
-	tk.MustExec("use test")
+	tk.PrepareDB("test")
 
 	if !option.retainData {
 		tk.MustExec("delete from mysql.tidb_global_task;")
