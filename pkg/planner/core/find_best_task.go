@@ -1602,7 +1602,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				isDNFOnlyEqualPredicates := ds.TableInfo.GetPartitionInfo() == nil && c.hasOnlyEqualPredicatesInDNF()
-				if preferMerge || isDNFOnlyEqualPredicates || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+				isDNFOnlyEquals := ds.TableInfo.GetPartitionInfo() == nil && c.hasOnlyEqualPredicatesInDNF()
+				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
