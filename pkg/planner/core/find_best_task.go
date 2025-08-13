@@ -1626,19 +1626,26 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return false
 	}
-
-	// Check if all access conditions are equal predicates
-	for _, cond := range c.path.AccessConds {
-		sf, ok := cond.(*expression.ScalarFunction)
+	// Helper function to check if a condition is an equal predicate or a LogicOr of equal predicates
+	var isEqualPredicateOrOr func(expr expression.Expression) bool
+	isEqualPredicateOrOr = func(expr expression.Expression) bool {
+		sf, ok := expr.(*expression.ScalarFunction)
 		if !ok {
-			// If it's not a scalar function, it's not an equal predicate
 			return false
 		}
 		if sf.FuncName.L == ast.LogicOr {
-			continue
+			for _, arg := range sf.GetArgs() {
+				if !isEqualPredicateOrOr(arg) {
+					return false
+				}
+			}
+			return true
 		}
 		// Check if it's an equal predicate (eq) or IN predicate (in)
-		if sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In {
+		return sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In
+	}
+	for _, cond := range c.path.AccessConds {
+		if !isEqualPredicateOrOr(cond) {
 			return false
 		}
 	}
