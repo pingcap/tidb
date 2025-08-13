@@ -61,7 +61,7 @@ func newTLSHttpClient(t *testing.T, caFile, certFile, keyFile string) *http.Clie
 // If parentCert and parentCertKey is specified, the new certificate will be signed by the parentCert.
 // Otherwise, the new certificate will be self-signed and is a CA.
 func generateCert(sn int, commonName string, parentCert *x509.Certificate, parentCertKey *rsa.PrivateKey, outKeyFile string, outCertFile string, opts ...func(c *x509.Certificate)) (*x509.Certificate, *rsa.PrivateKey, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 528)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
