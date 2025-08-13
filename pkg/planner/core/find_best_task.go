@@ -2975,7 +2975,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				prop.VectorProp.TopK,
 				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
 				prop.VectorProp.Vec.SerializeTo(nil),
-				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
+				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, true),
 			))
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
