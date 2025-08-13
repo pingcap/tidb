@@ -15,7 +15,7 @@
 package slice
 
 // AnyOf returns true if any element in the slice matches the predict func.
-func AnyOf[E any](s []E, p func(int) bool) bool {
+func AnyOf[T any](s []T, p func(int) bool) bool {
 	for i := range s {
 		if p(i) {
 			return true
@@ -25,12 +25,12 @@ func AnyOf[E any](s []E, p func(int) bool) bool {
 }
 
 // NoneOf returns true if no element in the slice matches the predict func.
-func NoneOf[E any](s []E, p func(int) bool) bool {
+func NoneOf[T any](s []T, p func(int) bool) bool {
 	return !AnyOf(s, p)
 }
 
 // AllOf returns true if all elements in the slice match the predict func.
-func AllOf[E any](s []E, p func(int) bool) bool {
+func AllOf[T any](s []T, p func(int) bool) bool {
 	return !AnyOf(s, func(i int) bool {
 		return !p(i)
 	})
