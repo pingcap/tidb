@@ -385,7 +385,8 @@ func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.Push
 }
 
 // FilterPathByIsolationRead filter out AccessPath by isolation read engine requirement.
-func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblName ast.CIStr, dbName ast.CIStr) ([]*AccessPath, error) {
+func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblName ast.CIStr,
+	dbName ast.CIStr) ([]*AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	if metadef.IsSystemRelatedDB(dbName.L) {
 		return paths, nil
@@ -416,7 +417,8 @@ func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblNam
 				helpMsg += " or check if the query is not readonly and sql mode is strict"
 			}
 		}
-		err = plannererrors.ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
+		err = plannererrors.ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is"+
+			" found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
 			vardef.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
@@ -425,7 +427,8 @@ func FilterPathByIsolationRead(ctx base.PlanContext, paths []*AccessPath, tblNam
 				"MPP mode may be blocked because the query is not readonly and sql mode is strict.")
 		} else {
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.", vardef.TiDBIsolationReadEngines, engineVals))
+				fmt.Sprintf("MPP mode may be blocked because '%v'(value: '%v') not match, need 'tiflash'.",
+					vardef.TiDBIsolationReadEngines, engineVals))
 		}
 	}
 	return paths, err
