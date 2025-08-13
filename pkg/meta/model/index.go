@@ -15,7 +15,6 @@
 package model
 
 import (
-	"context"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -362,25 +361,4 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 		}
 	}
 	return -1, nil
-}
-
-type useMVIdxScanOption struct{}
-
-var useMVIdxScanOptionKey useMVIdxScanOption
-
-// WithUseMVIdxScan controls how the optimizer process MV Index.
-// If it's true, it indicated we want to use MV Index for scan.
-// NOTE: It should only be used in fast admin check table for now,
-// see check_table_index.go for more details.
-func WithUseMVIdxScan(ctx context.Context) context.Context {
-	return context.WithValue(ctx, useMVIdxScanOptionKey, true)
-}
-
-// GetUseMVIdxScan check whether the force MV index scan option is set.
-func GetUseMVIdxScan(ctx context.Context) bool {
-	force := false
-	if opt := ctx.Value(useMVIdxScanOptionKey); opt != nil {
-		force = opt.(bool)
-	}
-	return force
 }

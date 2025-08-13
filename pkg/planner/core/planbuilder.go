@@ -303,6 +303,8 @@ type PlanBuilder struct {
 
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
+	// inAdminCheckSQL indicates whether the expression rewriter is used in admin check sql.
+	inAdminCheckSQL bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
 }
@@ -492,6 +494,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.inAdminCheckSQL = false
 
 	// Add more fields if they are safe to be reused.
 
@@ -504,6 +507,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
+	b.inAdminCheckSQL = kv.GetInternalSourceType(ctx) == kv.InternalTxnAdmin
 	switch x := node.Node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -1162,7 +1166,7 @@ func getPossibleAccessPaths(
 	tableHints *hint.PlanHints,
 	indexHints []*ast.IndexHint,
 	tbl table.Table, dbName, tblName ast.CIStr,
-	check, hasFlagPartitionProcessor, enableMVIndexScan bool) ([]*util.AccessPath, error) {
+	check, hasFlagPartitionProcessor, inAdminCheckSQL bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1372,9 +1376,9 @@ func getPossibleAccessPaths(
 		}
 	}
 
-	// If we want to build MV Index scan, don't add table scan to possible access path,
-	// otherwise we can't guarantee index scan is chosen after cost estimation.
-	if allMVIIndexPath && !enableMVIndexScan {
+	// In admin check SQL, we may use MVIndex as possible access path, in such case we should not add table scan.
+	// Otherwise we can't guarantee index scan is chosen after cost estimation.
+	if allMVIIndexPath && !inAdminCheckSQL {
 		available = append(available, tablePath)
 	}
 

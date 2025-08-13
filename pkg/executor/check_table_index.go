@@ -674,7 +674,7 @@ func (w *checkIndexWorker) handleTask(task checkIndexTask) error {
 		return err
 	}
 
-	indexCtx := model.WithUseMVIdxScan(w.e.contextCtx)
+	indexCtx := w.e.contextCtx
 
 	var (
 		checkTimes         = 0
@@ -898,6 +898,7 @@ func verifyCheckQuery(ctx context.Context, se sessionctx.Context, sql string, us
 	}
 
 	if (useTableScan && !isTableScan) || (!useTableScan && !isIndexScan) {
+		fmt.Print(rows)
 		panic(fmt.Sprintf("check query %s error, table scan: %t, index scan: %t",
 			sql, isTableScan, isIndexScan))
 	}

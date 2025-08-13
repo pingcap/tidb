@@ -264,6 +264,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	}
 
 	rewriter = b.rewriterPool[b.rewriterCounter-1]
+	rewriter.inAdminCheckSQL = b.inAdminCheckSQL
 	rewriter.asScalar = false
 	rewriter.preprocess = nil
 	rewriter.disableFoldCounter = 0
@@ -355,6 +356,8 @@ type expressionRewriter struct {
 	asScalar bool
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
+	// inAdminCheckSQL indicates whether the expression rewriter is used in admin check sql.
+	inAdminCheckSQL bool
 	// sourceTable is only used to build simple expression without all columns from a single table
 	sourceTable *model.TableInfo
 
@@ -1527,7 +1530,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.JSONSumCrc32Expr:
-		if !model.GetUseMVIdxScan(er.ctx) {
+		if !er.inAdminCheckSQL {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("JSON_SUM_CRC32 is only allowed to be used internally")
 			return retNode, false
 		}
@@ -2468,8 +2471,8 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
-		// When MVIndexScan is enabled, we may use virtual columns directly in selection.
-		if column.IsHidden && !model.GetUseMVIdxScan(er.ctx) {
+		// In fast admin check, we may need to read virtual columns directly.
+		if column.IsHidden && !er.inAdminCheckSQL {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
