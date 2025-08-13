@@ -508,8 +508,10 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 func (c *CheckpointAdvancer) stopSubscriber() {
 	c.subscriberMu.Lock()
 	defer c.subscriberMu.Unlock()
-	c.subscriber.Drop()
-	c.subscriber = nil
+	if c.subscriber != nil {
+		c.subscriber.Drop()
+		c.subscriber = nil
+	}
 }
 
 func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
