@@ -476,9 +476,9 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}
 	newTask := &RootTask{}
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{
-			partialPlans:       t.idxMergePartPlans,
-			tablePlan:          t.tablePlan,
+		p := physicalop.PhysicalIndexMergeReader{
+			PartialPlansRaw:    t.idxMergePartPlans,
+			TablePlan:          t.tablePlan,
 			IsIntersectionType: t.idxMergeIsIntersection,
 			AccessMVIndex:      t.idxMergeAccessMVIndex,
 			KeepOrder:          t.keepOrder,

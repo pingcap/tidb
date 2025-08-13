@@ -898,18 +898,18 @@ func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 
 func sinkIntoIndexMerge(p *physicalop.PhysicalLimit, t base.Task) bool {
 	root := t.(*RootTask)
-	imReader, isIm := root.GetPlan().(*PhysicalIndexMergeReader)
+	imReader, isIm := root.GetPlan().(*physicalop.PhysicalIndexMergeReader)
 	proj, isProj := root.GetPlan().(*physicalop.PhysicalProjection)
 	if !isIm && !isProj {
 		return false
 	}
 	if isProj {
-		imReader, isIm = proj.Children()[0].(*PhysicalIndexMergeReader)
+		imReader, isIm = proj.Children()[0].(*physicalop.PhysicalIndexMergeReader)
 		if !isIm {
 			return false
 		}
 	}
-	ts, ok := imReader.tablePlan.(*physicalop.PhysicalTableScan)
+	ts, ok := imReader.TablePlan.(*physicalop.PhysicalTableScan)
 	if !ok {
 		return false
 	}

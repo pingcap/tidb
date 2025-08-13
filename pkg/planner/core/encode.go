@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -241,12 +242,12 @@ func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, 
 	case *PhysicalIndexLookUpReader:
 		pn.encodePlan(copPlan.indexPlan, false, store, depth)
 		pn.encodePlan(copPlan.tablePlan, false, store, depth)
-	case *PhysicalIndexMergeReader:
-		for _, p := range copPlan.partialPlans {
+	case *physicalop.PhysicalIndexMergeReader:
+		for _, p := range copPlan.PartialPlansRaw {
 			pn.encodePlan(p, false, store, depth)
 		}
-		if copPlan.tablePlan != nil {
-			pn.encodePlan(copPlan.tablePlan, false, store, depth)
+		if copPlan.TablePlan != nil {
+			pn.encodePlan(copPlan.TablePlan, false, store, depth)
 		}
 	case *PhysicalCTE:
 		pn.ctes = append(pn.ctes, copPlan)
@@ -356,12 +357,12 @@ func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.
 	case *PhysicalIndexLookUpReader:
 		d.normalizePlan(x.indexPlan, false, store, depth, false)
 		d.normalizePlan(x.tablePlan, false, store, depth, true)
-	case *PhysicalIndexMergeReader:
-		for _, p := range x.partialPlans {
+	case *physicalop.PhysicalIndexMergeReader:
+		for _, p := range x.PartialPlansRaw {
 			d.normalizePlan(p, false, store, depth, false)
 		}
-		if x.tablePlan != nil {
-			d.normalizePlan(x.tablePlan, false, store, depth, true)
+		if x.TablePlan != nil {
+			d.normalizePlan(x.TablePlan, false, store, depth, true)
 		}
 	}
 }

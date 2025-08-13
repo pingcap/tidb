@@ -356,23 +356,6 @@ func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.Acc
 	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
 }
 
-// AccessObject implements PartitionAccesser interface.
-func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return DynamicPartitionAccessObjects(nil)
-	}
-	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
-	asName := ""
-	if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
-		asName = ts.TableAsName.O
-	}
-	res := getDynamicAccessPartition(sctx, ts.Table, p.PlanPartInfo, asName)
-	if res == nil {
-		return DynamicPartitionAccessObjects(nil)
-	}
-	return DynamicPartitionAccessObjects{res}
-}
-
 // AccessObject implements DataAccesser interface.
 func (p *PhysicalCTE) AccessObject() base.AccessObject {
 	if p.cteName == p.cteAsName {
