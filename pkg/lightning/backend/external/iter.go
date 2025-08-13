@@ -528,13 +528,6 @@ func NewMergeKVIter(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
 		membuf.WithBlockSize(largeBufSize),
 	)
-	//if MergeSortMemLimiter != nil {
-	//	memPool = membuf.NewPool(
-	//		membuf.WithBlockNum(1),
-	//		membuf.WithBlockSize(largeBufSize),
-	//		membuf.WithPoolMemoryLimiter(MergeSortMemLimiter),
-	//	)
-	//}
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {

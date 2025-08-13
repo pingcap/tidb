@@ -38,8 +38,6 @@ var (
 	// MinUploadPartSize is the minimum size of each part when uploading files to
 	// external storage, which is 5MiB for both S3 and GCS.
 	MinUploadPartSize int64 = 5 * units.MiB
-
-	//MergeSortMemLimiter *membuf.Limiter
 )
 
 // mergeCollector collects the bytes and row count in merge step.
@@ -99,10 +97,6 @@ func MergeOverlappingFiles(
 		zap.Int64("part-size", partSize))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
-	//MergeSortMemLimiter = membuf.NewLimiter(int(10 * size.GB))
-	//defer func() {
-	//	MergeSortMemLimiter = nil
-	//}()
 	for _, files := range dataFilesSlice {
 		eg.Go(func() error {
 			return mergeOverlappingFilesInternal(
