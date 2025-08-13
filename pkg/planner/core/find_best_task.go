@@ -1627,7 +1627,7 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return false
 	}
-	// Helper function to check if a condition is an equal predicate or a LogicOr of equal predicates
+	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
 	var isEqualPredicateOrOr func(expr expression.Expression) bool
 	isEqualPredicateOrOr = func(expr expression.Expression) bool {
 		sf, ok := expr.(*expression.ScalarFunction)
