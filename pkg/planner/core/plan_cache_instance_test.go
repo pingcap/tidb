@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -24,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 )

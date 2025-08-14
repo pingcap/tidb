@@ -16,7 +16,6 @@ package old
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )

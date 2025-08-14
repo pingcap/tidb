@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"strings"
 	"testing"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"

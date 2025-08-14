@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"

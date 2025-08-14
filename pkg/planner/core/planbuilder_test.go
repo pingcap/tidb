@@ -17,7 +17,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"math/rand"
 	"net/url"
 	"reflect"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"

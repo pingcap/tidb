@@ -17,7 +17,6 @@ package dag
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"

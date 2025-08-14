@@ -15,7 +15,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"math/rand"
 	"testing"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )

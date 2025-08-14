@@ -16,11 +16,11 @@ package test
 
 import (
 	"bytes"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"

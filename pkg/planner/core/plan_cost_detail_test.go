@@ -16,7 +16,6 @@ package core_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -24,6 +23,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"

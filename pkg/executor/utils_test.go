@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )

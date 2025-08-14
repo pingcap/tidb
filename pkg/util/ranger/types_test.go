@@ -15,12 +15,12 @@
 package ranger_test
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"math"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
