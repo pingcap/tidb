@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "rule",
@@ -7,14 +7,52 @@ go_library(
         "rule_build_key_info.go",
         "rule_constant_propagation.go",
         "rule_init.go",
+        "rule_partition_processor.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/rule/util",
+        "//pkg/planner/util",
         "//pkg/planner/util/optimizetrace",
+        "//pkg/planner/util/utilfuncp",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/collate",
+        "//pkg/util/hint",
+        "//pkg/util/mathutil",
+        "//pkg/util/plancodec",
+        "//pkg/util/ranger",
+        "//pkg/util/set",
         "//pkg/util/zeropool",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-tipb",
+    ],
+)
+
+go_test(
+    name = "rule_test",
+    timeout = "short",
+    srcs = ["rule_partition_pruning_test.go"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        ":rule",
+        "//pkg/expression",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/planner/core",
+        "//pkg/testkit/ddlhelper",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
     ],
 )

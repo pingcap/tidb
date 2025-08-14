@@ -182,7 +182,7 @@ type IndexScanImpl struct {
 
 // CalcCost implements Implementation interface.
 func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
-	is := impl.plan.(*plannercore.PhysicalIndexScan)
+	is := impl.plan.(*physicalop.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
 	rowSize := cardinality.GetIndexAvgRowSize(is.SCtx(), impl.tblColHists, is.Schema().Columns, is.Index.Unique)
 	cost := outCount * rowSize * sessVars.GetScanFactor(is.Table)
@@ -195,7 +195,7 @@ func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) 
 }
 
 // NewIndexScanImpl creates a new IndexScan Implementation.
-func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
+func NewIndexScanImpl(scan *physicalop.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
 	return &IndexScanImpl{
 		baseImpl:    baseImpl{plan: scan},
 		tblColHists: tblColHists,

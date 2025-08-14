@@ -1126,29 +1126,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
 	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
 	if statsTbl != nil {
-		lhsPseudo, rhsPseudo, tablePseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
-		if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-			if !lhsFullScan && lhs.path.Index != nil {
-				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
-					lhsPseudo = false // We have statistics for the lhs index
-				} else {
-					lhsPseudo = true
-				}
-			}
-			if !rhsFullScan && rhs.path.Index != nil {
-				if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
-					rhsPseudo = false // We have statistics on the rhs index
-				} else {
-					rhsPseudo = true
-				}
-			}
-		}
+		tablePseudo = statsTbl.HistColl.Pseudo
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
 	}
-
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
-	// TODO: riskResult is not added to sum to limit change to existing logic. Further testing required.
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 
@@ -1171,11 +1154,11 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 			// 1) there are at least 2 equal/INs
 			// 2) OR - it's a full index match for all index predicates
 			if lhsPseudo && lhs.path.EqOrInCondCount > rhs.path.EqOrInCondCount && globalResult >= 0 && sum >= 0 &&
-				(lhs.path.EqOrInCondCount > 1 || (lhs.path.EqOrInCondCount > 0 && len(lhs.indexCondsColMap) >= len(lhs.path.Index.Columns))) {
+				(lhs.path.EqOrInCondCount > 1 || isFullIndexMatch(lhs)) {
 				return 1, lhsPseudo // left wins and does NOT have statistics (lhsPseudo==true)
 			}
 			if rhsPseudo && rhs.path.EqOrInCondCount > lhs.path.EqOrInCondCount && globalResult <= 0 && sum <= 0 &&
-				(rhs.path.EqOrInCondCount > 1 || (rhs.path.EqOrInCondCount > 0 && len(rhs.indexCondsColMap) >= len(rhs.path.Index.Columns))) {
+				(rhs.path.EqOrInCondCount > 1 || isFullIndexMatch(rhs)) {
 				return -1, rhsPseudo // right wins and does NOT have statistics (rhsPseudo==true)
 			}
 		}
@@ -1220,6 +1203,31 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
+}
+
+func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
+	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
+		if !lhsFullScan && lhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
+				lhsPseudo = false // We have statistics for the lhs index
+			} else {
+				lhsPseudo = true
+			}
+		}
+		if !rhsFullScan && rhs.path.Index != nil {
+			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
+				rhsPseudo = false // We have statistics on the rhs index
+			} else {
+				rhsPseudo = true
+			}
+		}
+	}
+	return lhsPseudo, rhsPseudo
+}
+
+func isFullIndexMatch(candidate *candidatePath) bool {
+	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
@@ -1718,7 +1726,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			}
 		}
 		tblName := ds.TableInfo.Name
-		ds.PossibleAccessPaths, err = filterPathByIsolationRead(ds.SCtx(), ds.PossibleAccessPaths, tblName, ds.DBName)
+		ds.PossibleAccessPaths, err = util.FilterPathByIsolationRead(ds.SCtx(), ds.PossibleAccessPaths, tblName, ds.DBName)
 		if err != nil {
 			return nil, 1, err
 		}
@@ -2152,7 +2160,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 }
 
 func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physicalop.PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
-	is := getOriginalPhysicalIndexScan(ds, prop, path, matchProp, false)
+	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
 	if matchProp {
@@ -2167,7 +2175,7 @@ func convertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *physi
 
 	// Add a `Selection` for `IndexScan` with global index.
 	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
-	indexConds, err := is.addSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
+	indexConds, err := is.AddSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2494,7 +2502,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	path := candidate.path
-	is := getOriginalPhysicalIndexScan(ds, prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
+	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
 	cop := &CopTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -2561,7 +2569,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 						Desc: si.Desc,
 					})
 				}
-				cop.indexPlan.(*PhysicalIndexScan).ByItems = byItems
+				cop.indexPlan.(*physicalop.PhysicalIndexScan).ByItems = byItems
 			}
 			if cop.tablePlan != nil && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				if !is.Index.Global {
@@ -2582,9 +2590,9 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		cop.originSchema = ds.Schema()
 	}
 	// prop.IsSortItemEmpty() would always return true when coming to here,
-	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
+	// so we can just use prop.ExpectedCnt as parameter of AddPushedDownSelection.
 	finalStats := ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt)
-	if err = is.addPushedDownSelection(cop, ds, path, finalStats); err != nil {
+	if err = addPushedDownSelection4PhysicalIndexScan(is, cop, ds, path, finalStats); err != nil {
 		return base.InvalidTask, err
 	}
 	if prop.TaskTp == property.RootTaskType {
@@ -2595,179 +2603,8 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) getScanRowSize() float64 {
-	idx := is.Index
-	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
-	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
-	if len(idx.Columns) == len(is.Schema().Columns) {
-		scanCols = append(scanCols, is.Schema().Columns...)
-		handleCol := is.pkIsHandleCol
-		if handleCol != nil {
-			scanCols = append(scanCols, handleCol)
-		}
-	} else {
-		scanCols = is.Schema().Columns
-	}
-	return cardinality.GetIndexAvgRowSize(is.SCtx(), is.tblColHists, scanCols, is.Index.Unique)
-}
-
-// initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
-// make sure the following field of PhysicalIndexScan are initialized:
-//
-//	PhysicalIndexScan.Table         *model.TableInfo
-//	PhysicalIndexScan.Index         *model.IndexInfo
-//	PhysicalIndexScan.Index.Columns []*IndexColumn
-//	PhysicalIndexScan.IdxCols       []*expression.Column
-//	PhysicalIndexScan.Columns       []*model.ColumnInfo
-func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
-	copy(indexCols, is.IdxCols)
-
-	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
-		if idxExprCols[i] != nil {
-			indexCols = append(indexCols, idxExprCols[i])
-		} else {
-			// TODO: try to reuse the col generated when building the DataSource.
-			indexCols = append(indexCols, &expression.Column{
-				ID:       is.Table.Columns[is.Index.Columns[i].Offset].ID,
-				RetType:  &is.Table.Columns[is.Index.Columns[i].Offset].FieldType,
-				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-			})
-		}
-	}
-	is.NeedCommonHandle = is.Table.IsCommonHandle
-
-	if is.NeedCommonHandle {
-		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
-			indexCols = append(indexCols, idxExprCols[i])
-		}
-	}
-	setHandle := len(indexCols) > len(is.Index.Columns)
-	if !setHandle {
-		for i, col := range is.Columns {
-			if (mysql.HasPriKeyFlag(col.GetFlag()) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				indexCols = append(indexCols, is.dataSourceSchema.Columns[i])
-				setHandle = true
-				break
-			}
-		}
-	}
-
-	var extraPhysTblCol *expression.Column
-	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
-	for _, col := range is.dataSourceSchema.Columns {
-		if col.ID == model.ExtraPhysTblID {
-			extraPhysTblCol = col.Clone().(*expression.Column)
-			break
-		}
-	}
-
-	if isDoubleRead || is.Index.Global {
-		// If it's double read case, the first index must return handle. So we should add extra handle column
-		// if there isn't a handle column.
-		if !setHandle {
-			if !is.Table.IsCommonHandle {
-				indexCols = append(indexCols, &expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
-					ID:       model.ExtraHandleID,
-					UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-					OrigName: model.ExtraHandleName.O,
-				})
-			}
-		}
-		// If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.
-		if is.Index.Global && extraPhysTblCol == nil {
-			indexCols = append(indexCols, &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				ID:       model.ExtraPhysTblID,
-				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-				OrigName: model.ExtraPhysTblIDName.O,
-			})
-		}
-	}
-
-	if extraPhysTblCol != nil {
-		indexCols = append(indexCols, extraPhysTblCol)
-	}
-
-	is.SetSchema(expression.NewSchema(indexCols...))
-}
-
-func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.DataSource, physPlanPartInfo *physicalop.PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
-	if !is.Index.Global {
-		return conditions, nil
-	}
-	args := make([]expression.Expression, 0, len(p.PartitionNames)+1)
-	for _, col := range is.Schema().Columns {
-		if col.ID == model.ExtraPhysTblID {
-			args = append(args, col.Clone())
-			break
-		}
-	}
-
-	if len(args) != 1 {
-		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPhysTblIDName.O, is.Schema())
-	}
-
-	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
-	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
-	// For truncate/drop partitions, we should only return indexes where partitions still in public state.
-	idxArr, err := PartitionPruning(p.SCtx(), p.Table.GetPartitionedTable(),
-		physPlanPartInfo.PruningConds,
-		physPlanPartInfo.PartitionNames,
-		physPlanPartInfo.Columns,
-		physPlanPartInfo.ColumnNames)
-	if err != nil {
-		return nil, err
-	}
-	needNot := false
-	// TODO: Move all this into PartitionPruning or the PartitionProcessor!
-	pInfo := p.TableInfo.GetPartitionInfo()
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
-		// Filter away partitions that may exists in Global Index,
-		// but should not be seen.
-		needNot = true
-		for _, id := range pInfo.IDsInDDLToIgnore() {
-			args = append(args, expression.NewInt64Const(id))
-		}
-	} else if len(idxArr) == 0 {
-		// TODO: Can we change to Table Dual somehow?
-		// Add an invalid pid as param for `IN` function
-		args = append(args, expression.NewInt64Const(-1))
-	} else {
-		// TODO: When PartitionPruning is guaranteed to not
-		// return old/blocked partition ids then ignoreMap can be removed.
-		ignoreMap := make(map[int64]struct{})
-		for _, id := range pInfo.IDsInDDLToIgnore() {
-			ignoreMap[id] = struct{}{}
-		}
-		for _, idx := range idxArr {
-			id := pInfo.Definitions[idx].ID
-			_, ok := ignoreMap[id]
-			if !ok {
-				args = append(args, expression.NewInt64Const(id))
-			}
-			intest.Assert(!ok, "PartitionPruning returns partitions which should be ignored!")
-		}
-	}
-	if len(args) == 1 {
-		return conditions, nil
-	}
-	condition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
-	if err != nil {
-		return nil, err
-	}
-	if needNot {
-		condition, err = expression.NewFunction(p.SCtx().GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeLonglong), condition)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return append(conditions, condition), nil
-}
-
 // addPushedDownSelection is to add pushdown selection
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
+func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, copTask *CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 	tableConds, copTask.rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
@@ -2782,7 +2619,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *logical
 
 	// Add a `Selection` for `IndexScan` with global index.
 	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
-	indexConds, err := is.addSelectionConditionForGlobalIndex(p, copTask.physPlanPartInfo, indexConds)
+	indexConds, err := is.AddSelectionConditionForGlobalIndex(p, copTask.physPlanPartInfo, indexConds)
 	if err != nil {
 		return err
 	}
@@ -2815,23 +2652,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *logical
 	return nil
 }
 
-// NeedExtraOutputCol is designed for check whether need an extra column for
-// pid or physical table id when build indexReq.
-func (is *PhysicalIndexScan) NeedExtraOutputCol() bool {
-	if is.Table.Partition == nil {
-		return false
-	}
-	// has global index, should return pid
-	if is.Index.Global {
-		return true
-	}
-	// has embedded limit, should return physical table id
-	if len(is.ByItems) != 0 && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return true
-	}
-	return false
-}
-
 func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expression.Expression, indexColumns []*expression.Column,
 	idxColLens []int) (indexConds, tableConds []expression.Expression) {
 	var indexConditions, tableConditions []expression.Expression
@@ -2849,30 +2669,6 @@ func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expressio
 		}
 	}
 	return indexConditions, tableConditions
-}
-
-// GetPhysicalIndexScan4LogicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
-func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
-	ds := s.Source
-	is := PhysicalIndexScan{
-		Table:            ds.TableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          s.Columns,
-		Index:            s.Index,
-		IdxCols:          s.IdxCols,
-		IdxColLens:       s.IdxColLens,
-		AccessCondition:  s.AccessConds,
-		Ranges:           s.Ranges,
-		dataSourceSchema: ds.Schema(),
-		isPartition:      ds.PartitionDefIdx != nil,
-		physicalTableID:  ds.PhysicalTableID,
-		tblColHists:      ds.TblColHists,
-		pkIsHandleCol:    ds.GetPKIsHandleCol(),
-	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	is.SetStats(stats)
-	is.initSchema(s.FullIdxCols, s.IsDoubleRead)
-	return is
 }
 
 // isPointGetPath indicates whether the conditions are point-get-able.
@@ -3300,62 +3096,6 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
 	}
-}
-
-func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
-	idx := path.Index
-	is := PhysicalIndexScan{
-		Table:            ds.TableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          util.CloneColInfos(ds.Columns),
-		Index:            idx,
-		IdxCols:          path.IdxCols,
-		IdxColLens:       path.IdxColLens,
-		AccessCondition:  path.AccessConds,
-		Ranges:           path.Ranges,
-		dataSourceSchema: ds.Schema(),
-		isPartition:      ds.PartitionDefIdx != nil,
-		physicalTableID:  ds.PhysicalTableID,
-		tblColHists:      ds.TblColHists,
-		pkIsHandleCol:    ds.GetPKIsHandleCol(),
-		constColsByCond:  path.ConstCols,
-		prop:             prop,
-	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	rowCount := path.CountAfterAccess
-	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
-
-	// If (1) tidb_opt_ordering_index_selectivity_threshold is enabled (not 0)
-	// and (2) there exists an index whose selectivity is smaller than or equal to the threshold,
-	// and (3) there is Selection on the IndexScan, we don't use the ExpectedCnt to
-	// adjust the estimated row count of the IndexScan.
-	ignoreExpectedCnt := ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh != 0 &&
-		ds.AccessPathMinSelectivity <= ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
-		len(path.IndexFilters)+len(path.TableFilters) > 0
-
-	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
-		rowCount = cardinality.AdjustRowCountForIndexScanByLimit(ds.SCtx(),
-			ds.StatsInfo(), ds.TableStats, ds.StatisticTable,
-			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
-	}
-
-	// ScaleByExpectCnt only allows to scale the row count smaller than the table total row count.
-	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
-	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
-	if idx.MVIndex && rowCount > ds.TableStats.RowCount {
-		is.SetStats(ds.TableStats.Scale(rowCount / ds.TableStats.RowCount))
-	} else {
-		is.SetStats(ds.TableStats.ScaleByExpectCnt(rowCount))
-	}
-	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats.GetUsedInfo(is.physicalTableID) != nil {
-		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
-	}
-	if isMatchProp {
-		is.Desc = prop.SortItems[0].Desc
-		is.KeepOrder = true
-	}
-	return is
 }
 
 // get the possible group expression and logical operator from common super pointer.
