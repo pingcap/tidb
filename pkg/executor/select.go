@@ -290,6 +290,23 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
+	// Check max_execution_time constraint for SELECT FOR UPDATE/SHARE
+	// max_execution_time only applies to SELECT statements
+	sessVars := e.Ctx().GetSessionVars()
+	maxExecTimeMS := sessVars.GetMaxExecutionTime()
+	if maxExecTimeMS > 0 && sessVars.StmtCtx.InSelectStmt {
+		// Get the query start time from ProcessInfo
+		processInfo := e.Ctx().ShowProcess()
+		if processInfo != nil {
+			queryStartTime := processInfo.Time
+			elapsed := time.Since(queryStartTime).Milliseconds()
+			if elapsed >= int64(maxExecTimeMS) {
+				// Already exceeded max_execution_time, fail immediately
+				return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+			}
+		}
+	}
+
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
@@ -309,6 +326,15 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+
+	// Set max_execution_time deadline for SELECT statements
+	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
+		if processInfo := sctx.ShowProcess(); processInfo != nil {
+			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
+			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
+		}
+	}
+
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
 		if req == nil {
 			return nil
