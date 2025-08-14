@@ -17,6 +17,7 @@ package dag
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -59,7 +60,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("case: %v, sql: %s", i, tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -95,7 +96,7 @@ func TestDAGPlanBuilderJoin(t *testing.T) {
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -132,7 +133,7 @@ func TestDAGPlanBuilderSubquery(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -162,7 +163,7 @@ func TestDAGPlanTopN(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -196,7 +197,7 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -236,7 +237,7 @@ func TestDAGPlanBuilderUnion(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -310,7 +311,7 @@ func TestDAGPlanBuilderAgg(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 		for i, tt := range input {
 			comment := fmt.Sprintf("input: %s", tt)
 			stmt, err := p.ParseOneStmt(tt, "", "")
@@ -340,7 +341,7 @@ func doTestDAGPlanBuilderWindow(t *testing.T, vars, input []string, output []str
 		}
 
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, tt := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, tt)

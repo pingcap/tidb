@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -140,7 +141,7 @@ func (p *mockPhysicalPlan4Test) MemoryUsage() (sum int64) {
 }
 
 func TestCostOverflow(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -157,7 +158,7 @@ func TestCostOverflow(t *testing.T) {
 }
 
 func TestEnforcedProperty(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -194,7 +195,7 @@ func TestEnforcedProperty(t *testing.T) {
 }
 
 func TestHintCannotFitProperty(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()

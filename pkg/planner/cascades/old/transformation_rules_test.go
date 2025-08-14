@@ -16,6 +16,7 @@ package old
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -36,11 +37,11 @@ func testGroupToString(t *testing.T, input []string, output []struct {
 	Result []string
 }, optimizer *Optimizer) {
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	for i, sql := range input {
@@ -90,11 +91,11 @@ func TestAggPushDownGather(t *testing.T) {
 	transformationRulesSuiteData.LoadTestCases(t, &input, &output)
 
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	for i, sql := range input {
 		stmt, err := p.ParseOneStmt(sql, "", "")

@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -138,7 +139,7 @@ func optimize(t *testing.T, sql string, p *parser.Parser, ctx sessionctx.Context
 	nodeW := resolve.NewNodeW(stmt)
 	err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
-	sctx := plannercore.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

@@ -17,6 +17,7 @@ package flatplan
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -77,7 +78,7 @@ func TestFlatPhysicalPlan(t *testing.T) {
 		planSuiteData := GetFlatPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		p := parser.New()
-		is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 		for i, test := range input {
 			comment := fmt.Sprintf("case:%v sql:%s", i, test)

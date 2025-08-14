@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 	"time"
 
@@ -570,7 +571,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 		}
 	}
 
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()

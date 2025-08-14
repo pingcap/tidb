@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"math/rand"
 	"net/url"
 	"reflect"
@@ -131,7 +132,7 @@ func TestGetPathByIndexName(t *testing.T) {
 }
 
 func TestRewriterPool(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -182,7 +183,7 @@ func TestDisableFold(t *testing.T) {
 		}},
 	}
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -691,7 +692,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -745,7 +746,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 }
 
 func TestRequireInsertAndSelectPriv(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -920,7 +921,7 @@ func TestTraffic(t *testing.T) {
 	}
 
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	for _, test := range tests {
 		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
@@ -937,7 +938,7 @@ func TestTraffic(t *testing.T) {
 
 func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 
@@ -1025,7 +1026,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 
 func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	// random speed value

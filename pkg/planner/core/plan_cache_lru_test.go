@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"math/rand"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
-	mockCtx := MockContext()
+	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
 		domain.GetDomain(mockCtx).StatsHandle().Close()
@@ -127,7 +128,7 @@ func TestLRUPCPut(t *testing.T) {
 }
 
 func TestLRUPCGet(t *testing.T) {
-	mockCtx := MockContext()
+	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
 		domain.GetDomain(mockCtx).StatsHandle().Close()
@@ -183,7 +184,7 @@ func TestLRUPCGet(t *testing.T) {
 }
 
 func TestLRUPCDelete(t *testing.T) {
-	mockCtx := MockContext()
+	mockCtx := coretestsdk.MockContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true
 	defer func() {
 		domain.GetDomain(mockCtx).StatsHandle().Close()
@@ -221,7 +222,7 @@ func TestLRUPCDelete(t *testing.T) {
 }
 
 func TestLRUPCDeleteAll(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(3, 0, 0, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -254,7 +255,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 }
 
 func TestLRUPCSetCapacity(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(5, 0, 0, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -323,7 +324,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 }
 
 func TestIssue37914(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(3, 0.1, 1, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -339,7 +340,7 @@ func TestIssue37914(t *testing.T) {
 }
 
 func TestIssue38244(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	lru := NewLRUPlanCache(3, 0, 0, ctx, false)
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -369,7 +370,7 @@ func TestIssue38244(t *testing.T) {
 
 func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()

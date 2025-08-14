@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"net"
 	"net/http"
 	"net/url"
@@ -485,7 +486,7 @@ func newTrafficTestSuite(t *testing.T, chunkSize int) *trafficTestSuite {
 	parser := parser.New()
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().MaxChunkSize = chunkSize
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
 	return &trafficTestSuite{

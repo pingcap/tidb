@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 		require.NoError(t, err)
-		sctx := core.MockContext()
+		sctx := coretestsdk.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().CostModelVersion = 2
 		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
@@ -129,7 +130,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
-	sctx := core.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -185,7 +186,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
-	sctx := core.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

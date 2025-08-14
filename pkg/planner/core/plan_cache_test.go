@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"math/rand"
 	"strings"
 	"sync"
@@ -105,7 +106,7 @@ func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
 	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
 	require.NoError(t, err)

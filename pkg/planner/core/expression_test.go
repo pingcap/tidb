@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -76,7 +77,7 @@ type testCase struct {
 }
 
 func runTests(t *testing.T, tests []testCase) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -132,7 +133,7 @@ func TestCaseWhen(t *testing.T) {
 		Value:       valExpr,
 		WhenClauses: []*ast.WhenClause{whenClause},
 	}
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -158,7 +159,7 @@ func TestCast(t *testing.T) {
 		Tp:   f,
 	}
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()

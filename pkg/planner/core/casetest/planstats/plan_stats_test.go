@@ -17,6 +17,7 @@ package planstats_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"slices"
 	"testing"
 	"time"
@@ -420,7 +421,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			}
 
 			// call the function
-			res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+			res := rule.CollectDependingVirtualCols(tblID2Tbl, neededItems)
 
 			// record and check the output
 			cols := make([]string, 0, len(res))

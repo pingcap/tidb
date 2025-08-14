@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"os"
 	"strconv"
 	"strings"
@@ -84,7 +85,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	stmt, err := p.ParseOneStmt("show backups", "", "")
 	require.NoError(t, err)
 	nodeW := resolve.NewNodeW(stmt)
-	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable(), coretestsdk.MockView()}))
 	require.NoError(t, err)
 	schema := plan.Schema()
 
@@ -150,7 +151,7 @@ func TestFetchShowBRIE(t *testing.T) {
 func TestBRIEBuilderOptions(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	ResetGlobalBRIEQueueForTest()
 	builder := NewMockExecutorBuilderForTest(sctx, is, nil)
 	ctx := context.Background()
@@ -165,7 +166,7 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 IGNORE_STATS = 1 COMPRESSION_LEVEL = 4 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr' ENCRYPTION_KEYFILE = '/tmp/keyfile'", "", "")
 	require.NoError(t, err)
 	nodeW := resolve.NewNodeW(stmt)
-	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable(), coretestsdk.MockView()}))
 	require.NoError(t, err)
 	s, ok := stmt.(*ast.BRIEStmt)
 	require.True(t, ok)
@@ -202,7 +203,7 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1 LOAD_STATS = 1", "", "")
 	require.NoError(t, err)
 	nodeW = resolve.NewNodeW(stmt)
-	plan, err = core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	plan, err = core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable(), coretestsdk.MockView()}))
 	require.NoError(t, err)
 	s, ok = stmt.(*ast.BRIEStmt)
 	require.True(t, ok)

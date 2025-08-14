@@ -15,11 +15,11 @@
 package util_test
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -79,7 +79,7 @@ func TestCompareCol2Len(t *testing.T) {
 }
 
 func TestOnlyPointRange(t *testing.T) {
-	sctx := core.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(sctx)
 		do.StatsHandle().Close()

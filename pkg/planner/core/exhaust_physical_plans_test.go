@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"strings"
 	"testing"
 
@@ -58,7 +59,7 @@ type indexJoinContext struct {
 }
 
 func prepareForAnalyzeLookUpFilters() *indexJoinContext {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
