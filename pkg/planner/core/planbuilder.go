@@ -2109,16 +2109,33 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 			),
 		)
 	} else {
+		// Some predicate columns are generated columns so we also need to add the columns that make up those generated columns.
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, id := range colList {
 			cols.data[id] = struct{}{}
+			if expr := columns[tblInfo.GetColumnByID(id).Offset].VirtualExpr; expr != nil {
+				virtualExprs = append(virtualExprs, expr)
+			}
+		}
+		relatedCols := make(map[int64]*expression.Column, len(tblInfo.Columns))
+		for len(virtualExprs) > 0 {
+			expression.ExtractColumnsMapFromExpressionsWithReusedMap(relatedCols, nil, virtualExprs...)
+			virtualExprs = virtualExprs[:0]
+			for _, col := range relatedCols {
+				cols.data[col.ID] = struct{}{}
+				if col.VirtualExpr != nil {
+					virtualExprs = append(virtualExprs, col.VirtualExpr)
+				}
+			}
+			clear(relatedCols)
 		}
 	}
-	// For predicate columns, we also need to add the columns that make up those generated columns.
-	result, err := b.getMustAnalyzedColumns(tbl, cols)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	cols.calculated = true
+	return cols.data, nil
 }
 
 func getAnalyzeColumnList(specifiedColumns []ast.CIStr, tbl *resolve.TableNameW) ([]*model.ColumnInfo, error) {
