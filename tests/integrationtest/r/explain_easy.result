@@ -244,7 +244,7 @@ StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(1, explain_easy.t2.c2)
+HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t2.c2, 1)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -253,7 +253,7 @@ explain format = 'brief' select sum(6 in (select c2 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
 └─Projection	10000.00	root		cast(Column#10, decimal(3,0) BINARY)->Column#13
-  └─HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(6, explain_easy.t2.c2)
+  └─HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(explain_easy.t2.c2, 6)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan

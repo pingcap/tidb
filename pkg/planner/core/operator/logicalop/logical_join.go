@@ -103,10 +103,9 @@ func (tp JoinType) String() string {
 type LogicalJoin struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	JoinType      JoinType `hash64-equals:"true"`
-	Reordered     bool
-	CartesianJoin bool
-	StraightJoin  bool
+	JoinType     JoinType `hash64-equals:"true"`
+	Reordered    bool
+	StraightJoin bool
 
 	// HintInfo stores the join algorithm hint information specified by client.
 	HintInfo            *utilhint.PlanHints

@@ -256,7 +256,8 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, pushDownfilter func(expression Expression) bool, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext,
+	pushDownfilter func(expression Expression) bool, conditions []Expression) []Expression {
 	s.ctx = ctx
 	s.pushDownfilter = pushDownfilter
 	return s.solve(conditions)
@@ -293,12 +294,33 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				if isColEqCondition(s.conditions[i]) {
+					// We should protect the equal condition. so we append the new expr.
+					visited = append(visited, false) // nolint:makezero
+					s.conditions = append(s.conditions, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
+				} else {
+					s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				}
 			}
 		}
 		cols = cols[:0]
 		cons = cons[:0]
 	}
+}
+
+func isColEqCondition(expr Expression) bool {
+	if sf, ok := expr.(*ScalarFunction); ok {
+		if sf.FuncName.L == ast.EQ {
+			args := sf.GetArgs()
+			_, ok := args[1].(*Column)
+			if !ok {
+				return false
+			}
+			_, ok = args[0].(*Column)
+			return ok
+		}
+	}
+	return false
 }
 
 // propagateColumnEQ propagates expressions like 'column A = column B' by adding extra filters
@@ -653,7 +675,13 @@ func (s *propSpecialJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				if isColEqCondition(s.joinConds[i]) {
+					// We should protect the equal condition. so we append the new expr.
+					visited = append(visited, false) // nolint:makezero
+					s.joinConds = append(s.joinConds, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
+				} else {
+					s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				}
 			}
 		}
 	}
@@ -795,6 +823,8 @@ func (s *propSpecialJoinConstSolver) solve(joinConds, filterConds []Expression) 
 	s.propagateColumnEQ()
 	s.joinConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.joinConds...)
 	s.filterConds = propagateConstantDNF(s.ctx, s.pushDownFilter, s.filterConds...)
+	s.joinConds = RemoveDupExprs(s.joinConds)
+	s.filterConds = RemoveDupExprs(s.filterConds)
 	return slices.Clone(s.joinConds), slices.Clone(s.filterConds)
 }
 

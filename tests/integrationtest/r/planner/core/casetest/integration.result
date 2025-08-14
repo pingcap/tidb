@@ -370,7 +370,7 @@ create table t(a int, b int);
 insert into t values(1, 2), (3, 4);
 explain format = 'brief' select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(2, planner__core__casetest__integration.t.b)
+HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(planner__core__casetest__integration.t.b, 2)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -556,7 +556,7 @@ id	estRows	task	access object	operator info
 Apply	10000.00	root		CARTESIAN semi join, left side:TableReader
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─Selection(Probe)	24000.00	root		eq(9, planner__core__casetest__integration.t.c)
+└─Selection(Probe)	24000.00	root		eq(planner__core__casetest__integration.t.c, 9)
   └─Limit	30000.00	root		offset:0, count:3
     └─TableReader	30000.00	root		data:Limit
       └─Limit	30000.00	cop[tikv]		offset:0, count:3
