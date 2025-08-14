@@ -23,6 +23,7 @@ go_library(
         "//pkg/table/tables",
         "//pkg/types",
         "//pkg/util/collate",
+        "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/tracing",
         "@com_github_pingcap_tipb//go-tipb",
