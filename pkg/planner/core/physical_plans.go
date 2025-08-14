@@ -718,8 +718,6 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 		// For index loop up, only the indexPlan is necessary,
 		// because they use the same stats and we do not set the stats info for tablePlan.
 		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
-	case *PhysicalIndexScan:
-		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
 	case *physicalop.PhysicalIndexScan:
 		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
 	case *physicalop.PhysicalTableScan:
