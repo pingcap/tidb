@@ -66,10 +66,12 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes)
 			m.SetConcurrency(autoConc)
 		} else {
+			//nolint:forbidigo
 			if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
 				m.SetConcurrency(variable.TidbOptInt(sv, 0))
 			}
 		}
+		//nolint:forbidigo
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
 			m.SetBatchSize(variable.TidbOptInt(sv, 0))
 		}
@@ -83,6 +85,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 		if kerneltype.IsNextGen() {
 			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(ctx, tableSizeInBytes)
 		} else {
+			//nolint:forbidigo
 			if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
 				if m.MaxNodeCount == -1 { // -1 means calculate automatically
