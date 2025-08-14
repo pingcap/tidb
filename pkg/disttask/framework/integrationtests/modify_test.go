@@ -424,4 +424,45 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		require.Equal(t, "modify_max_write_speed=456", string(*runtimeInfo.currTaskMeta.Load()))
 		require.Equal(t, int64(5), runtimeInfo.currTaskConcurrency.Load())
 	})
+
+	t.Run("modify running task max node count", func(t *testing.T) {
+		defer resetRuntimeInfoFn()
+		var once sync.Once
+		modifySyncCh := make(chan struct{})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {
+			if task.State != proto.TaskStateRunning && task.Step != proto.StepOne {
+				return
+			}
+			once.Do(func() {
+				require.NoError(t, c.TaskMgr.ModifyTaskByID(c.Ctx, task.ID, &proto.ModifyParam{
+					PrevState: proto.TaskStateRunning,
+					Modifications: []proto.Modification{
+						{Type: proto.ModifyMaxNodeCount, To: 200},
+					},
+				}))
+				<-modifySyncCh
+			})
+		})
+		task, err := handle.SubmitTask(c.Ctx, "k8", proto.TaskTypeExample, 3, "", 1, nil)
+		require.NoError(t, err)
+		require.Equal(t, 3, task.Concurrency)
+		require.EqualValues(t, 1, task.MaxNodeCount)
+		// finish StepOne
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		// wait task move to 'modifying' state
+		modifySyncCh <- struct{}{}
+		// wait task move back to 'running' state, and modified
+		require.Eventually(t, func() bool {
+			gotTask, err2 := c.TaskMgr.GetTaskByID(c.Ctx, task.ID)
+			require.NoError(t, err2)
+			return gotTask.State == proto.TaskStateRunning && gotTask.MaxNodeCount == 200
+		}, 10*time.Second, 100*time.Millisecond)
+		// finish StepTwo
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		subtaskCh <- struct{}{}
+		task2Base := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, task2Base.State)
+	})
 }
