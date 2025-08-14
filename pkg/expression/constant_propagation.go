@@ -293,12 +293,36 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				if isEqCondition(s.conditions[i]) {
+					// We should protect the equal condition. so we append the new expr.
+					visited = append(visited, false)
+					s.conditions = append(s.conditions, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
+				} else {
+					s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
+				}
 			}
 		}
 		cols = cols[:0]
 		cons = cons[:0]
 	}
+}
+
+func isEqCondition(expr Expression) bool {
+	if sf, ok := expr.(*ScalarFunction); ok {
+		if sf.FuncName.L == ast.EQ {
+			args := sf.GetArgs()
+			_, ok := args[1].(*Column)
+			if !ok {
+				return false
+			}
+			_, ok = args[0].(*Column)
+			if !ok {
+				return false
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // propagateColumnEQ propagates expressions like 'column A = column B' by adding extra filters

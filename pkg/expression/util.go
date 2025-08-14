@@ -72,9 +72,24 @@ func (c *cowExprRef) Set(i int, changed bool, val Expression) {
 // Result return the final reference
 func (c *cowExprRef) Result() []Expression {
 	if c.new != nil {
+		slices.SortFunc(c.new, sortArgs)
 		return c.new
 	}
+	slices.SortFunc(c.ref, sortArgs)
 	return c.ref
+}
+
+// sortArgs aims to place the column before the const value, which is beneficial for identifying identical expressions.
+func sortArgs(a, b Expression) int {
+	_, ok1 := a.(*Column)
+	_, ok2 := b.(*Column)
+	if ok1 && ok2 || (!ok1 && !ok2) {
+		return 0
+	}
+	if ok1 {
+		return -1
+	}
+	return 1
 }
 
 // Filter the input expressions, append the results to result.
