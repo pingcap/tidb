@@ -1139,8 +1139,8 @@ type SessionVars struct {
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 
-	// InternalAnalyze is used to indicate whether the current session is used for internal analyze.
-	InternalAnalyze bool
+	// AnalyzeReorgIndexes is used to tell the current session analyze to include reorg indexes.
+	AnalyzeReorgIndexes bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType

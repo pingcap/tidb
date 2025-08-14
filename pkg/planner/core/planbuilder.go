@@ -2465,7 +2465,11 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	independentIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
-		if originIdx.State != model.StatePublic && !sctx.GetSessionVars().InternalAnalyze {
+		// admission for two cases:
+		// 1: only public indexes.
+		// 2: rerog state indexes && sctx.GetSessionVars().AnalyzeReorgIndexes
+		analyzable := originIdx.State == model.StatePublic || (sctx.GetSessionVars().AnalyzeReorgIndexes && originIdx.State == model.StateWriteReorganization)
+		if !analyzable {
 			continue
 		}
 		if originIdx.MVIndex {
