@@ -139,7 +139,6 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 			if !ok {
 				continue
 			}
-			table = table.Copy()
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
