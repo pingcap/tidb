@@ -563,8 +563,8 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.partialPlans...)
-	case *PhysicalIndexScan:
-		if underIndexMerge && x.isFullScan() {
+	case *physicalop.PhysicalIndexScan:
+		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *physicalop.PhysicalTableScan:

@@ -55,12 +55,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalIndexScan.
-func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndexScan {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIdxScan, &p, offset)
-	return &p
-}
-
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
@@ -97,15 +91,15 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 		case *physicalop.PhysicalTableScan:
 			p.SetSchema(p.PartialPlans[0][0].Schema())
 		default:
-			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
-			p.SetSchema(is.dataSourceSchema)
+			is := p.PartialPlans[0][0].(*physicalop.PhysicalIndexScan)
+			p.SetSchema(is.DataSourceSchema)
 		}
 	}
 	if p.KeepOrder {
 		switch x := p.PartialPlans[0][0].(type) {
 		case *physicalop.PhysicalTableScan:
 			p.ByItems = x.ByItems
-		case *PhysicalIndexScan:
+		case *physicalop.PhysicalIndexScan:
 			p.ByItems = x.ByItems
 		}
 	}
