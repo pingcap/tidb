@@ -3307,7 +3307,7 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.True(t, tblStats.IsAnalyzed())
 	// For JSON column, it should be analyzed now
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
-	// For virtual generated columns, we still could not collect statistics becasue we couldn't evaluate the expression on the TiKV side
+	// For virtual generated columns, we still could not collect statistics because we couldn't evaluate the expression on the TiKV side
 	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
 	// For stored columns, we can collect statistics because the values are stored in TiKV
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
