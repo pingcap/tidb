@@ -3656,6 +3656,7 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 	if s.StmtCtx.ForShareLockEnabledByNoop {
 		return false
 	}
+	// Pessimistic locks is needed for DML statements even they are executed in auto-commit mode.
 	if !s.IsAutocommit() || s.InTxn() ||
 		s.StmtCtx.InInsertStmt || s.StmtCtx.InUpdateStmt || s.StmtCtx.InDeleteStmt {
 		return true
