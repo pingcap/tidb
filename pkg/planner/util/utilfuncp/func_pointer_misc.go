@@ -422,6 +422,7 @@ var GetPlanCostVer14PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskTyp
 // probe-cost = probe-child-cost * build-rows
 var GetPlanCostVer24PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
+
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
@@ -469,9 +470,6 @@ var DoOptimize func(
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error)
 
-// Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
-var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
-
 // ****************************************** index related ***********************************************
 
 // ClonePhysicalPlan is used to clone physical plans.
@@ -495,4 +493,3 @@ var AppendChildCandidate func(origin base.PhysicalPlan, pp base.PhysicalPlan, op
 
 // GetTblStats is used to get table stats.
 var GetTblStats func(copTaskPlan base.PhysicalPlan) *statistics.HistColl
-

@@ -301,7 +301,7 @@ func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObj
 }
 
 func getAccessObjectFromIndexScan(sctx base.PlanContext, is base.PhysicalPlan, physPlanPartInfo any) base.AccessObject {
-	indexScan, _ := is.(*PhysicalIndexScan)
+	indexScan, _ := is.(*physicalop.PhysicalIndexScan)
 	p, _ := physPlanPartInfo.(*physicalop.PhysPlanPartInfo)
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
