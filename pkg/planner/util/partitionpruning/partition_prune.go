@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package partitionpruning
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	tmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -26,30 +27,31 @@ import (
 // PartitionPruning finds all used partitions according to query conditions, it will
 // return nil if condition match none of partitions. The return value is a array of the
 // idx in the partition definitions array, use pi.Definitions[idx] to get the partition ID
-func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []ast.CIStr,
+func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable,
+	conds []expression.Expression, partitionNames []ast.CIStr,
 	columns []*expression.Column, names types.NameSlice) ([]int, error) {
-	s := PartitionProcessor{}
+	s := rule.PartitionProcessor{}
 	pi := tbl.Meta().Partition
 	switch pi.Type {
 	case ast.PartitionTypeHash, ast.PartitionTypeKey:
-		return s.pruneHashOrKeyPartition(ctx, tbl, partitionNames, conds, columns, names)
+		return s.PruneHashOrKeyPartition(ctx, tbl, partitionNames, conds, columns, names)
 	case ast.PartitionTypeRange:
-		rangeOr, err := s.pruneRangePartition(ctx, pi, tbl, conds, columns, names)
+		rangeOr, err := s.PruneRangePartition(ctx, pi, tbl, conds, columns, names)
 		if err != nil {
 			return nil, err
 		}
-		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
+		ret := s.ConvertToIntSlice(rangeOr, pi, partitionNames)
 		ret = handleDroppingForRange(pi, partitionNames, ret)
 		return ret, nil
 	case ast.PartitionTypeList:
-		return s.pruneListPartition(ctx, tbl, partitionNames, conds, columns)
+		return s.PruneListPartition(ctx, tbl, partitionNames, conds, columns)
 	}
-	return []int{FullRange}, nil
+	return []int{rule.FullRange}, nil
 }
 
 func handleDroppingForRange(pi *tmodel.PartitionInfo, partitionNames []ast.CIStr, usedPartitions []int) []int {
 	if pi.CanHaveOverlappingDroppingPartition() {
-		if len(usedPartitions) == 1 && usedPartitions[0] == FullRange {
+		if len(usedPartitions) == 1 && usedPartitions[0] == rule.FullRange {
 			usedPartitions = make([]int, 0, len(pi.Definitions))
 			for i := range pi.Definitions {
 				usedPartitions = append(usedPartitions, i)
@@ -76,8 +78,8 @@ func handleDroppingForRange(pi *tmodel.PartitionInfo, partitionNames []ast.CIStr
 			// add the overlapping partition, if not already included
 			if end >= len(usedPartitions) || usedPartitions[end] != idx {
 				// It must also match partitionNames if explicitly given
-				s := PartitionProcessor{}
-				if len(partitionNames) == 0 || s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+				s := rule.PartitionProcessor{}
+				if len(partitionNames) == 0 || s.FindByName(partitionNames, pi.Definitions[idx].Name.L) {
 					ret = append(ret, idx)
 				}
 			}
@@ -89,7 +91,7 @@ func handleDroppingForRange(pi *tmodel.PartitionInfo, partitionNames []ast.CIStr
 		usedPartitions = ret
 	}
 	if len(usedPartitions) == len(pi.Definitions) {
-		return []int{FullRange}
+		return []int{rule.FullRange}
 	}
 	return usedPartitions
 }

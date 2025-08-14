@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -186,7 +187,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	}
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
-	simplifiedPredicate = pushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
+	simplifiedPredicate = rule.PushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.

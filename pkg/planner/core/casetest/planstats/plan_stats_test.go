@@ -182,7 +182,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
 					require.True(t, ok)
-					pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+					pis, ok := pr.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 					require.True(t, ok)
 					require.True(t, pis.StatsInfo().HistColl.GetIdx(1).IsEssentialStatsLoaded())
 				},

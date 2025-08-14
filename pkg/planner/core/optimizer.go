@@ -101,7 +101,7 @@ var optRuleList = []base.LogicalOptRule{
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
-	&PartitionProcessor{},
+	&rule.PartitionProcessor{},
 	&CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},

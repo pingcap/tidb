@@ -4586,7 +4586,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if !(b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
 		// Skip storage engine check for CreateView.
 		if b.capFlag&canExpandAST == 0 {
-			possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
+			possiblePaths, err = util.FilterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
 			if err != nil {
 				return nil, err
 			}

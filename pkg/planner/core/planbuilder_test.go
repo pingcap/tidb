@@ -305,11 +305,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(tableReader))
 
 	// index scan
-	indexScan := &PhysicalIndexScan{
+	indexScan := &physicalop.PhysicalIndexScan{
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		dataSourceSchema: schema,
+		DataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
