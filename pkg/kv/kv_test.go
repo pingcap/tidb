@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -48,9 +49,13 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	require.Nil(t, resTag.KeyspaceName)
 
 	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
-	tag = NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
+	tag = NewResourceGroupTagBuilder(nil).SetSQLDigest(sqlDigest).EncodeTagWithKey([]byte(""))
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
-	require.Len(t, tag, 6)
+	if kerneltype.IsNextGen() {
+		require.Len(t, tag, 8)
+	} else {
+		require.Len(t, tag, 6) // For classic kernel, it does not include keyspace name.
+	}
 
 	decodedSQLDigest, err = resourcegrouptag.DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
@@ -76,5 +81,10 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 	resTag = &tipb.ResourceGroupTag{}
 	err = resTag.Unmarshal(tag)
 	require.NoError(t, err)
-	require.Nil(t, resTag.KeyspaceName)
+	if kerneltype.IsNextGen() {
+		require.NotNil(t, resTag.KeyspaceName)
+		require.Equal(t, resTag.KeyspaceName, keyspace.GetKeyspaceNameBytesBySettings())
+	} else {
+		require.Nil(t, resTag.KeyspaceName)
+	}
 }

@@ -205,8 +205,9 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time) (*ttlTableSession, func() error, error) {
 	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
 	origPaging := se.GetSessionVars().EnablePaging
-
+	se.GetSessionVars().InternalSQLScanUserTable = true
 	restore := func() error {
+		se.GetSessionVars().InternalSQLScanUserTable = false
 		_, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=%?", origConcurrency)
 		terror.Log(err)
 		if err != nil {

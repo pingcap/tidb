@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -124,8 +125,8 @@ func setPhysicalTableOrIndexScanCostDetail(p base.PhysicalPlan, opt *optimizetra
 	if opt == nil {
 		return
 	}
-	_, ok1 := p.(*PhysicalTableScan)
-	_, ok2 := p.(*PhysicalIndexScan)
+	_, ok1 := p.(*physicalop.PhysicalTableScan)
+	_, ok2 := p.(*physicalop.PhysicalIndexScan)
 	if !ok1 && !ok2 {
 		return
 	}
@@ -180,7 +181,7 @@ func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *optimizetrace
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *optimizetrace.PhysicalOptimizeOp, spill bool,
+func setPhysicalHashJoinCostDetail(p *physicalop.PhysicalHashJoin, opt *optimizetrace.PhysicalOptimizeOp, spill bool,
 	buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
 	cpuCost, probeCPUCost, memCost, diskCost, probeDiskCost,
 	diskFactor, memoryFactor, concurrencyFactor float64,

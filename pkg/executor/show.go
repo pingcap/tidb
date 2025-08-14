@@ -28,7 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -120,7 +119,6 @@ type ShowExec struct {
 
 	ImportJobID       *int64
 	DistributionJobID *int64
-	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
@@ -264,8 +262,6 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBind()
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
-	case ast.ShowPlanForSQL:
-		return e.fetchPlanForSQL()
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -377,35 +373,6 @@ func (e *ShowExec) fetchShowBind() error {
 			hint.SQLDigest,
 			hint.PlanDigest,
 		})
-	}
-	return nil
-}
-
-func (e *ShowExec) fetchPlanForSQL() error {
-	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
-	plans, err := bindingHandle.ExplorePlansForSQL(e.Ctx().GetPlanCtx(), e.SQLOrDigest, false)
-	if err != nil {
-		return err
-	}
-	for _, p := range plans {
-		hintStr, err := p.Binding.Hint.Restore()
-		if err != nil {
-			return err
-		}
-
-		e.appendRow([]any{
-			p.Binding.OriginalSQL,
-			hintStr,
-			p.Plan,
-			p.PlanDigest,
-			p.AvgLatency,
-			float64(p.ExecTimes),
-			p.AvgScanRows,
-			p.AvgReturnedRows,
-			p.LatencyPerReturnRow,
-			p.ScanRowsPerReturnRow,
-			p.Recommend,
-			p.Reason})
 	}
 	return nil
 }
@@ -819,7 +786,7 @@ func (e *ShowExec) fetchShowIndex() error {
 		return errors.Trace(err)
 	}
 
-	statsTbl := h.GetTableStats(tb.Meta())
+	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
@@ -1108,7 +1075,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col.Hidden {
+		if col == nil || col.Hidden {
 			continue
 		}
 		if needAddComma {
@@ -2487,9 +2454,8 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	result.AppendString(16, runInfo.ProcessedSize())
 	result.AppendString(17, runInfo.TotalSize())
 	result.AppendString(18, runInfo.Percent())
-	speed, eta := runInfo.SpeedAndETA()
-	result.AppendString(19, speed)
-	result.AppendString(20, eta)
+	result.AppendString(19, fmt.Sprintf("%s/s", units.BytesSize(float64(runInfo.Speed))))
+	result.AppendString(20, runInfo.ETA())
 }
 
 func handleImportJobInfo(
@@ -2507,19 +2473,10 @@ func handleImportJobInfo(
 		if err != nil {
 			return err
 		}
-		runInfo.StartTime = info.StartTime
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
 		}
-
-		failpoint.Inject("mockUpdateTime", func(val failpoint.Value) {
-			if v, ok := val.(int); ok {
-				ti := time.Now()
-				runInfo.StartTime = types.NewTime(types.FromGoTime(ti), mysql.TypeTimestamp, 0)
-				runInfo.UpdateTime = types.NewTime(types.FromGoTime(ti.Add(time.Duration(v)*time.Second)), mysql.TypeTimestamp, 0)
-			}
-		})
 	}
 	FillOneImportJobInfo(result, info, runInfo)
 	return nil

@@ -101,7 +101,7 @@ var optRuleList = []base.LogicalOptRule{
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
-	&PartitionProcessor{},
+	&rule.PartitionProcessor{},
 	&CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
@@ -262,6 +262,13 @@ func CheckTableMode(node *resolve.NodeW) error {
 	switch node.Node.(type) {
 	case *ast.ShowStmt, *ast.ExplainStmt:
 	default:
+		// Special handling to the `ADMIN CHECKSUM TABLE`, as `IMPORT INTO` will
+		// executes this statement during post checksum to verify data.
+		// TODO: only allow `ADMIN CHECKSUM TABLE` from import into task
+		adminStmt, ok := node.Node.(*ast.AdminStmt)
+		if ok && adminStmt.Tp == ast.AdminChecksumTable {
+			return nil
+		}
 		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
 			if err := dbutil.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
 				return err
@@ -340,7 +347,6 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
@@ -375,7 +381,8 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+	// InternalSQLScanUserTable is for ttl scan.
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
 		flag |= rule.FlagCollectPredicateColumnsPoint
 		flag |= rule.FlagSyncWaitStatsLoadPoint
 	}
@@ -486,7 +493,7 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	logutil.BgLogger().Debug("Start runtime filter generator")
 	rfGenerator := &RuntimeFilterGenerator{
 		rfIDGenerator:      &util.IDGenerator{},
-		columnUniqueIDToRF: map[int64][]*RuntimeFilter{},
+		columnUniqueIDToRF: map[int64][]*physicalop.RuntimeFilter{},
 		parentPhysicalPlan: plan,
 	}
 	startRFGenerator := time.Now()
@@ -538,12 +545,12 @@ func countStarRewrite(plan base.PhysicalPlan) {
 
 func countStarRewriteInternal(plan base.PhysicalPlan) {
 	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
-	var physicalAgg *basePhysicalAgg
+	var physicalAgg *physicalop.BasePhysicalAgg
 	switch x := plan.(type) {
-	case *PhysicalHashAgg:
-		physicalAgg = x.getPointer()
-	case *PhysicalStreamAgg:
-		physicalAgg = x.getPointer()
+	case *physicalop.PhysicalHashAgg:
+		physicalAgg = x.GetPointer()
+	case *physicalop.PhysicalStreamAgg:
+		physicalAgg = x.GetPointer()
 	default:
 		return
 	}
@@ -558,8 +565,8 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 			return
 		}
 	}
-	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
-	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
+	physicalTableScan, ok := physicalAgg.Children()[0].(*physicalop.PhysicalTableScan)
+	if !ok || !physicalTableScan.IsFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
 		return
 	}
 	// rewrite datasource and agg args
@@ -568,7 +575,7 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 
 // rewriteTableScanAndAggArgs Pick the narrowest and not null column from table
 // If there is no not null column in Data Source, the row_id or pk column will be retained
-func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
+func rewriteTableScanAndAggArgs(physicalTableScan *physicalop.PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
 
@@ -835,7 +842,7 @@ func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 
 func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
 	switch x := plan.(type) {
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
@@ -859,12 +866,12 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		// Todo: allow hash aggregation's output still benefits from fine grained shuffle
 		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*physicalop.BasePhysicalPlan{}}
 		aggHelper.plans = append(aggHelper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		child0 := x.Children()[0]
 		child1 := x.Children()[1]
 		buildChild := child0
@@ -951,7 +958,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalPlan) {
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
-	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
+		*PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
@@ -991,7 +999,7 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
-	if apply, ok := plan.(*PhysicalApply); ok {
+	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
 		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
@@ -1196,7 +1204,7 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
-	var physLock *PhysicalLock
+	var physLock *physicalop.PhysicalLock
 	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
@@ -1207,7 +1215,7 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 			pointGet = x
 		case *BatchPointGetPlan:
 			batchPointGet = x
-		case *PhysicalLock:
+		case *physicalop.PhysicalLock:
 			physLock = x
 		case *physicalop.PhysicalUnionScan:
 			unionScan = x
