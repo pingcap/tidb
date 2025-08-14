@@ -74,6 +74,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 	if err != nil {
 		return nil, nil, err
 	}
+	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, false)
 	p.Conditions = make([]expression.Expression, 0, len(predicates))
 	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
