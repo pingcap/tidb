@@ -876,8 +876,8 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	// Now, PushDownNot have be done in the ApplyPredicateSimplification
 	// AllConds and PushedDownConds may become inconsistent in subsequent ApplyPredicateSimplification calls.
 	// They must be kept in sync to ensure correctness after PR #61571.
-	ds.PushedDownConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.PushedDownConds, false)
-	ds.AllConds = utilfuncp.ApplyPredicateSimplification(ds.SCtx(), ds.AllConds, false)
+	ds.PushedDownConds = applyPredicateSimplification(ds.SCtx(), ds.PushedDownConds, false)
+	ds.AllConds = applyPredicateSimplification(ds.SCtx(), ds.AllConds, false)
 	// Return table dual when filter is constant false or null.
 	dual := logicalop.Conds2TableDual(ds, ds.AllConds)
 	if dual != nil {

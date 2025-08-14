@@ -155,9 +155,6 @@ var DeriveStats4LogicalTableScan func(lp base.LogicalPlan) (_ *property.StatsInf
 var AddPrefix4ShardIndexes func(lp base.LogicalPlan, sc base.PlanContext,
 	conds []expression.Expression) []expression.Expression
 
-// ApplyPredicateSimplification will be called by LogicalSelection in logicalOp pkg.
-var ApplyPredicateSimplification func(base.PlanContext, []expression.Expression, bool) []expression.Expression
-
 // IsSingleScan check whether the data source is a single scan.
 var IsSingleScan func(ds base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool
 

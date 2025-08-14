@@ -206,7 +206,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
-	predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
+	predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -256,7 +256,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = utilfuncp.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
+		tempCond = ruleutil.ApplyPredicateSimplification(p.SCtx(), tempCond, true)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -271,7 +271,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
+		predicates = ruleutil.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 		predicates = p.joinPropConst(predicates)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
