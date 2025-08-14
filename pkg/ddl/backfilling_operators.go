@@ -384,7 +384,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 	for {
 		kvRanges, err := loadTableRanges(
 			src.ctx,
-			src.tbl,
+			src.tbl.GetPhysicalID(),
 			src.store,
 			startKey,
 			src.endKey,
@@ -490,7 +490,7 @@ func NewTableScanOperator(
 			}
 		})
 	return &TableScanOperator{
-		AsyncOperator: operator.NewAsyncOperator[TableScanTask, IndexRecordChunk](ctx, pool),
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
 		logger:        logutil.Logger(ctx),
 		totalCount:    totalCount,
 	}

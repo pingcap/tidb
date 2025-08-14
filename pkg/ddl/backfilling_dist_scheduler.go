@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -121,35 +122,19 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	}
 	job := &backfillMeta.Job
 	logger.Info("on next subtasks batch")
-	storeWithPD := sch.d.store.(kv.StorageWithPD)
+	store, tbl, err := getUserStoreAndTable(ctx, sch.d, sch.d.store, task.Keyspace, job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
-		taskKS := task.Keyspace
-		store := sch.d.store
-		if taskKS != tidbconfig.GetGlobalKeyspaceName() {
-			taskMgr, err := diststorage.GetTaskManager()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
-				store, err = se.GetSQLServer().GetKSStore(taskKS)
-				return err
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-		tblInfo, err := getTblInfo(ctx, store, job)
-		if err != nil {
-			return nil, err
-		}
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, store, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
+		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergePlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
+		return generateMergeSortPlan(ctx, taskHandle, task, len(execIDs), backfillMeta.CloudStorageURI, logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -163,16 +148,54 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				storeWithPD,
+				store.(kv.StorageWithPD),
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
 				logger)
 		}
 		return nil, nil
+	case proto.BackfillStepMergeTempIndex:
+		jobArgs, err := model.GetModifyIndexArgs(job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return generateMergeTempIndexPlan(ctx, store, tbl, jobArgs)
 	default:
 		return nil, nil
 	}
+}
+
+func getUserStoreAndTable(
+	ctx context.Context,
+	d *ddl,
+	schrStore kv.Storage,
+	taskKeyspace string,
+	job *model.Job,
+) (kv.Storage, table.Table, error) {
+	store := schrStore
+	if taskKeyspace != tidbconfig.GetGlobalKeyspaceName() {
+		taskMgr, err := diststorage.GetTaskManager()
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+			store, err = se.GetSQLServer().GetKSStore(taskKeyspace)
+			return err
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	tblInfo, err := getTblInfo(ctx, store, job)
+	if err != nil {
+		return nil, nil, err
+	}
+	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, tbl, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.
@@ -184,10 +207,12 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 		if sch.GlobalSort {
 			return proto.BackfillStepMergeSort
 		}
-		return proto.StepDone
+		return proto.BackfillStepMergeTempIndex
 	case proto.BackfillStepMergeSort:
 		return proto.BackfillStepWriteAndIngest
 	case proto.BackfillStepWriteAndIngest:
+		return proto.BackfillStepMergeTempIndex
+	case proto.BackfillStepMergeTempIndex:
 		return proto.StepDone
 	default:
 		return proto.StepDone
@@ -257,21 +282,17 @@ func generateReadIndexPlan(
 	ctx context.Context,
 	d *ddl,
 	store kv.Storage,
-	tblInfo *model.TableInfo,
+	tbl table.Table,
 	job *model.Job,
 	useCloud bool,
 	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
-	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
-	if err != nil {
-		return nil, err
-	}
 	jobReorgCtx := d.jobContext(job.ID, job.ReorgMeta)
-	if tblInfo.Partition == nil {
+	if tbl.Meta().Partition == nil {
 		return generatePlanForPhysicalTable(ctx, jobReorgCtx, store, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
 	}
-	defs := tblInfo.Partition.Definitions
+	defs := tbl.Meta().Partition.Definitions
 	for _, def := range defs {
 		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
 		partMeta, err := generatePlanForPhysicalTable(ctx, jobReorgCtx, store, partTbl, job, useCloud, nodeCnt, logger)
@@ -572,7 +593,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	return metaArr, nil
 }
 
-func generateMergePlan(
+func generateMergeSortPlan(
 	ctx context.Context,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
@@ -742,4 +763,96 @@ func forEachBackfillSubtaskMeta(
 		fn(subtask)
 	}
 	return nil
+}
+
+func generateMergeTempIndexPlan(
+	ctx context.Context,
+	store kv.Storage,
+	tbl table.Table,
+	jobArgs *model.ModifyIndexArgs,
+) ([][]byte, error) {
+	tblInfo := tbl.Meta()
+	indexIDs := make([]int64, 0, len(jobArgs.IndexArgs))
+	hasGlobalIndex := false
+	for _, ia := range jobArgs.IndexArgs {
+		var idxInfo *model.IndexInfo
+		for _, idx := range tbl.Meta().Indices {
+			if ia.IndexName.L == idx.Name.L {
+				indexIDs = append(indexIDs, idx.ID)
+				idxInfo = idx
+				if idx.Global {
+					hasGlobalIndex = true
+				}
+				break
+			}
+		}
+		if idxInfo == nil {
+			return nil, errors.Errorf("index %s not found", ia.IndexName.O)
+		}
+	}
+
+	if tblInfo.Partition == nil || hasGlobalIndex {
+		return generateMergeTempIndexPlanForPhysicalTable(ctx, store, tbl.(table.PhysicalTable), indexIDs)
+	}
+	metas := make([][]byte, 0, 16)
+	defs := tblInfo.Partition.Definitions
+	for _, def := range defs {
+		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
+		partMeta, err := generateMergeTempIndexPlanForPhysicalTable(ctx, store, partTbl, indexIDs)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, partMeta...)
+	}
+	return metas, nil
+}
+
+func generateMergeTempIndexPlanForPhysicalTable(
+	ctx context.Context,
+	store kv.Storage,
+	tbl table.PhysicalTable,
+	indexIDs []int64,
+) ([][]byte, error) {
+	pid := tbl.GetPhysicalID()
+	start, end := encodeTempIndexRange(pid, indexIDs[0], indexIDs[len(indexIDs)-1])
+	splitKeys := getSplitKeysForMergeTempIndexPlan(pid, indexIDs)
+
+	subtaskMetas := make([][]byte, 0, 4)
+	for {
+		kvRanges, err := loadTableRanges(ctx, pid, store, start, end, splitKeys, backfillTaskChanSize)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(kvRanges) == 0 {
+			break
+		}
+		for _, r := range kvRanges {
+			subTaskMeta := &BackfillSubTaskMeta{
+				SortedKVMeta: external.SortedKVMeta{
+					StartKey: r.StartKey,
+					EndKey:   r.EndKey,
+				},
+			}
+			metaBytes, err := subTaskMeta.Marshal()
+			if err != nil {
+				return nil, err
+			}
+			subtaskMetas = append(subtaskMetas, metaBytes)
+		}
+		start = kvRanges[len(kvRanges)-1].EndKey
+		if start.Cmp(end) >= 0 {
+			break
+		}
+	}
+	return subtaskMetas, nil
+}
+
+func getSplitKeysForMergeTempIndexPlan(pid int64, indexIDs []int64) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(indexIDs))
+	for _, eid := range indexIDs {
+		tempIdxID := tablecodec.TempIndexPrefix | eid
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }

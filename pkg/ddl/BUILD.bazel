@@ -18,6 +18,7 @@ go_library(
         "backfilling_dist_scheduler.go",
         "backfilling_import_cloud.go",
         "backfilling_merge_sort.go",
+        "backfilling_merge_temp.go",
         "backfilling_operators.go",
         "backfilling_read_index.go",
         "backfilling_txn_executor.go",
@@ -213,6 +214,7 @@ go_library(
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
