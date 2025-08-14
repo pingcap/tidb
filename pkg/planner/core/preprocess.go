@@ -378,19 +378,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Tables != nil {
 			for _, tbl := range node.Tables.Tables {
 				p.schemaReadOnlyByTable(tbl, false, true)
-				//table, err := p.tableByName(tbl)
-				//if err != nil {
-				//	p.err = err
-				//	return nil, true
-				//}
-				//if table.Meta().TempTableType != model.TempTableNone {
-				//	// If it is a temporary table, we should not check the read-only state.
-				//	continue
-				//}
-				//dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta())
-				//if dbInfo != nil && dbInfo.ReadOnly() {
-				//	p.err = errors.New("database is in read-only state")
-				//}
 			}
 		} else {
 			for _, db := range p.getAllDBInfos(node.TableRefs) {
