@@ -108,7 +108,7 @@ func prepareModifyTaskTest(t *testing.T, nodeCount int) (*testutil.TestDXFContex
 	return c, runtimeInfo, subtaskCh, modifyWaitCh, &testModifyWhenSubtaskRun
 }
 
-func TestModifyTaskConcurrency(t *testing.T) {
+func TestModifyTaskConcurrencyAndMeta(t *testing.T) {
 	c, runtimeInfo, subtaskCh, modifyWaitCh, testModifyWhenSubtaskRun := prepareModifyTaskTest(t, 1)
 	resetRuntimeInfoFn := func() {
 		*runtimeInfo = collectedRuntimeInfo{}
