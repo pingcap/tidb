@@ -134,8 +134,8 @@ func TestModifySchemaArgs(t *testing.T) {
 		}
 	}
 	inArgs = &ModifySchemaArgs{
-		ReadOnly:  true,
-		DDLConnID: 12345,
+		ReadOnly:   true,
+		DDLStartTS: 123,
 	}
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 		j2 := &Job{}
@@ -143,7 +143,7 @@ func TestModifySchemaArgs(t *testing.T) {
 		args, err := GetModifySchemaArgs(j2)
 		require.NoError(t, err)
 		require.True(t, args.ReadOnly)
-		require.Equal(t, uint64(12345), args.DDLConnID)
+		require.Equal(t, uint64(123), args.DDLStartTS)
 	}
 }
 

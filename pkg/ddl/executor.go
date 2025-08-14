@@ -445,8 +445,8 @@ func (e *executor) ModifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.A
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.ModifySchemaArgs{
-		ReadOnly:  readOnly,
-		DDLConnID: ctx.GetSessionVars().ConnectionID,
+		ReadOnly:   readOnly,
+		DDLStartTS: ctx.GetSessionVars().TxnCtx.StartTS,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)

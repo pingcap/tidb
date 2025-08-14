@@ -212,7 +212,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 		defer w.sessPool.Put(sessCtx)
 		session := sess.NewSession(sessCtx)
 		sampleLogger := logutil.SampleLoggerFactory(time.Second, 5, zap.String(logutil.LogFieldCategory, "ddl"))
-		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, session, dbInfo.ID, trxTableName, args.DDLConnID)
+		uncommittedTxn, err := getUncommittedTxnIDs(jobCtx, session, dbInfo.ID, trxTableName, args.DDLStartTS)
 		failpoint.Inject("mockCheckUncommittedTxnError", func() {
 			if err == nil {
 				err = errors.New("mock error for check uncommitted txn")
@@ -261,7 +261,7 @@ func (w *worker) onModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver
 	return ver, nil
 }
 
-func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlConnID uint64) (map[int64]struct{}, error) {
+func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int64, trxTableName string, ddlStartTS uint64) (map[int64]struct{}, error) {
 	var currTS = uint64(0)
 	err := kv.RunInNewTxn(jobCtx.ctx, jobCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		currTS = txn.StartTS()
@@ -273,10 +273,10 @@ func getUncommittedTxnIDs(jobCtx *jobContext, sess *sess.Session, targetDBID int
 	is := jobCtx.infoCache.GetLatest()
 	sql := fmt.Sprintf(
 		"SELECT RELATED_TABLE_IDS, ID FROM INFORMATION_SCHEMA.%s "+
-			"WHERE SESSION_ID != %d "+ // exclude current ddl
+			"WHERE ID != %d "+ // exclude current ddl
 			"AND ID < %d", // exclude new transactions
 		trxTableName,
-		ddlConnID,
+		ddlStartTS,
 		currTS,
 	)
 	t := time.Now()
