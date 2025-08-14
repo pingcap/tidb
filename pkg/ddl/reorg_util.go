@@ -125,8 +125,8 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx ses
 }
 
 func getTableSizeByID(ctx context.Context, store kv.Storage, tblID int64) int64 {
-	helperStore := store.(helper.Storage)
-	if helperStore == nil {
+	helperStore, ok := store.(helper.Storage)
+	if !ok {
 		logutil.DDLLogger().Error("store does not implement helper.Storage interface",
 			zap.String("storeType", fmt.Sprintf("%T", store)))
 		return 0
