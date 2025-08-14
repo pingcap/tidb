@@ -2133,6 +2133,11 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 				columnInfo := tblInfo.GetColumnByID(id)
 				intest.Assert(columnInfo != nil, "column %d not found in table %s.%s", id, tbl.Schema.L, tbl.Name.L)
 				if columnInfo == nil {
+					statslogutil.StatsLogger().Warn("Column not found in table while getting predicate columns",
+						zap.Int64("columnID", id),
+						zap.String("tableSchema", tbl.Schema.L),
+						zap.String("table", tblInfo.Name.O),
+					)
 					// This should not happen, but we handle it gracefully.
 					continue
 				}
