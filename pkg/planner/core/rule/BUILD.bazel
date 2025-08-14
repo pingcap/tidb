@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "logical_rules.go",
         "rule_build_key_info.go",
+        "rule_column_pruning.go",
         "rule_constant_propagation.go",
         "rule_init.go",
         "rule_partition_processor.go",
@@ -28,6 +29,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/collate",
         "//pkg/util/hint",
+        "//pkg/util/intest",
         "//pkg/util/mathutil",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
