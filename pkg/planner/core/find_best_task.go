@@ -1634,6 +1634,7 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return false
 	}
+
 	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
 	var isEqualPredicateOrOr func(expr expression.Expression) bool
 	isEqualPredicateOrOr = func(expr expression.Expression) bool {
@@ -1641,6 +1642,12 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 		if !ok {
 			return false
 		}
+
+		// Reject NOT operators - they can make predicates non-equal
+		if sf.FuncName.L == ast.UnaryNot {
+			return false
+		}
+
 		if sf.FuncName.L == ast.LogicOr {
 			for _, arg := range sf.GetArgs() {
 				if !isEqualPredicateOrOr(arg) {
@@ -1649,9 +1656,19 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 			}
 			return true
 		}
+
 		// Check if it's an equal predicate (eq) or IN predicate (in)
-		return sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In
+		// Also reject any other comparison operators that are not equal/IN
+		if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
+			return true
+		}
+
+		// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
+		// and any other functions that are not equal/IN predicates
+		return false
 	}
+
+	// Check all access conditions
 	for _, cond := range c.path.AccessConds {
 		if !isEqualPredicateOrOr(cond) {
 			return false
