@@ -369,23 +369,6 @@ type LoadDataController struct {
 	ExecuteNodesCnt int
 }
 
-// validateGroupKey validates the group key.
-// group key should be a string with length <= 256 composed of only alphanumeric characters, '-', and '_'.
-func validateGroupKey(groupKey string) bool {
-	if len(groupKey) > 256 {
-		return false
-	}
-	for _, r := range groupKey {
-		if !((r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			r == '-' || r == '_') {
-			return false
-		}
-	}
-	return true
-}
-
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	res := map[string]string{}
 	for k, defVal := range common.DefaultImportantVariables {
