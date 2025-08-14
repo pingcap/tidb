@@ -19,8 +19,10 @@ import (
 	"testing"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 )
 
 type GlobalConfigTestSuite struct {
@@ -31,7 +33,7 @@ type GlobalConfigTestSuite struct {
 
 func SetUpSuite() *GlobalConfigTestSuite {
 	s := &GlobalConfigTestSuite{}
-	s.rpc, s.client, s.cluster, _ = New("", nil, nil)
+	s.rpc, s.client, s.cluster, _ = New("", nil, constants.NullKeyspaceID, nil)
 	return s
 }
 
@@ -111,4 +113,41 @@ func TestMockPDServiceDiscovery(t *testing.T) {
 	re.Len(clis, 2)
 	re.Equal(clis[0].GetURL(), "http://127.0.0.1:2379")
 	re.Equal(clis[1].GetURL(), "http://172.32.21.32:2379")
+}
+
+func TestMockKeyspaceManager(t *testing.T) {
+	re := require.New(t)
+
+	checkConsistency := func(m *mockKeyspaceManager) {
+		re.Equalf(len(m.keyspaces), len(m.keyspaceNamesMap), "amount of keyspace meta and keyspace names mismatches, meta: %+v, names: %+v", m.keyspaces, m.keyspaceNamesMap)
+		for i, meta := range m.keyspaces {
+			// The array should be sorted by ID, and the ID is distinct.
+			if i > 0 {
+				re.Greater(meta.Id, m.keyspaces[i-1].Id)
+			}
+			nameMapEntry, exists := m.keyspaceNamesMap[meta.Name]
+			re.True(exists)
+			re.Equal(meta.Id, nameMapEntry)
+		}
+	}
+
+	checkListID := func(m *mockKeyspaceManager, ids []uint32) {
+		re.Equalf(len(ids), len(m.keyspaces), "amount of keyspace meta mismatches, meta: %+v, expected IDs: %v", m.keyspaces, ids)
+		for i, keyspace := range m.keyspaces {
+			re.Equal(ids[i], keyspace.Id)
+		}
+	}
+
+	m, err := newMockKeyspaceManager(nil)
+	re.NoError(err)
+	re.NotNil(m)
+	re.Empty(m.keyspaces)
+	re.Empty(m.keyspaceNamesMap)
+
+	m, err := newMockKeyspaceManager([]*keyspacepb.KeyspaceMeta{{
+		Id:   0,
+		Name: "DEFAULT",
+	}})
+	re.NoError(err)
+	re.NotNil(m)
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 )
 
 // MockTiKVDriver is in memory mock TiKV driver.
@@ -93,16 +94,18 @@ const (
 )
 
 type mockOptions struct {
-	clusterInspector func(testutils.Cluster)
-	clientHijacker   func(tikv.Client) tikv.Client
-	pdClientHijacker func(pd.Client) pd.Client
-	path             string
-	txnLocalLatches  uint
-	storeType        StoreType
-	ddlCheckerHijack bool
-	tikvOptions      []tikv.Option
-	pdAddrs          []string
-	keyspaceMeta     *keyspacepb.KeyspaceMeta
+	clusterInspector  func(testutils.Cluster)
+	clientHijacker    func(tikv.Client) tikv.Client
+	pdClientHijacker  func(pd.Client) pd.Client
+	path              string
+	txnLocalLatches   uint
+	storeType         StoreType
+	ddlCheckerHijack  bool
+	tikvOptions       []tikv.Option
+	pdAddrs           []string
+	keyspaceSpecified bool
+	currentKeyspaceID uint32
+	clusterKeyspaces  []*keyspacepb.KeyspaceMeta
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -203,10 +206,22 @@ func WithMockTiFlash(nodes int) MockTiKVStoreOption {
 	)
 }
 
-// WithKeyspaceMeta lets user set the keyspace meta.
-func WithKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStoreOption {
+// WithCurrentKeyspaceMeta lets user set the keyspace meta.
+func WithCurrentKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStoreOption {
 	return func(c *mockOptions) {
-		c.keyspaceMeta = keyspaceMeta
+		c.keyspaceSpecified = true
+		c.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{keyspaceMeta}
+		c.currentKeyspaceID = keyspaceMeta.Id
+	}
+}
+
+// WithKeyspacesAndCurrentKeyspaceID specifies a list of keyspaces in the cluster, and ID of the keyspace that
+// the user will be in. It's useful when the test needs to operate other keyspaces.
+func WithKeyspacesAndCurrentKeyspaceID(clusterKeyspaces []*keyspacepb.KeyspaceMeta, currentKeyspaceID uint32) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.keyspaceSpecified = true
+		c.clusterKeyspaces = clusterKeyspaces
+		c.currentKeyspaceID = currentKeyspaceID
 	}
 }
 
@@ -221,7 +236,8 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		clusterInspector: func(c testutils.Cluster) {
 			BootstrapWithSingleStore(c)
 		},
-		storeType: defaultStoreType,
+		storeType:         defaultStoreType,
+		currentKeyspaceID: constants.NullKeyspaceID,
 	}
 	for _, f := range options {
 		f(&opt)
@@ -229,11 +245,13 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	if kerneltype.IsNextGen() {
 		// in nextgen, all stores must have a keyspace meta set. to simplify the
 		// test, we set the default keyspace meta to system keyspace.
-		if opt.keyspaceMeta == nil {
-			opt.keyspaceMeta = &keyspacepb.KeyspaceMeta{
-				Id:   1,
+		if !opt.keyspaceSpecified {
+			meta := &keyspacepb.KeyspaceMeta{
+				Id:   constants.MaxKeyspaceID - 1,
 				Name: keyspace.System,
 			}
+			opt.clusterKeyspaces = []*keyspacepb.KeyspaceMeta{meta}
+			opt.currentKeyspaceID = meta.Id
 		}
 	}
 
