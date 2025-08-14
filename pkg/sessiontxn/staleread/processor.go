@@ -16,6 +16,7 @@ package staleread
 
 import (
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
