@@ -25,9 +25,11 @@ func TestPredicateSimplification(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec(`CREATE TABLE t1 (
+    a int,
     id VARCHAR(64) PRIMARY KEY
 );`)
 		tk.MustExec(`CREATE TABLE t2 (
+    a int,
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     c3 VARCHAR(64) NOT NULL,
@@ -35,6 +37,7 @@ func TestPredicateSimplification(tt *testing.T) {
     KEY c3 (c3)
 );`)
 		tk.MustExec(`CREATE TABLE t3 (
+    a int,
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     c3 VARCHAR(64) NOT NULL,
@@ -42,6 +45,7 @@ func TestPredicateSimplification(tt *testing.T) {
     KEY c3 (c3)
 );`)
 		tk.MustExec(`CREATE TABLE t4 (
+    a int,
     c1 VARCHAR(64) NOT NULL,
     c2 VARCHAR(64) NOT NULL,
     c3 VARCHAR(64) NOT NULL,
