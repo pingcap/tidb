@@ -599,7 +599,8 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 	return tMemUsage
 }
 
-// Copy copies the current table.
+// Copy creates a full deep copy of the current table.
+// This is the most expensive copy operation as it deep copies all histograms, sketches, and statistics data.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
@@ -637,9 +638,8 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
-// ShallowCopy copies the current table.
-// It's different from Copy(). Only the struct Table (and also the embedded HistColl) is copied here.
-// The internal containers, like t.Columns and t.Indices, and the stats, like TopN and Histogram are not copied.
+// ShallowCopy creates a shallow copy of the current table.
+// Only the struct Table (and embedded HistColl) is copied - all maps and statistics objects are shared.
 func (t *Table) ShallowCopy() *Table {
 	newHistColl := HistColl{
 		PhysicalID:    t.PhysicalID,
@@ -656,6 +656,85 @@ func (t *Table) ShallowCopy() *Table {
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
+		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
+	}
+	return nt
+}
+
+// CopyForColumnUpdate creates a copy optimized for column updates.
+func (t *Table) CopyForColumnUpdate() *Table {
+	newColumns := make(map[int64]*Column, len(t.columns))
+	for id, col := range t.columns {
+		newColumns[id] = col
+	}
+
+	newHistColl := HistColl{
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       newColumns,
+		indices:       t.indices,
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
+	}
+	nt := &Table{
+		HistColl:              newHistColl,
+		Version:               t.Version,
+		TblInfoUpdateTS:       t.TblInfoUpdateTS,
+		ExtendedStats:         t.ExtendedStats,
+		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
+		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
+	}
+	return nt
+}
+
+// CopyForIndexUpdate creates a copy optimized for index updates.
+func (t *Table) CopyForIndexUpdate() *Table {
+	newIndices := make(map[int64]*Index, len(t.indices))
+	for id, idx := range t.indices {
+		newIndices[id] = idx
+	}
+
+	newHistColl := HistColl{
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       t.columns,
+		indices:       newIndices,
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
+	}
+	nt := &Table{
+		HistColl:              newHistColl,
+		Version:               t.Version,
+		TblInfoUpdateTS:       t.TblInfoUpdateTS,
+		ExtendedStats:         t.ExtendedStats,
+		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
+		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
+	}
+	return nt
+}
+
+// CopyForMapUpdate creates a copy optimized for map-only updates like DelCol/DelIdx.
+func (t *Table) CopyForMapUpdate() *Table {
+	newHistColl := HistColl{
+		PhysicalID:    t.PhysicalID,
+		RealtimeCount: t.RealtimeCount,
+		columns:       t.columns,
+		indices:       t.indices,
+		Pseudo:        t.Pseudo,
+		ModifyCount:   t.ModifyCount,
+		StatsVer:      t.StatsVer,
+	}
+	nt := &Table{
+		HistColl:              newHistColl,
+		Version:               t.Version,
+		TblInfoUpdateTS:       t.TblInfoUpdateTS,
+		ExtendedStats:         t.ExtendedStats,
+		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap.Clone(),
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
 		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
