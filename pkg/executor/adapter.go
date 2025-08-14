@@ -1652,8 +1652,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
-	sql := FormatSQL(a.GetTextToLog(true))
-	_, digest := stmtCtx.SQLDigest()
 
 	var indexNames string
 	if len(stmtCtx.IndexNames) > 0 {
@@ -1678,9 +1676,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	stmtDetail, tikvExecDetail, ruDetails := execdetails.GetExecDetailsFromContext(a.GoCtx)
 	execDetail := stmtCtx.GetExecDetails()
-	copTaskInfo := stmtCtx.CopTasksDetails()
-	memMax := sessVars.MemTracker.MaxConsumed()
-	diskMax := sessVars.DiskTracker.MaxConsumed()
+	sql := FormatSQL(a.GetTextToLog(true))
+	_, digest := stmtCtx.SQLDigest()
 	_, planDigest := GetPlanDigest(stmtCtx)
 
 	binaryPlan := ""
@@ -1708,15 +1705,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		SQL:               sql.String(),
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         sessVars.DurationParse,
-		TimeCompile:       sessVars.DurationCompile,
-		TimeOptimize:      sessVars.DurationOptimization,
-		TimeWaitTS:        sessVars.DurationWaitTS,
 		IndexNames:        indexNames,
-		CopTasks:          copTaskInfo,
+		CopTasks:          stmtCtx.CopTasksDetails(),
 		ExecDetail:        execDetail,
-		MemMax:            memMax,
-		DiskMax:           diskMax,
+		MemMax:            sessVars.MemTracker.MaxConsumed(),
+		DiskMax:           sessVars.DiskTracker.MaxConsumed(),
 		Succ:              succ,
 		Plan:              getPlanTree(stmtCtx),
 		PlanDigest:        planDigest.String(),
@@ -1736,9 +1729,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          variable.CollectWarningsForSlowLog(stmtCtx),
 		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
-		RRU:               ruDetails.RRU(),
-		WRU:               ruDetails.WRU(),
-		WaitRUDuration:    ruDetails.RUWaitDuration(),
+		RUDetails:         ruDetails,
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),
 		StorageKV:         stmtCtx.IsTiKV.Load(),
 		StorageMPP:        stmtCtx.IsTiFlash.Load(),
@@ -1790,7 +1781,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 				Digest:     digest.String(),
 				Start:      sessVars.StartTime,
 				Duration:   costTime,
-				Detail:     stmtCtx.GetExecDetails(),
+				Detail:     execDetail,
 				Succ:       succ,
 				ConnID:     sessVars.ConnectionID,
 				SessAlias:  sessVars.SessionAlias,
@@ -1900,11 +1891,6 @@ func GetPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	normalized, planDigest = plannercore.NormalizeFlatPlan(flat)
 	stmtCtx.SetPlanDigest(normalized, planDigest)
 	return normalized, planDigest
-}
-
-// GetEncodedPlan returned same as getEncodedPlan
-func GetEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
-	return getEncodedPlan(stmtCtx, genHint)
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
@@ -2329,7 +2315,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,
 	}
-	dumpTask.EncodedPlan, _ = GetEncodedPlan(stmtCtx, false)
+	dumpTask.EncodedPlan, _ = getEncodedPlan(stmtCtx, false)
 	if execStmtAst, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		planCacheStmt, err := plannercore.GetPreparedStmt(execStmtAst, sctx.GetSessionVars())
 		if err != nil {
