@@ -207,7 +207,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			countResult.MultiplyAll(1 / float64(coll.RealtimeCount))
+			countResult.DivideAll(float64(coll.RealtimeCount))
 			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,

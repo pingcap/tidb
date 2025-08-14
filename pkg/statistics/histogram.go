@@ -646,6 +646,13 @@ func (r *RowEstimate) MultiplyAll(f float64) {
 	r.MaxEst *= f
 }
 
+// DivideAll divides all three fields of the RowEstimate by a float64 value and stores the result.
+func (r *RowEstimate) DivideAll(f float64) {
+	r.Est /= f
+	r.MinEst /= f
+	r.MaxEst /= f
+}
+
 // TotalRowCount returns the total count of this histogram.
 func (hg *Histogram) TotalRowCount() float64 {
 	return hg.NotNullCount() + float64(hg.NullCount)
