@@ -140,7 +140,6 @@ func (t *ManagerCtx) updateClient(ch clientv3.WatchChan) {
 					if t.metaClient != nil {
 						t.metaClient.Close()
 					}
-					// TODO: Support retrying connection if it fails
 					metaClient, err := newMetaClient(t.ctx, string(event.Kv.Value))
 					if err != nil {
 						t.metaClient = nil
