@@ -385,13 +385,13 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		fixcontrol.Fix47400,
 		false,
 	)
-	min := float64(1)
+	minCount := float64(1)
 	if allowZeroEst {
-		min = 0
+		minCount = 0
 	}
-	totalCount.Est = mathutil.Clamp(totalCount.Est, min, float64(realtimeRowCount))
-	totalCount.MinEst = mathutil.Clamp(totalCount.MinEst, min, float64(realtimeRowCount))
-	totalCount.MaxEst = mathutil.Clamp(totalCount.MaxEst, min, float64(realtimeRowCount))
+	totalCount.Est = mathutil.Clamp(totalCount.Est, minCount, float64(realtimeRowCount))
+	totalCount.MinEst = mathutil.Clamp(totalCount.MinEst, minCount, float64(realtimeRowCount))
+	totalCount.MaxEst = mathutil.Clamp(totalCount.MaxEst, minCount, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
