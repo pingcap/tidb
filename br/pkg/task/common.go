@@ -838,7 +838,8 @@ func GetStorage(
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	s, err := storage.New(ctx, u, storageOpts(cfg))
+	opts := getExternalStorageOptions(cfg, u)
+	s, err := storage.New(ctx, u, &opts)
 	if err != nil {
 		return nil, nil, errors.Annotate(err, "create storage failed")
 	}
