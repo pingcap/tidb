@@ -295,7 +295,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 			if !visited[i] {
 				if isEqCondition(s.conditions[i]) {
 					// We should protect the equal condition. so we append the new expr.
-					visited = append(visited, false)
+					visited = append(visited, false) // nolint:makezero
 					s.conditions = append(s.conditions, ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons))
 				} else {
 					s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
@@ -316,10 +316,7 @@ func isEqCondition(expr Expression) bool {
 				return false
 			}
 			_, ok = args[0].(*Column)
-			if !ok {
-				return false
-			}
-			return true
+			return ok
 		}
 	}
 	return false
