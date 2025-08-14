@@ -1767,7 +1767,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = e.createIndex(sctx, ident, ast.IndexKeyTypeUnique, ast.NewCIStr(constr.Name),
-					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
@@ -3176,6 +3176,11 @@ func checkIsDroppableColumn(ctx sessionctx.Context, is infoschema.InfoSchema, sc
 	}
 	if mysql.HasAutoIncrementFlag(col.GetFlag()) && !ctx.GetSessionVars().AllowRemoveAutoInc {
 		return false, dbterror.ErrCantDropColWithAutoInc
+	}
+	// Check the partial index condition
+	err = checkColumnReferencedByPartialCondition(t, col.ColumnInfo)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 	return true, nil
 }
@@ -4902,8 +4907,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == ast.IndexTypeHypo { // for hypo-index
+		partialConditionString, err := CheckAndBuildIndexPartialConditionString(tblInfo, indexOption.PartialCondition, keyType)
+		if err != nil {
+			return err
+		}
 		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
-			indexPartSpecifications, indexOption, model.StatePublic)
+			indexPartSpecifications, indexOption, partialConditionString, model.StatePublic)
 		if err != nil {
 			return err
 		}
@@ -4929,6 +4938,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
+	var partialConditionString string
+	if indexOption != nil {
+		partialConditionString, err = CheckAndBuildIndexPartialConditionString(tblInfo, indexOption.PartialCondition, keyType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			Unique:                  unique,
@@ -4938,6 +4954,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			HiddenCols:              hiddenCols,
 			Global:                  global,
 			SplitOpt:                splitOpt,
+			PartialConditionString:  partialConditionString,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -7064,4 +7081,17 @@ func getScatterScopeFromSessionctx(sctx sessionctx.Context) string {
 		scatterScope = val
 	}
 	return scatterScope
+}
+
+func checkColumnReferencedByPartialCondition(t table.Table, col *model.ColumnInfo) error {
+	// Check whether alter column is referenced by a partial condition
+	for _, idx := range t.Indices() {
+		for _, referencedCol := range idx.ColumnsInPartialCondition() {
+			if referencedCol.ID == col.ID {
+				return dbterror.ErrAlterColumnReferencedByPartialCondition.GenWithStackByArgs(col.Name.O, idx.Meta().Name.O)
+			}
+		}
+	}
+
+	return nil
 }

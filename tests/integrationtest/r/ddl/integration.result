@@ -147,3 +147,15 @@ PARTITION `p1970` VALUES LESS THAN (1980),
 PARTITION `p1980` VALUES LESS THAN (1990),
 PARTITION `p1990` VALUES LESS THAN (2000));
 ALTER TABLE members REORGANIZE PARTITION `p1990` INTO (PARTITION p1995 VALUES LESS THAN (1995),  PARTITION p2000 VALUES LESS THAN (2010));
+create table t (a int, b int);
+insert into t values (1, 2);
+create index testidx on t (b) where a > 2;
+alter table t modify column a bigint;
+Error 8266 (HY000): Column 'a' is referenced by a partial condition in index 'testidx', so it cannot be altered
+alter table t drop column a;
+Error 8266 (HY000): Column 'a' is referenced by a partial condition in index 'testidx', so it cannot be altered
+alter table t change column a c int;
+Error 8266 (HY000): Column 'a' is referenced by a partial condition in index 'testidx', so it cannot be altered
+alter table t drop index testidx;
+alter table t modify column b bigint;
+alter table t drop column b;

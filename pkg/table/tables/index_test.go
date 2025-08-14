@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -30,14 +32,21 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +54,8 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
 	var idxUnique, idxNonUnique table.Index
 	for _, idxInfo := range tblInfo.Indices {
-		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		idx, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		if idxInfo.Name.L == "u" {
 			idxUnique = idx
 		} else if idxInfo.Name.L == "nu" {
@@ -117,7 +127,8 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
 	var idxUnique, idxNonUnique table.Index
 	for _, idxInfo := range tblInfo.Indices {
-		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		idx, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		require.NoError(t, err)
 		if idxInfo.Name.L == "u" {
 			idxUnique = idx
 		} else if idxInfo.Name.L == "nu" {
@@ -220,9 +231,11 @@ func TestGenIndexValueWithLargePaddingSize(t *testing.T) {
 	// ref https://github.com/pingcap/tidb/issues/47115
 	tblInfo := buildTableInfo(t, "create table t (a int, b int, k varchar(255), primary key (a, b), key (k))")
 	var idx table.Index
+	var err error
 	for _, idxInfo := range tblInfo.Indices {
 		if !idxInfo.Primary {
-			idx = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+			idx, err = tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+			require.NoError(t, err)
 			break
 		}
 	}
@@ -381,7 +394,8 @@ func TestForceLockNonUniqueIndexInDDLMergingTempIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	h := kv.IntHandle(1)
 	indexedValues := []types.Datum{types.NewIntDatum(100)}
-	idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	idx, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
 	indexKey, distinct, err := idx.GenIndexKey(mockCtx.ErrCtx(), time.UTC, indexedValues, h, nil)
 	require.NoError(t, err)
 	require.False(t, distinct)
@@ -420,4 +434,309 @@ func TestForceLockNonUniqueIndexInDDLMergingTempIndex(t *testing.T) {
 			require.Equal(t, c.forceLock, flags.HasNeedLocked())
 		})
 	}
+}
+
+func TestMeetPartialCondition(t *testing.T) {
+	// The index name for `indexDefinition` must be `testidx`
+	type testCase struct {
+		tableDefinition string
+		indexDefinition string
+		row             []any
+		meet            bool
+	}
+	testCases := []testCase{
+		// cluster index case
+		{
+			tableDefinition: "create table t (a int, b int, c int, primary key (a, b))",
+			indexDefinition: "create index testidx on t (c) where c > 2",
+			row:             []any{1, 2, 3},
+			meet:            true,
+		},
+		{
+			tableDefinition: "create table t (a int, b int, c int, primary key (a, b))",
+			indexDefinition: "create index testidx on t (c) where c > 3",
+			row:             []any{1, 2, 3},
+			meet:            false,
+		},
+		// primary as handle case
+		{
+			tableDefinition: "create table t (a int, b int, c int, primary key (a))",
+			indexDefinition: "create index testidx on t (c) where c > 2",
+			row:             []any{1, 2, 3},
+			meet:            true,
+		},
+		{
+			tableDefinition: "create table t (a int, b int, c int, primary key (a))",
+			indexDefinition: "create index testidx on t (c) where c > 3",
+			row:             []any{1, 2, 3},
+			meet:            false,
+		},
+		// generated column case
+		{
+			tableDefinition: "create table t (a int, b int, c int as (a+b), primary key (a))",
+			indexDefinition: "create index testidx on t (c) where c > 2",
+			row:             []any{1, 2, 3},
+			meet:            true,
+		},
+		{
+			tableDefinition: "create table t (a int, b int, c int as (a+b), primary key (a))",
+			indexDefinition: "create index testidx on t (c) where c > 3",
+			row:             []any{1, 2, 3},
+			meet:            false,
+		},
+		// tidb rowid case
+		{
+			tableDefinition: "create table t (a int, b int, c int)",
+			indexDefinition: "create index testidx on t (c) where c > 2",
+			row:             []any{1, 2, 3, 100},
+			meet:            true,
+		},
+		{
+			tableDefinition: "create table t (a int, b int, c int)",
+			indexDefinition: "create index testidx on t (c) where c > 3",
+			row:             []any{1, 2, 3, 500},
+			meet:            false,
+		},
+	}
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tc := range testCases {
+		tk.MustExec(tc.tableDefinition)
+		tk.MustExec(tc.indexDefinition)
+
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		require.NotNil(t, t)
+		var idx table.Index
+		for _, i := range tbl.Indices() {
+			if i.Meta().Name.L == "testidx" {
+				idx = i
+				break
+			}
+		}
+
+		rowData := types.MakeDatums(tc.row...)
+
+		meet, err := idx.MeetPartialCondition(rowData)
+		require.NoError(t, err)
+		require.Equal(t, tc.meet, meet)
+
+		tk.MustExec("drop table t")
+	}
+}
+
+// checkIndexEmpty returns true if the index has no KV.
+func checkIndexEmpty(t *testing.T, tk *testkit.TestKit, tableName string, indexName string, dom *domain.Domain) bool {
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+	var idx table.Index
+	for _, i := range tbl.Indices() {
+		if i.Meta().Name.L == indexName {
+			idx = i
+			break
+		}
+	}
+
+	dctx := tk.Session().GetDistSQLCtx()
+	idxFirstColumn := tbl.Meta().Columns[idx.Meta().Columns[0].Offset]
+	dagRequest := &tipb.DAGRequest{Executors: []*tipb.Executor{
+		{
+			Tp: tipb.ExecType_TypeIndexScan,
+			IdxScan: &tipb.IndexScan{
+				TableId: tbl.Meta().ID,
+				IndexId: idx.Meta().ID,
+				Columns: util.ColumnsToProto(
+					[]*model.ColumnInfo{idxFirstColumn},
+					tbl.Meta().PKIsHandle, true, false),
+			},
+		},
+	}}
+
+	tk.MustExec("BEGIN")
+	defer tk.MustExec("COMMIT")
+	txnManager := sessiontxn.GetTxnManager(tk.Session())
+	startTS, err := txnManager.GetStmtReadTS()
+	require.NoError(t, err)
+	request, err := (&distsql.RequestBuilder{}).
+		SetIndexRanges(dctx, tbl.Meta().ID, idx.Meta().ID, ranger.FullIntRange(false)).
+		SetDAGRequest(dagRequest).
+		SetDesc(false).
+		SetKeepOrder(false).
+		SetFromSessionVars(tk.Session().GetDistSQLCtx()).
+		SetMemTracker(memory.NewTracker(-1, -1)).
+		SetStartTS(startTS).
+		Build()
+	require.NoError(t, err)
+	result, err := distsql.Select(context.Background(), dctx, request, []*types.FieldType{
+		&idxFirstColumn.FieldType,
+	})
+	defer func() {
+		require.NoError(t, result.Close())
+	}()
+	require.NoError(t, err)
+	chk := chunk.New([]*types.FieldType{&idxFirstColumn.FieldType}, 1024, 1024)
+	err = result.Next(context.Background(), chk)
+	require.NoError(t, err)
+
+	return chk.NumRows() == 0
+}
+
+func TestPartialIndexDML(t *testing.T) {
+	// The index name for `indexDefinition` must be `testidx`
+	type testCase struct {
+		tableDefinition   string
+		indexDefinition   string
+		dml               []string
+		shouldCreateIndex bool
+	}
+	testCases := []testCase{
+		// cluster index case
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a, b))",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			dml:               []string{"insert into t values (1, 2, 3)"},
+			shouldCreateIndex: true,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a, b))",
+			indexDefinition:   "create index testidx on t (c) where c > 3",
+			dml:               []string{"insert into t values (1, 2, 3)"},
+			shouldCreateIndex: false,
+		},
+		// primary as handle case
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a))",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			dml:               []string{"insert into t values (1, 2, 3)"},
+			shouldCreateIndex: true,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a))",
+			indexDefinition:   "create index testidx on t (c) where c > 3",
+			dml:               []string{"insert into t values (1, 2, 3)"},
+			shouldCreateIndex: false,
+		},
+		// generated column case
+		{
+			tableDefinition:   "create table t (a int, b int, c int as (a+b), primary key (a))",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			dml:               []string{"insert into t(a,b) values (1, 2)"},
+			shouldCreateIndex: true,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int as (a+b), primary key (a))",
+			indexDefinition:   "create index testidx on t (c) where c > 3",
+			dml:               []string{"insert into t(a,b) values (1, 2)"},
+			shouldCreateIndex: false,
+		},
+		// tidb rowid case
+		{
+			tableDefinition:   "create table t (a int, b int, c int)",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			dml:               []string{"insert into t values (1, 2, 3)"},
+			shouldCreateIndex: true,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int)",
+			indexDefinition:   "create index testidx on t (c) where c > 3",
+			dml:               []string{"insert into t values (1, 2, 3)"},
+			shouldCreateIndex: false,
+		},
+		// update case
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a))",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			dml:               []string{"insert into t values (1, 2, 3)", "update t set c = 4 where a = 1"},
+			shouldCreateIndex: true,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a))",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			dml:               []string{"insert into t values (1, 2, 3)", "update t set c = 1 where a = 1"},
+			shouldCreateIndex: false,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a))",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			dml:               []string{"insert into t values (1, 2, 1)", "update t set c = 3 where a = 1"},
+			shouldCreateIndex: true,
+		},
+	}
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tc := range testCases {
+		tk.MustExec(tc.tableDefinition)
+		tk.MustExec(tc.indexDefinition)
+
+		for _, dml := range tc.dml {
+			tk.MustExec(dml)
+		}
+		require.Equal(t, tc.shouldCreateIndex, !checkIndexEmpty(t, tk, "t", "testidx", dom))
+
+		if tc.shouldCreateIndex {
+			// test delete
+			tk.MustExec("delete from t")
+			require.True(t, checkIndexEmpty(t, tk, "t", "testidx", dom))
+		}
+
+		tk.MustExec("drop table t")
+	}
+}
+
+func TestPartialIndexDDL(t *testing.T) {
+	type testCase struct {
+		tableDefinition   string
+		dml               string
+		indexDefinition   string
+		shouldCreateIndex bool
+	}
+	testCases := []testCase{
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a, b))",
+			dml:               "insert into t values (1, 2, 3)",
+			indexDefinition:   "create index testidx on t (c) where c > 2",
+			shouldCreateIndex: true,
+		},
+		{
+			tableDefinition:   "create table t (a int, b int, c int, primary key (a, b))",
+			dml:               "insert into t values (1, 2, 3)",
+			indexDefinition:   "create index testidx on t (c) where c > 3",
+			shouldCreateIndex: false,
+		},
+		// TODO: add more test cases for at least the following scenarios:
+		// - partition table
+		// - global index
+		// - fast add index (though ingest)
+	}
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, tc := range testCases {
+		tk.MustExec(tc.tableDefinition)
+		tk.MustExec(tc.dml)
+
+		tk.MustExec(tc.indexDefinition)
+		require.Equal(t, tc.shouldCreateIndex, !checkIndexEmpty(t, tk, "t", "testidx", dom))
+
+		tk.MustExec("drop table t")
+	}
+
+	// test drop/modify/change column referenced by partial index
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustExec("create index testidx on t (b) where a > 2")
+	tk.MustGetDBError("alter table t modify column a bigint", dbterror.ErrAlterColumnReferencedByPartialCondition)
+	tk.MustGetDBError("alter table t drop column a", dbterror.ErrAlterColumnReferencedByPartialCondition)
+	tk.MustGetDBError("alter table t change column a c int", dbterror.ErrAlterColumnReferencedByPartialCondition)
+	tk.MustExec("alter table t drop index testidx")
+	tk.MustExec("alter table t modify column b bigint")
+	tk.MustExec("alter table t drop column b")
 }
