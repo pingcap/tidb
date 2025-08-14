@@ -51,6 +51,7 @@ type BasePhysicalJoin struct {
 
 	LeftNAJoinKeys  []*expression.Column
 	RightNAJoinKeys []*expression.Column
+	CartesianJoin   bool
 }
 
 // GetJoinType returns the type of the join operation.

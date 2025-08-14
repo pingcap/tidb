@@ -246,8 +246,8 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	buffer := new(strings.Builder)
 
-	if len(p.EqualConditions) == 0 {
-		if len(p.NAEqualConditions) == 0 {
+	if len(p.EqualConditions) == 0 || p.CartesianJoin {
+		if len(p.NAEqualConditions) == 0 || p.CartesianJoin {
 			buffer.WriteString("CARTESIAN ")
 		} else {
 			buffer.WriteString("Null-aware ")

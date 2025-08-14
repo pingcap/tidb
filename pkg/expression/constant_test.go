@@ -84,7 +84,7 @@ func TestConstantPropagation(t *testing.T) {
 				newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
 				newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 			},
-			result: "1, eq(Column#0, 1), eq(Column#1, 1), eq(Column#2, 1), eq(Column#3, 1)",
+			result: "1, eq(Column#0, 1), eq(Column#0, Column#1), eq(Column#1, 1), eq(Column#1, Column#2), eq(Column#2, 1), eq(Column#2, Column#3), eq(Column#3, 1)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -93,7 +93,7 @@ func TestConstantPropagation(t *testing.T) {
 				newFunctionWithMockCtx(ast.EQ, newColumn(1), newLonglong(1)),
 				newFunctionWithMockCtx(ast.NE, newColumn(2), newLonglong(2)),
 			},
-			result: "eq(Column#0, 1), eq(Column#1, 1), ne(Column#2, 2)",
+			result: "eq(Column#0, 1), eq(Column#0, Column#1), eq(Column#1, 1), ne(Column#2, 2)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -105,7 +105,7 @@ func TestConstantPropagation(t *testing.T) {
 				newFunctionWithMockCtx(ast.NE, newColumn(2), newLonglong(4)),
 				newFunctionWithMockCtx(ast.NE, newColumn(3), newLonglong(5)),
 			},
-			result: "eq(Column#0, 1), eq(Column#1, 1), eq(Column#2, Column#3), ge(Column#2, 2), ge(Column#3, 2), ne(Column#2, 4), ne(Column#2, 5), ne(Column#3, 4), ne(Column#3, 5)",
+			result: "eq(Column#0, 1), eq(Column#0, Column#1), eq(Column#1, 1), eq(Column#2, Column#3), ge(Column#2, 2), ge(Column#3, 2), ne(Column#2, 4), ne(Column#2, 5), ne(Column#3, 4), ne(Column#3, 5)",
 		},
 		{
 			solver: []PropagateConstantSolver{newPropConstSolver()},
@@ -177,7 +177,7 @@ func TestConstantPropagation(t *testing.T) {
 			result: "eq(Column#0, Column#1), le(cast(Column#0, double BINARY), rand())",
 		},
 	}
-	for _, tt := range tests {
+	for idx, tt := range tests {
 		for _, solver := range tt.solver {
 			ctx := mock.NewContext()
 			conds := make([]Expression, 0, len(tt.conditions))
@@ -190,7 +190,7 @@ func TestConstantPropagation(t *testing.T) {
 				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
 			}
 			sort.Strings(result)
-			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
+			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr[index:%v] %s", idx, tt.conditions)
 		}
 	}
 }

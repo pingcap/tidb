@@ -279,6 +279,7 @@ func constructIndexJoinStatic(
 		InnerJoinKeys: innerJoinKeys,
 		IsNullEQ:      isNullEQ,
 		DefaultValues: p.DefaultValues,
+		CartesianJoin: p.CartesianJoin,
 	}
 
 	join := physicalop.PhysicalIndexJoin{
@@ -514,6 +515,7 @@ func constructIndexJoin(
 		InnerJoinKeys:   newInnerKeys,
 		IsNullEQ:        newIsNullEQ,
 		DefaultValues:   p.DefaultValues,
+		CartesianJoin:   p.CartesianJoin,
 	}
 
 	join := physicalop.PhysicalIndexJoin{
@@ -2488,6 +2490,7 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 		RightJoinKeys:   rkeys,
 		LeftNAJoinKeys:  lNAkeys,
 		RightNAJoinKeys: rNAKeys,
+		CartesianJoin:   p.CartesianJoin,
 	}
 	// It indicates which side is the build side.
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)

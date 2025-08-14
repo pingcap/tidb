@@ -63,7 +63,7 @@ func TestTableRange(t *testing.T) {
 		},
 		{
 			exprStr:     "1 = a",
-			accessConds: "[eq(1, test.t.a)]",
+			accessConds: "[eq(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1]]",
 		},
@@ -559,7 +559,7 @@ func TestColumnRange(t *testing.T) {
 		{
 			colPos:      0,
 			exprStr:     "1 = a",
-			accessConds: "[eq(1, test.t.a)]",
+			accessConds: "[eq(test.t.a, 1)]",
 			filterConds: "[]",
 			resultStr:   "[[1,1]]",
 			length:      types.UnspecifiedLength,

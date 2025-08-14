@@ -321,7 +321,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
-        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1 NULL,1 NULL]], Table(t))}"
+        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[NULL NULL,NULL NULL]]->Sel([eq(test.t.c, 1)]), Table(t))}(test.t.b,test.t.c)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.b and t1.c=1 and t2.c=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
@@ -333,7 +333,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
-        "Best": "RightHashJoin{PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 2 KindInt64 4])->TableReader(Table(t)->Sel([eq(test.t.b, 1)]))}->Projection"
+        "Best": "IndexJoin{IndexLookUp(Index(t.c_d_e)[[NULL 2 4,NULL 2 4]]->Sel([eq(test.t.c, 1)]), Table(t))->TableReader(Table(t)->Sel([eq(test.t.b, 1)]))}(test.t.b,test.t.c)->Projection"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20",

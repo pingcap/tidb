@@ -243,13 +243,13 @@ func TestIssue59902(t *testing.T) {
 	tk.MustExec("set tidb_enable_inl_join_inner_multi_pattern=on;")
 	tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
 		Check(testkit.Rows(
-			"Projection 8.00 root  test.t1.b, ifnull(Column#9, 0)->Column#9",
-			"└─HashJoin 8.00 root  CARTESIAN left outer join, left side:Point_Get",
-			"  ├─Point_Get(Build) 1.00 root table:t1 handle:1",
-			"  └─StreamAgg(Probe) 8.00 root  group by:test.t2.a, funcs:count(Column#11)->Column#9",
-			"    └─IndexReader 8.00 root  index:StreamAgg",
-			"      └─StreamAgg 8.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#11",
-			"        └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(a) range:[1,1], keep order:true, stats:pseudo"))
+			`Projection 1.00 root  test.t1.b, ifnull(Column#9, 0)->Column#9`,
+			`└─MergeJoin 1.00 root  left outer join, left side:Point_Get, left key:test.t1.a, right key:test.t2.a`,
+			`  ├─StreamAgg(Build) 8.00 root  group by:test.t2.a, funcs:count(Column#10)->Column#9, funcs:firstrow(test.t2.a)->test.t2.a`,
+			`  │ └─IndexReader 8.00 root  index:StreamAgg`,
+			`  │   └─StreamAgg 8.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#10`,
+			`  │     └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(a) range:[1,1], keep order:true, stats:pseudo`,
+			`  └─Point_Get(Probe) 1.00 root table:t1 handle:1`))
 	tk.MustQuery("select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").Check(testkit.Rows("100 2"))
 }
 
