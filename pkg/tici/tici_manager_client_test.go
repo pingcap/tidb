@@ -59,9 +59,11 @@ func (m *MockMetaServiceClient) GetShardLocalCacheInfo(ctx context.Context, in *
 
 func newTestTiCIManagerCtx(mockClient MetaServiceClient) *ManagerCtx {
 	return &ManagerCtx{
-		conn:              nil,
-		metaServiceClient: mockClient,
-		ctx:               context.Background(),
+		metaClient: &metaClient{
+			conn:   nil, // Not used in tests
+			client: mockClient,
+		},
+		ctx: context.Background(),
 	}
 }
 

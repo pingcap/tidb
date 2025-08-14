@@ -33,15 +33,44 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+type metaClient struct {
+	conn   *grpc.ClientConn
+	client MetaServiceClient
+}
+
+func newMetaClient(ctx context.Context, addr string) (*metaClient, error) {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		logutil.BgLogger().Error("failed to create grpc connection", zap.String("address", addr), zap.Error(err))
+		return nil, err
+	}
+	metaServiceClient := NewMetaServiceClient(conn)
+	return &metaClient{
+		conn:   conn,
+		client: metaServiceClient,
+	}, nil
+}
+
+func (c *metaClient) Close() {
+	if c.conn != nil {
+		if err := c.conn.Close(); err != nil {
+			logutil.BgLogger().Error("failed to close grpc connection", zap.Error(err))
+		}
+		c.conn = nil
+	}
+	if c.client != nil {
+		c.client = nil
+	}
+}
+
 // ManagerCtx manages fulltext index for TiCI.
 type ManagerCtx struct {
-	mu                sync.RWMutex
-	err               error
-	conn              *grpc.ClientConn
-	metaServiceClient MetaServiceClient
-	ctx               context.Context
-	cancel            context.CancelFunc // cancel is used to cancel the context when the manager is closed
-	wg                sync.WaitGroup     // wg is used to wait for goroutines to finish
+	mu         sync.RWMutex
+	err        error
+	metaClient *metaClient
+	ctx        context.Context
+	cancel     context.CancelFunc // cancel is used to cancel the context when the manager is closed
+	wg         sync.WaitGroup     // wg is used to wait for goroutines to finish
 }
 
 // MetaServiceEelectionKey is the election path used for meta service leader election.
@@ -51,40 +80,28 @@ const MetaServiceEelectionKey = "/tici/metaservice/election"
 // NewManagerCtx creates a new TiCI manager.
 func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
 	if client == nil {
-		logutil.BgLogger().Error("meta service client is nil")
-		return nil, errors.New("meta service client is nil")
+		logutil.BgLogger().Error("etcd client is nil")
+		return nil, errors.New("etcd client is nil")
 	}
-	addr, err := getMetaServiceLeaderAddress(ctx, client)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
+
+	var metaClient *metaClient
+	if addr, err := getMetaServiceLeaderAddress(ctx, client); err == nil {
+		metaClient, err = newMetaClient(ctx, addr)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		logutil.BgLogger().Error("failed to get meta service leader address", zap.Error(err))
+		// If we cannot get the leader address, let metaClient be nil.
+		// updateClient will initialize metaClient if a new meta service leader is elected.
+		metaClient = nil
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	managerCtx := &ManagerCtx{
-		metaServiceClient: NewMetaServiceClient(conn),
-		ctx:               ctx,
-		cancel:            cancel,
-	}
-	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
-	managerCtx.wg.Add(1)
-	go func() {
-		defer managerCtx.wg.Done()
-		managerCtx.updateClient(ch)
-	}()
-	return managerCtx, nil
-}
-
-// NewNilManagerCtx creates a new TiCI manager with a nil MetaServiceClient.
-func NewNilManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	managerCtx := &ManagerCtx{
-		metaServiceClient: nil,
-		ctx:               ctx,
-		cancel:            cancel,
+		metaClient: metaClient,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 	ch := client.Watch(managerCtx.ctx, MetaServiceEelectionKey, clientv3.WithPrefix())
 	managerCtx.wg.Add(1)
@@ -120,19 +137,16 @@ func (t *ManagerCtx) updateClient(ch clientv3.WatchChan) {
 					t.mu.Lock()
 					defer t.mu.Unlock()
 					// Close previous connection if it exists
-					if t.conn != nil {
-						t.conn.Close()
+					if t.metaClient != nil {
+						t.metaClient.Close()
 					}
 					// TODO: Support retrying connection if it fails
-					conn, err := grpc.NewClient(string(event.Kv.Value), grpc.WithTransportCredentials(insecure.NewCredentials()))
+					metaClient, err := newMetaClient(t.ctx, string(event.Kv.Value))
 					if err != nil {
-						t.conn = nil
-						t.metaServiceClient = nil
+						t.metaClient = nil
 						t.err = err
-						return
 					}
-					t.conn = conn
-					t.metaServiceClient = NewMetaServiceClient(t.conn)
+					t.metaClient = metaClient
 					t.err = nil
 				}()
 				logutil.BgLogger().Info("Received Put event, update leader address", zap.String("key", string(event.Kv.Key)), zap.String("value", string(event.Kv.Value)))
@@ -149,16 +163,25 @@ func (t *ManagerCtx) Close() {
 	t.wg.Wait()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.conn != nil {
-		if err := t.conn.Close(); err != nil {
-			logutil.BgLogger().Error("failed to close grpc connection", zap.Error(err))
-		}
-		t.conn = nil
-	}
-	if t.metaServiceClient != nil {
-		t.metaServiceClient = nil
+	if t.metaClient != nil {
+		t.metaClient.Close()
+		t.metaClient = nil
 	}
 	t.err = errors.New("ManagerCtx closed")
+}
+
+// checkMetaClient checks if the metaClient is nil and logs an error if it is.
+// Please note that this function should be called with the mutex locked.
+func (t *ManagerCtx) checkMetaClient() error {
+	if t.metaClient == nil {
+		var errMsg string
+		if t.err != nil {
+			errMsg = t.err.Error()
+		}
+		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
+		return errors.Wrap(t.err, "meta service client is nil")
+	}
+	return nil
 }
 
 // CreateFulltextIndex creates fulltext index on TiCI.
@@ -214,15 +237,10 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaServiceClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return dbterror.ErrInvalidDDLJob.FastGenByArgs(errors.Wrap(t.err, "meta service client is nil"))
+	if err := t.checkMetaClient(); err != nil {
+		return err
 	}
-	resp, err := t.metaServiceClient.CreateIndex(ctx, req)
+	resp, err := t.metaClient.client.CreateIndex(ctx, req)
 	if err != nil {
 		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
 	}
@@ -242,15 +260,10 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaServiceClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+	if err := t.checkMetaClient(); err != nil {
+		return err
 	}
-	resp, err := t.metaServiceClient.DropIndex(ctx, req)
+	resp, err := t.metaClient.client.DropIndex(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -327,15 +340,10 @@ func (t *ManagerCtx) GetCloudStoragePath(
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaServiceClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return "", errors.Wrap(t.err, "meta service client is nil")
+	if err := t.checkMetaClient(); err != nil {
+		return "", err
 	}
-	resp, err := t.metaServiceClient.GetCloudStoragePath(ctx, req)
+	resp, err := t.metaClient.client.GetCloudStoragePath(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -367,15 +375,10 @@ func (t *ManagerCtx) MarkPartitionUploadFinished(
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaServiceClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+	if err := t.checkMetaClient(); err != nil {
+		return err
 	}
-	resp, err := t.metaServiceClient.MarkPartitionUploadFinished(ctx, req)
+	resp, err := t.metaClient.client.MarkPartitionUploadFinished(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -401,15 +404,10 @@ func (t *ManagerCtx) MarkTableUploadFinished(
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaServiceClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return errors.Wrap(t.err, "meta service client is nil")
+	if err := t.checkMetaClient(); err != nil {
+		return err
 	}
-	resp, err := t.metaServiceClient.MarkTableUploadFinished(ctx, req)
+	resp, err := t.metaClient.client.MarkTableUploadFinished(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -444,15 +442,10 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.metaServiceClient == nil {
-		var errMsg string
-		if t.err != nil {
-			errMsg = t.err.Error()
-		}
-		logutil.BgLogger().Error("meta service client is nil", zap.String("errorMessage", errMsg))
-		return nil, errors.Wrap(t.err, "meta service client is nil")
+	if err := t.checkMetaClient(); err != nil {
+		return nil, err
 	}
-	resp, err := t.metaServiceClient.GetShardLocalCacheInfo(ctx, request)
+	resp, err := t.metaClient.client.GetShardLocalCacheInfo(ctx, request)
 	if err != nil {
 		return nil, err
 	}
