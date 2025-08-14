@@ -91,12 +91,8 @@ func (l *mockGCWorkerLockResolver) Identifier() string {
 
 type mockGCWorkerClient struct {
 	tikv.Client
-	unsafeDestroyRangeHandler   handler
-	deleteRangeHandler          handler
-	physicalScanLockHandler     handler
-	registerLockObserverHandler handler
-	checkLockObserverHandler    handler
-	removeLockObserverHandler   handler
+	unsafeDestroyRangeHandler handler
+	deleteRangeHandler        handler
 }
 
 type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
@@ -109,18 +105,6 @@ func gcContext() context.Context {
 func (c *mockGCWorkerClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.Type == tikvrpc.CmdUnsafeDestroyRange && c.unsafeDestroyRangeHandler != nil {
 		return c.unsafeDestroyRangeHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdPhysicalScanLock && c.physicalScanLockHandler != nil {
-		return c.physicalScanLockHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdRegisterLockObserver && c.registerLockObserverHandler != nil {
-		return c.registerLockObserverHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdCheckLockObserver && c.checkLockObserverHandler != nil {
-		return c.checkLockObserverHandler(addr, req)
-	}
-	if req.Type == tikvrpc.CmdRemoveLockObserver && c.removeLockObserverHandler != nil {
-		return c.removeLockObserverHandler(addr, req)
 	}
 	if req.Type == tikvrpc.CmdDeleteRange && c.deleteRangeHandler != nil {
 		return c.deleteRangeHandler(addr, req)
