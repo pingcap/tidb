@@ -23,8 +23,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -167,6 +169,8 @@ type DataDivideConfig struct {
 	// we need it read row-count for parquet, and to read line terminator to split large CSV files
 	Store     storage.ExternalStorage
 	TableMeta *MDTableMeta
+	// only used when read parquet files, to check if the table has auto-increment column
+	TableInfo *model.TableInfo
 
 	// only used when split large CSV files.
 	StrictFormat           bool
@@ -368,8 +372,11 @@ func makeParquetFileRegion(
 ) ([]*TableRegion, []float64, error) {
 	numberRows := dataFile.FileMeta.Rows
 	var err error
-	// for safety
-	if numberRows <= 0 {
+	if cfg.TableInfo != nil || !common.TableHasAutoID(cfg.TableInfo) {
+		// For table without auto-increment column, we don't need to read row count,
+		// just use file size as row count.
+		numberRows = dataFile.FileMeta.FileSize
+	} else {
 		numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta)
 		if err != nil {
 			return nil, nil, err
