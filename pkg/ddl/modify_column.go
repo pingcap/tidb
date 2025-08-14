@@ -974,7 +974,7 @@ func GetModifiableColumnJob(
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
-	err = initJobReorgMetaFromVariables(job, sctx)
+	err = initJobReorgMetaFromVariables(ctx, job, sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

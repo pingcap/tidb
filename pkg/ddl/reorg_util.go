@@ -1,0 +1,199 @@
+package ddl
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"fmt"
+
+	"github.com/docker/go-units"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
+)
+
+func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, sctx sessionctx.Context) error {
+	m := NewDDLReorgMeta(sctx)
+
+	var setReorgParam bool
+	var setDistTaskParam bool
+
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		setReorgParam = true
+		setDistTaskParam = true
+	case model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning,
+		model.ActionModifyColumn:
+		setReorgParam = true
+	case model.ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			switch sub.Type {
+			case model.ActionAddIndex, model.ActionAddPrimaryKey:
+				setReorgParam = true
+				setDistTaskParam = true
+			case model.ActionReorganizePartition,
+				model.ActionRemovePartitioning,
+				model.ActionAlterTablePartitioning,
+				model.ActionModifyColumn:
+				setReorgParam = true
+			}
+		}
+	default:
+		return nil
+	}
+	var tableSizeInBytes int64
+	if setReorgParam || setDistTaskParam {
+		tableSizeInBytes = getTableSizeByID(ctx, sctx.GetStore(), job.TableID)
+	}
+
+	if setReorgParam {
+		if kerneltype.IsNextGen() {
+			autoConc := scheduler.CalcConcurrencyByDataSize(tableSizeInBytes)
+			m.SetConcurrency(autoConc)
+		} else {
+			if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
+				m.SetConcurrency(variable.TidbOptInt(sv, 0))
+			}
+		}
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgBatchSize); ok {
+			m.SetBatchSize(variable.TidbOptInt(sv, 0))
+		}
+		m.SetMaxWriteSpeed(int(vardef.DDLReorgMaxWriteSpeed.Load()))
+	}
+
+	if setDistTaskParam {
+		m.IsDistReorg = vardef.EnableDistTask.Load()
+		m.IsFastReorg = vardef.EnableFastReorg.Load()
+		m.TargetScope = dxfhandle.GetTargetScope()
+		if kerneltype.IsNextGen() {
+			m.MaxNodeCount = scheduler.CalcMaxNodeCountByTableSize(ctx, tableSizeInBytes)
+		} else {
+			if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+				m.MaxNodeCount = variable.TidbOptInt(sv, 0)
+				if m.MaxNodeCount == -1 { // -1 means calculate automatically
+					m.MaxNodeCount = scheduler.CalcMaxNodeCountByStoresNum(ctx, sctx.GetStore())
+				}
+			}
+		}
+
+		if hasSysDB(job) {
+			if m.IsDistReorg {
+				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
+					zap.Stringer("job", job))
+			}
+			m.IsDistReorg = false
+			m.IsFastReorg = false
+			failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
+				LastReorgMetaFastReorgDisabled = true
+			})
+		}
+		if m.IsDistReorg && !m.IsFastReorg {
+			return dbterror.ErrUnsupportedDistTask
+		}
+	}
+	job.ReorgMeta = m
+	logutil.DDLLogger().Info("initialize reorg meta",
+		zap.String("jobSchema", job.SchemaName),
+		zap.String("jobTable", job.TableName),
+		zap.Stringer("jobType", job.Type),
+		zap.Bool("enableDistTask", m.IsDistReorg),
+		zap.Bool("enableFastReorg", m.IsFastReorg),
+		zap.String("targetScope", m.TargetScope),
+		zap.Int("maxNodeCount", m.MaxNodeCount),
+		zap.Int("concurrency", m.GetConcurrency()),
+		zap.Int("batchSize", m.GetBatchSize()),
+	)
+	return nil
+}
+
+func getTableSizeByID(ctx context.Context, store kv.Storage, tblID int64) int64 {
+	helperStore := store.(helper.Storage)
+	if helperStore == nil {
+		logutil.DDLLogger().Error("store does not implement helper.Storage interface",
+			zap.String("storeType", fmt.Sprintf("%T", store)))
+		return 0
+	}
+	h := helper.NewHelper(helperStore)
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		logutil.DDLLogger().Error("failed to get PD HTTP client for calculating table size",
+			zap.Int64("tableID", tblID),
+			zap.Error(err))
+		return 0
+	}
+	totalSize, err := estimateTableSizeByID(ctx, pdCli, tblID)
+	if err != nil {
+		logutil.DDLLogger().Error("failed to estimate table size for calculating concurrency",
+			zap.Int64("tableID", tblID),
+			zap.Error(err))
+	}
+	if totalSize == 0 {
+		regionStats, err := h.GetPDRegionStats(ctx, tblID, false)
+		if err != nil {
+			logutil.DDLLogger().Error("failed to get region stats for calculating concurrency",
+				zap.Int64("tableID", tblID),
+				zap.Error(err))
+			return 0
+		}
+		return regionStats.StorageSize * units.MiB
+	}
+	return totalSize
+}
+
+func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, pid int64) (int64, error) {
+	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
+	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
+	if err != nil {
+		return 0, err
+	}
+	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
+	if err != nil {
+		return 0, err
+	}
+	sk, err = hex.DecodeString(sRegion.StartKey)
+	if err != nil {
+		return 0, err
+	}
+	ek, err = hex.DecodeString(eRegion.EndKey)
+	if err != nil {
+		return 0, err
+	}
+
+	var totalSize int64
+	for {
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(sk, ek), 128)
+		if err != nil {
+			return 0, err
+		}
+		if len(regionInfos.Regions) == 0 {
+			break
+		}
+		for _, r := range regionInfos.Regions {
+			totalSize += r.ApproximateSize * units.MiB
+		}
+		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
+		sk, err = hex.DecodeString(lastKey)
+		if err != nil {
+			return 0, err
+		}
+		if bytes.Compare(sk, ek) >= 0 {
+			break
+		}
+	}
+	return totalSize, nil
+}
