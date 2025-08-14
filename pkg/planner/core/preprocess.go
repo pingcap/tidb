@@ -252,29 +252,201 @@ type preprocessor struct {
 	resolveCtx *resolve.Context
 }
 
+type TableNameCollector struct {
+	TableSources []*ast.TableSource
+}
+
+// Enter implements ast.Visitor interface.
+// ref updatableTableListResolver
+func (t *TableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch node := in.(type) {
+	case *ast.TableSource:
+		t.TableSources = append(t.TableSources, node)
+	}
+	return in, false
+}
+
+func (t *TableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+type tableWithDBInfo struct {
+	Table *model.TableInfo
+	DB    *model.DBInfo
+}
+
+func (p *preprocessor) getAllDBInfos(node *ast.TableRefsClause) map[*ast.TableSource]*tableWithDBInfo {
+	var m map[*ast.TableSource]*tableWithDBInfo
+	m = make(map[*ast.TableSource]*tableWithDBInfo)
+	t := TableNameCollector{
+		TableSources: make([]*ast.TableSource, 0),
+	}
+	node.Accept(&t)
+
+	for _, tbl := range t.TableSources {
+		name := tbl.Source.(*ast.TableName)
+		if util.IsSysDB(name.Name.L) || util.IsSystemView(name.Name.L) {
+			continue
+		}
+		table, err := p.tableByName(name)
+		if err != nil {
+			p.err = err
+			return nil
+		}
+		if dbInfo, ok := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta()); ok {
+			m[tbl] = &tableWithDBInfo{
+				Table: table.Meta().Clone(),
+				DB:    dbInfo.Clone(),
+			}
+		}
+	}
+	return m
+}
+
+func checkColNameValidAndGetDBInfo(col *ast.ColumnName, tableInfos map[*ast.TableSource]*tableWithDBInfo) (*model.TableInfo, *model.DBInfo, error) {
+	colExist := false
+	var (
+		db    *model.DBInfo
+		table *model.TableInfo
+	)
+	for tbl, tableInfo := range tableInfos {
+		for _, colName := range tableInfo.Table.Cols() {
+			if colName.Name.L == col.Name.L &&
+				(col.Schema.L == "" || col.Schema.L == tableInfo.Table.Name.L) &&
+				(col.Table.L == "" || col.Table.L == tableInfo.Table.Name.L || (tbl.AsName.L != "" && col.Table.L == tbl.AsName.L)) {
+
+				if colExist {
+					return nil, nil, errors.New("Column xxx in field list is ambiguous")
+				}
+				colExist = true
+				db = tableInfo.DB
+				table = tableInfo.Table
+			}
+		}
+	}
+	return table, db, nil
+}
+
+func (p *preprocessor) schemaReadOnly(dbName pmodel.CIStr) {
+	if util.IsSysDB(dbName.L) || util.IsSystemView(dbName.L) {
+		return
+	}
+	if dbName.L == "" {
+		currentDB := p.sctx.GetSessionVars().CurrentDB
+		if currentDB == "" {
+			p.err = errors.Trace(plannererrors.ErrNoDB)
+			return
+		}
+		dbName = pmodel.NewCIStr(currentDB)
+	}
+	if db, ok := p.ensureInfoSchema().SchemaByName(dbName); ok {
+		if db.ReadOnly() {
+			p.err = errors.Trace(errors.New("database is in read-only state"))
+		}
+		return
+	}
+	logutil.BgLogger().Info("Check schema read only can't find schema")
+}
+
+func (p *preprocessor) schemaReadOnlyByTable(name *ast.TableName, ifExists, checkTempTable bool) {
+	table, err := p.tableByName(name)
+	if err != nil {
+		if !(ifExists && infoschema.ErrTableNotExists.Equal(err)) {
+			p.err = err
+		}
+		return
+	}
+	// if it is a temporary table, we should not check the read-only state.
+	if checkTempTable && table.Meta().TempTableType != model.TempTableNone {
+		return
+	}
+	if dbInfo, ok := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta()); ok {
+		if dbInfo.ReadOnly() {
+			p.err = errors.New("database is in read-only state")
+		}
+	} else {
+		logutil.BgLogger().Info("Check schema read only can't find schema", zap.String("table", name.Name.L))
+	}
+}
+
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
 	case *ast.DeleteStmt:
 		p.stmtTp = TypeDelete
+		if node.Tables != nil {
+			for _, tbl := range node.Tables.Tables {
+				p.schemaReadOnlyByTable(tbl, false, true)
+				//table, err := p.tableByName(tbl)
+				//if err != nil {
+				//	p.err = err
+				//	return nil, true
+				//}
+				//if table.Meta().TempTableType != model.TempTableNone {
+				//	// If it is a temporary table, we should not check the read-only state.
+				//	continue
+				//}
+				//dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), table.Meta())
+				//if dbInfo != nil && dbInfo.ReadOnly() {
+				//	p.err = errors.New("database is in read-only state")
+				//}
+			}
+		} else {
+			for _, db := range p.getAllDBInfos(node.TableRefs) {
+				if db.Table.TempTableType != model.TempTableNone && db.DB.ReadOnly() {
+					p.err = errors.New("database is in read-only state")
+				}
+			}
+		}
 	case *ast.SelectStmt:
 		p.stmtTp = TypeSelect
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 		p.checkSelectNoopFuncs(node)
+		if node.LockInfo != nil {
+			if node.LockInfo.LockType == ast.SelectLockForUpdate ||
+				((node.LockInfo.LockType == ast.SelectLockForShare || node.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
+					!p.sctx.GetSessionVars().SharedLockPromotion) {
+				dbInfos := p.getAllDBInfos(node.From)
+				for _, tbl := range dbInfos {
+					if tbl.Table.TempTableType != model.TempTableNone && tbl.DB.ReadOnly() {
+						p.err = errors.New("database is in read-only state")
+						return nil, true
+					}
+				}
+			}
+		}
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
+		dbInfos := p.getAllDBInfos(node.TableRefs)
+		for _, set := range node.List {
+			// check column if unique like expression.FindFieldName()
+			if tableInfo, dbInfo, err := checkColNameValidAndGetDBInfo(set.Column, dbInfos); err != nil {
+				p.err = err
+				return nil, true
+			} else if tableInfo.TempTableType != model.TempTableNone && dbInfo.ReadOnly() {
+				p.err = errors.New("database is in read-only state")
+				return nil, true
+			}
+		}
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
 		// handle the insert table name imminently
 		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
 		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
+		for _, tbl := range p.resolveCtx.GetTableNames() {
+			//if tbl.TableInfo.TempTableType != model.TempTableNone && tbl.DBInfo.ReadOnly() {
+			//	p.err = errors.New("database is in read-only state")
+			//	return nil, true
+			//}
+			p.schemaReadOnlyByTable(tbl.TableName, false, true)
+		}
 	case *ast.ExecuteStmt:
 		p.stmtTp = TypeExecute
 		p.resolveExecuteStmt(node)

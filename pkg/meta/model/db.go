@@ -34,6 +34,13 @@ type DBInfo struct {
 	TableName2ID       map[string]int64 `json:"-"`
 }
 
+// ReadOnly returns true if the DB is read-only.
+func (db *DBInfo) ReadOnly() bool {
+	// TODO: check the lock state, intermediate state or public state return true
+	// StateNone -> StatePreLock -> StatePublic
+	return false
+}
+
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
