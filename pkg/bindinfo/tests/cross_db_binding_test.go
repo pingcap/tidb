@@ -23,10 +23,10 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -297,7 +297,7 @@ func TestCrossDBBindingPlanCache(t *testing.T) {
 
 	hasPlan := func(operator, accessInfo string) {
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 		flag := false
@@ -333,7 +333,7 @@ func TestCrossDBBindingPlanCache(t *testing.T) {
 }
 
 type mockSessionPool struct {
-	se sessiontypes.Session
+	se sessionapi.Session
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -40,8 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -63,7 +64,7 @@ type taskInfo struct {
 	lastRegisterTime time.Time
 
 	// initialized lazily in register()
-	etcdClient   *etcd.Client
+	etcdClient   *clientv3.Client
 	taskRegister utils.TaskRegister
 }
 
@@ -83,7 +84,7 @@ func (t *taskInfo) register(ctx context.Context) {
 			return
 		}
 		t.etcdClient = client
-		t.taskRegister = NewTaskRegisterWithTTL(client.GetClient(), registerTaskTTL,
+		t.taskRegister = NewTaskRegisterWithTTL(client, registerTaskTTL,
 			utils.RegisterImportInto, strconv.FormatInt(t.taskID, 10))
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
@@ -166,6 +167,7 @@ func NewImportScheduler(
 func NewImportSchedulerForTest(globalSort bool) scheduler.Scheduler {
 	return &importScheduler{
 		GlobalSort: globalSort,
+		taskKS:     tidb.GetGlobalKeyspaceName(),
 	}
 }
 
@@ -272,13 +274,20 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
-) (
-	resSubtaskMeta [][]byte, err error) {
+) (resSubtaskMeta [][]byte, err error) {
+	nodeCnt := len(execIDs)
+	if kerneltype.IsNextGen() {
+		// in nextgen, node resource are scaled out automatically, we only consider
+		// the max allowed node for the task, and ignore how many node currently
+		// available.
+		nodeCnt = task.MaxNodeCount
+	}
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
+		zap.Int("node-count", nodeCnt),
 	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
@@ -306,10 +315,6 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 			return nil, err
 		}
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
-		// Update update_time in tidb_import_jobs
-		if err = sch.job2Step(ctx, logger, taskMeta, importer.JobStepGlobalSorting); err != nil {
-			return nil, err
-		}
 	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
@@ -363,8 +368,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(execIDs),
+		ExecuteNodesCnt:      nodeCnt,
 		Store:                sch.store,
+		ThreadCnt:            task.Concurrency,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {

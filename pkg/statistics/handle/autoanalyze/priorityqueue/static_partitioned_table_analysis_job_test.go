@@ -85,7 +85,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.True(t, tblStats.Pseudo)
 
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
@@ -97,7 +97,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
 }
@@ -124,7 +124,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats := handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
@@ -137,7 +137,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	tblStats = handle.GetPhysicalTableStats(pid, tbl.Meta())
 	require.NotNil(t, tblStats.GetIdx(1))
 	require.True(t, tblStats.GetIdx(1).IsAnalyzed())
 	require.NotNil(t, tblStats.GetIdx(2))
@@ -151,7 +151,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 func TestStaticPartitionedTableValidateAndPrepare(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec(session.CreateAnalyzeJobsTable)
 	tk.MustExec("create schema example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")

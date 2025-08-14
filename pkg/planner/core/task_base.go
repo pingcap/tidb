@@ -288,10 +288,10 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if len(t.rootTaskConds) > 0 {
 		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
 		// so this Selection will be executed in TiDB.
-		_, isTableScan := t.p.(*PhysicalTableScan)
+		_, isTableScan := t.p.(*physicalop.PhysicalTableScan)
 		_, isSelection := t.p.(*physicalop.PhysicalSelection)
 		if isSelection {
-			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
+			_, isTableScan = t.p.Children()[0].(*physicalop.PhysicalTableScan)
 		}
 		if !isTableScan {
 			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
@@ -350,7 +350,7 @@ type CopTask struct {
 	rootTaskConds []expression.Expression
 
 	// For table partition.
-	physPlanPartInfo *PhysPlanPartInfo
+	physPlanPartInfo *physicalop.PhysPlanPartInfo
 
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
@@ -464,7 +464,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		for len(tp.Children()) > 0 {
 			tp = tp.Children()[0]
 		}
-		ts := tp.(*PhysicalTableScan)
+		ts := tp.(*physicalop.PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
 		prevSchema := ts.Schema().Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.Schema(), ts.Table.Columns)
@@ -487,7 +487,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
@@ -507,7 +507,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		for len(tp.Children()) > 0 {
 			tp = tp.Children()[0]
 		}
-		ts := tp.(*PhysicalTableScan)
+		ts := tp.(*physicalop.PhysicalTableScan)
 		p := PhysicalTableReader{
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
@@ -524,12 +524,12 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		// Besides, the agg would only be pushed down if it doesn't contain virtual columns, so virtual column should not be affected.
 		aggPushedDown := false
 		switch p.tablePlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg:
+		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 			aggPushedDown = true
 		}
 
 		if t.needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
+			proj := physicalop.PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)

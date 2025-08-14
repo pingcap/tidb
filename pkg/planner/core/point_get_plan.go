@@ -439,7 +439,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
-	baseSchemaProducer
+	physicalop.SimpleSchemaProducer
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
@@ -605,17 +605,17 @@ func (*BatchPointGetPlan) SetChild(_ int, _ base.PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *BatchPointGetPlan) ResolveIndices() error {
-	return resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
+	return resolveIndicesForVirtualColumn(p.Schema().Columns, p.Schema())
 }
 
 // OutputNames returns the outputting names of each column.
 func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
-	return p.names
+	return p.SimpleSchemaProducer.OutputNames()
 }
 
 // SetOutputNames sets the outputting name by the given slice.
 func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
-	p.names = names
+	p.SimpleSchemaProducer.SetOutputNames(names)
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
@@ -629,7 +629,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
+	sum = emptyBatchPointGetPlanSize + p.SimpleSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
 		int64(cap(p.IdxColLens)+cap(p.PartitionIdxs))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
 		int64(cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.HandleType != nil {
@@ -675,6 +675,10 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr) bool {
 	if len(names) == 0 {
 		return true
+	}
+	// partIdx can be -1 more to check issue #62458
+	if pi == nil || idx < 0 || idx >= len(pi.Definitions) {
+		return false
 	}
 	s := pi.Definitions[idx].Name.L
 	for _, name := range names {
@@ -1998,12 +2002,9 @@ func isExprHasSubQuery(expr ast.Node) bool {
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
-	for _, a := range list {
-		if isExprHasSubQuery(a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(list, func(assignment *ast.Assignment) bool {
+		return isExprHasSubQuery(assignment.Expr)
+	})
 }
 
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
@@ -2066,7 +2067,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 		VirtualAssignmentsOffset:  len(orderedList),
 		IgnoreError:               updateStmt.IgnoreErr,
 	}.Init(ctx)
-	updatePlan.names = pointPlan.OutputNames()
+	updatePlan.SetOutputNames(pointPlan.OutputNames())
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{

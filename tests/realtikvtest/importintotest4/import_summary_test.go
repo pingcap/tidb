@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
@@ -93,7 +94,14 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 		WHERE task_key = ?
 		`
 	rs = s.tk.MustQuery(sql, id, id).Rows()
-	require.Len(s.T(), rs, 10)
+	// in nextgen, node resource are scaled out automatically, we only consider
+	// the max allowed node for the task, and ignore how many node currently
+	// available.
+	if kerneltype.IsNextGen() {
+		require.Len(s.T(), rs, 12)
+	} else {
+		require.Len(s.T(), rs, 10)
+	}
 
 	for _, r := range rs {
 		step, err := strconv.Atoi(r[0].(string))
@@ -103,7 +111,11 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 		require.NoError(s.T(), json.Unmarshal([]byte(r[1].(string)), &summary))
 
 		switch proto.Step(step) {
-		case proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort:
+		case proto.ImportStepEncodeAndSort:
+			if kerneltype.IsClassic() {
+				require.EqualValues(s.T(), 10000, summary.RowCnt.Load())
+			}
+		case proto.ImportStepMergeSort:
 			require.EqualValues(s.T(), 10000, summary.RowCnt.Load())
 		case proto.ImportStepPostProcess:
 			require.EqualValues(s.T(), 0, summary.RowCnt.Load())

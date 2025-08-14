@@ -39,7 +39,6 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/ranger",
-        "//pkg/util/set",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -60,7 +59,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
-    shard_count = 34,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/domain",

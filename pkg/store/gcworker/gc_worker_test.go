@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1669,7 +1670,7 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Domain {
-	session.SetSchemaLease(lease)
+	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
