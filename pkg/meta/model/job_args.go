@@ -186,15 +186,15 @@ type ModifySchemaArgs struct {
 	// might be nil, means set it to default.
 	PolicyRef *PolicyRefInfo `json:"policy_ref,omitempty"`
 	// used for modify schema read only state.
-	ReadOnly  bool   `json:"read_only,omitempty"`
-	DDLConnID uint64 `json:"ddl_conn_id,omitempty"`
+	ReadOnly   bool   `json:"read_only,omitempty"`
+	DDLStartTS uint64 `json:"ddl_start_ts,omitempty"`
 }
 
 func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return []any{a.ToCharset, a.ToCollate}
 	} else if job.Type == ActionModifySchemaReadOnly {
-		return []any{a.ReadOnly, a.DDLConnID}
+		return []any{a.ReadOnly, a.DDLStartTS}
 	}
 	return []any{a.PolicyRef}
 }
@@ -203,7 +203,7 @@ func (a *ModifySchemaArgs) decodeV1(job *Job) error {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return errors.Trace(job.decodeArgs(&a.ToCharset, &a.ToCollate))
 	} else if job.Type == ActionModifySchemaReadOnly {
-		return errors.Trace(job.decodeArgs(&a.ReadOnly, &a.DDLConnID))
+		return errors.Trace(job.decodeArgs(&a.ReadOnly, &a.DDLStartTS))
 	}
 	return errors.Trace(job.decodeArgs(&a.PolicyRef))
 }
