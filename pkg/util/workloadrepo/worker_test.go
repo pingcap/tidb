@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -926,7 +927,7 @@ func TestOwnerRandomDown(t *testing.T) {
 		var err error
 		prevSnapID := uint64(0)
 		breakOwnerIdx := -1
-		oldOwnerIdx := -1
+		var oldOwner *worker
 
 		// stop the current owner
 		for idx, wrk := range workers {
@@ -957,40 +958,32 @@ func TestOwnerRandomDown(t *testing.T) {
 					}
 				}
 
-				oldOwnerIdx = idx
+				oldOwner = wrk
 				break
 			}
 		}
 
 		// new owner elected
 		require.Eventually(t, func() bool {
-			for i := range workers {
-				workers[i].Lock()
-				isNewOwner := workers[i].cancel != nil &&
-					workers[i].owner.IsOwner() && i != oldOwnerIdx
-				workers[i].Unlock()
-				if isNewOwner {
-					return true
-				}
-			}
-			return false
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner.IsOwner() && wrk != oldOwner
+			})
 		}, time.Minute, 100*time.Millisecond)
 
 		// new snapshot taken
 		require.Eventually(t, func() bool {
-			for i := range workers {
-				workers[i].Lock()
-				hasNewSnapshot := false
-				if workers[i].cancel != nil {
-					newSnapID, err := workers[i].getSnapID(ctx)
-					hasNewSnapshot = err == nil && newSnapID > prevSnapID
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				if wrk.cancel == nil {
+					return false
 				}
-				workers[i].Unlock()
-				if hasNewSnapshot {
-					return true
-				}
-			}
-			return false
+				newSnapID, err := wrk.getSnapID(ctx)
+				return err == nil && newSnapID > prevSnapID
+			})
 		}, time.Minute, 100*time.Millisecond)
 
 		// recover stopped owner

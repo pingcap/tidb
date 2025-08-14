@@ -411,10 +411,7 @@ func (regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string) error {
 			if number > pat.NumSubexp() {
 				return errors.Errorf("sub pattern capture '%s' out of range", subVar)
 			}
-		} else if !slices.ContainsFunc(pat.SubexpNames(), func(name string) bool {
-			// FIXME: we should use re.SubexpIndex here, but not supported in go1.13 yet
-			return name == tmplName
-		}) {
+		} else if !slices.Contains(pat.SubexpNames(), tmplName) {
 			return errors.Errorf("invalid named capture '%s'", subVar)
 		}
 	}

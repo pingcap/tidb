@@ -4946,9 +4946,7 @@ func hasTimeArgs(argsType ...byte) bool {
 }
 
 func hasTimestampArgs(argsType ...byte) bool {
-	return slices.ContainsFunc(argsType, func(t byte) bool {
-		return t == mysql.TypeTimestamp
-	})
+	return slices.Contains(argsType, mysql.TypeTimestamp)
 }
 
 func hasDatetimeArgs(argsType ...byte) bool {
