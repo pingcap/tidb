@@ -101,14 +101,14 @@ func createPlannerSuite() (s *PlannerSuite) {
 	id := int64(1)
 	for _, tblInfo := range tblInfos {
 		tblInfo.ID = id
-		id += 1
+		id++
 		pi := tblInfo.GetPartitionInfo()
 		if pi == nil {
 			continue
 		}
 		for i := range pi.Definitions {
 			pi.Definitions[i].ID = id
-			id += 1
+			id++
 		}
 	}
 	s.is = infoschema.MockInfoSchema(tblInfos)
