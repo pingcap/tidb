@@ -2029,7 +2029,7 @@ type calcOnceMap struct {
 // columnSelector is a function that determines which columns to include and their virtual expressions.
 func (b *PlanBuilder) addColumnsWithVirtualExprs(tbl *resolve.TableNameW, cols *calcOnceMap, columnSelector func([]*expression.Column) []expression.Expression) error {
 	intest.Assert(cols.data != nil, "cols.data should not be nil before adding columns")
-	intest.Assert(len(cols.data) != 0, "cols.data should not `be empty before adding columns")
+	intest.Assert(len(cols.data) != 0, "cols.data should not be empty before adding columns")
 	tblInfo := tbl.TableInfo
 	columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx.GetExprCtx(), tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
 	if err != nil {
