@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -240,12 +241,11 @@ func MakeTableRegions(
 				sizes   []float64
 				err     error
 			)
-			dataFileSize := info.FileMeta.FileSize
 			if info.FileMeta.Type == SourceTypeParquet {
 				regions, sizes, err = makeParquetFileRegion(egCtx, cfg, info)
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
-				dataFileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
+				info.FileMeta.FileSize > cfg.MaxChunkSize+cfg.MaxChunkSize/largeCSVLowerThresholdRation {
 				// If a csv file is overlarge, we need to split it into multiple regions.
 				// Note: We can only split a csv file whose format is strict.
 				// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
@@ -363,6 +363,36 @@ func MakeSourceFileRegion(
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.RealSize)}, nil
 }
 
+func checkNeedPreciseRowCount(tblInfo *model.TableInfo) bool {
+	// If the table has auto-increment column, we need to read row count from parquet file.
+	// If the table does not have auto-increment column, we can use file size as row count.
+	if common.TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
+		return true
+	}
+
+	for _, idx := range tblInfo.Indices {
+		if idx.Unique || idx.Primary {
+			return true
+		}
+		for _, col := range idx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			if mysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
+				return true
+			}
+		}
+	}
+
+	if tblInfo.PKIsHandle {
+		for _, col := range tblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) && mysql.HasAutoIncrementFlag(col.GetFlag()) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // because parquet files can't seek efficiently, there is no benefit in split.
 // parquet file are column orient, so the offset is read line number
 func makeParquetFileRegion(
@@ -378,6 +408,7 @@ func makeParquetFileRegion(
 		// For table without auto-increment column, we don't need to read row count,
 		// just use file size as row count.
 		numberRows = dataFile.FileMeta.FileSize
+		checkNeedPreciseRowCount(cfg.TableInfo)
 	} else {
 		numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta)
 		if err != nil {
