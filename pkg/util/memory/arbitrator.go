@@ -1781,7 +1781,7 @@ func (m *MemArbitrator) SetDigestProfileCacheLimit(limit int64) {
 	m.digestProfileCache.limit = min(max(0, limit), defMax)
 }
 
-func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrationPriority, waitAverse bool) (cnt uint64) {
+func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrationPriority, waitAverse bool) (cnt int64) {
 	var entries [64]*rootPoolEntry
 
 	fifo := &m.tasks.fifoWaitAverse
@@ -1821,7 +1821,7 @@ func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrationPriority, waitAvers
 			entry.windUp(0, ArbitrateFail)
 		}
 
-		cnt += uint64(size)
+		cnt += int64(size)
 
 		if size != len(entries) {
 			break
@@ -1881,11 +1881,11 @@ func (m *MemArbitrator) doReclaimNonBlockingTasks() {
 	if m.execMu.mode == ArbitratorModeStandard {
 		for prio := minArbitrationPriority; prio < maxArbitrationPriority; prio++ {
 			if m.taskNumByPriority(prio) != 0 {
-				m.AddMetricsCancelStandardMode(m.doCancelPendingTasks(prio, false))
+				atomic.AddInt64(&m.execMetrics.Cancel.StandardMode, m.doCancelPendingTasks(prio, false))
 			}
 		}
 	} else if m.taskNumOfWaitAverse() != 0 {
-		m.AddMetricsCancelWaitAverse(m.doCancelPendingTasks(maxArbitrationPriority, true))
+		atomic.AddInt64(&m.execMetrics.Cancel.WaitAverse, m.doCancelPendingTasks(maxArbitrationPriority, true))
 	}
 }
 
@@ -3077,9 +3077,9 @@ func (r ArbitratorStopReason) String() (desc string) {
 	case ArbitratorWaitAverseCancel:
 		desc = "CANCEL(out-of-quota & wait-averse)"
 	case ArbitratorStandardCancel:
-		desc = "CANCEL(out-of-quota & standard mode)"
+		desc = "CANCEL(out-of-quota & standard-mode)"
 	case ArbitratorPriorityCancel:
-		desc = "CANCEL(out-of-quota & priority mode)"
+		desc = "CANCEL(out-of-quota & priority-mode)"
 	}
 	return
 }
@@ -3201,16 +3201,6 @@ func (m *MemArbitrator) stop() bool {
 	m.runOneRound()
 
 	return true
-}
-
-// AddMetricsCancelStandardMode adds the number of cancel tasks in standard mode
-func (m *MemArbitrator) AddMetricsCancelStandardMode(delta uint64) {
-	atomic.AddInt64(&m.execMetrics.Cancel.StandardMode, int64(delta))
-}
-
-// AddMetricsCancelWaitAverse adds the number of cancel tasks in wait-averse mode
-func (m *MemArbitrator) AddMetricsCancelWaitAverse(delta uint64) {
-	atomic.AddInt64(&m.execMetrics.Cancel.WaitAverse, int64(delta))
 }
 
 // AtMemRisk checks if the memory is under risk

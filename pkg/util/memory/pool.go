@@ -31,7 +31,7 @@ const DefMaxUnusedBlocks int64 = 10
 // ResourcePool manages a set of resource quota
 type ResourcePool struct {
 	actions  PoolActions                                        // actions to be taken when the pool meets certain conditions
-	parentMu struct{ prevChildren, nextChildren *ResourcePool } // accessable by parent pool only
+	parentMu struct{ prevChildren, nextChildren *ResourcePool } // accessible by parent pool only
 	name     string                                             // name of pool
 	mu       struct {
 		headChildren *ResourcePool // head of the children pools chain
