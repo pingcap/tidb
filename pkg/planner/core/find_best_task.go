@@ -1634,6 +1634,11 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return false
 	}
+	// If the minimum number of access conditions required for DNF is more than 1, then each OR condition
+	// must have at least 1 equal predicates to satisfy the DNF requirement. Return true.
+	if c.path.MinAccessCondsForDNFCond > 1 {
+		return true
+	}
 
 	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
 	var isEqualPredicateOrOr func(expr expression.Expression) bool
