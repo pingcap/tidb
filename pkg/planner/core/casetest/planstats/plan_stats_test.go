@@ -17,7 +17,6 @@ package planstats_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"slices"
 	"testing"
 	"time"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"

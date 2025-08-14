@@ -42,6 +42,7 @@ func GetFieldValue(prefix, row string) string {
 	return ""
 }
 
+// PlannerSuite is exported for test
 type PlannerSuite struct {
 	p    *parser.Parser
 	is   infoschema.InfoSchema
@@ -49,22 +50,27 @@ type PlannerSuite struct {
 	ctx  base.PlanContext
 }
 
+// GetParser get the parser inside.
 func (p *PlannerSuite) GetParser() *parser.Parser {
 	return p.p
 }
 
+// GetIS get the is inside.
 func (p *PlannerSuite) GetIS() infoschema.InfoSchema {
 	return p.is
 }
 
+// GetSCtx get the sctx inside.
 func (p *PlannerSuite) GetSCtx() sessionctx.Context {
 	return p.sctx
 }
 
+// GetCtx get the ctx inside.
 func (p *PlannerSuite) GetCtx() base.PlanContext {
 	return p.ctx
 }
 
+// CreatePlannerSuite create a planner suite with specified is and sctx.
 func CreatePlannerSuite(sctx sessionctx.Context, is infoschema.InfoSchema) (s *PlannerSuite) {
 	s = new(PlannerSuite)
 	s.is = is
