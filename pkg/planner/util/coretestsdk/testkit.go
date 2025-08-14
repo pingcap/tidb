@@ -136,6 +136,7 @@ func createPlannerSuite() (s *PlannerSuite) {
 	return
 }
 
+// Close closes the planner suite.
 func (p *PlannerSuite) Close() {
 	domain.GetDomain(p.ctx).StatsHandle().Close()
 }
