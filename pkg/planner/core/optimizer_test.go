@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -165,7 +166,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 
 	const expStreamCount int64 = 8
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
 	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
 	defer func() {
@@ -406,7 +407,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 }
 
 func TestCanTiFlashUseHashJoinV2(t *testing.T) {
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

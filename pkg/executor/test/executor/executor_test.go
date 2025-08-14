@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -781,7 +782,7 @@ func TestOOMActionPriority(t *testing.T) {
 func TestUnreasonablyClose(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -920,7 +921,7 @@ func TestUnreasonablyClose(t *testing.T) {
 func TestTwiceCloseUnionExec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 

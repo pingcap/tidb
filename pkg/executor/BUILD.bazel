@@ -444,6 +444,7 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/planner/property",
         "//pkg/planner/util",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/privilege",
         "//pkg/server",
         "//pkg/session",
