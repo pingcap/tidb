@@ -179,8 +179,10 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 		return path.CountAfterAccess, true, 0
 	}
 	var rangeCount float64
+	var tempResult statistics.RowEstimate
 	if idxExists {
-		rangeCount, _, _, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges, nil)
+		tempResult, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges, nil)
+		rangeCount = tempResult.Est
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
@@ -199,6 +201,7 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*ranger.Range, histColl *statistics.HistColl, idxID int64) (rangeCounts []float64, minCount float64, maxCount float64, ok bool) {
 	var err error
 	var count float64
+	var tempResult statistics.RowEstimate
 	rangeCounts = make([]float64, len(ranges))
 	for i, ran := range ranges {
 		if idxID >= 0 {
@@ -206,7 +209,8 @@ func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*range
 			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
 				return nil, 0, 0, false
 			}
-			count, minCount, maxCount, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran}, nil)
+			tempResult, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran}, nil)
+			count, minCount, maxCount = tempResult.Est, tempResult.MinEst, tempResult.MaxEst
 		} else {
 			colHist := histColl.GetCol(colID)
 			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {

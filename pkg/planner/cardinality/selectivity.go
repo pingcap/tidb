@@ -203,13 +203,12 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			cnt, minCnt, maxCnt, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
+			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			selectivity := cnt / float64(coll.RealtimeCount)
-			minSelectivity := minCnt / float64(coll.RealtimeCount)
-			maxSelectivity := maxCnt / float64(coll.RealtimeCount)
+			countResult.MultiplyAll(1 / float64(coll.RealtimeCount))
+			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
 			nodes = append(nodes, &StatsNode{
 				Tp:                       IndexType,
 				ID:                       id,

@@ -416,7 +416,8 @@ func detachCondAndBuildRangeForPath(
 	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
 		indexCols = indexCols[0:len(path.Index.Columns)]
 	}
-	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
+	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
 	return err
 }
 

@@ -566,7 +566,7 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is required for stats version 2. For version 1, it is just for debug trace, you can pass nil safely.
-func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) float64 {
+func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) RowEstimate {
 	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
 	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
 	rangeEst := lessCountB - lessCountA
@@ -597,12 +597,53 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
 					skewEstimate -= hg.Buckets[bktIndexA].Repeat
 				}
-				// Add a scaled ratio of the worst case skewed estimate to our regular estimate
-				return rangeEst + max(0, (float64(skewEstimate)-rangeEst)*skewRatio)
+				return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
 			}
 		}
 	}
-	return rangeEst
+	return DefaultRowEst(rangeEst)
+}
+
+// getSkewRatioMinMaxCount calculates the default, min, and max skew estimates given a skew ratio.
+func CalculateSkewRatioCounts(estimate, skewEstimate, skewRatio float64) RowEstimate {
+	skewDiff := skewEstimate - estimate
+	// Add a "ratio" of the skewEstimate to adjust the default row estimate.
+	skewAmt := max(0, skewDiff*skewRatio)
+	maxSkewAmt := min(skewDiff, 2*skewAmt)
+	return RowEstimate{estimate + skewAmt, estimate, estimate + maxSkewAmt}
+}
+
+// RowEstimate stores the min, default, and max row count estimates.
+type RowEstimate struct {
+	Est    float64
+	MinEst float64
+	MaxEst float64
+}
+
+// DefaultRowEstimate returns a RowEstimate with same value for all three fields
+func DefaultRowEst(est float64) RowEstimate {
+	return RowEstimate{est, est, est}
+}
+
+// Add adds two RowEstimates together, storing result in the first RowEstimate.
+func (r1 *RowEstimate) Add(r2 RowEstimate) {
+	r1.Est += r2.Est
+	r1.MinEst += r2.MinEst
+	r1.MaxEst += r2.MaxEst
+}
+
+// AddAll adds a float64 value to all three fields of the RowEstimate and stores the result.
+func (r *RowEstimate) AddAll(f float64) {
+	r.Est += f
+	r.MinEst += f
+	r.MaxEst += f
+}
+
+// MultiplyAll multiplies all three fields of the RowEstimate by a float64 value and stores the result.
+func (r *RowEstimate) MultiplyAll(f float64) {
+	r.Est *= f
+	r.MinEst *= f
+	r.MaxEst *= f
 }
 
 // TotalRowCount returns the total count of this histogram.
@@ -1184,7 +1225,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 				continue
 			}
 			dataSet[string(prefixColData)] = struct{}{}
-			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext()))
+			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext())).Est
 			if res >= limit {
 				dataCnts = append(dataCnts, dataCnt{prefixColData, uint64(res)})
 			}
