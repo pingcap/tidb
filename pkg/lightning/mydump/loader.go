@@ -472,7 +472,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * ratio)
 			rows := float64(info.FileMeta.RealSize) / rowSize
 			if m, ok := metric.FromContext(ctx); ok {
-				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(float64(rows))
+				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(rows)
 			}
 		}
 

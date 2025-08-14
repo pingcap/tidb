@@ -370,8 +370,10 @@ func makeParquetFileRegion(
 	cfg *DataDivideConfig,
 	dataFile FileInfo,
 ) ([]*TableRegion, []float64, error) {
-	numberRows := dataFile.FileMeta.Rows
-	var err error
+	var (
+		numberRows int64
+		err        error
+	)
 	if cfg.TableInfo != nil || !common.TableHasAutoID(cfg.TableInfo) {
 		// For table without auto-increment column, we don't need to read row count,
 		// just use file size as row count.
