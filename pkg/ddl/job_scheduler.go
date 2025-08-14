@@ -566,7 +566,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	// current owner.
 	job := jobW.Job
 	if jobCtx.isUnSynced(job.ID) || (job.Started() && !jobCtx.maybeAlreadyRunOnce(job.ID)) {
-		if vardef.EnableMDL.Load() {
+		if vardef.IsMDLEnabled() {
 			version, err := s.sysTblMgr.GetMDLVer(s.schCtx, job.ID)
 			if err == nil {
 				jobCtx.logger.Info("the job have schema version un-synced",
@@ -580,7 +580,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 				jobCtx.logger.Warn("check MDL info failed", zap.Error(err))
 				return err
 			}
-		} else {
+		} else if job.LastSchemaVersion > 0 {
 			err := waitVersionSyncedWithoutMDL(s.schCtx, jobCtx, job)
 			if err != nil {
 				time.Sleep(time.Second)
@@ -624,7 +624,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	defer func() {
 		metrics.DDLCleanMDLInfoHist.Observe(time.Since(start).Seconds())
 	}()
-	if !vardef.EnableMDL.Load() {
+	if !vardef.IsMDLEnabled() {
 		return
 	}
 	var sql string

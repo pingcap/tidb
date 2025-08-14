@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -788,28 +789,28 @@ func TestUnreasonablyClose(t *testing.T) {
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
 	var opsNeedsCovered = []base.PhysicalPlan{
-		&plannercore.PhysicalHashJoin{},
-		&plannercore.PhysicalMergeJoin{},
-		&plannercore.PhysicalIndexJoin{},
-		&plannercore.PhysicalIndexHashJoin{},
+		&physicalop.PhysicalHashJoin{},
+		&physicalop.PhysicalMergeJoin{},
+		&physicalop.PhysicalIndexJoin{},
+		&physicalop.PhysicalIndexHashJoin{},
 		&plannercore.PhysicalTableReader{},
 		&plannercore.PhysicalIndexReader{},
 		&plannercore.PhysicalIndexLookUpReader{},
 		&plannercore.PhysicalIndexMergeReader{},
-		&plannercore.PhysicalApply{},
-		&plannercore.PhysicalHashAgg{},
-		&plannercore.PhysicalStreamAgg{},
+		&physicalop.PhysicalApply{},
+		&physicalop.PhysicalHashAgg{},
+		&physicalop.PhysicalStreamAgg{},
 		&physicalop.PhysicalLimit{},
 		&physicalop.PhysicalSort{},
 		&physicalop.PhysicalTopN{},
 		&plannercore.PhysicalCTE{},
-		&plannercore.PhysicalCTETable{},
+		&physicalop.PhysicalCTETable{},
 		&physicalop.PhysicalMaxOneRow{},
 		&physicalop.PhysicalProjection{},
 		&physicalop.PhysicalSelection{},
 		&physicalop.PhysicalTableDual{},
-		&plannercore.PhysicalWindow{},
-		&plannercore.PhysicalShuffle{},
+		&physicalop.PhysicalWindow{},
+		&physicalop.PhysicalShuffle{},
 		&physicalop.PhysicalUnionAll{},
 	}
 
@@ -874,7 +875,7 @@ func TestUnreasonablyClose(t *testing.T) {
 					newChild = append(newChild, x.SeedPlan)
 					hasCTE = true
 					continue
-				case *plannercore.PhysicalShuffle:
+				case *physicalop.PhysicalShuffle:
 					newChild = append(newChild, x.DataSources...)
 					newChild = append(newChild, x.Tails...)
 					continue
@@ -2765,7 +2766,7 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk0.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk0.Session().ShowProcess()},
 	}
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()

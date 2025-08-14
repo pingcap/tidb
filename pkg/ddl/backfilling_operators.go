@@ -125,9 +125,6 @@ var (
 	_ execute.Collector = (*localRowCntCollector)(nil)
 )
 
-// MockDMLExecutionBeforeScan is only used for test.
-var MockDMLExecutionBeforeScan func()
-
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -157,12 +154,7 @@ func NewAddIndexIngestPipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
-	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
-		if MockDMLExecutionBeforeScan != nil {
-			MockDMLExecutionBeforeScan()
-		}
-	})
-	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
+	failpoint.InjectCall("beforeAddIndexScan")
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
@@ -844,7 +836,7 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, nextKey
 	failpoint.InjectCall("writeLocalExec", rs.Done)
 
 	oprStartTime := time.Now()
-	vars := w.se.GetSessionVars()
+	vars := w.se.GetSessionVars() //nolint:forbidigo
 	sc := vars.StmtCtx
 	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
 	if err != nil || cnt == 0 {

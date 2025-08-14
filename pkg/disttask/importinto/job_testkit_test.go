@@ -297,11 +297,33 @@ func TestShowImportProgress(t *testing.T) {
 		state   proto.SubtaskState
 	}{
 		{
-			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(20), Bytes: *atomic.NewInt64(200)},
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(20),
+				Bytes:  *atomic.NewInt64(200),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 20, Bytes: 200, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
 			proto.SubtaskStateRunning,
 		},
 		{
-			execute.SubtaskSummary{RowCnt: *atomic.NewInt64(30), Bytes: *atomic.NewInt64(300)},
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(30),
+				Bytes:  *atomic.NewInt64(300),
+				Progresses: []execute.Progress{
+					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1000, 0)},
+					{RowCnt: 15, Bytes: 150, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 30, Bytes: 300, UpdateTime: time.Unix(1002, 0)},
+				},
+			},
+			proto.SubtaskStateSucceed,
+		},
+		{
+			execute.SubtaskSummary{
+				RowCnt: *atomic.NewInt64(0),
+				Bytes:  *atomic.NewInt64(0),
+			},
 			proto.SubtaskStateSucceed,
 		},
 	}
@@ -324,7 +346,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepGlobalSorting))
 	checkShowInfo("init", "0B", "0B", "N/A", "0B/s", "N/A", 0)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(5)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(5000)")
 
 	// Encode step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
@@ -339,7 +361,7 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1000, runInfo.Total)
 	require.EqualValues(t, 500, runInfo.Processed)
-	checkShowInfo("encode", "500B", "1kB", "50", "100B/s", "00:00:05", 0)
+	checkShowInfo("encode", "500B", "1000B", "50", "100B/s", "00:00:05", 0)
 
 	// Merge step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepMergeSort)
@@ -356,9 +378,9 @@ func TestShowImportProgress(t *testing.T) {
 			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
 	}
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockUpdateTime", "return(500)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/importinto/mockSpeedDuration", "return(10000)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
-	checkShowInfo("ingest", "500B", "1kB", "50", "1B/s", "00:08:20", 50)
+	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
 
 	// Post-process step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)

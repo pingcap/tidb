@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -1084,6 +1085,7 @@ const (
 	// In test, we disable it by default. See GlobalSystemVariableInitialValue for details.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
 	// TiDBEnableAutoAnalyzePriorityQueue determines whether TiDB executes automatic analysis with priority queue.
+	// DEPRECATED: This variable is deprecated, please do not use this variable.
 	TiDBEnableAutoAnalyzePriorityQueue = "tidb_enable_auto_analyze_priority_queue"
 	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
@@ -1267,6 +1269,10 @@ const (
 
 	// TiDBEnableTSValidation controls whether to enable the timestamp validation in client-go.
 	TiDBEnableTSValidation = "tidb_enable_ts_validation"
+
+	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
+	// The log backup task will be paused if the checkpoint lag is larger than it.
+	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1666,6 +1672,7 @@ const (
 	DefTiDBAccelerateUserCreationUpdate               = false
 	DefTiDBEnableTSValidation                         = true
 	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 )
 
 // Process global variables.
@@ -1726,7 +1733,7 @@ var (
 	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
-	EnableMDL                           = atomic.NewBool(false)
+	enableMDL                           = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
 	// TODO: set value by session variable
@@ -1795,6 +1802,8 @@ var (
 	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
 
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
+
+	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 )
 
 func serverMemoryLimitDefaultValue() string {
@@ -2124,4 +2133,23 @@ func SetMaxDeltaSchemaCount(cnt int64) {
 // GetMaxDeltaSchemaCount gets MaxDeltaSchemaCount size.
 func GetMaxDeltaSchemaCount() int64 {
 	return goatomic.LoadInt64(&MaxDeltaSchemaCount)
+}
+
+// IsMDLEnabled returns if MDL is enabled.
+func IsMDLEnabled() bool {
+	if kerneltype.IsNextGen() {
+		// MDL is very useful to avoid the 'Information schema is changed' error,
+		// in next-gen TiDB, MDL is always enabled, as we don't have the compatibility
+		// debts.
+		// some tests might call SetEnableMDL(false) to disable MDL, but it is not
+		// expected in nextgen, we use this branch to ensure MDL is always enabled,
+		// even in test.
+		return true
+	}
+	return enableMDL.Load()
+}
+
+// SetEnableMDL sets the MDL enable status.
+func SetEnableMDL(enabled bool) {
+	enableMDL.Store(enabled)
 }

@@ -180,7 +180,7 @@ func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(colName.Column.Name)
 		}
 		// Virtual columns cannot be used in primary key.
-		if lastCol.IsGenerated() && !lastCol.GeneratedStored {
+		if lastCol.IsVirtualGenerated() {
 			if lastCol.Hidden {
 				return nil, dbterror.ErrFunctionalIndexPrimaryKey
 			}
@@ -1256,7 +1256,38 @@ func checkIfTableReorgWorkCanSkip(
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
-	return checkIfTableIsEmpty(ctx, store, tbl, startTS)
+	if isEmpty, err := checkIfTableIsEmpty(ctx, store, tbl, startTS); err != nil || !isEmpty {
+		return false
+	}
+	return true
+}
+
+// CheckImportIntoTableIsEmpty check import into table is empty or not.
+func CheckImportIntoTableIsEmpty(
+	store kv.Storage,
+	sessCtx sessionctx.Context,
+	tbl table.Table,
+) (bool, error) {
+	failpoint.Inject("checkImportIntoTableIsEmpty", func(_val failpoint.Value) {
+		if val, ok := _val.(string); ok {
+			switch val {
+			case "error":
+				failpoint.Return(false, errors.New("check is empty get error"))
+			case "notEmpty":
+				failpoint.Return(false, nil)
+			}
+		}
+	})
+	txn, err := sessCtx.Txn(true)
+	if err != nil {
+		return false, err
+	}
+	validTxn := txn != nil && txn.Valid()
+	if !validTxn {
+		return false, errors.New("check if table is empty failed")
+	}
+	startTS := txn.StartTS()
+	return checkIfTableIsEmpty(NewReorgContext(), store, tbl, startTS)
 }
 
 func checkIfTableIsEmpty(
@@ -1264,15 +1295,15 @@ func checkIfTableIsEmpty(
 	store kv.Storage,
 	tbl table.Table,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
 			pTbl := pTbl.GetPartition(pid)
-			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS) {
-				return false
+			if isEmpty, err := checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS); err != nil || !isEmpty {
+				return false, err
 			}
 		}
-		return true
+		return true, nil
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
@@ -1284,14 +1315,14 @@ func checkIfPhysicalTableIsEmpty(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 	startTS uint64,
-) bool {
+) (bool, error) {
 	hasRecord, err := existsTableRow(ctx, store, tbl, startTS)
 	intest.Assert(err == nil)
 	if err != nil {
-		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
-		return false
+		logutil.DDLLogger().Warn("check if table is empty failed", zap.Error(err))
+		return false, err
 	}
-	return !hasRecord
+	return !hasRecord, nil
 }
 
 func checkIfTempIndexReorgWorkCanSkip(
@@ -1489,12 +1520,7 @@ func doReorgWorkForCreateIndex(
 		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
-		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
-			if MockDMLExecutionStateBeforeMerge != nil {
-				MockDMLExecutionStateBeforeMerge()
-			}
-		})
-		failpoint.InjectCall("BeforeBackfillMerge")
+		failpoint.InjectCall("beforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
@@ -1598,13 +1624,7 @@ func runReorgJobAndHandleErr(
 		elements = append(elements, &meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey})
 	}
 
-	failpoint.Inject("mockDMLExecutionStateMerging", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) && allIndexInfos[0].BackfillState == model.BackfillStateMerging &&
-			MockDMLExecutionStateMerging != nil {
-			MockDMLExecutionStateMerging()
-		}
-	})
+	failpoint.InjectCall("beforeRunReorgJobAndHandleErr", allIndexInfos)
 
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
@@ -1653,11 +1673,8 @@ func runReorgJobAndHandleErr(
 		}
 		return false, ver, errors.Trace(err)
 	}
-	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
-		if MockDMLExecutionStateBeforeImport != nil {
-			MockDMLExecutionStateBeforeImport()
-		}
-	})
+
+	failpoint.InjectCall("afterRunReorgJobAndHandleErr")
 	return true, ver, nil
 }
 
@@ -1982,24 +1999,31 @@ func newAddIndexTxnWorker(
 	decodeColMap map[int64]decoder.Column,
 	t table.PhysicalTable,
 	bfCtx *backfillCtx,
-	jobID int64,
+	job *model.Job,
 	elements []*meta.Element,
-	eleTypeKey []byte,
+	currElement *meta.Element,
 ) (*addIndexTxnWorker, error) {
-	if !bytes.Equal(eleTypeKey, meta.IndexElementKey) {
+	if !bytes.Equal(currElement.TypeKey, meta.IndexElementKey) {
 		logutil.DDLLogger().Error("Element type for addIndexTxnWorker incorrect",
-			zap.Int64("job ID", jobID), zap.ByteString("element type", eleTypeKey), zap.Int64("element ID", elements[0].ID))
-		return nil, errors.Errorf("element type is not index, typeKey: %v", eleTypeKey)
+			zap.Int64("job ID", job.ID), zap.ByteString("element type", currElement.TypeKey), zap.Int64("element ID", elements[0].ID))
+		return nil, errors.Errorf("element type is not index, typeKey: %v", currElement.TypeKey)
 	}
 
 	allIndexes := make([]table.Index, 0, len(elements))
-	for _, elem := range elements {
-		if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
-			continue
-		}
-		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+	if job.Type == model.ActionModifyColumn {
+		// For modify column with indexes, we only need to add the index one by one.
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, currElement.ID)
 		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 		allIndexes = append(allIndexes, index)
+	} else {
+		for _, elem := range elements {
+			if !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+				continue
+			}
+			indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+			index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+			allIndexes = append(allIndexes, index)
+		}
 	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
@@ -2431,6 +2455,7 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 		if err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.InjectCall("addIndexTxnWorkerBackfillData", len(idxRecords))
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
@@ -2483,15 +2508,6 @@ var MockDMLExecution func()
 
 // MockDMLExecutionMerging is only used for test.
 var MockDMLExecutionMerging func()
-
-// MockDMLExecutionStateMerging is only used for test.
-var MockDMLExecutionStateMerging func()
-
-// MockDMLExecutionStateBeforeImport is only used for test.
-var MockDMLExecutionStateBeforeImport func()
-
-// MockDMLExecutionStateBeforeMerge is only used for test.
-var MockDMLExecutionStateBeforeMerge func()
 
 func (w *worker) addPhysicalTableIndex(
 	ctx context.Context,

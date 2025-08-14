@@ -75,6 +75,10 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	// Try to set tidb_enable_auto_analyze_priority_queue to OFF, it should return error.
+	_, err = tk.Exec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=OFF")
+	require.Error(t, err)
+	require.Equal(t, "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze", err.Error())
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {
@@ -213,7 +217,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl1 := h.GetTableStats(tbl.Meta())
+	statsTbl1 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	// Check that all the version of t's stats are 1.
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(1), col.GetStatsVer())
@@ -231,7 +235,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Auto analyze t whose version is 1 after setting global ver to 2.
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tbl.Meta())
+	statsTbl1 = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
 	// All of its statistics should still be version 1.
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -255,7 +259,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		require.Equal(t, int64(2), col.GetStatsVer())
@@ -283,12 +287,12 @@ func TestTableAnalyzed(t *testing.T) {
 	h := dom.StatsHandle()
 
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.LastAnalyzeVersion > 0)
 
 	testKit.MustExec("analyze table t")
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 
 	h.Clear()
@@ -299,7 +303,7 @@ func TestTableAnalyzed(t *testing.T) {
 		h.SetLease(oriLease)
 	}()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 }
 
@@ -669,12 +673,11 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
-	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=off")
 	tk.MustExec("analyze table t all columns")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("alter table t add index idx(a)")

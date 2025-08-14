@@ -25,6 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -132,78 +135,6 @@ func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 }
 
 // AccessObject implements DataAccesser interface.
-func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
-	res := &access.ScanAccessObject{
-		Database: p.DBName.O,
-	}
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	res.Table = tblName
-	if p.isPartition {
-		pi := p.Table.GetPartitionInfo()
-		if pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			res.Partitions = []string{partitionName}
-		}
-	}
-	if len(p.Index.Columns) > 0 {
-		index := access.IndexAccess{
-			Name: p.Index.Name.O,
-		}
-		for _, idxCol := range p.Index.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
-			}
-		}
-		res.Indexes = []access.IndexAccess{index}
-	}
-	return res
-}
-
-// AccessObject implements DataAccesser interface.
-func (p *PhysicalTableScan) AccessObject() base.AccessObject {
-	res := &access.ScanAccessObject{
-		Database: p.DBName.O,
-	}
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	res.Table = tblName
-	if p.isPartition {
-		pi := p.Table.GetPartitionInfo()
-		if pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			res.Partitions = []string{partitionName}
-		}
-	}
-	if len(p.UsedColumnarIndexes) > 0 {
-		res.Indexes = make([]access.IndexAccess, 0, len(p.UsedColumnarIndexes))
-		for _, idx := range p.UsedColumnarIndexes {
-			if idx == nil || idx.IndexInfo == nil {
-				continue
-			}
-			index := access.IndexAccess{
-				Name: idx.IndexInfo.Name.O,
-			}
-			for _, idxCol := range idx.IndexInfo.Columns {
-				if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-					index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-				} else {
-					index.Cols = append(index.Cols, idxCol.Name.O)
-				}
-			}
-			res.Indexes = append(res.Indexes, index)
-		}
-	}
-	return res
-}
-
-// AccessObject implements DataAccesser interface.
 func (p *PointGetPlan) AccessObject() base.AccessObject {
 	res := &access.ScanAccessObject{
 		Database: p.dbName,
@@ -273,7 +204,7 @@ func (p *BatchPointGetPlan) AccessObject() base.AccessObject {
 	return res
 }
 
-func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, physPlanPartInfo *PhysPlanPartInfo, asName string) (res *DynamicPartitionAccessObject) {
+func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, physPlanPartInfo *physicalop.PhysPlanPartInfo, asName string) (res *DynamicPartitionAccessObject) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return nil
@@ -297,13 +228,13 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	idxArr, err := PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
+	idxArr, err := partitionpruning.PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
 		res.err = "partition pruning error:" + err.Error()
 		return res
 	}
 
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
+	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
 		res.AllPartitions = true
 		return res
 	}
@@ -320,7 +251,7 @@ func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObj
 		return DynamicPartitionAccessObjects(nil)
 	}
 	if len(p.TableScanAndPartitionInfos) == 0 {
-		ts, ok := p.TablePlans[0].(*PhysicalTableScan)
+		ts, ok := p.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
 			return OtherAccessObject("")
 		}
@@ -336,12 +267,12 @@ func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObj
 	}
 	if len(p.TableScanAndPartitionInfos) == 1 {
 		tp := p.TableScanAndPartitionInfos[0]
-		ts := tp.tableScan
+		ts := tp.TableScan
 		asName := ""
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O
 		}
-		res := getDynamicAccessPartition(sctx, ts.Table, tp.physPlanPartInfo, asName)
+		res := getDynamicAccessPartition(sctx, ts.Table, tp.PhysPlanPartInfo, asName)
 		if res == nil {
 			return DynamicPartitionAccessObjects(nil)
 		}
@@ -350,15 +281,15 @@ func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObj
 
 	res := make(DynamicPartitionAccessObjects, 0)
 	for _, info := range p.TableScanAndPartitionInfos {
-		if info.tableScan.Table.GetPartitionInfo() == nil {
+		if info.TableScan.Table.GetPartitionInfo() == nil {
 			continue
 		}
-		ts := info.tableScan
+		ts := info.TableScan
 		asName := ""
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O
 		}
-		accessObj := getDynamicAccessPartition(sctx, ts.Table, info.physPlanPartInfo, asName)
+		accessObj := getDynamicAccessPartition(sctx, ts.Table, info.PhysPlanPartInfo, asName)
 		if accessObj != nil {
 			res = append(res, accessObj)
 		}
@@ -369,7 +300,7 @@ func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObj
 	return res
 }
 
-func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, p *PhysPlanPartInfo) base.AccessObject {
+func getAccessObjectFromIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexScan, p *physicalop.PhysPlanPartInfo) base.AccessObject {
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
@@ -386,12 +317,12 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
+	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*physicalop.PhysicalIndexScan), p.PlanPartInfo)
 }
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexLookUpReader) AccessObject(sctx base.PlanContext) base.AccessObject {
-	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*PhysicalIndexScan), p.PlanPartInfo)
+	return getAccessObjectFromIndexScan(sctx, p.IndexPlans[0].(*physicalop.PhysicalIndexScan), p.PlanPartInfo)
 }
 
 // AccessObject implements PartitionAccesser interface.
@@ -399,7 +330,7 @@ func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.Acce
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
-	ts := p.TablePlans[0].(*PhysicalTableScan)
+	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
 	asName := ""
 	if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 		asName = ts.TableAsName.O

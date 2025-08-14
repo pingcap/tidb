@@ -30,6 +30,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -93,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -184,7 +185,7 @@ func (h *StmtHistory) Count() int {
 
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
-	processInfo atomic.Pointer[util.ProcessInfo]
+	processInfo atomic.Pointer[sessmgr.ProcessInfo]
 	txn         LazyTxn
 
 	mu struct {
@@ -207,7 +208,7 @@ type session struct {
 	sessionPlanCache sessionctx.SessionPlanCache
 
 	sessionVars    *variable.SessionVars
-	sessionManager util.SessionManager
+	sessionManager sessmgr.Manager
 
 	pctx    *planContextImpl
 	exprctx *sessionexpr.ExprContext
@@ -433,11 +434,11 @@ func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	return s.sessionPlanCache
 }
 
-func (s *session) SetSessionManager(sm util.SessionManager) {
+func (s *session) SetSessionManager(sm sessmgr.Manager) {
 	s.sessionManager = sm
 }
 
-func (s *session) GetSessionManager() util.SessionManager {
+func (s *session) GetSessionManager() sessmgr.Manager {
 	return s.sessionManager
 }
 
@@ -880,8 +881,7 @@ func (s *session) tryReplaceWriteConflictError(ctx context.Context, oldErr error
 	inErr, _ := originErr.(*errors.Error)
 	// we don't want to modify the oldErr, so copy the args list
 	oldArgs := inErr.Args()
-	args := make([]any, len(oldArgs))
-	copy(args, oldArgs)
+	args := slices.Clone(oldArgs)
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	if is == nil {
 		return nil
@@ -1246,9 +1246,9 @@ func getSessionFactoryWithDom(store kv.Storage) func(*domain.Domain) (pools.Reso
 	return getSessionFactoryInternal(store, CreateSessionWithDomain)
 }
 
-func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string) pools.Factory {
+func getCrossKSSessionFactory(currKSStore kv.Storage, targetKS string, schemaValidator validatorapi.Validator) pools.Factory {
 	facWithDom := getSessionFactoryInternal(currKSStore, func(store kv.Storage, _ *domain.Domain) (*session, error) {
-		return createCrossKSSession(store, targetKS)
+		return createCrossKSSession(store, targetKS, schemaValidator)
 	})
 	return func() (pools.Resource, error) {
 		return facWithDom(nil)
@@ -1442,8 +1442,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
-	res := make([]ast.StmtNode, len(tmp))
-	copy(res, tmp)
+	res := slices.Clone(tmp)
 	return res, warn, err
 }
 
@@ -1481,7 +1480,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		sqlCPUUsages = nil
 	}
 
-	pi := util.ProcessInfo{
+	pi := sessmgr.ProcessInfo{
 		ID:                    s.sessionVars.ConnectionID,
 		Port:                  s.sessionVars.Port,
 		DB:                    s.sessionVars.CurrentDB,
@@ -1560,8 +1559,8 @@ func (s *session) UpdateProcessInfo() {
 	s.processInfo.Store(shallowCP)
 }
 
-func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
-	return util.OOMAlarmVariablesInfo{
+func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
+	return sessmgr.OOMAlarmVariablesInfo{
 		SessionAnalyzeVersion:         s.sessionVars.AnalyzeVersion,
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
@@ -3418,7 +3417,7 @@ func InitMDLVariableForBootstrap(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 	return nil
 }
 
@@ -3462,9 +3461,9 @@ func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
 		return nil
 	})
 	if isNull || !enable {
-		vardef.EnableMDL.Store(false)
+		vardef.SetEnableMDL(false)
 	} else {
-		vardef.EnableMDL.Store(true)
+		vardef.SetEnableMDL(true)
 	}
 	return isNull, err
 }
@@ -3491,7 +3490,7 @@ func InitMDLVariable(store kv.Storage) error {
 		}
 		return nil
 	})
-	vardef.EnableMDL.Store(enable)
+	vardef.SetEnableMDL(enable)
 	return err
 }
 
@@ -3884,7 +3883,7 @@ func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, dom, dom.GetSchemaValidator(), dom.InfoCache(), nil)
 }
 
-func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, error) {
+func createCrossKSSession(currKSStore kv.Storage, targetKS string, validator validatorapi.Validator) (*session, error) {
 	if currKSStore.GetKeyspace() == targetKS {
 		return nil, errors.New("cannot create session for the same keyspace")
 	}
@@ -3903,7 +3902,7 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string) (*session, er
 	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
-	return createSessionWithOpt(store, nil, isvalidator.NewNoop(), infoCache, nil)
+	return createSessionWithOpt(store, nil, validator, infoCache, nil)
 }
 
 func createSessionWithOpt(
@@ -4174,7 +4173,7 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() *util.ProcessInfo {
+func (s *session) ShowProcess() *sessmgr.ProcessInfo {
 	return s.processInfo.Load()
 }
 
@@ -4877,34 +4876,6 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		)
 	}
 	return true
-}
-
-// RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.
-func RemoveLockDDLJobs(s sessionapi.Session, job2ver map[int64]int64, job2ids map[int64]string, printLog bool) {
-	sv := s.GetSessionVars()
-	if sv.InRestrictedSQL {
-		return
-	}
-	sv.TxnCtxMu.Lock()
-	defer sv.TxnCtxMu.Unlock()
-	if sv.TxnCtx == nil {
-		return
-	}
-	sv.GetRelatedTableForMDL().Range(func(tblID, value any) bool {
-		for jobID, ver := range job2ver {
-			ids := util.Str2Int64Map(job2ids[jobID])
-			if _, ok := ids[tblID.(int64)]; ok && value.(int64) < ver {
-				delete(job2ver, jobID)
-				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
-				if elapsedTime > time.Minute && printLog {
-					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
-				} else {
-					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
-				}
-			}
-		}
-		return true
-	})
 }
 
 // GetDBNames gets the sql layer database names from the session.

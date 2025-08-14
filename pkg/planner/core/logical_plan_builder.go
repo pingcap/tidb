@@ -4152,10 +4152,10 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
 	}
 	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
 
@@ -4221,9 +4221,9 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo)
+		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+		statsTbl = statsHandle.GetPhysicalTableStats(pid, tblInfo)
 	}
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.
@@ -4487,7 +4487,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 			} else {
 				h := domain.GetDomain(b.ctx).StatsHandle()
-				tblStats := h.GetTableStats(tableInfo)
+				tblStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				globalStatsReady := tblStats.IsAnalyzed()
 				skipMissingPartition := b.ctx.GetSessionVars().SkipMissingPartitionStats
@@ -4586,7 +4586,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if !(b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
 		// Skip storage engine check for CreateView.
 		if b.capFlag&canExpandAST == 0 {
-			possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
+			possiblePaths, err = util.FilterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
 			if err != nil {
 				return nil, err
 			}
@@ -5621,7 +5621,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		VirtualAssignmentsOffset:  len(update.List),
 		IgnoreError:               update.IgnoreErr,
 	}.Init(b.ctx)
-	updt.names = p.OutputNames()
+	updt.SetOutputNames(p.OutputNames())
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved. (^flagEliminateProjection should also be applied in postOptimize)
 	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^rule.FlagEliminateProjection, p)
@@ -5709,11 +5709,11 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
 			if otherTable, ok := updateFromOtherAlias[tbl.Meta().ID]; ok {
 				if otherTable.pkUpdated || updatePK || otherTable.partitionColUpdated || updatePartitionCol {
-					return plannererrors.ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.names[content.Start].TblName.O)
+					return plannererrors.ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.OutputNames()[content.Start].TblName.O)
 				}
 			} else {
 				updateFromOtherAlias[tbl.Meta().ID] = tblUpdateInfo{
-					name:                updt.names[content.Start].TblName.O,
+					name:                updt.OutputNames()[content.Start].TblName.O,
 					pkUpdated:           updatePK,
 					partitionColUpdated: updatePartitionCol,
 				}
@@ -6147,7 +6147,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	proj.SetSchema(expression.NewSchema(finalProjCols...))
 	proj.SetOutputNames(finalProjNames)
 	p = proj
-	del.names = p.OutputNames()
+	del.SetOutputNames(p.OutputNames())
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
 	return del, err

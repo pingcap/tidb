@@ -12,6 +12,7 @@ go_library(
         "//pkg/ddl/logutil",
         "//pkg/ddl/util",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/metrics",
         "//pkg/sessionctx/vardef",
         "//pkg/util",
@@ -34,7 +35,7 @@ go_test(
     ],
     embed = [":schemaver"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//pkg/ddl/util",
         "//pkg/domain/serverinfo",

@@ -2187,7 +2187,7 @@
       },
       {
         "SQL": "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([and(not(like(test.t.c_str, abc, 92)), not(like(test.t.c_str, abd, 92)))])->Projection)"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([not(like(test.t.c_str, abc, 92)) not(like(test.t.c_str, abd, 92))])->Projection)"
       },
       {
         "SQL": "select a from t where c_str like '_abc'",
@@ -2356,15 +2356,14 @@
           "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "  └─Limit(Probe) 10000.00 root  offset:0, count:1",
-          "    └─MergeJoin 10000.00 root  inner join, left key:test.t.a, right key:test.t.a",
-          "      ├─IndexReader(Build) 17.98 root  index:Selection",
-          "      │ └─Selection 17.98 cop[tikv]  eq(test.t.a, test.t.a)",
-          "      │   └─IndexFullScan 17980.01 cop[tikv] table:t3, index:idx_a(a) keep order:true, stats:pseudo",
-          "      └─Projection(Probe) 17.98 root  test.t.a, test.t.b",
-          "        └─IndexLookUp 17.98 root  ",
-          "          ├─Selection(Build) 17.98 cop[tikv]  eq(test.t.a, test.t.a)",
-          "          │ └─IndexFullScan 17980.01 cop[tikv] table:t2, index:idx_a(a) keep order:true, stats:pseudo",
-          "          └─TableRowIDScan(Probe) 17.98 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    └─IndexHashJoin 10000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
+          "      ├─IndexReader(Build) 8919.00 root  index:Selection",
+          "      │ └─Selection 8919.00 cop[tikv]  eq(test.t.a, test.t.a)",
+          "      │   └─IndexFullScan 8919000.00 cop[tikv] table:t3, index:idx_a(a) keep order:false, stats:pseudo",
+          "      └─IndexLookUp(Probe) 11148.75 root  ",
+          "        ├─Selection(Build) 11148.75 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+          "        │ └─IndexRangeScan 11159909.91 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
+          "        └─TableRowIDScan(Probe) 11148.75 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
