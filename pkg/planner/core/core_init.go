@@ -132,13 +132,9 @@ func init() {
 	utilfuncp.GetCost4PhysicalIndexLookUpReader = getCost4PhysicalIndexLookUpReader
 	utilfuncp.GetPlanCostVer14PhysicalIndexLookUpReader = getPlanCostVer14PhysicalIndexLookUpReader
 	utilfuncp.GetPlanCostVer24PhysicalIndexLookUpReader = getPlanCostVer24PhysicalIndexLookUpReader
-	utilfuncp.ClonePhysicalPlan = clonePhysicalPlan
+	utilfuncp.ResolveIndices4PhysicalIndexLookUpReader = resolveIndices4PhysicalIndexLookUpReader
 	utilfuncp.GetAccessObjectFromIndexScan = getAccessObjectFromIndexScan
-	utilfuncp.ResolveIndicesForVirtualColumn = resolveIndicesForVirtualColumn
-	utilfuncp.FlattenPushDownPlan = flattenPushDownPlan
 	utilfuncp.LoadTableStats = loadTableStats
-	utilfuncp.AppendChildCandidate = appendChildCandidate
-	utilfuncp.GetTblStats = getTblStats
 
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow

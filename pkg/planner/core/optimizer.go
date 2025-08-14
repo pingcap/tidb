@@ -465,7 +465,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	tableReader, isTableReader := p.(*PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		mergeContinuousSelections(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		tableReader.TablePlans = physicalop.FlattenPushDownPlan(tableReader.tablePlan)
 	}
 }
 

@@ -350,8 +350,8 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 		tableRows = min(tableRows, float64(p.PushedLimit.Count)) // rows to scan on the table side
 	}
 
-	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.IndexPlan), p.IndexPlan.Schema().Columns, true, false)
-	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
+	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.IndexPlan), p.IndexPlan.Schema().Columns, true, false)
+	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)

@@ -67,10 +67,10 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 		return nil, err
 	}
 	cloned.PhysicalSchemaProducer = *base
-	if cloned.IndexPlans, err = utilfuncp.ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
+	if cloned.IndexPlans, err = ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
 		return nil, err
 	}
-	if cloned.TablePlans, err = utilfuncp.ClonePhysicalPlan(newCtx, p.TablePlans); err != nil {
+	if cloned.TablePlans, err = ClonePhysicalPlan(newCtx, p.TablePlans); err != nil {
 		return nil, err
 	}
 	if cloned.IndexPlan, err = p.IndexPlan.Clone(newCtx); err != nil {
@@ -107,12 +107,12 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 
 // GetIndexNetDataSize return the estimated total size in bytes via network transfer.
 func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), utilfuncp.GetTblStats(p.IndexPlan), p.IndexPlan.Schema().Columns, true, false) * p.IndexPlan.StatsCount()
+	return cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.IndexPlan), p.IndexPlan.Schema().Columns, true, false) * p.IndexPlan.StatsCount()
 }
 
 // GetAvgTableRowSize return the average row size of each final row.
 func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), utilfuncp.GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlan), p.TablePlan.Schema().Columns, false, false)
 }
 
 // BuildPlanTrace implements op.PhysicalPlan interface.
@@ -131,10 +131,10 @@ func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.IndexPlan != nil {
-		utilfuncp.AppendChildCandidate(p, p.IndexPlan, op)
+		AppendChildCandidate(p, p.IndexPlan, op)
 	}
 	if p.TablePlan != nil {
-		utilfuncp.AppendChildCandidate(p, p.TablePlan, op)
+		AppendChildCandidate(p, p.TablePlan, op)
 	}
 }
 
@@ -194,10 +194,15 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = utilfuncp.FlattenPushDownPlan(p.TablePlan)
-	p.IndexPlans = utilfuncp.FlattenPushDownPlan(p.IndexPlan)
+	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.IndexPlans = FlattenPushDownPlan(p.IndexPlan)
 	p.SetSchema(p.TablePlan.Schema())
 	return &p
+}
+
+// ResolveIndices implements Plan interface.
+func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
+	return utilfuncp.ResolveIndices4PhysicalIndexLookUpReader(p)
 }
 
 // CloneForPlanCache implements the base.Plan interface.
@@ -223,8 +228,8 @@ func (p *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (
 		}
 		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
 	}
-	cloned.IndexPlans = utilfuncp.FlattenPushDownPlan(cloned.IndexPlan)
-	cloned.TablePlans = utilfuncp.FlattenPushDownPlan(cloned.TablePlan)
+	cloned.IndexPlans = FlattenPushDownPlan(cloned.IndexPlan)
+	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
 	if p.ExtraHandleCol != nil {
 		if p.ExtraHandleCol.SafeToShareAcrossSession() {
 			cloned.ExtraHandleCol = p.ExtraHandleCol
@@ -236,37 +241,6 @@ func (p *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) (
 	cloned.CommonHandleCols = utilfuncp.CloneColumnsForPlanCache(p.CommonHandleCols, nil)
 	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
 	return cloned, true
-}
-
-// ResolveIndices implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
-	err = utilfuncp.ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())
-	if err != nil {
-		return err
-	}
-	err = p.TablePlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	err = p.IndexPlan.ResolveIndices()
-	if err != nil {
-		return err
-	}
-	if p.ExtraHandleCol != nil {
-		newCol, err := p.ExtraHandleCol.ResolveIndices(p.TablePlan.Schema())
-		if err != nil {
-			return err
-		}
-		p.ExtraHandleCol = newCol.(*expression.Column)
-	}
-	for i, commonHandleCol := range p.CommonHandleCols {
-		newCol, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
-		if err != nil {
-			return err
-		}
-		p.CommonHandleCols[i] = newCol.(*expression.Column)
-	}
-	return
 }
 
 // GetCost computes the cost of apply operator.

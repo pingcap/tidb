@@ -80,15 +80,15 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		fullFieldName := fmt.Sprintf("%v.%v", vType.String(), vType.Field(i).Name)
 		switch fullFieldName { // handle some fields specially
 		case "core.PhysicalTableReader.TablePlans", "core.PhysicalIndexMergeReader.TablePlans":
-			c.write("cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)")
+			c.write("cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)")
 			continue
 		case "core.PhysicalIndexReader.IndexPlans":
-			c.write("cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)")
+			c.write("cloned.IndexPlans = physicalop.FlattenPushDownPlan(cloned.indexPlan)")
 			continue
 		case "core.PhysicalIndexMergeReader.PartialPlans":
 			c.write("cloned.PartialPlans = make([][]base.PhysicalPlan, len(op.PartialPlans))")
 			c.write("for i, plan := range cloned.partialPlans {")
-			c.write("cloned.PartialPlans[i] = flattenPushDownPlan(plan)")
+			c.write("cloned.PartialPlans[i] = physicalop.FlattenPushDownPlan(plan)")
 			c.write("}")
 			continue
 		}

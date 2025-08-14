@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -423,6 +422,9 @@ var GetPlanCostVer14PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskTyp
 var GetPlanCostVer24PhysicalIndexLookUpReader func(pp base.PhysicalPlan, taskType property.TaskType,
 	option *optimizetrace.PlanCostOption, args ...bool) (costusage.CostVer2, error)
 
+// ResolveIndices4PhysicalIndexLookUpReader is used to resolve indices for PhysicalIndexLookUpReader.
+var ResolveIndices4PhysicalIndexLookUpReader func(pp base.PhysicalPlan) (err error)
+
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
@@ -472,24 +474,9 @@ var DoOptimize func(
 
 // ****************************************** index related ***********************************************
 
-// ClonePhysicalPlan is used to clone physical plans.
-var ClonePhysicalPlan func(sctx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, error)
-
 // GetAccessObjectFromIndexScan is used to get access object from index scan.
 var GetAccessObjectFromIndexScan func(sctx base.PlanContext, is base.PhysicalPlan,
 	physPlanPartInfo any) base.AccessObject
 
-// ResolveIndicesForVirtualColumn is used to resolve indices for virtual column.
-var ResolveIndicesForVirtualColumn func(result []*expression.Column, schema *expression.Schema) error
-
-// FlattenPushDownPlan is used to flatten push down plan.
-var FlattenPushDownPlan func(p base.PhysicalPlan) []base.PhysicalPlan
-
 // LoadTableStats is used to load table stats.
 var LoadTableStats func(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
-
-// AppendChildCandidate is used to append child candidate.
-var AppendChildCandidate func(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp)
-
-// GetTblStats is used to get table stats.
-var GetTblStats func(copTaskPlan base.PhysicalPlan) *statistics.HistColl
