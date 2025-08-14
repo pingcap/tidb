@@ -17,12 +17,21 @@
 # It need TCP ports:
 # - pd: 2379, 2380, 2381, 2383, 2384
 # - tikv: 20160, 20161, 20162, 20180, 20181, 20182
-function main() {
-    local test_suite="$1"
-    local suite_timeout="${2:-40m}"
+# - tikv-worker: 19000
 
+set -euo pipefail
+
+function main() {
     local self_dir=$(realpath $(dirname "${BASH_SOURCE[0]}"))
-    "${self_dir}/bootstrap-test-with-cluster.sh" go test ./tests/realtikvtest/${test_suite} -v --tags=intest -with-real-tikv -timeout ${suite_timeout}
+    export TIDB_TEST_STORE_NAME="tikv"
+    export TIKV_PATH="127.0.0.1:2379"
+
+    if [ -d bin ]; then
+        ln -s "$(realpath bin)" "${self_dir}/bin"
+    fi
+    pushd "${self_dir}"
+        ../realtikvtest/scripts/next-gen/bootstrap-test-with-cluster.sh ./run-tests.sh "$@"
+    popd
 }
 
 main "$@"
