@@ -83,10 +83,10 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where not (b2 is NULL OR c2 = 5) -- NOT case ",
         "Plan": [
-          "Projection 9990.00 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
-          "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
-          "  ├─TableReader(Build) 7992.00 root  data:Selection",
-          "  │ └─Selection 7992.00 cop[tikv]  and(not(isnull(test.t2.b2)), ne(test.t2.c2, 5)), not(isnull(test.t2.a2))",
+          "Projection 8304.20 root  test.t1.a1, test.t1.b1, test.t1.c1, test.t2.a2, test.t2.b2, test.t2.c2",
+          "└─HashJoin 8304.20 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "  ├─TableReader(Build) 6643.36 root  data:Selection",
+          "  │ └─Selection 6643.36 cop[tikv]  ne(test.t2.c2, 5), not(isnull(test.t2.a2)), not(isnull(test.t2.b2))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
@@ -367,7 +367,7 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where not(b2 is not null) -- nested 'not' negative case",
         "Plan": [
-          "Selection 9990.00 root  not(not(isnull(test.t2.b2)))",
+          "Selection 9990.00 root  isnull(test.t2.b2)",
           "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
@@ -379,7 +379,7 @@
       {
         "SQL": "select * from t1 left outer join t2 on a1=a2 where not(not(b2 is null)) -- nested 'not' negative case",
         "Plan": [
-          "Selection 9990.00 root  not(not(isnull(test.t2.b2)))",
+          "Selection 9990.00 root  isnull(test.t2.b2)",
           "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2)]",
           "  ├─TableReader(Build) 9990.00 root  data:Selection",
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",

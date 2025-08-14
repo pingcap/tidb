@@ -361,7 +361,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer1(_ property.TaskType, option *
 		}
 		var isIdxScan bool
 		for p := partialScan; ; p = p.Children()[0] {
-			_, isIdxScan = p.(*PhysicalIndexScan)
+			_, isIdxScan = p.(*physicalop.PhysicalIndexScan)
 			if len(p.Children()) == 0 {
 				break
 			}
@@ -400,7 +400,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer1(_ property.TaskType, option *
 
 // GetPartialReaderNetDataSize returns the estimated total response data size of a partial read.
 func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan base.PhysicalPlan) float64 {
-	_, isIdxScan := plan.(*PhysicalIndexScan)
+	_, isIdxScan := plan.(*physicalop.PhysicalIndexScan)
 	return plan.StatsCount() * cardinality.GetAvgRowSize(p.SCtx(), getTblStats(plan), plan.Schema().Columns, isIdxScan, false)
 }
 
@@ -431,7 +431,8 @@ func getPlanCostVer14PhysicalTableScan(pp base.PhysicalPlan, option *optimizetra
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexScan) GetPlanCostVer1(_ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func getPlanCostVer14PhysicalIndexScan(pp base.PhysicalPlan, _ property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalIndexScan)
 	costFlag := option.CostFlag
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
@@ -441,11 +442,11 @@ func (p *PhysicalIndexScan) GetPlanCostVer1(_ property.TaskType, option *optimiz
 	var rowCount, rowSize, scanFactor float64
 	costModelVersion := p.SCtx().GetSessionVars().CostModelVersion
 	scanFactor = p.SCtx().GetSessionVars().GetScanFactor(p.Table)
-	if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= cost.SmallScanThreshold {
+	if p.Desc && p.Prop != nil && p.Prop.ExpectedCnt >= cost.SmallScanThreshold {
 		scanFactor = p.SCtx().GetSessionVars().GetDescScanFactor(p.Table)
 	}
 	rowCount = getCardinality(p, costFlag)
-	rowSize = p.getScanRowSize()
+	rowSize = p.GetScanRowSize()
 	selfCost = rowCount * rowSize * scanFactor
 	if option.GetTracer() != nil {
 		setPhysicalTableOrIndexScanCostDetail(p, option.GetTracer(), rowCount, rowSize, scanFactor, costModelVersion)
@@ -1275,7 +1276,7 @@ func estimateNetSeekCost(copTaskPlan base.PhysicalPlan) float64 {
 			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.SCtx().GetSessionVars().GetSeekFactor(x.Table)
 		}
 		return float64(len(x.Ranges)) * x.SCtx().GetSessionVars().GetSeekFactor(x.Table) // TiKV
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		return float64(len(x.Ranges)) * x.SCtx().GetSessionVars().GetSeekFactor(x.Table) // TiKV
 	default:
 		return estimateNetSeekCost(copTaskPlan.Children()[0])
@@ -1287,8 +1288,8 @@ func getTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
 	switch x := copTaskPlan.(type) {
 	case *physicalop.PhysicalTableScan:
 		return x.TblColHists
-	case *PhysicalIndexScan:
-		return x.tblColHists
+	case *physicalop.PhysicalIndexScan:
+		return x.TblColHists
 	default:
 		return getTblStats(copTaskPlan.Children()[0])
 	}
@@ -1299,7 +1300,7 @@ func getTableNetFactor(copTaskPlan base.PhysicalPlan) float64 {
 	switch x := copTaskPlan.(type) {
 	case *physicalop.PhysicalTableScan:
 		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)
-	case *PhysicalIndexScan:
+	case *physicalop.PhysicalIndexScan:
 		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)
 	default:
 		if len(x.Children()) == 0 {

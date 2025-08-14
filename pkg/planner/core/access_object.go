@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -133,39 +135,6 @@ func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 }
 
 // AccessObject implements DataAccesser interface.
-func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
-	res := &access.ScanAccessObject{
-		Database: p.DBName.O,
-	}
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	res.Table = tblName
-	if p.isPartition {
-		pi := p.Table.GetPartitionInfo()
-		if pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			res.Partitions = []string{partitionName}
-		}
-	}
-	if len(p.Index.Columns) > 0 {
-		index := access.IndexAccess{
-			Name: p.Index.Name.O,
-		}
-		for _, idxCol := range p.Index.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
-			} else {
-				index.Cols = append(index.Cols, idxCol.Name.O)
-			}
-		}
-		res.Indexes = []access.IndexAccess{index}
-	}
-	return res
-}
-
-// AccessObject implements DataAccesser interface.
 func (p *PointGetPlan) AccessObject() base.AccessObject {
 	res := &access.ScanAccessObject{
 		Database: p.dbName,
@@ -259,13 +228,13 @@ func getDynamicAccessPartition(sctx base.PlanContext, tblInfo *model.TableInfo, 
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	idxArr, err := PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
+	idxArr, err := partitionpruning.PartitionPruning(sctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
 		res.err = "partition pruning error:" + err.Error()
 		return res
 	}
 
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
+	if len(idxArr) == 1 && idxArr[0] == rule.FullRange {
 		res.AllPartitions = true
 		return res
 	}

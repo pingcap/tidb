@@ -56,7 +56,7 @@ func TestIssue43461(t *testing.T) {
 	}
 	require.True(t, ok)
 
-	is := idxLookUpPlan.IndexPlans[0].(*core.PhysicalIndexScan)
+	is := idxLookUpPlan.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	ts := idxLookUpPlan.TablePlans[0].(*physicalop.PhysicalTableScan)
 
 	require.NotEqual(t, is.Columns, ts.Columns)

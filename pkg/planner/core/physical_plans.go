@@ -17,7 +17,6 @@ package core
 import (
 	"fmt"
 	"strconv"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -34,11 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -58,7 +54,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.NominalSort{}
 	_ base.PhysicalPlan = &physicalop.PhysicalLock{}
 	_ base.PhysicalPlan = &physicalop.PhysicalLimit{}
-	_ base.PhysicalPlan = &PhysicalIndexScan{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexScan{}
 	_ base.PhysicalPlan = &physicalop.PhysicalTableScan{}
 	_ base.PhysicalPlan = &PhysicalTableReader{}
 	_ base.PhysicalPlan = &PhysicalIndexReader{}
@@ -318,8 +314,8 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
 		default:
-			is := p.IndexPlans[0].(*PhysicalIndexScan)
-			p.PhysicalSchemaProducer.SetSchema(is.dataSourceSchema)
+			is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+			p.PhysicalSchemaProducer.SetSchema(is.DataSourceSchema)
 		}
 		p.OutputColumns = p.Schema().Clone().Columns
 	}
@@ -378,8 +374,8 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
-	is := p.IndexPlans[0].(*PhysicalIndexScan)
-	loadTableStats(ctx, is.Table, is.physicalTableID)
+	is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
+	loadTableStats(ctx, is.Table, is.PhysicalTableID)
 }
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
@@ -487,138 +483,6 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
 	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
 	loadTableStats(ctx, ts.Table, ts.PhysicalTableID)
-}
-
-// PhysicalIndexScan represents an index scan plan.
-type PhysicalIndexScan struct {
-	physicalop.PhysicalSchemaProducer
-
-	// AccessCondition is used to calculate range.
-	AccessCondition []expression.Expression
-
-	Table      *model.TableInfo `plan-cache-clone:"shallow"` // please see comment on genPlanCloneForPlanCacheCode.
-	Index      *model.IndexInfo `plan-cache-clone:"shallow"`
-	IdxCols    []*expression.Column
-	IdxColLens []int
-	Ranges     []*ranger.Range     `plan-cache-clone:"shallow"`
-	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName     ast.CIStr           `plan-cache-clone:"shallow"`
-
-	TableAsName *ast.CIStr `plan-cache-clone:"shallow"`
-
-	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
-	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
-	dataSourceSchema *expression.Schema `plan-cache-clone:"shallow"`
-
-	rangeInfo string
-
-	// The index scan may be on a partition.
-	physicalTableID int64
-
-	GenExprs map[model.TableItemID]expression.Expression `plan-cache-clone:"must-nil"`
-
-	isPartition bool
-	Desc        bool
-	KeepOrder   bool
-	// ByItems only for partition table with orderBy + pushedLimit
-	ByItems []*util.ByItems
-
-	// DoubleRead means if the index executor will read kv two times.
-	// If the query requires the columns that don't belong to index, DoubleRead will be true.
-	DoubleRead bool
-
-	NeedCommonHandle bool
-
-	// required by cost model
-	// tblColHists contains all columns before pruning, which are used to calculate row-size
-	tblColHists   *statistics.HistColl `plan-cache-clone:"shallow"`
-	pkIsHandleCol *expression.Column
-
-	// constColsByCond records the constant part of the index columns caused by the access conds.
-	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
-	constColsByCond []bool
-
-	prop *property.PhysicalProperty `plan-cache-clone:"shallow"`
-
-	// usedStatsInfo records stats status of this physical table.
-	// It's for printing stats related information when display execution plan.
-	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexScan)
-	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.AccessCondition = util.CloneExprs(p.AccessCondition)
-	if p.Table != nil {
-		cloned.Table = p.Table.Clone()
-	}
-	if p.Index != nil {
-		cloned.Index = p.Index.Clone()
-	}
-	cloned.IdxCols = util.CloneCols(p.IdxCols)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.Ranges = util.CloneRanges(p.Ranges)
-	cloned.Columns = util.CloneColInfos(p.Columns)
-	if p.dataSourceSchema != nil {
-		cloned.dataSourceSchema = p.dataSourceSchema.Clone()
-	}
-
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition))
-	for _, expr := range p.AccessCondition {
-		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-	}
-	return corCols
-}
-
-const emptyPhysicalIndexScanSize = int64(unsafe.Sizeof(PhysicalIndexScan{}))
-
-// MemoryUsage return the memory usage of PhysicalIndexScan
-func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = emptyPhysicalIndexScanSize + p.PhysicalSchemaProducer.MemoryUsage() + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		p.DBName.MemoryUsage() + int64(len(p.rangeInfo)) + int64(len(p.Columns))*model.EmptyColumnInfoSize
-	if p.TableAsName != nil {
-		sum += p.TableAsName.MemoryUsage()
-	}
-	if p.pkIsHandleCol != nil {
-		sum += p.pkIsHandleCol.MemoryUsage()
-	}
-	if p.prop != nil {
-		sum += p.prop.MemoryUsage()
-	}
-	if p.dataSourceSchema != nil {
-		sum += p.dataSourceSchema.MemoryUsage()
-	}
-	// slice memory usage
-	for _, cond := range p.AccessCondition {
-		sum += cond.MemoryUsage()
-	}
-	for _, col := range p.IdxCols {
-		sum += col.MemoryUsage()
-	}
-	for _, rang := range p.Ranges {
-		sum += rang.MemUsage()
-	}
-	for iid, expr := range p.GenExprs {
-		sum += int64(unsafe.Sizeof(iid)) + expr.MemoryUsage()
-	}
-	return
 }
 
 // AddExtraPhysTblIDColumn for partition table.
@@ -840,19 +704,6 @@ func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
 	p.TargetTasks = append(p.TargetTasks, tasks...)
 }
 
-// IsPartition returns true and partition ID if it works on a partition.
-func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
-	return p.isPartition, p.physicalTableID
-}
-
-// IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(tc types.Context) bool {
-	return len(p.Ranges) == 1 &&
-		p.Index.Unique &&
-		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPointNonNullable(tc)
-}
-
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
 func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint64) map[string]uint64 {
 	for _, child := range plan.Children() {
@@ -868,6 +719,8 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 		// because they use the same stats and we do not set the stats info for tablePlan.
 		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
 	case *PhysicalIndexScan:
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
+	case *physicalop.PhysicalIndexScan:
 		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
 	case *physicalop.PhysicalTableScan:
 		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
@@ -898,13 +751,6 @@ type PhysicalCTE struct {
 
 	readerReceiver *PhysicalExchangeReceiver
 	storageSender  *PhysicalExchangeSender
-}
-
-// PhysicalCTETable is for CTE table.
-type PhysicalCTETable struct {
-	physicalop.PhysicalSchemaProducer
-
-	IDForStorage int
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -993,20 +839,6 @@ func (p *PhysicalCTE) MemoryUsage() (sum int64) {
 		sum += p.CTE.MemoryUsage()
 	}
 	return
-}
-
-// ExplainInfo overrides the ExplainInfo
-func (p *PhysicalCTETable) ExplainInfo() string {
-	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
-}
-
-// MemoryUsage return the memory usage of PhysicalCTETable
-func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	return p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt
 }
 
 // CTEDefinition is CTE definition for explain.

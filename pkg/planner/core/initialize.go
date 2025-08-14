@@ -55,12 +55,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalIndexScan.
-func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndexScan {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIdxScan, &p, offset)
-	return &p
-}
-
 // Init initializes PhysicalIndexMergeReader.
 func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexMergeReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexMerge, &p, offset)
@@ -88,15 +82,15 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 		case *physicalop.PhysicalTableScan:
 			p.SetSchema(p.PartialPlans[0][0].Schema())
 		default:
-			is := p.PartialPlans[0][0].(*PhysicalIndexScan)
-			p.SetSchema(is.dataSourceSchema)
+			is := p.PartialPlans[0][0].(*physicalop.PhysicalIndexScan)
+			p.SetSchema(is.DataSourceSchema)
 		}
 	}
 	if p.KeepOrder {
 		switch x := p.PartialPlans[0][0].(type) {
 		case *physicalop.PhysicalTableScan:
 			p.ByItems = x.ByItems
-		case *PhysicalIndexScan:
+		case *physicalop.PhysicalIndexScan:
 			p.ByItems = x.ByItems
 		}
 	}
@@ -224,13 +218,6 @@ func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 // Init only assigns type and context.
 func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTE {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalCTETable) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTETable {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
 	p.SetStats(stats)
 	return &p
 }
