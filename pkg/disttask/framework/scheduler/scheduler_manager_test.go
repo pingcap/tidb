@@ -42,7 +42,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
 	mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
 
-	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
+	sch, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	sch.Start()
 	defer sch.Stop()

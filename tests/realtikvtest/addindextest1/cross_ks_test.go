@@ -15,17 +15,14 @@
 package addindextest
 
 import (
-	"context"
+	"fmt"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/ddl"
+	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -35,10 +32,22 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 		t.Skip("This test is only for nextgen kernel, skip it in classic kernel")
 	}
 
-	t.Run("bootstrap system keyspace", func(t *testing.T) {
-		realtikvtest.CreateMockStoreAndSetup(t)
-	})
+	runtimes := realtikvtest.PrepareForCrossKSTest(t, "keyspace1")
+	userStore := runtimes["keyspace1"].Store
+	// submit add index sql on user keyspace
+	tk := testkit.NewTestKit(t, userStore)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("alter table t add index idx_a (a);")
+	tk.MustExec("admin check table t;")
+	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	jobIDStr := rs[0][0].(string)
+	jobID, err := strconv.Atoi(jobIDStr)
+	require.NoError(t, err)
+	taskKey := ddl.TaskKey(int64(jobID))
 
+<<<<<<< HEAD
 	t.Run("submit add index sql on user keyspace", func(t *testing.T) {
 		userStore := realtikvtest.CreateMockStoreAndSetup(t,
 			realtikvtest.WithKeyspaceName("cross_ks"))
@@ -87,4 +96,13 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("admin check table t;")
 	})
+=======
+	// job to user keyspace, task to system keyspace
+	sysKSTk := testkit.NewTestKit(t, kvstore.GetSystemStorage())
+	taskQuerySQL := fmt.Sprintf(`select sum(c) from (select count(1) c from mysql.tidb_global_task where task_key='%s'
+		union select count(1) c from mysql.tidb_global_task_history where task_key='%s') t`, taskKey, taskKey)
+	sysKSTk.MustQuery(taskQuerySQL).Check(testkit.Rows("1"))
+	// reverse check
+	tk.MustQuery(taskQuerySQL).Check(testkit.Rows("0"))
+>>>>>>> 9cd2b038332 (dxf/crossks: check by inner fields not global var and make crossks real tikvtest work (#62918))
 }

@@ -56,7 +56,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	require.NoError(t, err)
 	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
-	executor := factory(ctx, task, taskexecutor.NewParamForTest(mgr, nil, proto.NodeResourceForTest, ":4000"))
+	executor := factory(ctx, task, taskexecutor.NewParamForTest(mgr, nil, proto.NodeResourceForTest, ":4000", nil))
 	executor.Run()
 	checkSubtasks(proto.StepOne, proto.SubtaskStateSucceed)
 	// 2. stepTwo

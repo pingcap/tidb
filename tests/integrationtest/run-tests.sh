@@ -220,6 +220,7 @@ function start_tidb_server()
         config_file="disable_new_collation.toml"
     fi
     echo "start tidb-server, log file: $mysql_tester_log"
+<<<<<<< HEAD
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
         SERVER_PID=$!
@@ -227,6 +228,11 @@ function start_tidb_server()
         $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
         SERVER_PID=$!
     fi
+=======
+    $tidb_server -V
+    $tidb_server $start_options > $mysql_tester_log 2>&1 &
+    SERVER_PID=$!
+>>>>>>> 9cd2b038332 (dxf/crossks: check by inner fields not global var and make crossks real tikvtest work (#62918))
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 

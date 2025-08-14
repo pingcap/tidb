@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -52,6 +53,7 @@ var (
 
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
+	store     kv.Storage
 	taskTable TaskTable
 	mu        struct {
 		sync.RWMutex
@@ -70,13 +72,14 @@ type Manager struct {
 }
 
 // NewManager creates a new task executor Manager.
-func NewManager(ctx context.Context, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
+func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}
 
 	m := &Manager{
+		store:        store,
 		id:           id,
 		taskTable:    taskTable,
 		logger:       logger,
@@ -320,6 +323,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 		slotMgr:   m.slotManager,
 		nodeRc:    m.getNodeResource(),
 		execID:    m.id,
+		Store:     m.store,
 	})
 	err = executor.Init(m.ctx)
 	if err != nil {

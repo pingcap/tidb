@@ -10,6 +10,7 @@ go_library(
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/ingest/testutil",
+        "//pkg/disttask/framework/handle",
         "//pkg/domain",
         "//pkg/keyspace",
         "//pkg/kv",

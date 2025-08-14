@@ -47,7 +47,6 @@ go_library(
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/infoschema/validatorapi",
-        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/metabuild",

@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -575,6 +574,7 @@ type postProcessStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	taskID       int64
 	store        tidbkv.Storage
+	taskTbl      taskexecutor.TaskTable
 	taskMeta     *TaskMeta
 	taskKeyspace string
 	logger       *zap.Logger
@@ -587,6 +587,7 @@ var _ execute.StepExecutor = &postProcessStepExecutor{}
 func NewPostProcessStepExecutor(
 	taskID int64,
 	store tidbkv.Storage,
+	taskTbl taskexecutor.TaskTable,
 	taskMeta *TaskMeta,
 	taskKeyspace string,
 	logger *zap.Logger,
@@ -594,6 +595,7 @@ func NewPostProcessStepExecutor(
 	return &postProcessStepExecutor{
 		taskID:       taskID,
 		store:        store,
+		taskTbl:      taskTbl,
 		taskMeta:     taskMeta,
 		taskKeyspace: taskKeyspace,
 		logger:       logger,
@@ -626,14 +628,13 @@ func NewImportExecutor(
 	ctx context.Context,
 	task *proto.Task,
 	param taskexecutor.Param,
-	store tidbkv.Storage,
 ) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
-		store:            store,
+		store:            param.Store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -660,12 +661,9 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
 	store := e.store
-	if keyspace.IsRunningOnSystem() && task.Keyspace != tidbconfig.GetGlobalKeyspaceName() {
-		taskMgr, err := dxfstorage.GetTaskManager()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+	if e.store.GetKeyspace() != task.Keyspace {
+		var err error
+		err = e.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
 			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
 			return err
 		})
@@ -696,7 +694,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			store:    store,
 		}, nil
 	case proto.ImportStepPostProcess:
-		return NewPostProcessStepExecutor(task.ID, store, &taskMeta, task.Keyspace, logger), nil
+		return NewPostProcessStepExecutor(task.ID, store, e.GetTaskTable(), &taskMeta, task.Keyspace, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}

@@ -610,7 +610,7 @@ func NewDomainWithEtcdClient(
 	)
 	do.initDomainSysVars()
 
-	do.crossKSSessMgr = crossks.NewManager()
+	do.crossKSSessMgr = crossks.NewManager(do.store)
 	return do
 }
 
@@ -810,7 +810,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
-	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
+	if kv.IsUserKS(do.store) && startMode == ddl.Normal {
 		if err = do.loadSysKSInfoSchema(); err != nil {
 			return err
 		}
@@ -1051,7 +1051,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	taskManager := storage.NewTaskManager(do.sysSessionPool)
 	storage.SetTaskManager(taskManager)
 
-	if keyspace.IsRunningOnUser() {
+	if kv.IsUserKS(do.store) {
 		sp, err := do.GetKSSessPool(keyspace.System)
 		if err != nil {
 			return err
@@ -1085,7 +1085,7 @@ func (do *Domain) InitDistTaskLoop() error {
 		return err
 	}
 	disthandle.SetNodeResource(nodeRes)
-	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
+	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
 	}
@@ -1157,7 +1157,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID, nodeRes)
+		schedulerManager = scheduler.NewManager(ctx, do.store, taskManager, serverID, nodeRes)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {
