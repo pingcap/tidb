@@ -55,6 +55,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 )
 
@@ -189,7 +190,7 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
 	require.NoError(t, err)
 	defer func() {
 		rpcClient.Close()
@@ -586,7 +587,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
 	defer func() {
 		rpcClient.Close()
 		pdClient.Close()

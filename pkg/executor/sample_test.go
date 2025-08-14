@@ -137,7 +137,7 @@ func TestKeyspaceSample(t *testing.T) {
 	keyspaceMeta.Id = 2
 	keyspaceMeta.Name = "test_ks_name2"
 
-	opts := mockstore.WithKeyspaceMeta(&keyspaceMeta)
+	opts := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta)
 	store := testkit.CreateMockStore(t, opts)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
@@ -149,7 +149,7 @@ func TestKeyspaceSample(t *testing.T) {
 	keyspaceMeta02.Id = 3
 	keyspaceMeta02.Name = "test_ks_name3"
 
-	opts02 := mockstore.WithKeyspaceMeta(&keyspaceMeta02)
+	opts02 := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta02)
 	store02 := testkit.CreateMockStore(t, opts02)
 
 	tk02 := createSampleTestkit(t, store02)

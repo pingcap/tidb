@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/goleak"
 )
 
@@ -91,7 +92,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
-	client, pdClient, cluster, err := unistore.New("", nil, nil)
+	client, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
 	require.NoError(t, err)
 
 	unistore.BootstrapWithSingleStore(cluster)
