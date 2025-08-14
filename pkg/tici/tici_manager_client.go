@@ -38,7 +38,7 @@ type metaClient struct {
 	client MetaServiceClient
 }
 
-func newMetaClient(ctx context.Context, addr string) (*metaClient, error) {
+func newMetaClient(addr string) (*metaClient, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logutil.BgLogger().Error("failed to create grpc connection", zap.String("address", addr), zap.Error(err))
@@ -86,7 +86,7 @@ func NewManagerCtx(ctx context.Context, client *clientv3.Client) (*ManagerCtx, e
 
 	var metaClient *metaClient
 	if addr, err := getMetaServiceLeaderAddress(ctx, client); err == nil {
-		metaClient, err = newMetaClient(ctx, addr)
+		metaClient, err = newMetaClient(addr)
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +140,7 @@ func (t *ManagerCtx) updateClient(ch clientv3.WatchChan) {
 					if t.metaClient != nil {
 						t.metaClient.Close()
 					}
-					metaClient, err := newMetaClient(t.ctx, string(event.Kv.Value))
+					metaClient, err := newMetaClient(string(event.Kv.Value))
 					if err != nil {
 						t.metaClient = nil
 						t.err = err
