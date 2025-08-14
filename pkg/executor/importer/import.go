@@ -805,7 +805,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if opt, ok := specifiedOptions[groupKeyOption]; ok {
 		v, err := optAsString(opt)
-		if err != nil || naming.CheckWithMaxLen(v, 256) != nil {
+		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.GroupKey = v

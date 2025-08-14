@@ -353,7 +353,7 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 	var rs []chunk.Row
 	err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-			`select max(state_update_time) from
+			`select FROM_UNIXTIME(max(state_update_time)) from
 				(select state_update_time from mysql.tidb_background_subtask where task_key = %?
 					union
 				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?

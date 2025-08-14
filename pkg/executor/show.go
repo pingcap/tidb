@@ -2643,6 +2643,7 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 			gInfo.updateTime = updateTime
 		}
 
+		// See pkg/executor/importer/job.go for job status
 		gInfo.jobCount++
 		switch info.Status {
 		case "pending":
