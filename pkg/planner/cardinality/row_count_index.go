@@ -48,7 +48,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		debugtrace.EnterContextCommon(sctx)
 		debugTraceGetRowCountInput(sctx, idxID, indexRanges)
 		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result.Est)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
@@ -402,7 +402,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
 		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result.Est)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}

@@ -1005,7 +1005,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result.Est)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
