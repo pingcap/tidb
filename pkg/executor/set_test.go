@@ -452,7 +452,10 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = marker")
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("MARKER"))
+	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '‹-120›'"))
 
+	tk.MustExec("set global tidb_redact_log = 1")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
