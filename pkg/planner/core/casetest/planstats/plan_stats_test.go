@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -420,7 +421,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			}
 
 			// call the function
-			res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+			res := rule.CollectDependingVirtualCols(tblID2Tbl, neededItems)
 
 			// record and check the output
 			cols := make([]string, 0, len(res))

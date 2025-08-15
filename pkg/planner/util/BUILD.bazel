@@ -57,7 +57,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/meta/model",
-        "//pkg/planner/core",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",

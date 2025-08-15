@@ -3444,6 +3444,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
 			DistributionJobID:     show.DistributionJobID,
+			ImportGroupKey:        show.ShowGroupKey,
 		},
 	}.Init(b.ctx)
 	isView := false
@@ -4497,6 +4498,13 @@ var (
 	// `SHOW IMPORT JOBS`, this structure is used to avoid hardcoding these indexs,
 	// so adding new fields does not require modifying all the tests.
 	ImportIntoFieldMap = make(map[string]int)
+
+	showImportGroupsNames = []string{"Group_Key", "Total_Jobs",
+		"Pending", "Running", "Completed", "Failed", "Cancelled",
+		"First_Job_Create_Time", "Last_Job_Update_Time"}
+	showImportGroupsFTypes = []byte{mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+		mysql.TypeTimestamp, mysql.TypeTimestamp}
 
 	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
 	ImportIntoDataSource = "data source"
@@ -5904,6 +5912,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowImportJobs:
 		names = importIntoSchemaNames
 		ftypes = ImportIntoSchemaFTypes
+	case ast.ShowImportGroups:
+		names = showImportGroupsNames
+		ftypes = showImportGroupsFTypes
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes

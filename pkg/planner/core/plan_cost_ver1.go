@@ -283,7 +283,7 @@ func (p *PhysicalTableReader) GetPlanCostVer1(_ property.TaskType, option *optim
 		p.PlanCost /= float64(sqlScanConcurrency)
 	case kv.TiFlash:
 		var concurrency, rowSize, seekCost float64
-		_, isMPP := p.tablePlan.(*PhysicalExchangeSender)
+		_, isMPP := p.tablePlan.(*physicalop.PhysicalExchangeSender)
 		if isMPP {
 			// mpp protocol
 			concurrency = p.SCtx().GetSessionVars().CopTiFlashConcurrencyFactor
@@ -1215,23 +1215,6 @@ func getPlanCostVer14PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 	return p.PlanCost, nil
 }
 
-// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalExchangeReceiver) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
-	costFlag := option.CostFlag
-	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCost, nil
-	}
-	childCost, err := p.Children()[0].GetPlanCostVer1(taskType, option)
-	if err != nil {
-		return 0, err
-	}
-	p.PlanCost = childCost
-	// accumulate net cost
-	p.PlanCost += getCardinality(p.Children()[0], costFlag) * p.SCtx().GetSessionVars().GetNetworkFactor(nil)
-	p.PlanCostInit = true
-	return p.PlanCost, nil
-}
-
 func getOperatorActRows(operator base.PhysicalPlan) float64 {
 	if operator == nil {
 		return 0
@@ -1247,6 +1230,24 @@ func getOperatorActRows(operator base.PhysicalPlan) float64 {
 		actRows = 0.0 // no data for this operator
 	}
 	return actRows
+}
+
+// getPlanCostVer1PhysicalExchangeReceiver calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func getPlanCostVer1PhysicalExchangeReceiver(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+	p := pp.(*physicalop.PhysicalExchangeReceiver)
+	costFlag := option.CostFlag
+	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCost, nil
+	}
+	childCost, err := p.Children()[0].GetPlanCostVer1(taskType, option)
+	if err != nil {
+		return 0, err
+	}
+	p.PlanCost = childCost
+	// accumulate net cost
+	p.PlanCost += getCardinality(p.Children()[0], costFlag) * p.SCtx().GetSessionVars().GetNetworkFactor(nil)
+	p.PlanCostInit = true
+	return p.PlanCost, nil
 }
 
 func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {

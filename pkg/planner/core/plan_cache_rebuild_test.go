@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -288,7 +289,7 @@ func TestCheckPlanClone(t *testing.T) {
 	// same sctx
 	l1.TblID2Handle[1] = nil
 	l2.TblID2Handle[1] = nil
-	ctx := core.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer ctx.Close()
 	l1.SetSCtx(ctx)
 	l2.SetSCtx(ctx)

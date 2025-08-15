@@ -9,6 +9,7 @@ go_library(
         "nominal_sort.go",
         "physical_apply.go",
         "physical_cte_table.go",
+        "physical_exchange.go",
         "physical_expand.go",
         "physical_hash_agg.go",
         "physical_hash_join.go",

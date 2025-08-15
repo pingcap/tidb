@@ -72,6 +72,10 @@ import into t from '/file.csv' with skip_rows=-1;
 Error 8164 (HY000): Invalid option value for skip_rows
 import into t from '/file.csv' with skip_rows=true;
 Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with group_key = "invalid@";
+Error 8164 (HY000): Invalid option value for group_key
+import into t from '/file.csv' with group_key;
+Error 8164 (HY000): Invalid option value for group_key
 import into t from '/file.csv' with split_file='aa';
 Error 8164 (HY000): Invalid option value for split_file
 import into t from '/file.csv' with split_file;
