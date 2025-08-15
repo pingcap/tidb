@@ -533,6 +533,11 @@ func (s *BaseScheduler) scheduleSubTask(
 		//   - subtasks of T1 and T2 are all scheduled to N1
 		//   - later we have a task T3 of thread 8, we can schedule it to N2.
 		pos := i % len(adjustedEligibleNodes)
+		//if len(metas) == 1 {
+		//	// sort the adjustedEligibleNodes
+		//	sort.Strings(adjustedEligibleNodes)
+		//	pos = int(task.ID) % len(adjustedEligibleNodes)
+		//}
 		instanceID := adjustedEligibleNodes[pos]
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
