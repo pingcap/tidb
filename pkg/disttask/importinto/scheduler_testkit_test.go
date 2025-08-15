@@ -55,7 +55,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	// create job
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// create another job, start it, and fail it.
 	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	logicalPlan.JobID = jobID
 	bs, err = logicalPlan.ToTaskMeta()
@@ -154,7 +154,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 	// create another job, start it, and cancel it.
 	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	logicalPlan.JobID = jobID
 	bs, err = logicalPlan.ToTaskMeta()
@@ -206,7 +206,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	// create job
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-		"root", &importer.ImportParameters{}, 123)
+		"root", "", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
