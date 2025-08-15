@@ -428,7 +428,7 @@ func TestShowImportGroup(t *testing.T) {
 			"root", job.GroupKey, &importer.ImportParameters{}, 1000)
 		require.NoError(t, err)
 
-		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, nil)
+		taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
 
 		switchTaskStep(ctx, t, manager, taskID, proto.ImportStepEncodeAndSort)
