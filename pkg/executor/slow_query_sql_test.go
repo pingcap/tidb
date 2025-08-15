@@ -105,7 +105,7 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set @@globa.tidb_redact_log=0;")
+		tk.MustExec("set @@global.tidb_redact_log=0;")
 	}()
 
 	tk.MustExec(`use test`)
