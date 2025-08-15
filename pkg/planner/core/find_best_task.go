@@ -1181,8 +1181,14 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+<<<<<<< HEAD
 				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+=======
+				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				isDNFOnlyEquals := c.hasOnlyEqualPredicatesInDNF()
+				if preferMerge || isDNFOnlyEquals || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
+>>>>>>> 3fc94685bf3 (planner: Skyline pruning to include equals within DNF (#62956))
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1194,6 +1200,60 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	}
 
 	return candidates
+}
+
+// hasOnlyEqualPredicatesInDNF checks if all access conditions in DNF form are equal predicates
+func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
+	// Exit if this isn't a DNF condition or has no access conditions
+	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
+		return false
+	}
+	// If the minimum number of access conditions required for DNF is more than 1, then each OR condition
+	// must have at least 1 equal predicates to satisfy the DNF requirement. Return true.
+	if c.path.MinAccessCondsForDNFCond > 1 {
+		return true
+	}
+
+	// Helper function to check if a condition is an equal/IN predicate or a LogicOr of equal/IN predicates
+	var isEqualPredicateOrOr func(expr expression.Expression) bool
+	isEqualPredicateOrOr = func(expr expression.Expression) bool {
+		sf, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+
+		// Reject NOT operators - they can make predicates non-equal
+		if sf.FuncName.L == ast.UnaryNot {
+			return false
+		}
+
+		if sf.FuncName.L == ast.LogicOr {
+			for _, arg := range sf.GetArgs() {
+				if !isEqualPredicateOrOr(arg) {
+					return false
+				}
+			}
+			return true
+		}
+
+		// Check if it's an equal predicate (eq) or IN predicate (in)
+		// Also reject any other comparison operators that are not equal/IN
+		if sf.FuncName.L == ast.EQ || sf.FuncName.L == ast.In {
+			return true
+		}
+
+		// Reject all other comparison operators (LT, GT, LE, GE, NE, etc.)
+		// and any other functions that are not equal/IN predicates
+		return false
+	}
+
+	// Check all access conditions
+	for _, cond := range c.path.AccessConds {
+		if !isEqualPredicateOrOr(cond) {
+			return false
+		}
+	}
+	return true
 }
 
 func getPruningInfo(ds *logicalop.DataSource, candidates []*candidatePath, prop *property.PhysicalProperty) string {

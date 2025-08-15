@@ -12,7 +12,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 29,
+=======
+    shard_count = 31,
+>>>>>>> 3fc94685bf3 (planner: Skyline pruning to include equals within DNF (#62956))
     deps = [
         "//pkg/domain",
         "//pkg/errno",
