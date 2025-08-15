@@ -62,4 +62,5 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":br_lib"],
     flaky = True,
+    deps = ["@org_uber_go_goleak//:goleak"],
 )
