@@ -387,8 +387,6 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader-and-follower", val)
 	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
 
-	rv := GetSysVar(vardef.TiDBRedactLog)
-	require.NotNil(t, err)
 	for _, c := range []struct {
 		a string
 		b string
@@ -401,8 +399,9 @@ func TestVarsutil(t *testing.T) {
 		{"marker", "MARKER"},
 		{"2", "MARKER"},
 	} {
-		require.NoError(t, rv.SetGlobalFromHook(context.TODO(), v, c.a, false))
-		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBRedactLog)
+		err = v.GlobalVarsAccessor.SetGlobalSysVar(context.TODO(), vardef.TiDBRedactLog, c.a)
+		require.NoError(t, err)
+		val, err = v.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBRedactLog)
 		require.NoError(t, err)
 		require.Equal(t, c.b, val)
 	}
