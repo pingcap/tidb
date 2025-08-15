@@ -22,6 +22,9 @@ import (
 
 func LogDBReplaceMap(title string, dbReplaces map[UpstreamID]*DBReplace) {
 	for upstreamDbId, dbReplace := range dbReplaces {
+		if dbReplace.FilteredOut {
+			continue
+		}
 		log.Info(title, func() []zapcore.Field {
 			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
 			fields = append(fields,
@@ -29,6 +32,9 @@ func LogDBReplaceMap(title string, dbReplaces map[UpstreamID]*DBReplace) {
 				zap.Int64("upstreamId", upstreamDbId),
 				zap.Int64("downstreamId", dbReplace.DbID))
 			for upstreamTableID, tableReplace := range dbReplace.TableMap {
+				if tableReplace.FilteredOut {
+					continue
+				}
 				fields = append(fields,
 					zap.String("table", tableReplace.Name),
 					zap.Int64("upstreamId", upstreamTableID),

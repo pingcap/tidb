@@ -7,9 +7,16 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/parser/ast",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
+        "//pkg/planner/util",
+        "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",
+        "//pkg/table",
         "//pkg/util/execdetails",
+        "//pkg/util/hint",
+        "@com_github_pingcap_tipb//go-tipb",
     ],
 )

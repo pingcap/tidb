@@ -412,9 +412,13 @@ func (w *worker) runReorgJob(
 			rowCount := rc.getRowCount()
 			job.SetRowCount(rowCount)
 			if err != nil {
-				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
+				logutil.DDLLogger().Warn("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {
-				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
+				logutil.DDLLogger().Info("run reorg job done",
+					zap.Int64("jobID", reorgInfo.ID),
+					zap.Int64("handled rows", rowCount))
 			}
 
 			// Update a job's warnings.
@@ -974,6 +978,19 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 	info.dbInfo = dbInfo
 
 	return &info, nil
+}
+
+func getSplitKeysForTempIndexRanges(pid int64, elements []*meta.Element) []kv.Key {
+	splitKeys := make([]kv.Key, 0, len(elements))
+	for _, e := range elements {
+		if !bytes.Equal(e.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		tempIdxID := tablecodec.TempIndexPrefix | e.ID
+		splitKey := tablecodec.EncodeIndexSeekKey(pid, tempIdxID, nil)
+		splitKeys = append(splitKeys, splitKey)
+	}
+	return splitKeys
 }
 
 func encodeTempIndexRange(physicalID, firstIdxID, lastIdxID int64) (start kv.Key, end kv.Key) {

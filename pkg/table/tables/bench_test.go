@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	_ "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -47,7 +48,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 
 	// Pre-create data to be inserted
 	records := make([][]types.Datum, batchSize)
@@ -101,7 +102,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	vardef.EnableMDL.Store(true)
+	vardef.SetEnableMDL(true)
 
 	// Pre-create and add initial records
 	records := make([][]types.Datum, batchSize)
@@ -214,4 +215,12 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 	totalRecords := batchSize * b.N
 	avgTimePerRecord := float64(b.Elapsed().Nanoseconds()) / float64(totalRecords)
 	b.ReportMetric(avgTimePerRecord, "ns/record")
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkAddRecordInPipelinedDML,
+		BenchmarkRemoveRecordInPipelinedDML,
+		BenchmarkUpdateRecordInPipelinedDML,
+	)
 }

@@ -99,6 +99,7 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 		dom:               dom,
 		unsafeSession:     se,
 		upstreamClusterID: upstreamClusterID,
+		restoreID:         0,
 		LogFileManager: &LogFileManager{
 			startTS:   startTS,
 			restoreTS: restoreTS,

@@ -1178,14 +1178,14 @@ CTE_0	10.00	root		Non-Recursive CTE
   │   └─Limit	10.00	root		offset:0, count:1
   │     └─IndexReader	10.00	root		index:Limit
   │       └─Limit	10.00	cop[tikv]		offset:0, count:1
-  │         └─Selection	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-  │           └─IndexFullScan	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
+  │         └─Selection	809.10	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+  │           └─IndexFullScan	1011.37	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
   └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
     └─Limit	10.00	root		offset:0, count:1
       └─IndexReader	10.00	root		index:Limit
         └─Limit	10.00	cop[tikv]		offset:0, count:1
-          └─Selection	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-            └─IndexFullScan	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
+          └─Selection	809.10	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+            └─IndexFullScan	1011.37	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
 desc format='brief' WITH date_table AS (
 SELECT
 d.col_1 AS date,
@@ -1304,14 +1304,14 @@ CTE_0	10.00	root		Non-Recursive CTE
   │   └─Limit	10.00	root		offset:0, count:1
   │     └─IndexReader	10.00	root		index:Limit
   │       └─Limit	10.00	cop[tikv]		offset:0, count:1
-  │         └─Selection	10.00	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-  │           └─IndexFullScan	12.50	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
+  │         └─Selection	809.10	cop[tikv]		le(cast(cte1.table_c.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+  │           └─IndexFullScan	1011.37	cop[tikv]	table:table_c, index:index_col_1_3(col_1, col_3)	keep order:true, desc, stats:pseudo
   └─StreamAgg(Probe)	10.00	root		funcs:max(cte1.table_a.col_1)->Column#254
     └─Limit	10.00	root		offset:0, count:1
       └─IndexReader	10.00	root		index:Limit
         └─Limit	10.00	cop[tikv]		offset:0, count:1
-          └─Selection	10.00	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
-            └─IndexFullScan	12.50	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
+          └─Selection	809.10	cop[tikv]		le(cast(cte1.table_a.col_1, double BINARY), cast(cte1.table_d.col_1, double BINARY))
+            └─IndexFullScan	1011.37	cop[tikv]	table:table_a, index:index_col_1(col_1)	keep order:true, desc, stats:pseudo
 WITH date_table AS (
 SELECT
 d.col_1 AS date,

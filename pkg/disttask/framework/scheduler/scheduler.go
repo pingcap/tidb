@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -85,19 +87,17 @@ type BaseScheduler struct {
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
-	balanceSubtaskTick int
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
 }
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID),
-		zap.Stringer("task-type", task.Type),
-		zap.Bool("allocated-slots", param.allocatedSlots))
+	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
+	ctx = logutil.WithLogger(ctx, logger)
 	s := &BaseScheduler{
 		ctx:    ctx,
 		Param:  param,
@@ -105,6 +105,7 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	s.task.Store(task)
+	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
 	return s
 }
 
@@ -619,8 +620,8 @@ func GetLiveExecIDs(ctx context.Context) ([]string, error) {
 	return execIDs, nil
 }
 
-func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
-	var serverInfos map[string]*infosync.ServerInfo
+func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*serverinfo.ServerInfo, err error) {
+	var serverInfos map[string]*serverinfo.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
 	if intest.InTest && !etcd {
 		serverInfos = infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
@@ -634,7 +635,7 @@ func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 		return nil, errors.New("not found instance")
 	}
 
-	serverNodes = make([]*infosync.ServerInfo, 0, len(serverInfos))
+	serverNodes = make([]*serverinfo.ServerInfo, 0, len(serverInfos))
 	for _, serverInfo := range serverInfos {
 		serverNodes = append(serverNodes, serverInfo)
 	}
@@ -656,6 +657,11 @@ func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) (
 	return previousSubtaskMetas, nil
 }
 
+// GetPreviousSubtaskSummary gets previous subtask summaries.
+func (s *BaseScheduler) GetPreviousSubtaskSummary(taskID int64, step proto.Step) ([]*execute.SubtaskSummary, error) {
+	return s.taskMgr.GetAllSubtaskSummaryByStep(s.ctx, taskID, step)
+}
+
 // WithNewSession executes the function with a new session.
 func (s *BaseScheduler) WithNewSession(fn func(se sessionctx.Context) error) error {
 	return s.taskMgr.WithNewSession(fn)
@@ -664,6 +670,11 @@ func (s *BaseScheduler) WithNewSession(fn func(se sessionctx.Context) error) err
 // WithNewTxn executes the fn in a new transaction.
 func (s *BaseScheduler) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return s.taskMgr.WithNewTxn(ctx, fn)
+}
+
+// GetTaskMgr returns the task manager.
+func (s *BaseScheduler) GetTaskMgr() TaskManager {
+	return s.taskMgr
 }
 
 func (*BaseScheduler) isStepSucceed(cntByStates map[proto.SubtaskState]int64) bool {

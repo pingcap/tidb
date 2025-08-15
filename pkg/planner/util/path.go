@@ -42,12 +42,16 @@ type AccessPath struct {
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
-	// CorrCountAfterAccess is the row count after only applying the most filtering index columns.
-	// against the index. This is used when we don't have a full index statistics
-	// and we need to use the exponential backoff to estimate the row count.
-	// Case CorrCountAfterAccess > 0 : we use the exponential backoff to estimate the row count (such as we don't have a full index statistics)
-	// Default CorrCountAfterAccess = 0 : we use index of table estimate row coun directly (such as table full scan, point get etc)
-	CorrCountAfterAccess float64
+	// MinCountAfterAccess is a lower bound on CountAfterAccess, accounting for risks that could
+	// lead to overestimation, such as assuming correlation with exponential backoff when columns are actually independent.
+	// Case MinCountAfterAccess > 0 : we've encountered risky scenarios and have a potential lower row count estimation
+	// Default MinCountAfterAccess = 0 : we have not identified risks that could lead to lower row count
+	MinCountAfterAccess float64
+	// MaxCountAfterAccess is an upper bound on the CountAfterAccess, accounting for risks that could
+	// lead to underestimation, such as assuming independence between non-index columns.
+	// Case MaxCountAfterAccess > 0 : we've encountered risky scenarios and have a potential greater row count estimation
+	// Default MaxCountAfterAccess = 0 : we have not identified risks that could lead to greater row count
+	MaxCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
 	AccessConds     []expression.Expression
@@ -139,7 +143,8 @@ func (path *AccessPath) Clone() *AccessPath {
 		ConstCols:                    slices.Clone(path.ConstCols),
 		Ranges:                       CloneRanges(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
-		CorrCountAfterAccess:         path.CorrCountAfterAccess,
+		MinCountAfterAccess:          path.MinCountAfterAccess,
+		MaxCountAfterAccess:          path.MaxCountAfterAccess,
 		CountAfterIndex:              path.CountAfterIndex,
 		AccessConds:                  CloneExprs(path.AccessConds),
 		EqCondCount:                  path.EqCondCount,
@@ -197,7 +202,7 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters...) {
 		return nil, path.TableFilters
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)

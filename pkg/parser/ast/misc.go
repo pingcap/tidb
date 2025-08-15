@@ -61,6 +61,7 @@ var (
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
+	_ StmtNode = &RecommendIndexStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -211,6 +212,13 @@ type ExplainStmt struct {
 	Stmt    StmtNode
 	Format  string
 	Analyze bool
+
+	// Explore indicates whether to use EXPLAIN EXPLORE.
+	Explore bool
+	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
+	SQLDigest string
+	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
+	PlanDigest string
 }
 
 // Restore implements Node interface.
@@ -232,14 +240,24 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
-	if !n.Analyze || strings.ToLower(n.Format) != "row" {
+	if n.Explore {
+		ctx.WriteKeyWord("EXPLORE ")
+		if n.SQLDigest != "" {
+			ctx.WriteString(n.SQLDigest)
+		}
+	} else if !n.Analyze || strings.ToLower(n.Format) != "row" {
 		ctx.WriteKeyWord("FORMAT ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Format)
 		ctx.WritePlain(" ")
 	}
-	if err := n.Stmt.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore ExplainStmt.Stmt")
+	if n.PlanDigest != "" {
+		ctx.WriteString(n.PlanDigest)
+	}
+	if n.Stmt != nil {
+		if err := n.Stmt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ExplainStmt.Stmt")
+		}
 	}
 	return nil
 }
@@ -251,11 +269,13 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExplainStmt)
-	node, ok := n.Stmt.Accept(v)
-	if !ok {
-		return n, false
+	if n.Stmt != nil {
+		node, ok := n.Stmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Stmt = node.(StmtNode)
 	}
-	n.Stmt = node.(StmtNode)
 	return v.Leave(n)
 }
 
@@ -931,6 +951,9 @@ const (
 	SetCharset = "SetCharset"
 	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// CloudStorageURI is similar to above tidb var, but it's used in import into
+	// to set a separate param for a single import job.
+	CloudStorageURI = "cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
@@ -1374,41 +1397,6 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetPwdStmt)
-	return v.Leave(n)
-}
-
-type ChangeStmt struct {
-	stmtNode
-
-	NodeType string
-	State    string
-	NodeID   string
-}
-
-// Restore implements Node interface.
-func (n *ChangeStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CHANGE ")
-	ctx.WriteKeyWord(n.NodeType)
-	ctx.WriteKeyWord(" TO NODE_STATE ")
-	ctx.WritePlain("=")
-	ctx.WriteString(n.State)
-	ctx.WriteKeyWord(" FOR NODE_ID ")
-	ctx.WriteString(n.NodeID)
-	return nil
-}
-
-// SecureText implements SensitiveStatement interface.
-func (n *ChangeStmt) SecureText() string {
-	return fmt.Sprintf("change %s to node_state='%s' for node_id '%s'", strings.ToLower(n.NodeType), n.State, n.NodeID)
-}
-
-// Accept implements Node Accept interface.
-func (n *ChangeStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ChangeStmt)
 	return v.Leave(n)
 }
 
@@ -2552,6 +2540,8 @@ const (
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
 	AdminWorkloadRepoCreate
+	// adminTpCount is the total number of admin statement types.
+	adminTpCount
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -3486,6 +3476,8 @@ const (
 	BRIEKindShowJob
 	BRIEKindShowQuery
 	BRIEKindShowBackupMeta
+	// brieKindCount is the total number of BRIE kinds.
+	brieKindCount
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
 	BRIEOptionConcurrency
@@ -3856,6 +3848,23 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// CancelDistributionJobStmt represent CANCEL DISTRIBUTION JOB statement.
+type CancelDistributionJobStmt struct {
+	stmtNode
+	JobID int64
+}
+
+func (n *CancelDistributionJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelDistributionJobStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CANCEL DISTRIBUTION JOB ")
 	ctx.WritePlainf("%d", n.JobID)
 	return nil
 }

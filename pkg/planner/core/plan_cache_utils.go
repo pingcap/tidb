@@ -22,7 +22,6 @@ import (
 	"hash"
 	"math"
 	"slices"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -128,7 +127,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	paramCount := len(extractor.markers)
-	for i := 0; i < paramCount; i++ {
+	for i := range paramCount {
 		extractor.markers[i].SetOrder(i)
 	}
 
@@ -242,9 +241,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i] < keys[j]
-	})
+	slices.Sort(keys)
 
 	for _, k := range keys {
 		v := m[k]
@@ -259,10 +256,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	binding, ignored := bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
-	if ignored {
-		return "", binding, false, "ignore plan cache by binding", nil
-	}
+	binding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
@@ -401,7 +395,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			}
 			dirtyTableIDs = append(dirtyTableIDs, t.ID)
 		}
-		sort.Slice(dirtyTableIDs, func(i, j int) bool { return dirtyTableIDs[i] < dirtyTableIDs[j] })
+		slices.Sort(dirtyTableIDs)
 		for _, id := range dirtyTableIDs {
 			hash = codec.EncodeInt(hash, id)
 		}
@@ -548,7 +542,7 @@ func NewPlanCacheValue(
 	}
 
 	flat := FlattenPhysicalPlan(plan, false)
-	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
+	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat, false)
 
 	// calculate opt env hash using cacheKey and paramTypes
 	// (cacheKey, paramTypes) contains all factors that can affect the plan

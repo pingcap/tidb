@@ -18,20 +18,6 @@ import (
 	"sort"
 )
 
-// PlanGenerator is used to generate new Plan Candidates for this specified query.
-type PlanGenerator interface {
-	Generate(defaultSchema string, sql string) (plans []*BindingPlanInfo, err error)
-}
-
-// knobBasedPlanGenerator generates new plan candidates via adjusting knobs like cost factors, hints, etc.
-type knobBasedPlanGenerator struct {
-}
-
-func (*knobBasedPlanGenerator) Generate(string, string) (plans []*BindingPlanInfo, err error) {
-	// TODO: implement this
-	return nil, nil
-}
-
 // PlanPerfPredictor is used to score these plan candidates, returns their scores and gives some explanations.
 // If all scores are 0, means that no plan is recommended.
 type PlanPerfPredictor interface {

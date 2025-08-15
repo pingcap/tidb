@@ -35,12 +35,19 @@ import (
 // If a field is tagged with `plan-cache-clone:"must-nil"`, then it will be checked for nil before cloning.
 // If a field is not tagged, then it will be deep cloned.
 func GenPlanCloneForPlanCacheCode() ([]byte, error) {
-	var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
-		core.PhysicalProjection{}, core.PhysicalSort{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
-		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
-		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
-		core.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
-		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalLock{}, core.PhysicalUnionScan{}, core.PhysicalUnionAll{}}
+	var structures = []any{core.PhysicalTableReader{},
+		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{},
+		core.PhysicalIndexLookUpReader{}, core.PhysicalIndexMergeReader{},
+		core.Update{}, core.Delete{}, core.Insert{}}
+
+	// todo: add all back with physicalop.x
+	// var structures = []any{core.PhysicalTableScan{}, core.PhysicalIndexScan{}, core.PhysicalSelection{},
+	//		core.PhysicalProjection{}, core.PhysicalTopN{}, core.PhysicalStreamAgg{},
+	//		core.PhysicalHashAgg{}, core.PhysicalHashJoin{}, core.PhysicalMergeJoin{}, core.PhysicalTableReader{},
+	//		core.PhysicalIndexReader{}, core.PointGetPlan{}, core.BatchPointGetPlan{}, core.PhysicalLimit{},
+	//		physicalop.PhysicalIndexJoin{}, core.PhysicalIndexHashJoin{}, core.PhysicalIndexLookUpReader{},
+	//      core.PhysicalIndexMergeReader{},
+	//		core.Update{}, core.Delete{}, core.Insert{}, core.PhysicalUnionScan{}, physicalop.PhysicalUnionAll{}}
 	c := new(codeGen)
 	c.write(codeGenPlanCachePrefix)
 	for _, s := range structures {
@@ -60,7 +67,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 	c.write("func (op *%v) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {", vType.Name())
 	c.write("cloned := new(%v)", vType.Name())
 	c.write("*cloned = *op")
-	for i := 0; i < vType.NumField(); i++ {
+	for i := range vType.NumField() {
 		f := vType.Field(i)
 		if allowShallowClone(f) {
 			continue
@@ -91,20 +98,25 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		case "[]int", "[]byte", "[]float", "[]bool": // simple slice
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
-		case "core.physicalSchemaProducer", "core.basePhysicalAgg", "core.basePhysicalJoin":
+		case "physicalop.BasePhysicalAgg":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
-			c.write(`basePlan, baseOK := op.%v.cloneForPlanCacheWithSelf(newCtx, cloned)
+			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
 							if !baseOK {return nil, false}
 							cloned.%v = *basePlan`, fieldName, fieldName)
-		case "physicalop.BasePhysicalPlan":
+		case "physicalop.BasePhysicalJoin":
+			fieldName := strings.Split(f.Type.String(), ".")[1]
+			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
+							if !baseOK {return nil, false}
+							cloned.%v = *basePlan`, fieldName, fieldName)
+		case "physicalop.BasePhysicalPlan", "physicalop.PhysicalSchemaProducer":
 			fieldName := strings.Split(f.Type.String(), ".")[1]
 			c.write(`basePlan, baseOK := op.%v.CloneForPlanCacheWithSelf(newCtx, cloned)
 							if !baseOK {return nil, false}
 							cloned.%v = *basePlan`, fieldName, fieldName)
 		case "baseimpl.Plan":
 			c.write("cloned.%v = *op.%v.CloneWithNewCtx(newCtx)", f.Name, f.Name)
-		case "core.baseSchemaProducer":
-			c.write("cloned.%v = *op.%v.cloneForPlanCache(newCtx)", f.Name, f.Name)
+		case "physicalop.SimpleSchemaProducer":
+			c.write("cloned.%v = *op.%v.CloneSelfForPlanCache(newCtx)", f.Name, f.Name)
 		case "[]expression.Expression", "[]*expression.Column",
 			"[]*expression.Constant", "[]*expression.ScalarFunction":
 			structureName := strings.Split(f.Type.String(), ".")[1] + "s"
@@ -123,11 +135,13 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = newCtx", f.Name)
 		case "util.HandleCols":
 			c.write("if op.%v != nil {", f.Name)
-			c.write("cloned.%v = op.%v.Clone(newCtx.GetSessionVars().StmtCtx)", f.Name, f.Name)
-			c.write("}")
-		case "*core.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
-		case "*core.PhysPlanPartInfo", "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
+			c.write("}")
+		case "*physicalop.PushedDownLimit":
+			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
+		case "*physicalop.PhysPlanPartInfo":
+			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
+		case "*core.ColWithCmpFuncManager", "core.InsertGeneratedColumns":
 			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
 		case "kv.Handle":
 			c.write("if op.%v != nil {", f.Name)
@@ -141,10 +155,10 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = op.%v.Clone().(%v)", f.Name, f.Name, f.Type.String())
 			c.write("}")
 			c.write("}")
-		case "core.PhysicalIndexJoin":
+		case "physicalop.PhysicalIndexJoin":
 			c.write("inlj, ok := op.%v.CloneForPlanCache(newCtx)", f.Name)
 			c.write("if !ok {return nil, false}")
-			c.write("cloned.%v = *inlj.(*PhysicalIndexJoin)", f.Name)
+			c.write("cloned.%v = *inlj.(*physicalop.PhysicalIndexJoin)", f.Name)
 			c.write("cloned.Self = cloned")
 		case "base.PhysicalPlan":
 			c.write("if op.%v != nil {", f.Name)
@@ -167,7 +181,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("if op.%v != nil {", f.Name)
 			c.write("cloned.%v = make(map[int64][]util.HandleCols, len(op.%v))", f.Name, f.Name)
 			c.write("for k, v := range op.%v {", f.Name)
-			c.write("cloned.%v[k] = util.CloneHandleCols(newCtx.GetSessionVars().StmtCtx, v)", f.Name)
+			c.write("cloned.%v[k] = util.CloneHandleCols(v)", f.Name)
 			c.write("}}")
 		case "map[int64]*expression.Column":
 			c.write("if op.%v != nil {", f.Name)

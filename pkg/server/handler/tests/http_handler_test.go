@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -52,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
@@ -1150,7 +1151,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1164,7 +1165,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
 
 	// Two tables in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1232,7 +1233,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
-	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
@@ -1431,38 +1432,38 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	require.NoError(t, err)
 	ddlID := do.DDL().GetID()
 	// check the result for upgrade show
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s0": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           ddlID,
 				IP:           "127.0.0.1",
 				Port:         4000,
 				JSONServerID: 0,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver",
 					GitHash: "hash",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           "ID2",
 				IP:           "127.0.0.1",
 				Port:         4002,
 				JSONServerID: 2,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver2",
 					GitHash: "hash2",
 				},
 			},
 		},
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID:           "ID1",
 				IP:           "127.0.0.1",
 				Port:         4001,
 				JSONServerID: 1,
-				ServerVersionInfo: infosync.ServerVersionInfo{
+				VersionInfo: serverinfo.VersionInfo{
 					Version: "ver",
 					GitHash: "hash",
 				},
@@ -1548,8 +1549,8 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
 
-	ts.domain.InfoSyncer().Restart(ctx)
-	ts.domain.InfoSyncer().RestartTopology(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
 
 	testUpdateLabels := func() {
 		labels := map[string]string{}
@@ -1567,7 +1568,7 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		require.Equal(t, newLabels, labels)
 	}
 	testStoreTopology := func() {
-		require.NoError(t, ts.domain.InfoSyncer().StoreTopologyInfo(context.Background()))
+		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
 	}
 
 	done := make(chan struct{})

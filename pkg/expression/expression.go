@@ -298,8 +298,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	cols := make([]*Column, 0, 1)
-	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
+	cols := ExtractColumnsMapFromExpressions(isColumnInOperand, sf.GetArgs()...)
 	return len(cols) > 0
 }
 
@@ -922,7 +921,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // Set the skip cache to false when the caller will not change the logical plan tree.
 // it is currently closed only by pkg/planner/core.ExtractNotNullFromConds when to extractFD.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression, skipPlanCacheCheck bool) (Expression, error) {
-	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+	if skipPlanCacheCheck && MaybeOverOptimized4PlanCache(ctx, expr) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {

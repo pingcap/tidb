@@ -30,6 +30,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -915,10 +916,16 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
 
 	configFile = "config.toml.example"
+	if kerneltype.IsNextGen() {
+		configFile = "config.toml.nextgen.example"
+	}
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
+	if kerneltype.IsNextGen() {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	}
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
@@ -1423,4 +1430,12 @@ enforce-mpp = 1
 	err = conf.Load(configFile)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
+}
+
+func TestKeyspaceName(t *testing.T) {
+	conf := NewConfig()
+	conf.KeyspaceName = "#!"
+	require.ErrorContains(t, conf.Valid(), "is invalid")
+	conf.KeyspaceName = "abc"
+	require.NoError(t, conf.Valid())
 }

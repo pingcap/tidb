@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -63,7 +64,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	encodeFlatPlanTree(flat.Main, 0, &buf)
 	for _, cte := range flat.CTEs {
 		fop := cte[0]
-		cteDef := cte[0].Origin.(*CTEDefinition)
+		cteDef := cte[0].Origin.(*physicalop.CTEDefinition)
 		id := cteDef.CTE.IDForStorage
 		tp := plancodec.TypeCTEDefinition
 		taskTypeInfo := plancodec.EncodeTaskType(fop.IsRoot, fop.StoreType)
@@ -110,7 +111,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		plancodec.EncodePlanNode(
 			int(fop.Depth),
 			strconv.Itoa(fop.Origin.ID())+fop.Label.String(),
-			fop.Origin.TP(),
+			fop.Origin.TP(fop.IsINLProbeChild),
 			estRows,
 			taskTypeInfo,
 			fop.Origin.ExplainInfo(),
@@ -148,7 +149,7 @@ type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
 
-	ctes []*PhysicalCTE
+	ctes []*physicalop.PhysicalCTE
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
@@ -185,8 +186,8 @@ func (pn *planEncoder) encodeCTEPlan() {
 		return
 	}
 	explainedCTEPlan := make(map[int]struct{})
-	for i := 0; i < len(pn.ctes); i++ {
-		x := (*CTEDefinition)(pn.ctes[i])
+	for i := range pn.ctes {
+		x := (*physicalop.CTEDefinition)(pn.ctes[i])
 		// skip if the CTE has been explained, the same CTE has same IDForStorage
 		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
 			continue
@@ -248,7 +249,7 @@ func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, 
 		if copPlan.tablePlan != nil {
 			pn.encodePlan(copPlan.tablePlan, false, store, depth)
 		}
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		pn.ctes = append(pn.ctes, copPlan)
 	}
 }
@@ -289,7 +290,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 		p := fop.Origin.(base.PhysicalPlan)
 		plancodec.NormalizePlanNode(
 			int(fop.Depth-uint32(selectPlanOffset)),
-			fop.Origin.TP(),
+			fop.Origin.TP(fop.IsINLProbeChild),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),
 			&d.buf,
@@ -333,12 +334,12 @@ func NormalizePlan(p base.Plan) (normalized string, digest *parser.Digest) {
 func (d *planDigester) normalizePlanTree(p base.PhysicalPlan) {
 	d.encodedPlans = make(map[int]bool)
 	d.buf.Reset()
-	d.normalizePlan(p, true, kv.TiKV, 0)
+	d.normalizePlan(p, true, kv.TiKV, 0, false)
 }
 
-func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
+func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.StoreType, depth int, isChildOfINL bool) {
 	taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(isRoot, store)
-	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
+	plancodec.NormalizePlanNode(depth, p.TP(isChildOfINL), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++
@@ -346,22 +347,22 @@ func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.
 		if d.encodedPlans[child.ID()] {
 			continue
 		}
-		d.normalizePlan(child, isRoot, store, depth)
+		d.normalizePlan(child, isRoot, store, depth, isChildOfINL)
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		d.normalizePlan(x.tablePlan, false, x.StoreType, depth)
+		d.normalizePlan(x.tablePlan, false, x.StoreType, depth, false)
 	case *PhysicalIndexReader:
-		d.normalizePlan(x.indexPlan, false, store, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth, false)
 	case *PhysicalIndexLookUpReader:
-		d.normalizePlan(x.indexPlan, false, store, depth)
-		d.normalizePlan(x.tablePlan, false, store, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth, false)
+		d.normalizePlan(x.tablePlan, false, store, depth, true)
 	case *PhysicalIndexMergeReader:
 		for _, p := range x.partialPlans {
-			d.normalizePlan(p, false, store, depth)
+			d.normalizePlan(p, false, store, depth, false)
 		}
 		if x.tablePlan != nil {
-			d.normalizePlan(x.tablePlan, false, store, depth)
+			d.normalizePlan(x.tablePlan, false, store, depth, true)
 		}
 	}
 }

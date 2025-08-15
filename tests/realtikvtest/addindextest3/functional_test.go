@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -161,6 +162,7 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 }
 
 func TestAddIndexPresplitIndexRegions(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -256,6 +258,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 }
 
 func TestAddIndexPresplitFunctional(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

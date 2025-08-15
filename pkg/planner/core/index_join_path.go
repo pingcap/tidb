@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -27,17 +26,15 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -95,7 +92,7 @@ type indexJoinPathResult struct {
 	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
 	usedColsNDV    float64                 // the estimated NDV of the used columns on this index, the NDV of `t1(a, b)`
 	idxOff2KeyOff  []int
-	lastColManager *ColWithCmpFuncManager
+	lastColManager *physicalop.ColWithCmpFuncManager
 }
 
 // indexJoinPathInfo records necessary information to build IndexJoin.
@@ -136,7 +133,7 @@ func indexJoinPathNewMutableRange(
 	ranges []*ranger.Range,
 	path *util.AccessPath) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs) {
+	if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), relatedExprs...) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
 			ranges:        ranges,
@@ -217,10 +214,10 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
-	lastColManager := &ColWithCmpFuncManager{
+	lastColManager := &physicalop.ColWithCmpFuncManager{
 		TargetCol:         lastPossibleCol,
-		colLength:         path.IdxColLens[lastColPos],
-		affectedColSchema: expression.NewSchema(),
+		ColLength:         path.IdxColLens[lastColPos],
+		AffectedColSchema: expression.NewSchema(),
 	}
 	lastColAccess := indexJoinPathBuildColManager(indexJoinInfo, lastPossibleCol, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
@@ -315,7 +312,7 @@ func indexJoinPathConstructResult(
 	ranges ranger.MutableRanges,
 	path *util.AccessPath, accesses,
 	remained []expression.Expression,
-	lastColManager *ColWithCmpFuncManager,
+	lastColManager *physicalop.ColWithCmpFuncManager,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
 	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
@@ -531,7 +528,7 @@ func indexJoinPathFindUsefulEQIn(sctx planctx.PlanContext, indexJoinInfo *indexJ
 // indexJoinPathBuildColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
 // The returned value is just for outputting explain information
 func indexJoinPathBuildColManager(indexJoinInfo *indexJoinPathInfo,
-	nextCol *expression.Column, cwc *ColWithCmpFuncManager) []expression.Expression {
+	nextCol *expression.Column, cwc *physicalop.ColWithCmpFuncManager) []expression.Expression {
 	var lastColAccesses []expression.Expression
 loopOtherConds:
 	for _, filter := range indexJoinInfo.joinOtherConditions {
@@ -562,7 +559,7 @@ loopOtherConds:
 			}
 		}
 		lastColAccesses = append(lastColAccesses, sf)
-		cwc.appendNewExpr(funcName, anotherArg, affectedCols)
+		cwc.AppendNewExpr(funcName, anotherArg, affectedCols)
 	}
 	return lastColAccesses
 }
@@ -632,8 +629,7 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 }
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
-func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty,
-	planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
@@ -646,12 +642,16 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 	var innerCopTask base.Task
 	if prop.IndexJoinProp.TableRangeScan {
 		innerCopTask = buildDataSource2TableScanByIndexJoinProp(ds, prop)
+	} else {
+		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	}
-	innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	if innerCopTask.Invalid() {
 		return base.InvalidTask, 0, nil
 	}
 	planCounter.Dec(1)
+	if prop.TaskTp == property.RootTaskType {
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
+	}
 	return innerCopTask, 1, nil
 }
 
@@ -747,139 +747,6 @@ func getBestIndexJoinPathResult(
 		}
 	}
 	return bestResult, keyOff2IdxOff
-}
-
-// ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
-// It stores the compare functions and build ranges in execution phase.
-type ColWithCmpFuncManager struct {
-	TargetCol         *expression.Column
-	colLength         int
-	OpType            []string
-	opArg             []expression.Expression
-	TmpConstant       []*expression.Constant
-	affectedColSchema *expression.Schema  `plan-cache-clone:"shallow"`
-	compareFuncs      []chunk.CompareFunc `plan-cache-clone:"shallow"`
-}
-
-func (cwc *ColWithCmpFuncManager) cloneForPlanCache() *ColWithCmpFuncManager {
-	if cwc == nil {
-		return nil
-	}
-	cloned := new(ColWithCmpFuncManager)
-	if cwc.TargetCol != nil {
-		if cwc.TargetCol.SafeToShareAcrossSession() {
-			cloned.TargetCol = cwc.TargetCol
-		} else {
-			cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.colLength = cwc.colLength
-	cloned.OpType = make([]string, len(cwc.OpType))
-	copy(cloned.OpType, cwc.OpType)
-	cloned.opArg = cloneExpressionsForPlanCache(cwc.opArg, nil)
-	cloned.TmpConstant = cloneConstantsForPlanCache(cwc.TmpConstant, nil)
-	cloned.affectedColSchema = cwc.affectedColSchema
-	cloned.compareFuncs = cwc.compareFuncs
-	return cloned
-}
-
-func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
-	cwc.OpType = append(cwc.OpType, opName)
-	cwc.opArg = append(cwc.opArg, arg)
-	cwc.TmpConstant = append(cwc.TmpConstant, &expression.Constant{RetType: cwc.TargetCol.RetType})
-	for _, col := range affectedCols {
-		if cwc.affectedColSchema.Contains(col) {
-			continue
-		}
-		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
-		cwc.affectedColSchema.Append(col)
-	}
-}
-
-// CompareRow compares the rows for deduplicate.
-func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
-	for i, col := range cwc.affectedColSchema.Columns {
-		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
-		if ret != 0 {
-			return ret
-		}
-	}
-	return 0
-}
-
-// BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
-func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx *rangerctx.RangerContext, row chunk.Row) ([]*ranger.Range, error) {
-	exprs := make([]expression.Expression, len(cwc.OpType))
-	exprCtx := ctx.ExprCtx
-	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(exprCtx.GetEvalCtx(), row)
-		if err != nil {
-			return nil, err
-		}
-		cwc.TmpConstant[i].Value = constantArg
-		newExpr, err := expression.NewFunction(exprCtx, opType, types.NewFieldType(mysql.TypeTiny), cwc.TargetCol, cwc.TmpConstant[i])
-		if err != nil {
-			return nil, err
-		}
-		exprs = append(exprs, newExpr) // nozero
-	}
-	// We already limit range mem usage when buildTemplateRange for inner table of IndexJoin in optimizer phase, so we
-	// don't need and shouldn't limit range mem usage when we refill inner ranges during the execution phase.
-	ranges, _, _, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength, 0)
-	if err != nil {
-		return nil, err
-	}
-	return ranges, nil
-}
-
-func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
-	for i := range cwc.opArg {
-		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// String implements Stringer interface.
-func (cwc *ColWithCmpFuncManager) String() string {
-	buffer := bytes.NewBufferString("")
-	for i := range cwc.OpType {
-		fmt.Fprintf(buffer, "%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i])
-		if i < len(cwc.OpType)-1 {
-			buffer.WriteString(" ")
-		}
-	}
-	return buffer.String()
-}
-
-const emptyColWithCmpFuncManagerSize = int64(unsafe.Sizeof(ColWithCmpFuncManager{}))
-
-// MemoryUsage return the memory usage of ColWithCmpFuncManager
-func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
-	if cwc == nil {
-		return
-	}
-
-	sum = emptyColWithCmpFuncManagerSize + int64(cap(cwc.compareFuncs))*size.SizeOfFunc
-	if cwc.TargetCol != nil {
-		sum += cwc.TargetCol.MemoryUsage()
-	}
-	if cwc.affectedColSchema != nil {
-		sum += cwc.affectedColSchema.MemoryUsage()
-	}
-
-	for _, str := range cwc.OpType {
-		sum += int64(len(str))
-	}
-	for _, expr := range cwc.opArg {
-		sum += expr.MemoryUsage()
-	}
-	for _, cst := range cwc.TmpConstant {
-		sum += cst.MemoryUsage()
-	}
-	return
 }
 
 // appendTailTemplateRange appends empty datum for each range in originRanges.

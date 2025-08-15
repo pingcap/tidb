@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -35,11 +38,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -126,7 +132,7 @@ func TestGetPathByIndexName(t *testing.T) {
 }
 
 func TestRewriterPool(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -177,7 +183,7 @@ func TestDisableFold(t *testing.T) {
 		}},
 	}
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -209,8 +215,8 @@ func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
-	sort1 := &PhysicalSort{ByItems: byItems}
-	sort2 := &PhysicalSort{ByItems: byItems}
+	sort1 := &physicalop.PhysicalSort{ByItems: byItems}
+	sort2 := &physicalop.PhysicalSort{ByItems: byItems}
 	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
 		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, whiteList, nil)
@@ -247,7 +253,7 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tblInfo := &model.TableInfo{}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -282,7 +288,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	aggDescs := []*aggregation.AggFuncDesc{aggDesc1, aggDesc2}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -300,11 +306,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(tableReader))
 
 	// index scan
-	indexScan := &PhysicalIndexScan{
+	indexScan := &physicalop.PhysicalIndexScan{
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		dataSourceSchema: schema,
+		DataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
@@ -326,64 +332,62 @@ func TestPhysicalPlanClone(t *testing.T) {
 		TablePlans:     []base.PhysicalPlan{tableReader},
 		tablePlan:      tableScan,
 		ExtraHandleCol: col,
-		PushedLimit:    &PushedDownLimit{1, 2},
+		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
 	indexLookup = indexLookup.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
-	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &physicalop.PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
 
 	// maxOneRow
-	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow := &physicalop.PhysicalMaxOneRow{}
 	maxOneRow = maxOneRow.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
-	lim := &PhysicalLimit{Count: 1, Offset: 2}
+	lim := &physicalop.PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(lim))
 
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
-	sort := &PhysicalSort{ByItems: byItems}
+	sort := &physicalop.PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sort))
 
 	// topN
-	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
+	topN := &physicalop.PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
 	topN = topN.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
-	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
+	streamAgg := &physicalop.PhysicalStreamAgg{BasePhysicalAgg: physicalop.BasePhysicalAgg{
 		AggFuncs:     aggDescs,
 		GroupByItems: []expression.Expression{col, cst},
 	}}
-	streamAgg = streamAgg.initForStream(ctx, stats, 0)
-	streamAgg.SetSchema(schema)
+	streamAgg = streamAgg.InitForStream(ctx, stats, 0, schema).(*physicalop.PhysicalStreamAgg)
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &PhysicalHashAgg{
-		basePhysicalAgg: basePhysicalAgg{
+	hashAgg := &physicalop.PhysicalHashAgg{
+		BasePhysicalAgg: physicalop.BasePhysicalAgg{
 			AggFuncs:     aggDescs,
 			GroupByItems: []expression.Expression{col, cst},
 		},
 	}
-	hashAgg = hashAgg.initForHash(ctx, stats, 0)
-	hashAgg.SetSchema(schema)
+	hashAgg = hashAgg.InitForHash(ctx, stats, 0, schema).(*physicalop.PhysicalHashAgg)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 
 	// hash join
-	hashJoin := &PhysicalHashJoin{
+	hashJoin := &physicalop.PhysicalHashJoin{
 		Concurrency:     4,
 		UseOuterToBuild: true,
 	}
@@ -392,7 +396,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(hashJoin))
 
 	// merge join
-	mergeJoin := &PhysicalMergeJoin{
+	mergeJoin := &physicalop.PhysicalMergeJoin{
 		CompareFuncs: []expression.CompareFunc{expression.CompareInt},
 		Desc:         true,
 	}
@@ -401,15 +405,15 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
 
 	// index join
-	baseJoin := basePhysicalJoin{
+	baseJoin := physicalop.BasePhysicalJoin{
 		LeftJoinKeys:    []*expression.Column{col},
 		RightJoinKeys:   nil,
 		OtherConditions: []expression.Expression{col},
 	}
 
-	indexJoin := &PhysicalIndexJoin{
-		basePhysicalJoin: baseJoin,
-		innerPlan:        indexScan,
+	indexJoin := &physicalop.PhysicalIndexJoin{
+		BasePhysicalJoin: baseJoin,
+		InnerPlan:        indexScan,
 		Ranges:           ranger.Ranges{},
 	}
 	indexJoin = indexJoin.Init(ctx, stats, 0)
@@ -489,7 +493,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 
 	switch v1.Kind() {
 	case reflect.Array:
-		for i := 0; i < v1.Len(); i++ {
+		for i := range v1.Len() {
 			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
@@ -510,7 +514,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
-		for i := 0; i < v1.Len(); i++ {
+		for i := range v1.Len() {
 			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
@@ -529,13 +533,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 		}
 		if v1.Pointer() == v2.Pointer() {
 			typeName := v1.Type().String()
-			inWhiteList := false
-			for _, whiteName := range whiteTypeList {
-				if whiteName == typeName {
-					inWhiteList = true
-					break
-				}
-			}
+			inWhiteList := slices.Contains(whiteTypeList, typeName)
 			if inWhiteList {
 				return nil
 			}
@@ -694,7 +692,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -736,7 +734,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
 
-	// TODO(hi-rustin): Find a better way to mock SQL execution.
+	// TODO(0xPoe): Find a better way to mock SQL execution.
 	// Test case 2: PredicateColumns(default)
 
 	// Test case 3: ColumnList.
@@ -748,7 +746,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 }
 
 func TestRequireInsertAndSelectPriv(t *testing.T) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -923,7 +921,7 @@ func TestTraffic(t *testing.T) {
 	}
 
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	for _, test := range tests {
 		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
@@ -933,14 +931,14 @@ func TestTraffic(t *testing.T) {
 		require.NoError(t, err, test.sql)
 		traffic, ok := p.(*Traffic)
 		require.True(t, ok, test.sql)
-		require.Equal(t, test.cols, len(traffic.names), test.sql)
+		require.Equal(t, test.cols, len(traffic.OutputNames()), test.sql)
 		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
 	}
 }
 
 func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 
@@ -1028,7 +1026,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 
 func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	parser := parser.New()
-	sctx := MockContext()
+	sctx := coretestsdk.MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	// random speed value
@@ -1054,4 +1052,27 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 	}
 	_, err = GetMaxWriteSpeedFromExpression(opt)
 	require.Equal(t, "parse max_write_speed value error: invalid size: 'MiB'", err.Error())
+}
+
+func TestProcessNextGenS3Path(t *testing.T) {
+	u, err := url.Parse("S3://bucket?External-id=abc")
+	require.NoError(t, err)
+	_, err = processSemNextGenS3Path(u)
+	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
+
+	bak := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "sem-next-gen"
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = bak
+		})
+	})
+	u, err = url.Parse("s3://bucket")
+	require.NoError(t, err)
+	newPath, err := processSemNextGenS3Path(u)
+	require.NoError(t, err)
+	require.Equal(t, "s3://bucket?external-id=sem-next-gen", newPath)
 }

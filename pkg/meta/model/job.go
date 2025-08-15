@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -114,6 +115,8 @@ const (
 	ActionAddColumnarIndex       ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
 	ActionAlterTableMode         ActionType = 75
+	ActionRefreshMeta            ActionType = 76
+	ActionModifySchemaReadOnly   ActionType = 77 // reserve for database read-only feature
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -188,6 +191,8 @@ var ActionMap = map[ActionType]string{
 	ActionAddColumnarIndex:              "add columnar index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
 	ActionAlterTableMode:                "alter table mode",
+	ActionRefreshMeta:                   "refresh meta",
+	ActionModifySchemaReadOnly:          "modify schema read only",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -387,6 +392,14 @@ type Job struct {
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
+
+	// SessionVars store system variables used in the DDL execution.
+	// To keep the backward compatibility, we still name it SessionVars.
+	SessionVars map[string]string `json:"session_vars,omitempty"`
+
+	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
+	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
+	LastSchemaVersion int64 `json:"last_schema_version"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -691,6 +704,17 @@ func (job *Job) InFinalState() bool {
 	return job.State == JobStateSynced || job.State == JobStateCancelled || job.State == JobStatePaused
 }
 
+// AddSystemVars add a system variable in DDL job.
+func (job *Job) AddSystemVars(name string, value string) {
+	job.SessionVars[name] = value
+}
+
+// GetSystemVars get a system variable stored in DDL job.
+func (job *Job) GetSystemVars(name string) (string, bool) {
+	value, ok := job.SessionVars[name]
+	return value, ok
+}
+
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
@@ -730,6 +754,10 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StateDeleteOnly ||
 			job.SchemaState == StateDeleteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionModifyColumn:
+		if job.SchemaState == StatePublic {
 			return false
 		}
 	case ActionAddTablePartition:
@@ -1113,6 +1141,8 @@ type SchemaDiff struct {
 	// ReadTableFromMeta is set to avoid the diff is too large to be saved in SchemaDiff.
 	// infoschema should read latest meta directly.
 	ReadTableFromMeta bool `json:"read_table_from_meta,omitempty"`
+	// IsRefreshMeta is set to true only when this diff is initiated by refreshMeta DDL that's only used by BR
+	IsRefreshMeta bool `json:"-"`
 
 	AffectedOpts []*AffectedOption `json:"affected_options"`
 }
@@ -1214,5 +1244,12 @@ func NewJobW(job *Job, bytes []byte) *JobW {
 }
 
 func init() {
-	SetJobVerInUse(JobVersion1)
+	// as the cluster might be upgraded from old TiDB version, so we set to v1
+	// initially, and then we detect the right version when DDL start.
+	ver := JobVersion1
+	if kerneltype.IsNextGen() {
+		// nextgen doesn't need to consider the compatibility with old TiDB versions,
+		ver = JobVersion2
+	}
+	SetJobVerInUse(ver)
 }

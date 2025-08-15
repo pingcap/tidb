@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	ast "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -1349,6 +1351,69 @@ func TestAdminCheckWithSnapshot(t *testing.T) {
 	tk.MustExec("drop table if exists admin_t_s")
 }
 
+func TestAdminCheckTableWithSnapshot(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tk2 := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1), (2), (3);")
+	tk.MustExec("alter table t add index(a)")
+	tk2.MustExec("use test")
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+			ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	var (
+		wg      sync.WaitGroup
+		startTS uint64
+	)
+	wg.Add(1)
+	ch := make(chan uint64)
+
+	go func() {
+		defer wg.Done()
+
+		for tso := range ch {
+			tk2.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", tso))
+			tk2.MustExec("ADMIN CHECK TABLE t")
+		}
+
+		tk2.MustExec("set @@tidb_snapshot = ''")
+		tk2.MustExec("ADMIN CHECK TABLE t")
+	}()
+
+	for _, alterTableSQL := range []string{
+		"ALTER TABLE t MODIFY COLUMN a VARCHAR(4)",
+		"ALTER TABLE t MODIFY COLUMN a INT",
+		"ALTER TABLE t RENAME COLUMN a TO aa",
+		"ALTER TABLE t ADD INDEX idx(aa)",
+		"ALTER TABLE t DROP INDEX idx",
+	} {
+		tk.MustExec("BEGIN")
+		startTS = tk.Session().GetSessionVars().TxnCtx.StartTS
+		tk.MustExec(alterTableSQL)
+		tk.MustExec("COMMIT")
+		ch <- startTS
+	}
+	close(ch)
+
+	wg.Wait()
+}
+
 func TestAdminCheckTableFailed(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
@@ -1494,6 +1559,10 @@ func TestAdminCheckTableFailed(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: ‹10›, index-values:‹\"handle: 10, values: [KindInt64 19]\"› != record-values:‹\"handle: 10, values: [KindInt64 20]\"›")
 	tk.MustExec("set @@tidb_redact_log=0;")
+
+	tk.MustExec("create table other (a int);")
+	tk.MustGetErrMsg("admin check table other, admin_test;",
+		"admin check only supports one table at a time")
 
 	// Recover records.
 	txn, err = store.Begin()

@@ -91,6 +91,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 			s3Options = options.S3
 		}
 		ExtractQueryParameters(u, &s3Options)
+		s3Options.setForcePathStyle(rawURL)
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -225,4 +226,9 @@ func IsLocalPath(p string) (bool, error) {
 // IsLocal returns true if the URL is a local file path.
 func IsLocal(u *url.URL) bool {
 	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
+}
+
+// IsS3 returns true if the URL is an S3 URL.
+func IsS3(u *url.URL) bool {
+	return u.Scheme == "s3"
 }

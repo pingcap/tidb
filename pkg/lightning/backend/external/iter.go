@@ -475,7 +475,7 @@ func getPairKey(p *kvPair) []byte {
 
 type kvReaderProxy struct {
 	p string
-	r *kvReader
+	r *KVReader
 }
 
 func (p kvReaderProxy) path() string {
@@ -531,12 +531,11 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
-			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			rd, err := NewKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
 				return nil, err
 			}
-			rd.byteReader.readDurHist = metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("merge_sort_read")
-			rd.byteReader.readRateHist = metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("merge_sort_read")
+			rd.byteReader.mergeSortReadCounter = metrics.MergeSortReadBytes
 			rd.byteReader.enableConcurrentRead(
 				exStorage,
 				paths[i],
@@ -659,7 +658,7 @@ func newMergePropBaseIter(
 	limit = min(limit, int64(len(multiStat.Filenames)))
 
 	// we are rely on the caller have reduced the overall overlapping to less than
-	// MergeSortOverlapThreshold for []MultipleFilesStat. And we are going to open
+	// maxMergeSortOverlapThreshold for []MultipleFilesStat. And we are going to open
 	// about 8000 connection to read files.
 	preOpenLimit := limit * 2
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
@@ -793,7 +792,7 @@ type MergePropIter struct {
 //
 // Input MultipleFilesStat should be processed by functions like
 // MergeOverlappingFiles to reduce overlapping to less than
-// MergeSortOverlapThreshold. MergePropIter will only open needed
+// maxMergeSortOverlapThreshold. MergePropIter will only open needed
 // MultipleFilesStat and its Filenames when iterates, and input MultipleFilesStat
 // must guarantee its order and its Filename order can be process from left to
 // right.
@@ -826,7 +825,7 @@ func NewMergePropIter(
 	}
 
 	// see the comment of newMergePropBaseIter why we need to raise the limit
-	limit := MergeSortOverlapThreshold * 2
+	limit := maxMergeSortOverlapThreshold * 2
 
 	it, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
 	return &MergePropIter{
