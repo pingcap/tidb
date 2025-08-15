@@ -78,7 +78,7 @@ type mergeMinimalTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
+func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
 	return "mergeSortOperator", "mergeMinimalTask", false
 }
 

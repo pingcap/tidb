@@ -239,7 +239,7 @@ type TableScanTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (_ TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
+func (TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
 	return metrics.LblAddIndex, "tableScanTask", false
 }
 
@@ -259,7 +259,7 @@ type IndexRecordChunk struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (_ IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
+func (IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
 	return metrics.LblAddIndex, "IndexRecordChunk", false
 }
 

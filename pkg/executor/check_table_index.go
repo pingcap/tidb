@@ -667,7 +667,7 @@ type checkIndexTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
+func (checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
 	return "fast_check_table", "checkIndexTask", false
 }
 

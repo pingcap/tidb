@@ -195,7 +195,7 @@ func TestBackfillOperators(t *testing.T) {
 		require.Len(t, values, 10)
 		require.Equal(t, 10, cnt)
 
-		cancel()
+		opCtx.Cancel()
 		require.NoError(t, opCtx.OperatorErr())
 	}
 }
@@ -319,7 +319,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
 			opCtx := util.NewContext(ctx)
-			defer opCtx.Cancel()
+			defer cancel()
 			pipeline, err := ddl.NewAddIndexIngestPipeline(
 				opCtx, store,
 				sessPool,
