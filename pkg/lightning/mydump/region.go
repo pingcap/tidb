@@ -363,9 +363,11 @@ func MakeSourceFileRegion(
 	return []*TableRegion{tableRegion}, []float64{float64(fi.FileMeta.RealSize)}, nil
 }
 
+// Determines whether a precise row count is needed for the table.
+// Returns true if the table has an auto-increment or auto-random column,
+// or any unique/primary index contains an auto-increment column.
+// Otherwise, returns false, allowing file size to be used as the row count.
 func checkNeedPreciseRowCount(tblInfo *model.TableInfo) bool {
-	// If the table has auto-increment column, we need to read row count from parquet file.
-	// If the table does not have auto-increment column, we can use file size as row count.
 	if common.TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
 		return true
 	}
@@ -404,17 +406,14 @@ func makeParquetFileRegion(
 		numberRows int64
 		err        error
 	)
-	if cfg.TableInfo != nil || !common.TableHasAutoID(cfg.TableInfo) {
-		// For table without auto-increment column, we don't need to read row count,
-		// just use file size as row count.
-		numberRows = dataFile.FileMeta.FileSize
-		checkNeedPreciseRowCount(cfg.TableInfo)
-	} else {
-		numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta)
-		if err != nil {
+	if checkNeedPreciseRowCount(cfg.TableInfo) {
+		if numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta); err != nil {
 			return nil, nil, err
 		}
+	} else {
+		numberRows = dataFile.FileMeta.FileSize
 	}
+
 	region := &TableRegion{
 		DB:       cfg.TableMeta.DB,
 		Table:    cfg.TableMeta.Name,
