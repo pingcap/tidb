@@ -60,7 +60,7 @@ func (ctx *Context) OnError(err error) {
 	ctx.cancel()
 }
 
-// OperatorErr returns the error of the operator.
+// OperatorErr returns the error caused by business logic.
 func (ctx *Context) OperatorErr() error {
 	err := ctx.err.Load()
 	if err == nil {
