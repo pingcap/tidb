@@ -920,6 +920,7 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrSchemaInReadOnlyMode                                  = 3809
 	ErrNonBooleanExprForCheckConstraint                      = 3812
 	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
 	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
