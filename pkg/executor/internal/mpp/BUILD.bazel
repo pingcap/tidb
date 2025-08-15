@@ -50,6 +50,7 @@ go_test(
     srcs = ["local_mpp_coordinator_test.go"],
     embed = [":mpp"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/planner/core",
         "//pkg/planner/core/operator/physicalop",

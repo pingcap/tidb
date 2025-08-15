@@ -105,6 +105,7 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":tidb-server_lib"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/parser/mysql",
