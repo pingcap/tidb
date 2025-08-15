@@ -164,7 +164,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		dom, err = session.BootstrapSession(store)
 		t.Cleanup(func() {
 			dom.Close()
-			ddl.CloseOwnerManager()
+			ddl.CloseOwnerManager(store)
 			err := store.Close()
 			require.NoError(t, err)
 			view.Stop()

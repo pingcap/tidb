@@ -108,7 +108,7 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 
 func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 	if p.StoreType == kv.TiFlash {
-		_, ok := p.tablePlan.(*PhysicalExchangeSender)
+		_, ok := p.tablePlan.(*physicalop.PhysicalExchangeSender)
 		if ok {
 			p.ReadReqType = MPP
 			return
@@ -188,20 +188,6 @@ func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalExchangeSender) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeSender {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeReceiver {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
-	p.SetStats(stats)
 	return &p
 }
 

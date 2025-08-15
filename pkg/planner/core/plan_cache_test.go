@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -105,7 +106,7 @@ func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
 	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
 	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
 	require.NoError(t, err)

@@ -920,7 +920,7 @@ func (c *localMppCoordinator) Next(ctx context.Context) (kv.ResultSubset, error)
 // Execute implements MppCoordinator interface
 func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.KeyRange, error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
-	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
+	sender := c.originalPlan.(*physicalop.PhysicalExchangeSender)
 	sctx := c.sessionCtx
 	frags, kvRanges, nodeInfo, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {

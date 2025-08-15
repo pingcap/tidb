@@ -84,7 +84,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 
 	t.Cleanup(func() {
 		dom.Close()
-		ddl.CloseOwnerManager()
+		ddl.CloseOwnerManager(store)
 		require.NoError(t, store.Close())
 	})
 
