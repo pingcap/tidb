@@ -179,8 +179,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 
-	opCtx := util.NewContext(ctx)
 	for _, group := range dataGroup {
+		opCtx := util.NewContext(ctx)
 		op := NewMergeOperator(
 			opCtx,
 			memStore,

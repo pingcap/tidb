@@ -120,6 +120,7 @@ func NewMergeOperator(
 				newFilePrefix: newFilePrefix,
 				blockSize:     blockSize,
 				onClose:       onClose,
+				collector:     collector,
 				checkHotspot:  checkHotspot,
 				onDup:         onDup,
 			}

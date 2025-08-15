@@ -164,7 +164,7 @@ type importStepMinimalTask struct {
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
 func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
-	return "encodeAndSortOperator", "importStepMininalTask", false
+	return "importExecutor", "importStepMininalTask", false
 }
 
 func (t *importStepMinimalTask) String() string {
