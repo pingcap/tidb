@@ -1214,6 +1214,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.DelFlag(mysql.NotNullFlag)
 				removeOnUpdateNowFlag(col)
 				hasNullFlag = true
+			case ast.ColumnOptionNoNullIndex:
+				col.NoNullIndex = true
 			case ast.ColumnOptionAutoIncrement:
 				col.AddFlag(mysql.AutoIncrementFlag | mysql.NotNullFlag)
 			case ast.ColumnOptionPrimaryKey:
@@ -5704,6 +5706,8 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with check"))
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
+		case ast.ColumnOptionNoNullIndex:
+			col.NoNullIndex = true
 		default:
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}
@@ -5875,6 +5879,10 @@ func GetModifiableColumnJob(
 	}
 
 	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name.L, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkModifyColumnWithNoNullIndex(t.Meta(), col.ColumnInfo, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -9531,4 +9539,31 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
+}
+
+func checkModifyColumnWithNoNullIndex(tbInfo *model.TableInfo, col *model.ColumnInfo, options []*ast.ColumnOption) error {
+	if col.NoNullIndex {
+		return nil
+	}
+
+	addNoNullIndex := false
+	for _, opt := range options {
+		if opt.Tp == ast.ColumnOptionNoNullIndex {
+			addNoNullIndex = true
+			break
+		}
+	}
+	if !addNoNullIndex {
+		return nil
+	}
+
+	// cannot add no_null_index if the column is part of an existing index
+	for _, indexInfo := range tbInfo.Indices {
+		for _, idxCol := range indexInfo.Columns {
+			if col.Name.L == idxCol.Name.L && addNoNullIndex {
+				return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify column to no_null_index with existing index")
+			}
+		}
+	}
+	return nil
 }

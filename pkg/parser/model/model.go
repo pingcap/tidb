@@ -117,6 +117,7 @@ type ColumnInfo struct {
 	FieldType           types.FieldType     `json:"type"`
 	State               SchemaState         `json:"state"`
 	Comment             string              `json:"comment"`
+	NoNullIndex         bool                `json:"no_null_index"`
 	// A hidden column is used internally(expression index) and are not accessible by users.
 	Hidden           bool `json:"hidden"`
 	*ChangeStateInfo `json:"change_state_info"`
@@ -1473,19 +1474,20 @@ const (
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID            int64          `json:"id"`
-	Name          CIStr          `json:"idx_name"` // Index name.
-	Table         CIStr          `json:"tbl_name"` // Table name.
-	Columns       []*IndexColumn `json:"idx_cols"` // Index columns.
-	State         SchemaState    `json:"state"`
-	BackfillState BackfillState  `json:"backfill_state"`
-	Comment       string         `json:"comment"`      // Comment
-	Tp            IndexType      `json:"index_type"`   // Index type: Btree, Hash or Rtree
-	Unique        bool           `json:"is_unique"`    // Whether the index is unique.
-	Primary       bool           `json:"is_primary"`   // Whether the index is primary key.
-	Invisible     bool           `json:"is_invisible"` // Whether the index is invisible.
-	Global        bool           `json:"is_global"`    // Whether the index is global.
-	MVIndex       bool           `json:"mv_index"`     // Whether the index is multivalued index.
+	ID                  int64          `json:"id"`
+	Name                CIStr          `json:"idx_name"` // Index name.
+	Table               CIStr          `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn `json:"idx_cols"` // Index columns.
+	NoNullIdxColOffsets []int          `json:"no_null_idx_cols"`
+	State               SchemaState    `json:"state"`
+	BackfillState       BackfillState  `json:"backfill_state"`
+	Comment             string         `json:"comment"`      // Comment
+	Tp                  IndexType      `json:"index_type"`   // Index type: Btree, Hash or Rtree
+	Unique              bool           `json:"is_unique"`    // Whether the index is unique.
+	Primary             bool           `json:"is_primary"`   // Whether the index is primary key.
+	Invisible           bool           `json:"is_invisible"` // Whether the index is invisible.
+	Global              bool           `json:"is_global"`    // Whether the index is global.
+	MVIndex             bool           `json:"mv_index"`     // Whether the index is multivalued index.
 }
 
 // Clone clones IndexInfo.

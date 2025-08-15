@@ -509,6 +509,7 @@ import (
 	nominvalue            "NOMINVALUE"
 	nonclustered          "NONCLUSTERED"
 	none                  "NONE"
+	noNullIndex           "NO_NULL_INDEX"
 	nowait                "NOWAIT"
 	nulls                 "NULLS"
 	nvarcharType          "NVARCHAR"
@@ -3660,6 +3661,10 @@ ColumnOption:
 |	"AUTO_RANDOM" AutoRandomOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+|	"NO_NULL_INDEX"
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionNoNullIndex}
 	}
 
 AutoRandomOpt:
@@ -6917,6 +6922,7 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"TPCH_10"
+|	"NO_NULL_INDEX"
 
 TiDBKeyword:
 	"ADMIN"
