@@ -92,7 +92,9 @@ func (*encodeAndSortOperator) String() string {
 }
 
 type chunkWorker struct {
-	ctx         context.Context
+	ctx context.Context
+	op  *encodeAndSortOperator
+
 	dataWriter  *external.EngineWriter
 	indexWriter *importer.IndexRouteWriter
 }

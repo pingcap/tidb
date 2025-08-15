@@ -234,7 +234,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	sourceOp := operator.NewSimpleDataSource(opCtx, tasks)
-	op := newEncodeAndSortOperator(opCtx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
+	op := newEncodeAndSortOperator(opCtx, s, sharedVars, s, subtask.ID, int(s.GetResource().CPU.Capacity()))
 	operator.Compose(sourceOp, op)
 
 	pipe := operator.NewAsyncPipeline(sourceOp, op)
