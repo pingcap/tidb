@@ -88,7 +88,6 @@ go_test(
         "//br/pkg/storage",
         "//pkg/config",
         "//pkg/disttask/framework/taskexecutor/execute",
-        "//pkg/disttask/operator",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",

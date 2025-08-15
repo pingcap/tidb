@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
@@ -167,7 +167,7 @@ func TestMergeOperator(t *testing.T) {
 		)
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
-		opCtx, _ := operator.NewContext(ctx)
+		opCtx := util.NewContext(ctx)
 
 		op := NewMergeOperator(
 			opCtx,
@@ -175,6 +175,7 @@ func TestMergeOperator(t *testing.T) {
 			0,
 			"",
 			0,
+			nil,
 			nil,
 			1,
 			false,
