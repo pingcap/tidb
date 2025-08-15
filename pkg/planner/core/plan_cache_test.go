@@ -278,7 +278,7 @@ func TestIssue38269(t *testing.T) {
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_redact_log=MARKER")
+	tk.MustExec("set global tidb_redact_log=MARKER")
 	tk.MustExec("execute stmt1 using @d, @e, @f")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*sessmgr.ProcessInfo{tkProcess}
