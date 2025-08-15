@@ -296,7 +296,7 @@ func (p *WorkerPool[T, R]) CloseAndWait() {
 	p.Release()
 }
 
-// Wait waits the pool to be released.
+// Release waits the pool to be released.
 func (p *WorkerPool[T, R]) Release() {
 	// First wait waits for all workers to complete.
 	p.wg.Wait()
