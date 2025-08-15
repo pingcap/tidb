@@ -188,7 +188,13 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 			partitionID := def.ID
 			partitionStats := pq.statsHandle.GetPartitionStatsForAutoAnalyze(tableInfo, partitionID)
 			job := pq.tryCreateJob(is, partitionStats, pruneMode, jobFactory, lockedTables)
+<<<<<<< HEAD
 			return pq.pushWithoutLock(job)
+=======
+			if err := pq.pushWithoutLock(job); err != nil {
+				return err
+			}
+>>>>>>> 0548f979397 (statistics: handle the adding index event correctly (#62884))
 		}
 		return nil
 	}
