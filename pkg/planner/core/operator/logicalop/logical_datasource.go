@@ -656,7 +656,10 @@ func (ds *DataSource) analyzeFTSFunc() error {
 	matchedColumns := make([]*expression.Column, 0, 2)
 	for i, cond := range ds.PushedDownConds {
 		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.FTSMatchWord {
+		if ok {
+			_, ok = expression.FTSFuncMap[sf.FuncName.L]
+		}
+		if !ok {
 			if expression.ContainsFullTextSearchFn(cond) {
 				return plannererrors.ErrWrongUsage.FastGen(plannererrors.FTSWrongPlace)
 			}

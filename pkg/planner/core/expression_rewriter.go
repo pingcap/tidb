@@ -647,7 +647,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
 			er.tryFoldCounter++
 		}
-		if v.FnName.L == ast.FTSMatchWord {
+		if _, ok := expression.FTSFuncMap[v.FnName.L]; ok {
 			er.planCtx.builder.optFlag = er.planCtx.builder.optFlag | rule.FlagFTSQuickValidation
 			er.planCtx.plan.SCtx().SetHasFTSFunc()
 		}
