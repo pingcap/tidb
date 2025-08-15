@@ -28,9 +28,22 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mathutil"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+>>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -146,6 +159,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagPDConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -777,6 +791,49 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("finish removing pd scheduler")
 	}()
 
+<<<<<<< HEAD
+=======
+	var checkpointTaskName string
+	var checkpointFirstRun bool = true
+	if cfg.UseCheckpoint {
+		checkpointTaskName = cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
+		// if the checkpoint metadata exists in the external storage, the restore is not
+		// for the first time.
+		existsCheckpointMetadata, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, checkpointTaskName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		checkpointFirstRun = !existsCheckpointMetadata
+	}
+
+	if isFullRestore(cmdName) {
+		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
+			if err = client.CheckTargetClusterFresh(ctx); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+		// to avoid import cycle problem which we won't do it in this pr, then refactor this
+		//
+		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+		if cfg.WithSysTable {
+			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	} else if checkpointFirstRun && cfg.CheckRequirements {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			schedulersRemovable = true
+			return errors.Trace(err)
+		}
+	}
+
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// reload or register the checkpoint
+>>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
 		taskName := cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
@@ -1045,6 +1102,218 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
+	var resp map[string]any
+	err = utils.WithRetry(ctx, func() error {
+		resp, err = mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	key := "max-replicas"
+	val, ok := resp[key]
+	if !ok {
+		return 0, errors.Errorf("key %s not found in response %v", key, resp)
+	}
+	return uint64(val.(float64)), nil
+}
+
+func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err error) {
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
+		return err
+	}, utils.NewPDReqBackoffer())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return stores, nil
+}
+
+func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint64) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
+	if replicaCnt > storeCnt {
+		replicaCnt = storeCnt
+	}
+	totalSize := uint64(0)
+	for _, file := range files {
+		totalSize += file.GetSize_()
+	}
+	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
+	return totalSize * replicaCnt / storeCnt
+}
+
+func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
+	if storeCnt == 0 {
+		return 0
+	}
+	tiflashTotal := uint64(0)
+	for _, table := range tables {
+		if table.Info.TiFlashReplica == nil || table.Info.TiFlashReplica.Count <= 0 {
+			continue
+		}
+		tableBytes := uint64(0)
+		for _, file := range table.Files {
+			tableBytes += file.GetSize_()
+		}
+		tiflashTotal += tableBytes * table.Info.TiFlashReplica.Count
+	}
+	log.Info("estimate tiflash usage", zap.Uint64("total size", tiflashTotal), zap.Uint64("store count", storeCnt))
+	return tiflashTotal / storeCnt
+}
+
+func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
+	available, err := units.RAMInBytes(store.Status.Available)
+	if err != nil {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+	}
+	if available <= 0 {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "store %d has invalid available space %s", store.Store.ID, store.Status.Available)
+	}
+	if uint64(available) < necessary {
+		return errors.Annotatef(berrors.ErrKVDiskFull, "store %d has no space left on device, available %s, necessary %s",
+			store.Store.ID, units.BytesSize(float64(available)), units.BytesSize(float64(necessary)))
+	}
+	return nil
+}
+
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, tables []*metautil.Table) error {
+	maxReplica, err := getMaxReplica(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stores, err := getStores(ctx, mgr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var tikvCnt, tiflashCnt uint64 = 0, 0
+	for i := range stores.Stores {
+		store := &stores.Stores[i]
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			tiflashCnt += 1
+			continue
+		}
+		tikvCnt += 1
+	}
+
+	// We won't need to restore more than 1800 PB data at one time, right?
+	preserve := func(base uint64, ratio float32) uint64 {
+		if base > 1000*units.PB {
+			return base
+		}
+		return base * uint64(ratio*10) / 10
+	}
+
+	// The preserve rate for tikv is quite accurate, while rate for tiflash is a
+	// number calculated from tpcc testing with variable data sizes.  1.4 is a
+	// relative conservative value.
+	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
+	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
+	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
+
+	err = utils.WithRetry(ctx, func() error {
+		stores, err = getStores(ctx, mgr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, store := range stores.Stores {
+			if engine.IsTiFlashHTTPResp(&store.Store) {
+				if err := CheckStoreSpace(tiflashUsage, &store); err != nil {
+					return errors.Trace(err)
+				}
+				continue
+			}
+			if err := CheckStoreSpace(tikvUsage, &store); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}, utils.NewDiskCheckBackoffer())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Exhaust drains all remaining errors in the channel, into a slice of errors.
+func Exhaust(ec <-chan error) []error {
+	out := make([]error, 0, len(ec))
+	for {
+		select {
+		case err := <-ec:
+			out = append(out, err)
+		default:
+			// errCh will NEVER be closed(ya see, it has multi sender-part),
+			// so we just consume the current backlog of this channel, then return.
+			return out
+		}
+	}
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	// Tasks from br clp client use other checks to validate
+	if g.GetClient() != glue.ClientSql {
+		return nil
+	}
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name)
+		if err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
+	return nil
+}
+
+// EstimateRangeSize estimates the total range count by file.
+func EstimateRangeSize(files []*backuppb.File) int {
+	result := 0
+	for _, f := range files {
+		if strings.HasSuffix(f.GetName(), "_write.sst") {
+			result++
+		}
+	}
+	return result
+}
+
+// MapTableToFiles makes a map that mapping table ID to its backup files.
+// aware that one file can and only can hold one table.
+func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
+	result := map[int64][]*backuppb.File{}
+	for _, file := range files {
+		tableID := tablecodec.DecodeTableID(file.GetStartKey())
+		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
+		if tableID != tableEndID {
+			log.Panic("key range spread between many files.",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		if tableID == 0 {
+			log.Panic("invalid table key of file",
+				zap.String("file name", file.Name),
+				logutil.Key("startKey", file.StartKey),
+				logutil.Key("endKey", file.EndKey))
+		}
+		result[tableID] = append(result[tableID], file)
+	}
+	return result
+}
+
+>>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
 func dropToBlackhole(
