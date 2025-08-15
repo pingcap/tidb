@@ -272,3 +272,9 @@ select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
 
 set @@session.default_collation_for_utf8mb4=default;
 
+# TestMatchAgainstNotSupported
+drop table if exists t;
+create table t(str varchar(40));
+insert into t values ('test');
+-- error 1105
+select * from t where match (t) against ('test');
