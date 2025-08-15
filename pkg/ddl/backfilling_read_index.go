@@ -195,7 +195,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		return err
 	}
 
-	opCtx := NewDistTaskOperatorCtx(ctx)
+	opCtx := util.NewContext(ctx)
 	defer opCtx.Cancel()
 	r.Reset()
 

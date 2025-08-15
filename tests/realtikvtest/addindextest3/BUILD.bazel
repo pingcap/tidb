@@ -26,6 +26,7 @@ go_test(
         "//pkg/lightning/backend/local",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/resourcemanager/util",
         "//pkg/sessionctx",
         "//pkg/table",
         "//pkg/table/tables",

@@ -26,10 +26,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -43,13 +45,41 @@ var (
 	MinUploadPartSize int64 = 5 * units.MiB
 )
 
+// mergeCollector collects the bytes and row count in merge step.
+type mergeCollector struct {
+	summary *execute.SubtaskSummary
+	counter prometheus.Counter
+}
+
+// NewMergeCollector creates a new merge collector.
+func NewMergeCollector(ctx context.Context, summary *execute.SubtaskSummary) *mergeCollector {
+	var counter prometheus.Counter
+	if me, ok := metric.GetCommonMetric(ctx); ok {
+		counter = me.BytesCounter.WithLabelValues(metric.StateMerged)
+	}
+	return &mergeCollector{
+		summary: summary,
+		counter: counter,
+	}
+}
+
+func (c *mergeCollector) Add(bytes, rowCnt int64) {
+	if c.summary != nil {
+		c.summary.Bytes.Add(bytes)
+		c.summary.RowCnt.Add(rowCnt)
+	}
+	if c.counter != nil {
+		c.counter.Add(float64(bytes))
+	}
+}
+
 type mergeMinimalTask struct {
 	files []string
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "mergeSortOperator", "RecoverArgs", nil, false
+func (*mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return "mergeSortOperator", "mergeMinimalTask", false, nil
 }
 
 // MergeOperator is the operator that merges overlapping files.
@@ -90,6 +120,7 @@ func NewMergeOperator(
 				newFilePrefix: newFilePrefix,
 				blockSize:     blockSize,
 				onClose:       onClose,
+				collector:     collector,
 				checkHotspot:  checkHotspot,
 				onDup:         onDup,
 			}
@@ -168,7 +199,11 @@ func MergeOverlappingFiles(
 		return err
 	}
 
-	return pipe.Close()
+	err := pipe.Close()
+	if err := ctx.OperatorErr(); err != nil {
+		return err
+	}
+	return err
 }
 
 // split input data files into multiple shares evenly, with the max number files

@@ -99,7 +99,8 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	require.Equal(t, mockErr, opCtx.OperatorErr())
 	// should not block
 	<-opCtx.Done()
-	require.ErrorIs(t, op.Close(), mockErr)
+	require.NoError(t, op.Close())
+	require.ErrorIs(t, opCtx.OperatorErr(), mockErr)
 
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
@@ -141,7 +142,8 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	source.Channel() <- &importStepMinimalTask{}
 	// should not block
 	<-opCtx.Done()
-	require.ErrorIs(t, op.Close(), mockErr2)
+	require.NoError(t, op.Close())
+	require.ErrorIs(t, opCtx.OperatorErr(), mockErr2)
 }
 
 func TestGetWriterMemorySizeLimit(t *testing.T) {

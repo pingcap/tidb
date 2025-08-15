@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -279,21 +280,27 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	opCtx := poolutil.NewContext(ctx)
-	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
-		poolutil.CheckTable, 3, e.createWorker)
-
 	ch := make(chan checkIndexTask)
-	workerPool.SetTaskReceiver(ch)
-	workerPool.Start(opCtx)
+	dc := operator.NewSimpleDataChannel[checkIndexTask](ch)
+
+	opCtx := poolutil.NewContext(ctx)
+	op := operator.NewAsyncOperator(opCtx,
+		workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+			poolutil.CheckTable, 3, e.createWorker))
+	op.SetSource(dc)
+	//nolint: errcheck
+	op.Open()
 
 	for i := range e.indexInfos {
 		ch <- checkIndexTask{indexOffset: i}
 	}
+	close(ch)
 
-	workerPool.Wait()
-	workerPool.Release()
-	return opCtx.OperatorErr()
+	err := op.Close()
+	if err := opCtx.OperatorErr(); err != nil {
+		return err
+	}
+	return err
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
@@ -399,8 +406,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
-		trySaveErr(err)
-		return
+		return err
 	}
 
 	times := 0
@@ -668,8 +674,8 @@ type checkIndexTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (c checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "fast_check_table", "RecoverArgs", nil, false
+func (checkIndexTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return "fast_check_table", "checkIndexTask", false, nil
 }
 
 type groupByChecksum struct {

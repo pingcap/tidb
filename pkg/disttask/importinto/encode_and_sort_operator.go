@@ -92,7 +92,9 @@ func (*encodeAndSortOperator) String() string {
 }
 
 type chunkWorker struct {
-	ctx         context.Context
+	ctx context.Context
+	op  *encodeAndSortOperator
+
 	dataWriter  *external.EngineWriter
 	indexWriter *importer.IndexRouteWriter
 }
@@ -101,6 +103,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 	perIndexKVMemSizePerCon uint64, dataBlockSize, indexBlockSize int) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
+		op:  op,
 	}
 	if op.tableImporter.IsGlobalSort() {
 		// in case on network partition, 2 nodes might run the same subtask.

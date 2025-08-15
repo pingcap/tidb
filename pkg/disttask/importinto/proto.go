@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -163,8 +164,8 @@ type importStepMinimalTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "encodeAndSortOperator", "RecoverArgs", nil, false
+func (*importStepMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return "importExecutor", "importStepMininalTask", false, errors.Errorf("panic occurred during import, please check log")
 }
 
 func (t *importStepMinimalTask) String() string {

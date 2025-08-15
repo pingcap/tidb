@@ -76,11 +76,9 @@ func (c *AsyncOperator[T, R]) Open() error {
 // Close implements the Operator's Close interface.
 func (c *AsyncOperator[T, R]) Close() error {
 	// Wait all tasks done.
-	// We don't need to close the task channel because
-	// it is maintained outside this operator, see SetSource.
-	c.pool.Wait()
+	// The task channel will be closed by the pool, so we don't need to close it here.
 	c.pool.Release()
-	return c.ctx.OperatorErr()
+	return nil
 }
 
 // String show the name.
