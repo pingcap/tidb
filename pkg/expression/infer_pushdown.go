@@ -88,7 +88,7 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	case kv.TiDB:
 		ret = scalarExprSupportedByTiDB(ctx, sf)
 	case kv.UnSpecified:
-		ret = scalarExprSupportedByTiDB(ctx, sf) || scalarExprSupportedByTiKV(ctx, sf) || scalarExprSupportedByFlash(ctx, sf)
+		ret = scalarExprSupportedByTiDB(ctx, sf) || scalarExprSupportedByTiKV(ctx, sf) || scalarExprSupportedByFlash(ctx, sf) || scalarExprSupportedByTiCI(ctx, sf)
 	}
 
 	if ret {
@@ -456,6 +456,15 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	}
 	return false
+}
+
+func scalarExprSupportedByTiCI(ctx EvalContext, function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.FTSMatchWord, ast.FTSMatchPrefix:
+		return true
+	default:
+		return false
+	}
 }
 
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
