@@ -254,6 +254,24 @@ func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec(`insert into t1 set c1 = 0.1`)
 	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
+
+	// Test issue 56829
+	tk.MustExec(`
+		CREATE TABLE cache (
+			cache_key varchar(512) NOT NULL,
+			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			expired_at datetime GENERATED ALWAYS AS (if(expires > 0, date_add(updated_at, interval expires second), date_add(updated_at, interval 99 year))) VIRTUAL,
+			expires int(11),
+			PRIMARY KEY (cache_key) /*T![clustered_index] CLUSTERED */,
+			KEY idx_c_on_expired_at (expired_at)
+		)`)
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("select sleep(1)")
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("admin check table cache")
+	rs1 := tk.MustQuery("select cache_key, expired_at from cache use index() order by cache_key")
+	rs2 := tk.MustQuery("select cache_key, expired_at from cache use index(idx_c_on_expired_at) order by cache_key")
+	rs1.Check(rs2.Rows())
 }
 
 func TestClusterIndexInsertOnDuplicateKey(t *testing.T) {
