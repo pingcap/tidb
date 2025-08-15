@@ -126,7 +126,7 @@ func setPhysicalTableOrIndexScanCostDetail(p base.PhysicalPlan, opt *optimizetra
 		return
 	}
 	_, ok1 := p.(*physicalop.PhysicalTableScan)
-	_, ok2 := p.(*PhysicalIndexScan)
+	_, ok2 := p.(*physicalop.PhysicalIndexScan)
 	if !ok1 && !ok2 {
 		return
 	}

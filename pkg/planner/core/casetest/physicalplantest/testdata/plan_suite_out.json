@@ -714,7 +714,7 @@
           "└─TableReader(Seed Part) 6929.18 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 6929.18 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 6929.18 mpp[tiflash]  test.t.a, test.t.b",
-          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)], other cond:or(lt(test.t.a, 18), gt(test.t.b, 1))",
+          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 5543.34 mpp[tiflash]  ",
           "        │ └─ExchangeSender 5543.34 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "        │   └─Selection 5543.34 mpp[tiflash]  not(isnull(test.t.a)), or(lt(test.t.a, 18), gt(test.t.b, 1))",
@@ -739,7 +739,7 @@
           "└─TableReader(Seed Part) 6929.18 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 6929.18 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 6929.18 mpp[tiflash]  test.t.a, test.t.b",
-          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)], other cond:or(lt(test.t.a, 18), gt(test.t.b, 1))",
+          "      └─HashJoin 6929.18 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 5543.34 mpp[tiflash]  ",
           "        │ └─ExchangeSender 5543.34 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─Selection 5543.34 mpp[tiflash]  not(isnull(test.t.a)), or(lt(test.t.a, 18), gt(test.t.b, 1))",
@@ -2187,7 +2187,7 @@
       },
       {
         "SQL": "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([and(not(like(test.t.c_str, abc, 92)), not(like(test.t.c_str, abd, 92)))])->Projection)"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([not(like(test.t.c_str, abc, 92)) not(like(test.t.c_str, abd, 92))])->Projection)"
       },
       {
         "SQL": "select a from t where c_str like '_abc'",

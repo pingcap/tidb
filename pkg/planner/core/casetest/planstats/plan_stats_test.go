@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -182,7 +183,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				check: func(p base.Plan, tableInfo *model.TableInfo) {
 					pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
 					require.True(t, ok)
-					pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+					pis, ok := pr.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 					require.True(t, ok)
 					require.True(t, pis.StatsInfo().HistColl.GetIdx(1).IsEssentialStatsLoaded())
 				},
@@ -420,7 +421,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			}
 
 			// call the function
-			res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+			res := rule.CollectDependingVirtualCols(tblID2Tbl, neededItems)
 
 			// record and check the output
 			cols := make([]string, 0, len(res))

@@ -28,16 +28,36 @@ import (
 	"go.uber.org/zap"
 )
 
-var globalOwnerManager = &ownerManager{}
+// keyspace name -> *ownerManager
+// we make it a map, as in real TiKV test, we might need to start multiple domain
+// and DDL owner manager in nextgen.
+// for classic kernel, the keyspace name is empty, we always init it, as some
+// test depends on it.
+var globalOwnerManagers = map[string]*ownerManager{
+	"": {},
+}
 
 // StartOwnerManager starts a global DDL owner manager.
 func StartOwnerManager(ctx context.Context, store kv.Storage) error {
-	return globalOwnerManager.Start(ctx, store)
+	keyspace := store.GetKeyspace()
+	mgr, ok := globalOwnerManagers[keyspace]
+	if !ok {
+		mgr = &ownerManager{}
+		globalOwnerManagers[keyspace] = mgr
+	}
+	return mgr.Start(ctx, store)
 }
 
 // CloseOwnerManager closes the global DDL owner manager.
-func CloseOwnerManager() {
-	globalOwnerManager.Close()
+func CloseOwnerManager(store kv.Storage) {
+	keyspace := store.GetKeyspace()
+	if mgr, ok := globalOwnerManagers[keyspace]; ok {
+		mgr.Close()
+	}
+}
+
+func getOwnerManager(store kv.Storage) *ownerManager {
+	return globalOwnerManagers[store.GetKeyspace()]
 }
 
 // ownerManager is used to manage lifecycle of a global DDL owner manager which

@@ -69,6 +69,9 @@ func init() {
 	utilfuncp.Attach2Task4PhysicalUnionAll = attach2Task4PhysicalUnionAll
 	utilfuncp.GetPlanCostVer14PhysicalUnionAll = getPlanCostVer14PhysicalUnionAll
 	utilfuncp.GetPlanCostVer24PhysicalUnionAll = getPlanCostVer24PhysicalUnionAll
+	// for physical exchange receiver.
+	utilfuncp.GetPlanCostVer1PhysicalExchangeReceiver = getPlanCostVer1PhysicalExchangeReceiver
+	utilfuncp.GetPlanCostVer2PhysicalExchangeReceiver = getPlanCostVer2PhysicalExchangeReceiver
 	// for physical limit.
 	utilfuncp.ResolveIndices4PhysicalLimit = resolveIndices4PhysicalLimit
 	utilfuncp.Attach2Task4PhysicalLimit = attach2Task4PhysicalLimit
@@ -132,6 +135,10 @@ func init() {
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
 	// for physical sequence
 	utilfuncp.Attach2Task4PhysicalSequence = attach2Task4PhysicalSequence
+
+	// for physicalIndexScan.
+	utilfuncp.GetPlanCostVer14PhysicalIndexScan = getPlanCostVer14PhysicalIndexScan
+	utilfuncp.GetPlanCostVer24PhysicalIndexScan = getPlanCostVer24PhysicalIndexScan
 	// for physical PhysicalTableScan
 	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
 	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan
@@ -143,6 +150,7 @@ func init() {
 	utilfuncp.AttachPlan2Task = attachPlan2Task
 	utilfuncp.GetTaskPlanCost = getTaskPlanCost
 	utilfuncp.CompareTaskCost = compareTaskCost
+	utilfuncp.GetPossibleAccessPaths = getPossibleAccessPaths
 
 	utilfuncp.AddPrefix4ShardIndexes = addPrefix4ShardIndexes
 	utilfuncp.DeriveStats4DataSource = deriveStats4DataSource

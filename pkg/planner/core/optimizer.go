@@ -88,7 +88,7 @@ var (
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
-	&ColumnPruner{},
+	&rule.ColumnPruner{},
 	&ResultReorder{},
 	&rule.BuildKeySolver{},
 	&DecorrelateSolver{},
@@ -101,15 +101,15 @@ var optRuleList = []base.LogicalOptRule{
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
-	&PartitionProcessor{},
-	&CollectPredicateColumnsPoint{},
+	&rule.PartitionProcessor{},
+	&rule.CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
 	&PredicateSimplification{},
 	&PushDownTopNOptimizer{},
-	&SyncWaitStatsLoadPoint{},
+	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
@@ -347,7 +347,6 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
@@ -644,7 +643,7 @@ func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan b
 
 func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+		if _, isExchangeSender := tableReader.tablePlan.(*physicalop.PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
 			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
@@ -864,7 +863,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *physicalop.PhysicalProjection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
 	case *physicalop.PhysicalHashAgg:
@@ -897,7 +896,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// don't apply fine grained shuffle for probe side
 		helper.clear()
 		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeSender:
+	case *physicalop.PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
 			// Set up stream count for all plans based on shuffle target type.
 			var exchangeColCount = x.Schema().Len()

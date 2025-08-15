@@ -23,35 +23,6 @@ import (
 )
 
 // CloneForPlanCache implements the base.Plan interface.
-func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexScan)
-	*cloned = *op
-	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
-	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
-	cloned.IdxColLens = make([]int, len(op.IdxColLens))
-	copy(cloned.IdxColLens, op.IdxColLens)
-	if op.GenExprs != nil {
-		return nil, false
-	}
-	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	if op.pkIsHandleCol != nil {
-		if op.pkIsHandleCol.SafeToShareAcrossSession() {
-			cloned.pkIsHandleCol = op.pkIsHandleCol
-		} else {
-			cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
-	copy(cloned.constColsByCond, op.constColsByCond)
-	return cloned, true
-}
-
-// CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableReader)
 	*cloned = *op
