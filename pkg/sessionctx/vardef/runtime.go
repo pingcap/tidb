@@ -15,6 +15,7 @@
 package vardef
 
 import (
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -62,4 +63,14 @@ func SetPlanReplayerGCLease(lease time.Duration) {
 // GetPlanReplayerGCLease returns the plan replayer gc lease time.
 func GetPlanReplayerGCLease() time.Duration {
 	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
+}
+
+// IsReadOnlyVarInNextGen checks if the variable is read-only in the nextgen.
+func IsReadOnlyVarInNextGen(name string) bool {
+	name = strings.ToLower(name)
+	switch name {
+	case TiDBEnableMDL:
+		return true
+	}
+	return false
 }

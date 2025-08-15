@@ -111,10 +111,9 @@ insert into tbl_39 values (1994),(1995),(1996),(1997);
 explain format='brief' select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 id	estRows	task	access object	operator info
 Limit	382.00	root		offset:0, count:382
-└─UnionScan	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
+└─UnionScan	382.00	root		or(and(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))), and(gt(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996), or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))))
   └─IndexMerge	382.00	root		type: union
-    ├─Selection(Build)	0.06	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010))
-    │ └─IndexRangeScan	0.15	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
+    ├─IndexRangeScan(Build)	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
     ├─Selection(Build)	485.68	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
     │ └─IndexRangeScan	505.92	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
     └─TableRowIDScan(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo

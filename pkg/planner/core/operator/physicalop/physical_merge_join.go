@@ -171,11 +171,8 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 			if key == nil {
 				continue
 			}
-			for i := range offsets {
-				if offsets[i] == joinKeyPos {
-					isExist = true
-					break
-				}
+			if slices.Contains(offsets, joinKeyPos) {
+				isExist = true
 			}
 			if !isExist {
 				offsets = append(offsets, joinKeyPos)

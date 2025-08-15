@@ -1713,7 +1713,7 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk2.MustExec("use test")
 
 	// Test issue 57414.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
 		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
 	})
 

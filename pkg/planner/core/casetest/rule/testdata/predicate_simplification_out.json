@@ -51,6 +51,13 @@
         "Plan": [
           "TableDual 0.00 root  rows:0"
         ]
+      },
+      {
+        "SQL": "with cte_263 ( col_1350,col_1351,col_1352 ) AS ( select /*+ read_from_storage(tiflash[ tad03b424,tlfdfece63 ]) */ /*+ use_index_merge( tlfdfece63,tad03b424 ) */ /*+ merge_join( tlfdfece63 , tad03b424 */ rpad( tad03b424.col_44 , 6 , tad03b424.col_48 ) as r0 , insert( tlfdfece63.col_44 , 0 , 10 , tlfdfece63.col_43 ) as r1 , tad03b424.col_41 as r2 from tlfdfece63 , tad03b424 where not( tlfdfece63.col_42 = '[\"Sl9DRlDnSdIOxbfequ02VeikDWiphuDO6suBf0F7esJeCWrRJWQbd3BK3vT58Coz\",\"MmC5saHdTUqosY50IrxprAR52oD08XgGhqJCcYeoaDJKrYxBdbi0QuVDDArCghyL\"]' ) order by r0,r1,r2 limit 348170821 ) ( select 1,col_1350,col_1351,col_1352 from cte_263 where not( cte_263.col_1352 != '2020-06-30' ) and cte_263.col_1352 in ( null ,'1983-08-09' ) order by 1,2,3,4  );",
+        "Plan": [
+          "Projection 0.00 root  1->Column#48, Column#46, Column#47, test.tad03b424.col_41",
+          "└─TableDual 0.00 root  rows:0"
+        ]
       }
     ]
   }

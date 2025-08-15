@@ -627,3 +627,36 @@ func TestLockKeysInDML(t *testing.T) {
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
 }
+
+func TestSelectForUpdateWriteConflict(t *testing.T) {
+	// Arrange
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t (id int primary key, val int)")
+	tk1.MustExec("insert into t values (1, 100)")
+
+	// Act
+	// T1 uses "select for update" to lock key (creates lock-type mutation)
+	tk1.MustExec("begin optimistic")
+	tk1.MustQuery("select * from t where id = 1 for update")
+
+	// T2 starts optimistic transaction and tries to modify the same key
+	tk2.MustExec("begin optimistic")
+	tk2.MustExec("update t set val = 200 where id = 1")
+
+	// T1 commits (commits the lock-type mutation from select for update)
+	tk1.MustExec("commit")
+
+	// T2 tries to prewrite and should get write conflict
+	t2err := tk2.ExecToErr("commit")
+
+	// Assert
+	require.Error(t, t2err)
+	require.Contains(t, t2err.Error(), "Write conflict")
+	tk1.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 100"))
+}

@@ -305,8 +305,8 @@ SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));
 c0
 explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));
 id	estRows	task	access object	operator info
-TableReader_8	8000.20	root		data:Selection_7
-└─Selection_7	8000.20	cop[tikv]		or(0, not(nulleq(planner__core__plan.t0.c0, 0)))
+TableReader_8	8000.00	root		data:Selection_7
+└─Selection_7	8000.00	cop[tikv]		not(nulleq(planner__core__plan.t0.c0, 0))
   └─TableFullScan_6	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
 SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));
 c0

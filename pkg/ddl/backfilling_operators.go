@@ -125,9 +125,6 @@ var (
 	_ execute.Collector = (*localRowCntCollector)(nil)
 )
 
-// MockDMLExecutionBeforeScan is only used for test.
-var MockDMLExecutionBeforeScan func()
-
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -157,12 +154,7 @@ func NewAddIndexIngestPipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
-	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
-		if MockDMLExecutionBeforeScan != nil {
-			MockDMLExecutionBeforeScan()
-		}
-	})
-	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
+	failpoint.InjectCall("beforeAddIndexScan")
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,

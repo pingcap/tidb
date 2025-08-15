@@ -328,7 +328,7 @@ func (*ImplHashAgg) Match(_ *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // OnImplement implements ImplementationRule OnImplement interface.
 func (*ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*logicalop.LogicalAggregation)
-	hashAgg := plannercore.NewPhysicalHashAgg(
+	hashAgg := physicalop.NewPhysicalHashAgg(
 		la,
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64},
@@ -558,7 +558,7 @@ func (*ImplApply) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (
 func (*ImplApply) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	la := expr.ExprNode.(*logicalop.LogicalApply)
 	join := plannercore.GetHashJoin(nil, la, reqProp)
-	physicalApply := plannercore.PhysicalApply{
+	physicalApply := physicalop.PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
 	}.Init(

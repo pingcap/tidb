@@ -128,7 +128,7 @@
           "└─IndexJoin 1.00 root  inner join, inner:IndexLookUp, outer key:test.tp.c, inner key:test.t.b, equal cond:eq(test.tp.c, test.t.b)",
           "  ├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
-          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:unInitialized]",
+          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false",
           "  └─IndexLookUp(Probe) 1.00 root  ",
           "    ├─Selection(Build) 1.00 cop[tikv]  not(isnull(test.t.b))",
           "    │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:idx(b) range: decided by [eq(test.t.b, test.tp.c)], keep order:false, stats:partial[idx:allEvicted, a:allEvicted, b:allEvicted]",

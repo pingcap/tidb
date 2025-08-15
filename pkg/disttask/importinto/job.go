@@ -23,17 +23,22 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -92,6 +97,12 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 			plan.User, plan.Parameters, plan.TotalFileSize)
 		if err2 != nil {
 			return err2
+		}
+		if kerneltype.IsClassic() {
+			err2 = ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeImport, plan.DBID, plan.TableInfo.ID)
+			if err2 != nil {
+				return err2
+			}
 		}
 		// in classical kernel or if we are inside SYSTEM keyspace itself, we
 		// submit the task to DXF in the same transaction as creating the job.
@@ -161,8 +172,8 @@ type RuntimeInfo struct {
 	ErrorMsg   string
 
 	Step       proto.Step
-	StartTime  types.Time
 	UpdateTime types.Time
+	Speed      int64
 	Processed  int64
 	Total      int64
 }
@@ -196,31 +207,25 @@ func FormatSecondAsTime(sec int64) string {
 	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
 }
 
-// SpeedAndETA returns the speed and estimated time of arrival (ETA) for the current step.
-func (ri *RuntimeInfo) SpeedAndETA() (speed, eta string) {
-	s := int64(0)
-	duration := types.TimestampDiff("SECOND", ri.StartTime, ri.UpdateTime)
-	if duration > 0 && ri.Processed > 0 {
-		s = ri.Processed / duration
-	}
-
+// ETA returns the estimated time of arrival (ETA) for the current step.
+func (ri *RuntimeInfo) ETA() string {
 	remainTime := notAvailable
-	if s > 0 && ri.Total > 0 {
-		remainSecond := max((ri.Total-ri.Processed)/s, 0)
+	if ri.Speed > 0 && ri.Total > 0 {
+		remainSecond := max((ri.Total-ri.Processed)/ri.Speed, 0)
 		remainTime = FormatSecondAsTime(remainSecond)
 	}
 
-	return fmt.Sprintf("%s/s", units.HumanSize(float64(s))), remainTime
+	return remainTime
 }
 
 // TotalSize returns the total size of the current step in human-readable format.
 func (ri *RuntimeInfo) TotalSize() string {
-	return units.HumanSize(float64(ri.Total))
+	return units.BytesSize(float64(ri.Total))
 }
 
 // ProcessedSize returns the processed size of the current step in human-readable format.
 func (ri *RuntimeInfo) ProcessedSize() string {
-	return units.HumanSize(float64(ri.Processed))
+	return units.BytesSize(float64(ri.Processed))
 }
 
 // convertToMySQLTime converts go time to MySQL time with the specified location.
@@ -285,11 +290,23 @@ func GetRuntimeInfoForJob(
 		return nil, err
 	}
 
+	currentTime := time.Now()
+	timeRange := execute.SubtaskSpeedUpdateInterval
+
+	failpoint.Inject("mockSpeedDuration", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			currentTime = time.Unix(1000, int64(v*1000000))
+			timeRange = time.Millisecond * time.Duration(v)
+		}
+	})
+
+	ri.Speed = 0
 	for _, s := range summaries {
 		ri.Processed += s.Bytes.Load()
 		ri.ImportRows += s.RowCnt.Load()
-		if s.UpdateTime.After(latestTime) {
-			latestTime = s.UpdateTime
+		ri.Speed += s.GetSpeedInTimeRange(currentTime, timeRange)
+		if s.UpdateTime().After(latestTime) {
+			latestTime = s.UpdateTime()
 		}
 	}
 

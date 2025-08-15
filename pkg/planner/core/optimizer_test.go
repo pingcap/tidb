@@ -239,7 +239,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	start(partWindow, 0, 6, 0)
 
 	// HashAgg <- Window <- ExchangeReceiver <- ExchangeSender
-	hashAgg := &PhysicalHashAgg{}
+	hashAgg := &physicalop.PhysicalHashAgg{}
 	tableReader.tablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
 	hashAgg.SetChildren([]base.PhysicalPlan{partWindow}...)
@@ -252,7 +252,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	// Window <- HashAgg(x) <- ExchangeReceiver <- ExchangeSender
 	tableReader.tablePlan = passSender
 	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	hashAgg = &PhysicalHashAgg{}
+	hashAgg = &physicalop.PhysicalHashAgg{}
 	partWindow.SetChildren([]base.PhysicalPlan{hashAgg}...)
 	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
 	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
@@ -327,7 +327,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 
 	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender
 	tableReader.tablePlan = passSender
-	hashAgg = &PhysicalHashAgg{}
+	hashAgg = &physicalop.PhysicalHashAgg{}
 	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
 	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
 	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
@@ -372,7 +372,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	require.NoError(t, failpoint.Enable(fpName2, `return("8000")`))
 	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender， exceed splitLimit
 	tableReader.tablePlan = passSender
-	hashAgg = &PhysicalHashAgg{}
+	hashAgg = &physicalop.PhysicalHashAgg{}
 	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
 	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
 	recv.SetChildren([]base.PhysicalPlan{hashSender}...)

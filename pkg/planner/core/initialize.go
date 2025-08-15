@@ -61,36 +61,6 @@ func (p PhysicalIndexScan) Init(ctx base.PlanContext, offset int) *PhysicalIndex
 	return &p
 }
 
-func initForHash(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
-	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	baseAgg := pp.(*physicalop.BasePhysicalAgg)
-	p := &PhysicalHashAgg{*baseAgg, ""}
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeHashAgg, p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	p.SetSchema(schema)
-	return p
-}
-
-func initForStream(pp base.PhysicalPlan, ctx base.PlanContext, stats *property.StatsInfo, offset int,
-	schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	baseAgg := pp.(*physicalop.BasePhysicalAgg)
-	p := &PhysicalStreamAgg{*baseAgg}
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	p.SetSchema(schema)
-	return p
-}
-
-// Init initializes PhysicalApply.
-func (p PhysicalApply) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalApply {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeApply, &p, offset)
-	p.SetChildrenReqProps(props)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes PhysicalIndexLookUpReader.
 func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
@@ -165,7 +135,7 @@ func (p *PhysicalTableReader) adjustReadReqType(ctx base.PlanContext) {
 			case 1:
 				for _, plan := range p.TablePlans {
 					switch plan.(type) {
-					case *PhysicalHashAgg, *PhysicalStreamAgg, *physicalop.PhysicalTopN:
+					case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalTopN:
 						p.ReadReqType = BatchCop
 						return
 					}
@@ -263,13 +233,6 @@ func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 // Init only assigns type and context.
 func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTE {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
-	p.SetStats(stats)
-	return &p
-}
-
-// Init only assigns type and context.
-func (p PhysicalCTETable) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTETable {
-	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
 	p.SetStats(stats)
 	return &p
 }

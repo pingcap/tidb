@@ -183,18 +183,17 @@ func TestGetAllFileNames(t *testing.T) {
 	err = w3.Close(ctx)
 	require.NoError(t, err)
 
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
+	filenames, err := GetAllFileNames(ctx, store, "subtask")
 	require.NoError(t, err)
-	require.Equal(t, []string{
-		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
-		"/subtask/12_stat/0", "/subtask/12_stat/1", "/subtask/12_stat/2",
-		"/subtask/3_stat/0", "/subtask/3_stat/1", "/subtask/3_stat/2",
-	}, statFiles)
+	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
+		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
 		"/subtask/12/0", "/subtask/12/1", "/subtask/12/2",
+		"/subtask/12_stat/0", "/subtask/12_stat/1", "/subtask/12_stat/2",
 		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
-	}, dataFiles)
+		"/subtask/3_stat/0", "/subtask/3_stat/1", "/subtask/3_stat/2",
+	}, filenames)
 }
 
 func TestCleanUpFiles(t *testing.T) {
@@ -219,21 +218,19 @@ func TestCleanUpFiles(t *testing.T) {
 	err := w.Close(ctx)
 	require.NoError(t, err)
 
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
+	filenames, err := GetAllFileNames(ctx, store, "subtask")
 	require.NoError(t, err)
-	require.Equal(t, []string{
-		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
-	}, statFiles)
+	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
-	}, dataFiles)
+		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+	}, filenames)
 
-	require.NoError(t, CleanUpFiles(ctx, store, "/subtask"))
+	require.NoError(t, CleanUpFiles(ctx, store, "subtask"))
 
-	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
+	filenames, err = GetAllFileNames(ctx, store, "subtask")
 	require.NoError(t, err)
-	require.Equal(t, []string(nil), statFiles)
-	require.Equal(t, []string(nil), dataFiles)
+	require.Equal(t, []string(nil), filenames)
 }
 
 func TestGetMaxOverlapping(t *testing.T) {

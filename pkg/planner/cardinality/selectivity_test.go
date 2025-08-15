@@ -132,7 +132,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	h := dom.StatsHandle()
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	sctx := mock.NewContext()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(900, 900), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
@@ -236,7 +236,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	sctx := mock.NewContext()
 	colID := table.Meta().Columns[0].ID
@@ -253,11 +253,11 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 4.7, count)
 
 	idxID := table.Meta().Indices[0].ID
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30), nil)
 	require.NoError(t, err)
 	require.Equal(t, 0.1, count)
 
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30), nil)
 	require.NoError(t, err)
 	require.Equal(t, 4.5, count)
 
@@ -266,7 +266,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	table, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl = h.GetTableStats(table.Meta())
+	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	colID = table.Meta().Columns[0].ID
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(1, 30))
@@ -279,7 +279,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	table, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl = h.GetTableStats(table.Meta())
+	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	colID = table.Meta().Columns[0].ID
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(2, 2))
@@ -287,7 +287,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 1.0, count)
 
 	idxID = table.Meta().Indices[0].ID
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2), nil)
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 }
@@ -314,7 +314,7 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	// Search for a found value == 10.0
 	sctx := mock.NewContext()
@@ -333,7 +333,7 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	testKit.MustExec("insert into t select a+10 from t where a <= 10")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-	statsTblNew := h.GetTableStats(table.Meta())
+	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	// Search for a not found value based upon statistics - count should be > 20 and < 40
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
@@ -390,6 +390,42 @@ func TestIssue57948(t *testing.T) {
 	testKit.MustQuery("explain format='brief' select * from t where b = 5").CheckContain("idxb(b)")
 }
 
+func TestNewIndexWithColumnStats(t *testing.T) {
+	// Test two identical tables where one has no statistics at all, and the other only has column statistics but no index statistics
+	// Test that we supplement index estimation with column stats if there are no index stats available
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("drop table if exists t2")
+	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("create table t2(a int, index idxa(a))")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select mod(a,250) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("insert into t2 select mod(a,250) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("analyze table t all columns")
+	is := dom.InfoSchema()
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	statsTbl := h.GetPhysicalTableStats(tblInfo.Meta().ID, tblInfo.Meta())
+	colStats := statsTbl.GetCol(1)
+	require.NotNil(t, colStats)
+	require.True(t, colStats.IsAnalyzed())
+
+	testKit.MustExec("create index idxa on t(a)")
+
+	// Two row estimates should differ, even though both indexes have no statistics because t uses column statistics
+	// Estimation from table t should be very close to true row count
+	rows := testKit.MustQuery("explain analyze select * from t use index(idxa) where a > 5 and a < 25").Rows()
+	rows2 := testKit.MustQuery("explain select * from t2 use index(idxa) where a > 5 and a < 25").Rows()
+	rowCnt1, _ := strconv.ParseFloat(rows[0][1].(string), 64)
+	trueRowCnt, _ := strconv.ParseFloat(rows[0][2].(string), 64)
+	rowCnt2, _ := strconv.ParseFloat(rows2[0][1].(string), 64)
+	require.InDelta(t, trueRowCnt, rowCnt1, 0.1)
+	require.NotEqual(t, rowCnt1, rowCnt2)
+}
+
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -400,15 +436,15 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	testKit.MustExec("analyze table t all columns with 4 cmsketch width, 1 cmsketch depth;")
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := dom.StatsHandle().GetTableStats(table.Meta())
+	statsTbl := dom.StatsHandle().GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
 	sctx := mock.NewContext()
 	idxID := table.Meta().Indices[0].ID
-	count, _, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7))
+	count, _, _, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7), nil)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -592,7 +628,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
-	statsTbl := h.GetTableStats(tblInfo)
+	statsTbl := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 
 	var (
 		input  []string
@@ -703,7 +739,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	h := dom.StatsHandle()
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	sctx := mock.NewContext()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
@@ -1039,12 +1075,12 @@ func TestIssue39593(t *testing.T) {
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, _, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count without any changes, use range to reduce test flakiness
 	require.InDelta(t, float64(462.6), count, float64(1))
 	statsTbl.RealtimeCount *= 10
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
 	require.InDelta(t, float64(3702.6), count, float64(1))
@@ -1093,7 +1129,7 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 		StatsVer:          2,
 	})
 	generateMapsForMockStatsTbl(mockStatsTbl)
-	stat := h.GetTableStats(tblInfo)
+	stat := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	stat.HistColl = mockStatsTbl.HistColl
 
 	var (
@@ -1177,7 +1213,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 		})
 	}
 	generateMapsForMockStatsTbl(mockStatsTbl)
-	stat := h.GetTableStats(tblInfo)
+	stat := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	stat.HistColl = mockStatsTbl.HistColl
 
 	var (
@@ -1260,7 +1296,7 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 		})
 	}
 	generateMapsForMockStatsTbl(mockStatsTbl)
-	stat := h.GetTableStats(tblInfo)
+	stat := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	stat.HistColl = mockStatsTbl.HistColl
 
 	var (
@@ -1327,6 +1363,7 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 	require.Nil(t, err4)
 	require.Less(t, planCost3, planCost4)
 }
+
 func TestCrossValidationSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1529,19 +1566,19 @@ func TestRiskEqSkewRatio(t *testing.T) {
 
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
-	statsTbl := h.GetTableStats(tb.Meta())
+	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 	// Search for the value "6" which will not be found in the histogram buckets, and since
 	// there are NO topN values - the value will be considered skewed based upon skew ratio.
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
-	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count2, _, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err2)
 	// Result of count2 should be larger than count because the risk ratio is higher
 	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count3, _, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err3)
 	// Result of count3 should be larger because the risk ratio is higher
 	require.Less(t, count2, count3)
@@ -1552,28 +1589,28 @@ func TestRiskEqSkewRatio(t *testing.T) {
 	testKit.MustExec(`analyze table t with 1 topn`)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	// Rerun tests with 1 value in the TopN
-	statsTbl = h.GetTableStats(tb.Meta())
-	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	statsTbl = h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
+	count, _, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count2, _, err2 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count2, _, _, err2 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err2)
 	// Result of count2 should be larger than count because the risk ratio is higher
 	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
-	count3, _, err3 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count3, _, _, err3 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err3)
 	// Result of count3 should be larger than count because the risk ratio is higher
 	require.Less(t, count2, count3)
 	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
 	testKit.MustExec("set @@global.tidb_opt_risk_eq_skew_ratio = 0.5")
-	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count4, _, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err4)
 	require.Less(t, count2, count4)
 	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
 	// variable and be less than count3.
 	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = default")
-	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	count4, _, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6), nil)
 	require.NoError(t, err4)
 	require.Less(t, count4, count3)
 	// Reset global variable to default.
@@ -1601,31 +1638,31 @@ func TestRiskRangeSkewRatioWithinBucket(t *testing.T) {
 
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
-	statsTbl := h.GetTableStats(tb.Meta())
+	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 	// Search for the range from 2 to 3, since there is only one bucket it will be a query within
 	// a bucket.
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0")
-	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	count, _, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3), nil)
 	require.NoError(t, err)
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 0.5")
-	count2, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	count2, _, _, err2 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3), nil)
 	require.NoError(t, err2)
 	// Result of count2 should be larger than count because the risk ratio is higher
 	require.Less(t, count, count2)
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = 1")
-	count3, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	count3, _, _, err3 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3), nil)
 	require.NoError(t, err3)
 	// Result of count3 should be larger because the risk ratio is higher
 	require.Less(t, count2, count3)
 	// Repeat the prior test by setting the global variable instead of the session variable. This should have no effect.
 	testKit.MustExec("set @@global.tidb_opt_risk_range_skew_ratio = 0.5")
-	count4, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	count4, _, _, err4 := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3), nil)
 	require.NoError(t, err4)
 	require.Less(t, count2, count4)
 	// Repeat the prior test by setting the session variable to the default. Count4 should inherit the global
 	// variable and be less than count3.
 	testKit.MustExec("set @@session.tidb_opt_risk_range_skew_ratio = default")
-	count4, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3))
+	count4, _, _, err4 = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(2, 3), nil)
 	require.NoError(t, err4)
 	require.Less(t, count4, count3)
 	// Reset global variable to default.
@@ -1648,14 +1685,14 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		testKit.MustExec(fmt.Sprintf("insert into t select a from t where a = %d", i))
 	}
-	//Ensure that there are values in the histogram buckets
+	// Ensure that there are values in the histogram buckets
 	testKit.MustExec("analyze table t with 0 topn")
 	h := dom.StatsHandle()
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	sctx := testKit.Session()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
@@ -1709,7 +1746,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	sctx := testKit.Session()
 	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
 
@@ -1728,7 +1765,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	statsTbl = h.GetTableStats(table.Meta())
+	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
 	insufficientCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
@@ -1747,7 +1784,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
-	statsTbl = h.GetTableStats(table.Meta())
+	statsTbl = h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	col = statsTbl.GetCol(table.Meta().Columns[0].ID)
 
 	enhancedCount, err := cardinality.GetColumnRowCount(sctx.GetPlanCtx(), col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
@@ -1764,11 +1801,11 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Test index estimation as well
 	idx := statsTbl.GetIdx(table.Meta().Indices[0].ID)
 	if idx != nil {
-		idxEnhancedCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11))
+		idxEnhancedCount, _, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11), nil)
 		require.NoError(t, err)
 		require.InDelta(t, 100.09, idxEnhancedCount, 0.1, "Index enhanced count should be approximately 100.09")
 
-		idxOtherCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3))
+		idxOtherCount, _, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3), nil)
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
 	}

@@ -699,15 +699,12 @@ UNIQUE KEY idx_14 (col_72,col_71) /*!80000 INVISIBLE */
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
 explain format=brief select /*+ NO_HASH_JOIN( t43fc4f8a , st_57 */ avg( distinct  st_57.r1 ) as r0 from t43fc4f8a , ( select  /*+ use_index( tlcf30036b ) */ /*+ agg_to_cop()  */  elt(2, tlcf30036b.col_72 , tlcf30036b.col_72 ) as r0 , bit_or( tlcf30036b.col_71 ) as r1 from tlcf30036b where IsNull( tlcf30036b.col_71 ) and not( tlcf30036b.col_72 in ( '1980-08-05' ,'2033-10-20' ,'2030-06-22' ,'1972-04-20' ) ) group by tlcf30036b.col_72  having tlcf30036b.col_72 in ( '2004-03-24' ,'2006-02-04' ,'1993-06-20' ,null ) and not( tlcf30036b.col_72 < '2026-03-29' ) order by r0,r1 ) st_57 where st_57.r1 in ( 13307631398032338238 ,10696905560280898882 ,5314440087685082217 ,17229250596274672311 ) group by t43fc4f8a.col_51,t43fc4f8a.col_49  having t43fc4f8a.col_49 <=> 11261 order by r0 limit 562300838;
 id	estRows	task	access object	operator info
-TopN	8.00	root		Column#13, offset:0, count:562300838
-└─HashAgg	8.00	root		group by:Column#18, Column#19, funcs:avg(distinct Column#17)->Column#13
-  └─Projection	8.00	root		cast(Column#9, decimal(20,0) UNSIGNED BINARY)->Column#17, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51->Column#18, planner__core__casetest__predicate_simplification.t43fc4f8a.col_49->Column#19
-    └─Projection	8.00	root		planner__core__casetest__predicate_simplification.t43fc4f8a.col_49, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51, Column#9
-      └─HashJoin	8.00	root		CARTESIAN inner join
-        ├─Selection(Build)	0.80	root		in(Column#9, 13307631398032338238, 10696905560280898882, 5314440087685082217, 17229250596274672311)
-        │ └─HashAgg	1.00	root		group by:Column#16, funcs:bit_or(Column#15)->Column#9
-        │   └─Projection	0.00	root		cast(planner__core__casetest__predicate_simplification.tlcf30036b.col_71, bigint BINARY)->Column#15, planner__core__casetest__predicate_simplification.tlcf30036b.col_72->Column#16
-        │     └─TableDual	0.00	root		rows:0
+TopN	1.00	root		Column#13, offset:0, count:562300838
+└─HashAgg	1.00	root		group by:Column#16, Column#17, funcs:avg(distinct Column#15)->Column#13
+  └─Projection	0.00	root		cast(Column#9, decimal(20,0) UNSIGNED BINARY)->Column#15, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51->Column#16, planner__core__casetest__predicate_simplification.t43fc4f8a.col_49->Column#17
+    └─Projection	0.00	root		planner__core__casetest__predicate_simplification.t43fc4f8a.col_49, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51, Column#9
+      └─HashJoin	0.00	root		CARTESIAN inner join
+        ├─TableDual(Build)	0.00	root		rows:0
         └─TableReader(Probe)	10.00	root	partition:all	data:Selection
           └─Selection	10.00	cop[tikv]		nulleq(planner__core__casetest__predicate_simplification.t43fc4f8a.col_49, 11261)
             └─TableFullScan	10000.00	cop[tikv]	table:t43fc4f8a	keep order:false, stats:pseudo

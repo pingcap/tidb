@@ -186,6 +186,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	}
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
+	simplifiedPredicate = pushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.

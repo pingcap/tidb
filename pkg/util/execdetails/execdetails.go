@@ -28,21 +28,21 @@ import (
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
-	DetailsNeedP90
+	CopExecDetails
 	CommitDetail   *util.CommitDetails
 	LockKeysDetail *util.LockKeysDetails
-	ScanDetail     *util.ScanDetail
 	CopTime        time.Duration
-	BackoffTime    time.Duration
 	RequestCount   int
 }
 
-// DetailsNeedP90 contains execution detail information which need calculate P90.
-type DetailsNeedP90 struct {
+// CopExecDetails contains cop execution detail information.
+type CopExecDetails struct {
+	ScanDetail    *util.ScanDetail
+	TimeDetail    util.TimeDetail
+	CalleeAddress string
+	BackoffTime   time.Duration
 	BackoffSleep  map[string]time.Duration
 	BackoffTimes  map[string]int
-	CalleeAddress string
-	TimeDetail    util.TimeDetail
 }
 
 // P90BackoffSummary contains execution summary for a backoff type.
@@ -63,16 +63,6 @@ type P90Summary struct {
 	BackoffInfo map[string]*P90BackoffSummary
 }
 
-// CopExecDetails contains cop execution detail information.
-type CopExecDetails struct {
-	ScanDetail    util.ScanDetail
-	TimeDetail    util.TimeDetail
-	CalleeAddress string
-	BackoffTime   time.Duration
-	BackoffSleep  map[string]time.Duration
-	BackoffTimes  map[string]int
-}
-
 // MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
 const MaxDetailsNumsForOneQuery = 1000
 
@@ -85,27 +75,27 @@ func (d *P90Summary) Reset() {
 }
 
 // Merge merges DetailsNeedP90 into P90Summary.
-func (d *P90Summary) Merge(detail *DetailsNeedP90) {
+func (d *P90Summary) Merge(backoffSleep map[string]time.Duration, backoffTimes map[string]int, calleeAddress string, timeDetail util.TimeDetail) {
 	if d.BackoffInfo == nil {
 		d.Reset()
 	}
 	d.NumCopTasks++
-	d.ProcessTimePercentile.Add(DurationWithAddr{detail.TimeDetail.ProcessTime, detail.CalleeAddress})
-	d.WaitTimePercentile.Add(DurationWithAddr{detail.TimeDetail.WaitTime, detail.CalleeAddress})
+	d.ProcessTimePercentile.Add(DurationWithAddr{timeDetail.ProcessTime, calleeAddress})
+	d.WaitTimePercentile.Add(DurationWithAddr{timeDetail.WaitTime, calleeAddress})
 
 	var info *P90BackoffSummary
 	var ok bool
-	for backoff, timeItem := range detail.BackoffTimes {
+	for backoff, timeItem := range backoffTimes {
 		if info, ok = d.BackoffInfo[backoff]; !ok {
 			d.BackoffInfo[backoff] = &P90BackoffSummary{}
 			info = d.BackoffInfo[backoff]
 		}
-		sleepItem := detail.BackoffSleep[backoff]
+		sleepItem := backoffSleep[backoff]
 		info.ReqTimes++
 		info.TotBackoffTime += sleepItem
 		info.TotBackoffTimes += timeItem
 
-		info.BackoffPercentile.Add(DurationWithAddr{sleepItem, detail.CalleeAddress})
+		info.BackoffPercentile.Add(DurationWithAddr{sleepItem, calleeAddress})
 	}
 }
 
@@ -416,15 +406,9 @@ func (s *SyncExecDetails) MergeCopExecDetails(details *CopExecDetails, copTime t
 	s.execDetails.CopTime += copTime
 	s.execDetails.BackoffTime += details.BackoffTime
 	s.execDetails.RequestCount++
-	s.mergeScanDetail(&details.ScanDetail)
+	s.mergeScanDetail(details.ScanDetail)
 	s.mergeTimeDetail(details.TimeDetail)
-	detail := &DetailsNeedP90{
-		BackoffSleep:  details.BackoffSleep,
-		BackoffTimes:  details.BackoffTimes,
-		CalleeAddress: details.CalleeAddress,
-		TimeDetail:    details.TimeDetail,
-	}
-	s.detailsSummary.Merge(detail)
+	s.detailsSummary.Merge(details.BackoffSleep, details.BackoffTimes, details.CalleeAddress, details.TimeDetail)
 }
 
 // mergeScanDetail merges scan details into self.

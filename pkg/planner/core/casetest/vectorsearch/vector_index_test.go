@@ -314,129 +314,185 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	require.Equal(t, types.KindMaxValue, tableScan.Ranges[0].HighVal[0].Kind())
 }
 
-func prepareVectorSearchWithPK(t *testing.T) *testkit.TestKit {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists doc")
-
-	// A non-partitioned table
-	tk.MustExec(`
-		create table t1 (
-			id int primary key,
-			vec vector(3),
-			a int,
-			b int,
-			c vector(3),
-			d vector,
-			VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
-		)
-	`)
-	for i := range 2000 {
-		tk.MustExec(fmt.Sprintf(`
-		insert into t1 values
-			(%d, '[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'),
-			(%d, '[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
-			(%d, '[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]');
-		`, i, 2000+i, 2000*2+i))
-	}
-	tk.MustExec("analyze table t1")
-
-	// Another table for join
-	tk.MustExec("create table doc(id INT, doc LONGTEXT)")
-
-	testkit.SetTiFlashReplica(t, dom, "test", "t1")
-
-	return tk
-}
-
 func TestVectorSearchWithPKAuto(t *testing.T) {
-	tk := prepareVectorSearchWithPK(t)
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	suiteData := GetANNIndexSuiteData()
-	suiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-		})
-		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
-			tk.MustExec(tt)
-			continue
+	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 600*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1")
+		testKit.MustExec("drop table if exists doc")
+
+		// A non-partitioned table
+		testKit.MustExec(`
+			create table t1 (
+				id int primary key,
+				vec vector(3),
+				a int,
+				b int,
+				c vector(3),
+				d vector,
+				VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
+			)
+		`)
+		for i := range 2000 {
+			testKit.MustExec(fmt.Sprintf(`
+			insert into t1 values
+				(%d, '[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'),
+				(%d, '[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
+				(%d, '[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]');
+			`, i, 2000+i, 2000*2+i))
 		}
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+		testKit.MustExec("analyze table t1")
+
+		// Another table for join
+		testKit.MustExec("create table doc(id INT, doc LONGTEXT)")
+
+		testkit.SetTiFlashReplica(t, dom, "test", "t1")
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		suiteData := GetANNIndexSuiteData()
+		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+				testKit.MustExec(tt)
+				continue
+			}
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := testKit.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
 }
 
 func TestVectorSearchWithPKForceTiKV(t *testing.T) {
-	tk := prepareVectorSearchWithPK(t)
-	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
+	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 600*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1")
+		testKit.MustExec("drop table if exists doc")
 
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	suiteData := GetANNIndexSuiteData()
-	suiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-		})
-		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
-			tk.MustExec(tt)
-			continue
+		// A non-partitioned table
+		testKit.MustExec(`
+			create table t1 (
+				id int primary key,
+				vec vector(3),
+				a int,
+				b int,
+				c vector(3),
+				d vector,
+				VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
+			)
+		`)
+		for i := range 2000 {
+			testKit.MustExec(fmt.Sprintf(`
+			insert into t1 values
+				(%d, '[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'),
+				(%d, '[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
+				(%d, '[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]');
+			`, i, 2000+i, 2000*2+i))
 		}
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+		testKit.MustExec("analyze table t1")
+
+		// Another table for join
+		testKit.MustExec("create table doc(id INT, doc LONGTEXT)")
+
+		testkit.SetTiFlashReplica(t, dom, "test", "t1")
+		testKit.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		suiteData := GetANNIndexSuiteData()
+		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+				testKit.MustExec(tt)
+				continue
+			}
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := testKit.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
 }
 
 func TestVectorSearchHeavyFunction(t *testing.T) {
-	tk := prepareVectorSearchWithPK(t)
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	suiteData := GetANNIndexSuiteData()
-	suiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-		})
-		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
-			tk.MustExec(tt)
-			continue
+	testkit.RunTestUnderCascadesAndDomainWithSchemaLease(t, 600*time.Millisecond, []mockstore.MockTiKVStoreOption{mockstore.WithMockTiFlash(2)}, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1")
+		testKit.MustExec("drop table if exists doc")
+
+		// A non-partitioned table
+		testKit.MustExec(`
+			create table t1 (
+				id int primary key,
+				vec vector(3),
+				a int,
+				b int,
+				c vector(3),
+				d vector,
+				VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
+			)
+		`)
+		for i := range 2000 {
+			testKit.MustExec(fmt.Sprintf(`
+			insert into t1 values
+				(%d, '[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'),
+				(%d, '[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
+				(%d, '[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]');
+			`, i, 2000+i, 2000*2+i))
 		}
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
-	}
+		testKit.MustExec("analyze table t1")
+
+		// Another table for join
+		testKit.MustExec("create table doc(id INT, doc LONGTEXT)")
+
+		testkit.SetTiFlashReplica(t, dom, "test", "t1")
+
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		suiteData := GetANNIndexSuiteData()
+		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+				testKit.MustExec(tt)
+				continue
+			}
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			res := testKit.MustQuery(tt)
+			res.Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	})
 }

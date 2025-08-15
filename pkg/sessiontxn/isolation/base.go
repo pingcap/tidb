@@ -133,7 +133,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
 	sessVars.TxnCtxMu.Unlock()
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		sessVars.TxnCtx.EnableMDL = true
 	}
 

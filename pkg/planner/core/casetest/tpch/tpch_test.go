@@ -295,6 +295,10 @@ func TestQ21(t *testing.T) {
 		createLineItem(t, tk, dom)
 		createOrders(t, tk, dom)
 		createNation(t, tk, dom)
+		testkit.LoadTableStats("test.supplier.json", dom)
+		testkit.LoadTableStats("test.lineitem.json", dom)
+		testkit.LoadTableStats("test.orders.json", dom)
+		testkit.LoadTableStats("test.nation.json", dom)
 		var (
 			input  []string
 			output []struct {
@@ -432,8 +436,7 @@ func BenchmarkTPCHQ21(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		tk.MustQuery("explain format='cost_trace' SELECT o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
-		tk.MustQuery("explain format='cost_trace' SELECT /*+ NO_INDEX_JOIN(orders, lineitem),NO_INDEX_HASH_JOIN(orders, lineitem) */ o_orderpriority, COUNT(*) AS order_count FROM orders WHERE o_orderdate >= '1995-01-01' AND o_orderdate < DATE_ADD('1995-01-01', INTERVAL '3' MONTH) AND EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey AND l_commitdate < l_receiptdate) GROUP BY o_orderpriority ORDER BY o_orderpriority;")
+		tk.MustQuery("explain format='brief' SELECT s_name, COUNT(*) AS numwait FROM supplier, lineitem l1, orders, nation WHERE s_suppkey = l1.l_suppkey AND o_orderkey = l1.l_orderkey AND o_orderstatus = 'F' AND l1.l_receiptdate > l1.l_commitdate AND EXISTS (SELECT * FROM lineitem l2 WHERE l2.l_orderkey = l1.l_orderkey AND l2.l_suppkey <> l1.l_suppkey) AND NOT EXISTS (SELECT * FROM lineitem l3 WHERE l3.l_orderkey = l1.l_orderkey AND l3.l_suppkey <> l1.l_suppkey AND l3.l_receiptdate > l3.l_commitdate) AND s_nationkey = n_nationkey AND n_name = 'EGYPT' GROUP BY s_name ORDER BY numwait DESC, s_name LIMIT 100;")
 	}
 }
 

@@ -98,7 +98,7 @@ func TestGroupExists(t *testing.T) {
 }
 
 func TestGroupFingerPrint(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	p := parser.New()
 	stmt1, err := p.ParseOneStmt("select * from t where a > 1 and a < 100", "", "")
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestFirstElemAfterDelete(t *testing.T) {
 }
 
 func TestBuildKeyInfo(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	defer func() {

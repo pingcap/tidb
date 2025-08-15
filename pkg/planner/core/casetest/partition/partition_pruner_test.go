@@ -125,16 +125,15 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 		defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-		store := testkit.CreateMockStore(t)
-		tk := testkit.NewTestKit(t, store)
+		store := testKit.Session().GetStore()
 
-		tk.MustExec("drop database if exists test_partition;")
-		tk.MustExec("create database test_partition")
-		tk.MustExec("use test_partition")
-		tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
-		tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
-		tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
-		tk.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+		testKit.MustExec("drop database if exists test_partition;")
+		testKit.MustExec("create database test_partition")
+		testKit.MustExec("use test_partition")
+		testKit.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
+		testKit.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
+		testKit.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+		testKit.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
 		// tk1 use to test partition table with index.
 		tk1 := testkit.NewTestKit(t, store)
@@ -160,6 +159,12 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 
 		// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 		tk1.MustExec("set @@tidb_enable_chunk_rpc = on")
+		cascadesVal := "off"
+		if cascades == "on" {
+			cascadesVal = "on"
+		}
+		tk1.MustExec(fmt.Sprintf("set @@tidb_enable_cascades_planner = %s", cascadesVal))
+		tk2.MustExec(fmt.Sprintf("set @@tidb_enable_cascades_planner = %s", cascadesVal))
 
 		var input []struct {
 			SQL    string
@@ -176,14 +181,14 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		valid := false
 		for i, tt := range input {
 			// Test for table without index.
-			plan := tk.MustQuery("explain format = 'brief' " + tt.SQL)
+			plan := testKit.MustQuery("explain format = 'brief' " + tt.SQL)
 			planTree := testdata.ConvertRowsToStrings(plan.Rows())
 			// Test for table with index.
 			indexPlan := tk1.MustQuery("explain format = 'brief' " + tt.SQL)
 			indexPlanTree := testdata.ConvertRowsToStrings(indexPlan.Rows())
 			testdata.OnRecord(func() {
 				output[i].SQL = tt.SQL
-				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt.SQL).Sort().Rows())
+				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt.SQL).Sort().Rows())
 				// Test for table without index.
 				output[i].Plan = planTree
 				// Test for table with index.
@@ -198,7 +203,7 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 			checkPrunePartitionInfo(t, tt.SQL, tt.Pruner, indexPlanTree)
 
 			// compare the result.
-			result := tk.MustQuery(tt.SQL).Sort()
+			result := testKit.MustQuery(tt.SQL).Sort()
 			idxResult := tk1.MustQuery(tt.SQL)
 			result.Check(idxResult.Sort().Rows())
 			result.Check(testkit.Rows(output[i].Result...))
