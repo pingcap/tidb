@@ -156,7 +156,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
-		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).
+		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		Build()
 	if err != nil {
 		return err

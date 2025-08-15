@@ -2058,6 +2058,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
+	sc.ResourceGroupName = vars.ResourceGroupName
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
