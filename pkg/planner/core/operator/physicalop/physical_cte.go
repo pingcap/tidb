@@ -16,20 +16,20 @@ package physicalop
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/access"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
