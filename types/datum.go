@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -2260,20 +2261,33 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
+var strBuilderPool = sync.Pool{New: func() interface{} { return &strings.Builder{} }}
+
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
-	strs := make([]string, 0, len(datums))
-	for _, datum := range datums {
+	n := len(datums)
+	builder := strBuilderPool.Get().(*strings.Builder)
+	defer func() {
+		builder.Reset()
+		strBuilderPool.Put(builder)
+	}()
+	if n > 1 {
+		builder.WriteString("(")
+	}
+	for i, datum := range datums {
+		if i > 0 {
+			builder.WriteString(", ")
+		}
 		if handleSpecialValue {
 			switch datum.Kind() {
 			case KindNull:
-				strs = append(strs, "NULL")
+				builder.WriteString("NULL")
 				continue
 			case KindMinNotNull:
-				strs = append(strs, "-inf")
+				builder.WriteString("-inf")
 				continue
 			case KindMaxValue:
-				strs = append(strs, "+inf")
+				builder.WriteString("+inf")
 				continue
 			}
 		}
@@ -2281,18 +2295,29 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
+		const logDatumLen = 2048
+		originalLen := -1
+		if len(str) > logDatumLen {
+			originalLen = len(str)
+			str = str[:logDatumLen]
+		}
 		if datum.Kind() == KindString {
-			strs = append(strs, fmt.Sprintf("%q", str))
+			builder.WriteString(`"`)
+			builder.WriteString(str)
+			builder.WriteString(`"`)
 		} else {
-			strs = append(strs, str)
+			builder.WriteString(str)
+		}
+		if originalLen != -1 {
+			builder.WriteString(" len(")
+			builder.WriteString(strconv.Itoa(originalLen))
+			builder.WriteString(")")
 		}
 	}
-	size := len(datums)
-	if size > 1 {
-		strs[0] = "(" + strs[0]
-		strs[size-1] = strs[size-1] + ")"
+	if n > 1 {
+		builder.WriteString(")")
 	}
-	return strings.Join(strs, ", "), nil
+	return builder.String(), nil
 }
 
 // DatumsToStrNoErr converts some datums to a formatted string.
