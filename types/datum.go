@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:types/datum.go
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -34,6 +35,17 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+=======
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+>>>>>>> 25dde1c45d1 (stats: use an alternative function to read the bound from `BLOB` stored in `mysql.stats_buckets`. (#59791)):pkg/types/datum.go
 	"go.uber.org/zap"
 )
 
@@ -1063,7 +1075,13 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindMysqlBit:
 		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.
+<<<<<<< HEAD:types/datum.go
 		val, err := d.GetBinaryLiteral().ToInt(sc)
+=======
+		val, err := d.GetBinaryLiteral().ToInt(ctx)
+		// The length of BIT is limited to 64, so this function will never fail / truncated.
+		intest.AssertNoError(err)
+>>>>>>> 25dde1c45d1 (stats: use an alternative function to read the bound from `BLOB` stored in `mysql.stats_buckets`. (#59791)):pkg/types/datum.go
 		if err != nil {
 			s = d.GetBinaryLiteral().ToString()
 		} else {
