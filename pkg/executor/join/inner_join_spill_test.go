@@ -243,6 +243,7 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType logicalop.JoinType, lef
 	testInnerJoinSpillCase5(t, ctx, info, leftDataSource, rightDataSource, param.memoryLimits[4])
 }
 
+// TODO adjust spill test to pass them
 func TestInnerJoinSpillBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
