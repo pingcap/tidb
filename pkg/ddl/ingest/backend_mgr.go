@@ -175,7 +175,7 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		var nilMgr *CheckpointManager
 		fpCpOp = nilMgr // typed-nil that implements CheckpointOperator
 	}
-	failpoint.InjectCall("mockNewBackendContext", b.job, cpOp, &mockBackend)
+	failpoint.InjectCall("mockNewBackendContext", b.job, fpCpOp, &mockBackend)
 	if mockBackend != nil {
 		BackendCounterForTest.Inc()
 		return mockBackend, nil
