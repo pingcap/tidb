@@ -9,9 +9,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/schemaver",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/ddl/logutil",
         "//pkg/ddl/util",
-        "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
         "//pkg/metrics",
         "//pkg/sessionctx/vardef",
