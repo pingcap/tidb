@@ -252,7 +252,7 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tblInfo := &model.TableInfo{}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -287,7 +287,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	aggDescs := []*aggregation.AggFuncDesc{aggDesc1, aggDesc2}
 
 	// table scan
-	tableScan := &PhysicalTableScan{
+	tableScan := &physicalop.PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -305,11 +305,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(tableReader))
 
 	// index scan
-	indexScan := &PhysicalIndexScan{
+	indexScan := &physicalop.PhysicalIndexScan{
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		dataSourceSchema: schema,
+		DataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
@@ -331,28 +331,28 @@ func TestPhysicalPlanClone(t *testing.T) {
 		TablePlans:     []base.PhysicalPlan{tableReader},
 		tablePlan:      tableScan,
 		ExtraHandleCol: col,
-		PushedLimit:    &PushedDownLimit{1, 2},
+		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
 	indexLookup = indexLookup.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
-	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &physicalop.PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
 
 	// maxOneRow
-	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow := &physicalop.PhysicalMaxOneRow{}
 	maxOneRow = maxOneRow.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
+	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
-	lim := &PhysicalLimit{Count: 1, Offset: 2}
+	lim := &physicalop.PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(lim))
 
@@ -363,32 +363,30 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(sort))
 
 	// topN
-	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
+	topN := &physicalop.PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
 	topN = topN.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
-	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
+	streamAgg := &physicalop.PhysicalStreamAgg{BasePhysicalAgg: physicalop.BasePhysicalAgg{
 		AggFuncs:     aggDescs,
 		GroupByItems: []expression.Expression{col, cst},
 	}}
-	streamAgg = streamAgg.initForStream(ctx, stats, 0)
-	streamAgg.SetSchema(schema)
+	streamAgg = streamAgg.InitForStream(ctx, stats, 0, schema).(*physicalop.PhysicalStreamAgg)
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &PhysicalHashAgg{
-		basePhysicalAgg: basePhysicalAgg{
+	hashAgg := &physicalop.PhysicalHashAgg{
+		BasePhysicalAgg: physicalop.BasePhysicalAgg{
 			AggFuncs:     aggDescs,
 			GroupByItems: []expression.Expression{col, cst},
 		},
 	}
-	hashAgg = hashAgg.initForHash(ctx, stats, 0)
-	hashAgg.SetSchema(schema)
+	hashAgg = hashAgg.InitForHash(ctx, stats, 0, schema).(*physicalop.PhysicalHashAgg)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 
 	// hash join
-	hashJoin := &PhysicalHashJoin{
+	hashJoin := &physicalop.PhysicalHashJoin{
 		Concurrency:     4,
 		UseOuterToBuild: true,
 	}
@@ -397,7 +395,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(hashJoin))
 
 	// merge join
-	mergeJoin := &PhysicalMergeJoin{
+	mergeJoin := &physicalop.PhysicalMergeJoin{
 		CompareFuncs: []expression.CompareFunc{expression.CompareInt},
 		Desc:         true,
 	}
@@ -406,15 +404,15 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
 
 	// index join
-	baseJoin := basePhysicalJoin{
+	baseJoin := physicalop.BasePhysicalJoin{
 		LeftJoinKeys:    []*expression.Column{col},
 		RightJoinKeys:   nil,
 		OtherConditions: []expression.Expression{col},
 	}
 
-	indexJoin := &PhysicalIndexJoin{
-		basePhysicalJoin: baseJoin,
-		innerPlan:        indexScan,
+	indexJoin := &physicalop.PhysicalIndexJoin{
+		BasePhysicalJoin: baseJoin,
+		InnerPlan:        indexScan,
 		Ranges:           ranger.Ranges{},
 	}
 	indexJoin = indexJoin.Init(ctx, stats, 0)
@@ -932,7 +930,7 @@ func TestTraffic(t *testing.T) {
 		require.NoError(t, err, test.sql)
 		traffic, ok := p.(*Traffic)
 		require.True(t, ok, test.sql)
-		require.Equal(t, test.cols, len(traffic.names), test.sql)
+		require.Equal(t, test.cols, len(traffic.OutputNames()), test.sql)
 		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
 	}
 }

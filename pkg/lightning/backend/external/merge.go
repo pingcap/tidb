@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -64,6 +65,7 @@ func NewMergeOperator(
 	newFilePrefix string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
@@ -112,6 +114,7 @@ type mergeWorker struct {
 	newFilePrefix string
 	blockSize     int
 	onClose       OnCloseFunc
+	collector     execute.Collector
 	checkHotspot  bool
 	onDup         engineapi.OnDuplicateKey
 }
@@ -126,6 +129,7 @@ func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)
 		uuid.New().String(),
 		w.blockSize,
 		w.onClose,
+		w.collector,
 		w.checkHotspot,
 		w.onDup,
 	)
@@ -224,6 +228,7 @@ func mergeOverlappingFilesInternal(
 	writerID string,
 	blockSize int,
 	onClose OnCloseFunc,
+	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
 ) (err error) {
@@ -285,9 +290,14 @@ func mergeOverlappingFilesInternal(
 	// currently use same goroutine to do read and write. The main advantage is
 	// there's no KV copy and iter can reuse the buffer.
 	for iter.Next() {
-		err = writer.WriteRow(ctx, iter.Key(), iter.Value())
+		key, value := iter.Key(), iter.Value()
+		err = writer.WriteRow(ctx, key, value)
 		if err != nil {
 			return err
+		}
+
+		if collector != nil {
+			collector.Add(int64(len(key)+len(value)), 1)
 		}
 	}
 	return iter.Error()

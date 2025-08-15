@@ -40,7 +40,7 @@ func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
 func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
-	p := PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
+	p := physicalop.PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
 	task := &RootTask{
 		p: p,
 	}

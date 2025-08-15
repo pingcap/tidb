@@ -27,9 +27,9 @@ import (
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
 	validatorapi.Validator
-	schemaVer       int64
-	relatedTableIDs []int64
-	needCheckSchema bool
+	schemaVer              int64
+	relatedTableIDs        []int64
+	needCheckSchemaByDelta bool
 }
 
 type intSchemaVer int64
@@ -46,12 +46,12 @@ var (
 )
 
 // NewSchemaChecker creates a new schema checker.
-func NewSchemaChecker(validator validatorapi.Validator, schemaVer int64, relatedTableIDs []int64, needCheckSchema bool) *SchemaChecker {
+func NewSchemaChecker(validator validatorapi.Validator, schemaVer int64, relatedTableIDs []int64, needCheckSchemaByDelta bool) *SchemaChecker {
 	return &SchemaChecker{
-		Validator:       validator,
-		schemaVer:       schemaVer,
-		relatedTableIDs: relatedTableIDs,
-		needCheckSchema: needCheckSchema,
+		Validator:              validator,
+		schemaVer:              schemaVer,
+		relatedTableIDs:        relatedTableIDs,
+		needCheckSchemaByDelta: needCheckSchemaByDelta,
 	}
 }
 
@@ -65,7 +65,7 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for range schemaOutOfDateRetryTimes {
-		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchema)
+		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchemaByDelta)
 		switch checkResult {
 		case validatorapi.ResultSucc:
 			return nil, nil

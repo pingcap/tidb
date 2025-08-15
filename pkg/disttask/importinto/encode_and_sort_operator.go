@@ -20,9 +20,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -34,10 +34,6 @@ import (
 
 const (
 	maxWaitDuration = 30 * time.Second
-
-	// we use a larger block size for data KV group to support larger row.
-	// TODO: make it configurable?
-	dataKVGroupBlockSize = 32 * units.MiB
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -47,6 +43,8 @@ const (
 // them inside.
 type encodeAndSortOperator struct {
 	*operator.AsyncOperator[*importStepMinimalTask, workerpool.None]
+
+	collector execute.Collector
 
 	taskID, subtaskID int64
 	tableImporter     *importer.TableImporter
@@ -63,10 +61,12 @@ func newEncodeAndSortOperator(
 	opCtx *util.Context,
 	executor *importStepExecutor,
 	sharedVars *SharedVars,
+	collector execute.Collector,
 	subtaskID int64,
 	concurrency int,
 ) *encodeAndSortOperator {
 	op := &encodeAndSortOperator{
+		collector:     collector,
 		taskID:        executor.taskID,
 		subtaskID:     subtaskID,
 		tableImporter: executor.tableImporter,
@@ -142,7 +142,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	return executor.Run(w.ctx, w.dataWriter, w.indexWriter)
+	return executor.Run(w.ctx, w.dataWriter, w.indexWriter, w.op.collector)
 }
 
 func (w *chunkWorker) Close() error {

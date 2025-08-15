@@ -507,20 +507,18 @@ type StatsHandle interface {
 	// TableInfoGetter is used to get table meta info.
 	handleutil.TableInfoGetter
 
-	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+	// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
+	// physicalTableID can be a table ID or partition ID.
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 
-	// GetTableStatsForAutoAnalyze retrieves the statistics table from cache, but it will not return pseudo.
-	GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table
-
-	// GetPartitionStats retrieves the partition stats from cache.
-	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+	// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
+	// physicalTableID can be a table ID or partition ID.
+	// Note: this function may return nil if the table is not found in the cache.
+	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
 
 	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+	// TODO: remove this function and use GetPhysicalTableStats instead.
 	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
-
-	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
-	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
 	// StatsGC is used to do the GC job.
 	StatsGC

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/statistics"
 )
@@ -33,7 +34,7 @@ type TableDualImpl struct {
 }
 
 // NewTableDualImpl creates a new table dual Implementation.
-func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
+func NewTableDualImpl(dual *physicalop.PhysicalTableDual) *TableDualImpl {
 	return &TableDualImpl{baseImpl{plan: dual}}
 }
 
@@ -48,7 +49,7 @@ type MemTableScanImpl struct {
 }
 
 // NewMemTableScanImpl creates a new table dual Implementation.
-func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
+func NewMemTableScanImpl(dual *physicalop.PhysicalMemTable) *MemTableScanImpl {
 	return &MemTableScanImpl{baseImpl{plan: dual}}
 }
 
@@ -111,7 +112,7 @@ type TableScanImpl struct {
 }
 
 // NewTableScanImpl creates a new table scan Implementation.
-func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Column,
+func NewTableScanImpl(ts *physicalop.PhysicalTableScan, cols []*expression.Column,
 	hists *statistics.HistColl) *TableScanImpl {
 	base := baseImpl{plan: ts}
 	impl := &TableScanImpl{
@@ -124,7 +125,7 @@ func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Colu
 
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
-	ts := impl.plan.(*plannercore.PhysicalTableScan)
+	ts := impl.plan.(*physicalop.PhysicalTableScan)
 	width := cardinality.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblColHists, impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.GetScanFactor(ts.Table) * width
@@ -181,7 +182,7 @@ type IndexScanImpl struct {
 
 // CalcCost implements Implementation interface.
 func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
-	is := impl.plan.(*plannercore.PhysicalIndexScan)
+	is := impl.plan.(*physicalop.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
 	rowSize := cardinality.GetIndexAvgRowSize(is.SCtx(), impl.tblColHists, is.Schema().Columns, is.Index.Unique)
 	cost := outCount * rowSize * sessVars.GetScanFactor(is.Table)
@@ -194,7 +195,7 @@ func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) 
 }
 
 // NewIndexScanImpl creates a new IndexScan Implementation.
-func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
+func NewIndexScanImpl(scan *physicalop.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
 	return &IndexScanImpl{
 		baseImpl:    baseImpl{plan: scan},
 		tblColHists: tblColHists,

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -43,27 +44,81 @@ var (
 	LoadSchemaDiffVersionGapThreshold int64 = 10000
 )
 
+// LoadMode represents the mode of loading info schema.
+type LoadMode int
+
+// String implements fmt.Stringer interface.
+func (m LoadMode) String() string {
+	switch m {
+	case LoadModeAuto:
+		return "auto"
+	case LoadModeFull:
+		return "full"
+	default:
+		return "unknown"
+	}
+}
+
+const (
+	// LoadModeAuto will use v1 or v2 according to vardef.SchemaCacheSize.
+	// this is also the default mode.
+	//  - v1: when vardef.SchemaCacheSize is 0, we will load all matched info
+	//    schema objects into memory eagerly.
+	//  - v2: when vardef.SchemaCacheSize is greater than 0, we will load only
+	//    names/IDs and some special tableInfo into memory immediately, and will
+	//    load other info schema objects lazily when they are accessed.
+	//    we will also try to restrict the memory usage of the info schema below
+	//    vardef.SchemaCacheSize.
+	LoadModeAuto LoadMode = 0
+	// LoadModeFull uses info schema v1.
+	LoadModeFull LoadMode = 1
+)
+
 // Loader is the main structure for syncing the info schema.
 type Loader struct {
+	mode      LoadMode
 	store     kv.Storage
 	infoCache *infoschema.InfoCache
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn *deferFn
+	// if true, it means the loader is used for cross keyspace, we only allow
+	// loading system tables
+	crossKS bool
+	logger  *zap.Logger
 
 	// below fields are set when running background routines
-	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
+	// Note: for cross keyspace loader, we don't set below fields as system tables
+	// are forbidden to use those features.
+	//
+	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the
+	// client to the autoid service.
 	autoidClient *autoid.ClientDiscover
 	// CachedTable need internal session to access some system tables, such as
 	// mysql.table_cache_meta
 	sysExecutorFactory func() (pools.Resource, error)
 }
 
-// NewLoader creates a new Loader instance.
-func NewLoader(store kv.Storage, infoCache *infoschema.InfoCache) *Loader {
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn) *Loader {
+	mode := LoadModeAuto
 	return &Loader{
+		mode:      mode,
+		store:     store,
+		infoCache: infoCache,
+		deferFn:   deferFn,
+		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
+	}
+}
+
+// NewLoaderForCrossKS creates a new Loader instance.
+func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loader {
+	mode := LoadModeFull
+	return &Loader{
+		mode:      mode,
 		store:     store,
 		infoCache: infoCache,
 		deferFn:   &deferFn{},
+		crossKS:   true,
+		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)),
 	}
 }
 
@@ -100,13 +155,22 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		return nil, false, 0, nil, err
 	}
 	// fetch the commit timestamp of the schema diff
-	schemaTs, err := l.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
-		schemaTs = 0
+	var schemaTs uint64
+	// on initial bootstrap, neededSchemaVersion=0, there is no schema diff
+	if neededSchemaVersion > 0 {
+		var err2 error
+		schemaTs, err2 = l.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion, startTS)
+		if err2 != nil {
+			l.logger.Warn("failed to get schema version", zap.Error(err2), zap.Int64("version", neededSchemaVersion))
+			schemaTs = 0
+		}
 	}
 
-	enableV2 := vardef.SchemaCacheSize.Load() > 0
+	var schemaCacheSize uint64
+	if l.mode == LoadModeAuto {
+		schemaCacheSize = vardef.SchemaCacheSize.Load()
+	}
+	enableV2 := schemaCacheSize > 0
 	currentSchemaVersion := int64(0)
 	oldInfoSchema := l.infoCache.GetLatest()
 	if oldInfoSchema != nil {
@@ -142,37 +206,38 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	// 4. No regenerated schema diff.
 	startTime := time.Now()
 	if !isV1V2Switch && currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
-		is, relatedChanges, diffTypes, err := l.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, startTS)
+		is, relatedChanges, diffTypes, err := l.tryLoadSchemaDiffs(useV2, m, currentSchemaVersion, neededSchemaVersion, startTS, schemaCacheSize)
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
 			l.infoCache.Insert(is, schemaTs)
-			logutil.BgLogger().Info("diff load InfoSchema success",
+			l.logger.Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
-				zap.Int64("currentSchemaVersion", currentSchemaVersion),
-				zap.Int64("neededSchemaVersion", neededSchemaVersion),
+				zap.Int64("currVer", currentSchemaVersion),
+				zap.Int64("neededVer", neededSchemaVersion),
+				zap.Int64("gotVer", is.SchemaMetaVersion()),
 				zap.Duration("elapsed time", time.Since(startTime)),
-				zap.Int64("gotSchemaVersion", is.SchemaMetaVersion()),
 				zap.Int64s("phyTblIDs", relatedChanges.PhyTblIDS),
 				zap.Uint64s("actionTypes", relatedChanges.ActionTypes),
 				zap.Strings("diffTypes", diffTypes))
+			failpoint.InjectCall("afterLoadSchemaDiffs", is.SchemaMetaVersion())
 			return is, false, currentSchemaVersion, relatedChanges, nil
 		}
 		// We can fall back to full load, don't need to return the error.
-		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
+		l.logger.Error("failed to load schema diff", zap.Error(err))
 	}
 
 	// add failpoint to simulate long-running schema loading scenario
 	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
 		if val.(bool) {
 			// not ideal to use sleep, but not sure if there is a better way
-			logutil.BgLogger().Error("sleep before doing a full load")
+			l.logger.Error("sleep before doing a full load")
 			time.Sleep(15 * time.Second)
 		}
 	})
 
 	// full load.
-	schemas, err := l.fetchAllSchemasWithTables(m)
+	schemas, err := l.fetchAllSchemasWithTables(m, schemaCacheSize)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -198,14 +263,15 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		// Not adding snapshot schema to history can avoid such cases.
 		data = infoschema.NewData()
 	}
-	builder := infoschema.NewBuilder(l, l.sysExecutorFactory, data, useV2)
+	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
+		WithCrossKS(l.crossKS)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
 	is := builder.Build(startTS)
 	isV2, _ := infoschema.IsV2(is)
-	logutil.BgLogger().Info("full load InfoSchema success",
+	l.logger.Info("full load InfoSchema success",
 		zap.Bool("isV2", isV2),
 		zap.Int64("currentSchemaVersion", currentSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
@@ -215,18 +281,31 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		// Reset the whole info cache to avoid co-existing of both v1 and v2, causing the memory usage doubled.
 		fn := l.infoCache.Upsert(is, schemaTs)
 		l.deferFn.add(fn, time.Now().Add(10*time.Minute))
-		logutil.BgLogger().Info("infoschema v1/v2 switch")
+		l.logger.Info("infoschema v1/v2 switch")
 	} else {
 		l.infoCache.Insert(is, schemaTs)
 	}
 	return is, false, currentSchemaVersion, nil, nil
 }
 
+func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+	if !l.crossKS {
+		return false
+	}
+
+	// for cross keyspace loader, we only load diff related to system tables.
+	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
+	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
+	// ExchangePartition, etc.
+	isRelatedToSystemTables := metadef.IsReservedID(diff.TableID) || metadef.IsReservedID(diff.OldTableID)
+	return !isRelatedToSystemTables
+}
+
 // tryLoadSchemaDiffs tries to only load latest schema changes.
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newVersion int64, startTS uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
+func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newVersion int64, startTS, schemaCacheSize uint64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, []string, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -237,7 +316,7 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 		if diff == nil {
 			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
 			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
-			logutil.BgLogger().Info("diff load InfoSchema get empty schema diff", zap.Int64("version", usedVersion))
+			l.logger.Info("diff load InfoSchema get empty schema diff", zap.Int64("version", usedVersion))
 			l.infoCache.InsertEmptySchemaVersion(usedVersion)
 			continue
 		}
@@ -261,7 +340,8 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 		}
 	})
 
-	builder := infoschema.NewBuilder(l, l.sysExecutorFactory, l.infoCache.Data, useV2)
+	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, l.infoCache.Data, useV2).
+		WithCrossKS(l.crossKS)
 	err := builder.InitWithOldInfoSchema(l.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -272,6 +352,12 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
+		if l.skipLoadingDiff(diff) {
+			// we still need to set the schema version even if we skip loading
+			// the diff to reflect where the I_S has been synced to.
+			builder.SetSchemaVersion(diff.Version)
+			continue
+		}
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
@@ -314,16 +400,29 @@ func (l *Loader) getTimestampForSchemaVersionWithNonEmptyDiff(m meta.Reader, ver
 }
 
 // fetchAllSchemasWithTables fetches all schemas with their tables.
-func (l *Loader) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
-	allSchemas, err := m.ListDatabases()
-	if err != nil {
-		return nil, err
+func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64) (
+	allSchemas []*model.DBInfo, err error) {
+	if l.crossKS {
+		var dbInfo *model.DBInfo
+		dbInfo, err = m.GetDatabase(metadef.SystemDatabaseID)
+		if err != nil {
+			return nil, err
+		}
+		if dbInfo == nil {
+			return nil, errors.New("system database not found")
+		}
+		allSchemas = []*model.DBInfo{dbInfo}
+	} else {
+		allSchemas, err = m.ListDatabases()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(allSchemas) == 0 {
 		return nil, nil
 	}
 
-	splittedSchemas := l.splitForConcurrentFetch(allSchemas)
+	splittedSchemas := l.splitForConcurrentFetch(allSchemas, schemaCacheSize)
 	concurrency := min(len(splittedSchemas), 128)
 
 	eg, ectx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
@@ -331,7 +430,7 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, erro
 	for _, schemas := range splittedSchemas {
 		ss := schemas
 		eg.Go(func() error {
-			return l.fetchSchemasWithTables(ectx, ss, m)
+			return l.fetchSchemasWithTables(ectx, ss, m, schemaCacheSize)
 		})
 	}
 	if err := eg.Wait(); err != nil {
@@ -356,7 +455,7 @@ func (*Loader) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader) error {
+func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {
 	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
 		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
 	})
@@ -368,7 +467,7 @@ func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		var tables []*model.TableInfo
 		var err error
-		if vardef.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+		if schemaCacheSize > 0 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
 				return err
@@ -376,8 +475,8 @@ func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 			if domainutil.RepairInfo.InRepairMode() && len(domainutil.RepairInfo.GetRepairTableList()) > 0 {
-				mustLoadReapirTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
-				for _, id := range mustLoadReapirTableIDs {
+				mustLoadRepairTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
+				for _, id := range mustLoadRepairTableIDs {
 					tblInfo, err := m.GetTable(di.ID, id)
 					if err != nil {
 						return err
@@ -423,10 +522,10 @@ func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 // so we decrease the concurrency.
 const fetchSchemaConcurrency = 1
 
-func (*Loader) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
+func (*Loader) splitForConcurrentFetch(schemas []*model.DBInfo, schemaCacheSize uint64) [][]*model.DBInfo {
 	groupCnt := fetchSchemaConcurrency
 	schemaCnt := len(schemas)
-	if vardef.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
+	if schemaCacheSize > 0 && schemaCnt > 1000 {
 		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
 		groupCnt = 8
 	}

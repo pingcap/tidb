@@ -151,7 +151,7 @@
           "TopN 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader 1.00 root  index:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[-inf,6], keep order:false"
+          "    └─IndexRangeScan 6.23 cop[tikv] table:t, index:idx_bc(b, c) range:[-inf,6], keep order:false"
         ]
       },
       {
@@ -166,7 +166,7 @@
           "  └─TopN(Probe) 1.00 root  test.t.a, offset:0, count:1",
           "    └─IndexReader 1.00 root  index:TopN",
           "      └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "        └─IndexRangeScan 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false"
+          "        └─IndexRangeScan 6.23 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false"
         ]
       },
       {
@@ -195,7 +195,7 @@
           "└─TableReader 1.00 root  data:Limit",
           "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
           "    └─Selection 1.00 cop[tikv]  eq(test.t.b, 2)",
-          "      └─TableFullScan 4.17 cop[tikv] table:t keep order:true"
+          "      └─TableFullScan 4.38 cop[tikv] table:t keep order:true"
         ]
       },
       {
@@ -222,7 +222,7 @@
           "TopN 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader 1.00 root  index:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─Selection 5.76 cop[tikv]  gt(test.t.a, 0)",
+          "    └─Selection 5.82 cop[tikv]  gt(test.t.a, 0)",
           "      └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
@@ -294,7 +294,7 @@
         "└─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
-        "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
+        "Batch_Point_Get_6 2.00 root table:t handle:[1 2], keep order:false, desc:false"
       ],
       [
         "TableReader_11 2.00 root  MppVersion: 3, data:ExchangeSender_10",
@@ -502,19 +502,18 @@
           "TopN 1.00 root  test.t.b, offset:0, count:1",
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.b, offset:0, count:1",
-          "    └─Selection 10000.00 cop[tikv]  le(test.t.a, 10000)",
+          "    └─Selection 10001.00 cop[tikv]  le(test.t.a, 10000)",
           "      └─TableFullScan 1000000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 999900 order by b limit 1",
         "Plan": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─Projection 1.00 root  test.t.a, test.t.b",
-          "  └─IndexLookUp 1.00 root  ",
-          "    ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:idx_b(b) keep order:true",
-          "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.a, 999900)",
-          "      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false"
+          "TopN 1.00 root  test.t.b, offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 102.00 cop[tikv] table:t, index:idx_a(a) range:[999900,+inf], keep order:false",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableRowIDScan 102.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]
@@ -526,10 +525,10 @@
         "SQL": "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;",
         "Plan": [
           "Sort_5 1.00 39640.65 root  cardcore_issuing.tbl_cardcore_transaction.transaction_status, cardcore_issuing.tbl_cardcore_transaction.account_number, cardcore_issuing.tbl_cardcore_transaction.entry_date, cardcore_issuing.tbl_cardcore_transaction.id",
-          "└─IndexLookUp_14 1.00 39619.45 root  ",
-          "  ├─IndexRangeScan_11(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
-          "  └─Selection_13(Probe) 1.00 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
-          "    └─TableRowIDScan_12 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
+          "└─IndexLookUp_15 1.00 39619.45 root  ",
+          "  ├─IndexRangeScan_12(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
+          "  └─Selection_14(Probe) 1.00 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
+          "    └─TableRowIDScan_13 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
         ],
         "Warn": null
       }
@@ -550,14 +549,36 @@
           "  │   │   ├─IndexFullScan(Build) 2.00 cop[tikv] table:t19f3e4f1, index:ee56e6aa(colc864) keep order:true, stats:pseudo",
           "  │   │   └─Selection(Probe) 2.00 cop[tikv]  not(isnull(test.t19f3e4f1.colaadb))",
           "  │   │     └─TableRowIDScan 2.00 cop[tikv] table:t19f3e4f1 keep order:false, stats:pseudo",
-          "  │   └─TableReader(Probe) 2.00 root  data:Selection",
-          "  │     └─Selection 2.00 cop[tikv]  eq(test.t19f3e4f1.colc864, NULL), not(isnull(test.t0da79f8d.colf2af))",
-          "  │       └─TableFullScan 2.00 cop[tikv] table:t0da79f8d keep order:false, stats:pseudo",
+          "  │   └─TableDual(Probe) 0.00 root  rows:0",
           "  └─IndexLookUp(Probe) 2.00 root  ",
           "    ├─IndexFullScan(Build) 2.00 cop[tikv] table:t19f3e4f1, index:ee56e6aa(colc864) keep order:false, stats:pseudo",
           "    └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t19f3e4f1 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs"
+        ]
       },
       {
         "SQL": "select /*+ nth_plan(5) */ * from `t19f3e4f1`  where  `colc864` in ( select  `colc864`     from  `t19f3e4f1`  where       `colaadb` in (      select     `colf2af`\n from   `t0da79f8d`  where  not ( `t19f3e4f1`.`colc864` <> null )  )  ) limit 2837;",
@@ -572,11 +593,37 @@
       {
         "SQL": "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';",
         "Plan": [
-          "IndexLookUp_10 169960.89 root  ",
-          "├─IndexRangeScan_8(Build) 169960.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
-          "└─TableRowIDScan_9(Probe) 169960.89 cop[tikv] table:s keep order:false"
+          "IndexLookUp_11 169960.89 root  ",
+          "├─IndexRangeScan_9(Build) 169960.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
+          "└─TableRowIDScan_10(Probe) 169960.89 cop[tikv] table:s keep order:false"
         ],
         "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue62438",
+    "Cases": [
+      {
+        "SQL": "explain format = 'cost_trace' \nSELECT\n  /*+ QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;",
+        "Plan": [
+          "Limit_15 5001.00 9906310.79 ((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) root  offset:0, count:5001",
+          "└─Projection_32 5001.00 9906310.79 (((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms, test.objects.metastore_uuid, test.objects.securable_id",
+          "  └─IndexLookUp_31 5001.00 9902317.99 ((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00 root  ",
+          "    ├─IndexRangeScan_29(Build) 5001.00 1253699.35 (scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects, index:idx_metastore_securable_seq(metastore_uuid, securable_id, seq) range:(\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 17299834,\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 +inf], keep order:true",
+          "    └─TableRowIDScan_30(Probe) 5001.00 1688011.54 (scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'cost_trace' \nSELECT\n  /*+ limit_to_cop(), QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;",
+        "Plan": [
+          "Projection_28 5001.00 9909305.39 (((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00)) + ((cpu(5001*filters(0.060000000000000005)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms",
+          "└─Projection_27 5001.00 9906310.79 ((((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00) + ((cpu(5001*filters(0.08)*tidb_cpu_factor(49.9)))/5.00) root  test.objects.path, test.objects.updated_ms, test.objects.size, test.objects.etag, test.objects.seq, test.objects.last_seen_ms, test.objects.metastore_uuid, test.objects.securable_id",
+          "  └─IndexLookUp_26 5001.00 9902317.99 (((((net(5001*rowsize(54.67)*tidb_kv_net_factor(3.96))) + (((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00)))/15.00) + (((((net(5001*rowsize(273.515)*tidb_kv_net_factor(3.96))) + ((scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00))/15.00) + ((double-read-cpu(5001*tidb_cpu_factor(49.9))) + (doubleRead(tasks(8.0016)*tidb_request_factor(6e+06)))))/5.00))*1.00)*1.00 root  limit embedded(offset:0, count:5001)",
+          "    ├─Limit_25(Build) 5001.00 1253699.35 ((scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00) cop[tikv]  offset:0, count:5001",
+          "    │ └─IndexRangeScan_23 5001.00 1253699.35 (scan(5001*logrowsize(71.47926389640116)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects, index:idx_metastore_securable_seq(metastore_uuid, securable_id, seq) range:(\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 17299834,\"<\\xbc\\xc2l\\xa7\\xe7@\\xa4\\x8d\\xd1d\\xd7GW\\xde\\xe2\" 2238365063123291 +inf], keep order:true",
+          "    └─TableRowIDScan_24(Probe) 5001.00 1688011.54 (scan(5001*logrowsize(313.69926389640113)*tikv_scan_factor(40.7)))*1.00 cop[tikv] table:objects keep order:false"
+        ]
       }
     ]
   }

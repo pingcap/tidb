@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/importinto/mock"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -83,14 +84,14 @@ func TestEncodeAndSortOperator(t *testing.T) {
 
 	opCtx := util.NewContext(context.Background())
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(opCtx, executorForParam, nil, 3, 1)
+	op := newEncodeAndSortOperator(opCtx, executorForParam, nil, nil, 3, 1)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
 
 	// cancel on error
 	mockErr := errors.New("mock err")
-	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
+	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
 		return opCtx.OperatorErr() != nil
@@ -104,7 +105,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	mockErr2 := errors.New("mock err 2")
 	opCtx = util.NewContext(context.Background())
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(opCtx, executorForParam, nil, 2, 2)
+	op = newEncodeAndSortOperator(opCtx, executorForParam, nil, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -118,14 +119,14 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// wait until 2 executor start running, else workerpool will be cancelled.
-	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
 			wg.Wait()
 			return mockErr2
 		})
-	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter, execute.Collector) error {
 			wg.Done()
 			wg.Wait()
 			// wait error in executor1 has been processed

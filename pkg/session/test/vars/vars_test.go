@@ -422,3 +422,10 @@ func TestTiDBValidateTS(t *testing.T) {
 	tk.MustExec("set global tidb_enable_ts_validation = on")
 	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
 }
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, vardef.AdvancerCheckPointLagLimit.Load())
+}

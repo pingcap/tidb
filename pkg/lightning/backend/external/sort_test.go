@@ -25,11 +25,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -119,11 +120,15 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
+	kvSize := 0
 	kvs := make([]common.KvPair, kvCnt)
 	for i := range kvCnt {
+		key := []byte(uuid.New().String())
+		val := []byte("56789")
+		kvSize += len(key) + len(val)
 		kvs[i] = common.KvPair{
-			Key: []byte(uuid.New().String()),
-			Val: []byte("56789"),
+			Key: key,
+			Val: val,
 		}
 	}
 
@@ -136,7 +141,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. merge step
-	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	datas, stats, err := getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 
 	dataGroup, _ := splitDataAndStatFiles(datas, stats)
@@ -144,6 +149,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	lastStepDatas := make([]string, 0, 10)
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
+
+	collector := &execute.TestCollector{}
 
 	closeFn := func(s *WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
@@ -172,8 +179,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	defaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 
-	opCtx, _ := operator.NewContext(ctx)
-
+	opCtx := util.NewContext(ctx)
 	for _, group := range dataGroup {
 		op := NewMergeOperator(
 			opCtx,
@@ -182,6 +188,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			"/test2",
 			mergeMemSize,
 			closeFn,
+			collector,
 			1,
 			true,
 			engineapi.OnDuplicateKeyIgnore,
@@ -194,6 +201,9 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			op,
 		))
 	}
+
+	require.EqualValues(t, kvCnt, collector.Rows.Load())
+	require.EqualValues(t, kvSize, collector.Bytes.Load())
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)

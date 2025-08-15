@@ -25,6 +25,7 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/disttask/operator",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend",
@@ -33,6 +34,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/log",
         "//pkg/lightning/membuf",
+        "//pkg/lightning/metric",
         "//pkg/metrics",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
@@ -86,6 +88,7 @@ go_test(
         "//br/pkg/storage",
         "//pkg/config",
         "//pkg/disttask/operator",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",

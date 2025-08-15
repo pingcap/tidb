@@ -79,13 +79,7 @@ type opSessPool interface {
 }
 
 // NewDistTaskOperatorCtx is used for adding index with dist framework.
-func NewDistTaskOperatorCtx(
-	ctx context.Context,
-	taskID, subtaskID int64,
-) *util.Context {
-	ctx = logutil.WithFields(ctx,
-		zap.Int64("task-id", taskID),
-		zap.Int64("subtask-id", subtaskID))
+func NewDistTaskOperatorCtx(ctx context.Context) *util.Context {
 	return util.NewContext(ctx)
 }
 
@@ -99,9 +93,6 @@ var (
 	_ execute.Collector = (*distTaskRowCntCollector)(nil)
 	_ execute.Collector = (*localRowCntCollector)(nil)
 )
-
-// MockDMLExecutionBeforeScan is only used for test.
-var MockDMLExecutionBeforeScan func()
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
@@ -132,12 +123,7 @@ func NewAddIndexIngestPipeline(
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
-	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
-		if MockDMLExecutionBeforeScan != nil {
-			MockDMLExecutionBeforeScan()
-		}
-	})
-	failpoint.InjectCall("mockDMLExecutionBeforeScanV2")
+	failpoint.InjectCall("beforeAddIndexScan")
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
@@ -528,7 +514,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
-	var idxResult IndexRecordChunk
+	var idxResults []IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func() {
 			failpoint.Return(errors.New("mock scan record error"))
@@ -551,17 +537,21 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
-			if w.cpOp != nil {
-				w.cpOp.UpdateChunk(task.ID, srcChk.NumRows(), done)
-			}
-			w.totalCount.Add(int64(srcChk.NumRows()))
-			sender(idxResult)
+			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx})
 		}
 		return rs.Close()
 	})
 	if err != nil {
 		w.ctx.OnError(err)
+	}
+	for i, idxResult := range idxResults {
+		sender(idxResult)
+		rowCnt := idxResult.Chunk.NumRows()
+		if w.cpOp != nil {
+			done := i == len(idxResults)-1
+			w.cpOp.UpdateChunk(task.ID, rowCnt, done)
+		}
+		w.totalCount.Add(int64(rowCnt))
 	}
 }
 
@@ -819,7 +809,7 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, nextKey
 	failpoint.InjectCall("writeLocalExec", rs.Done)
 
 	oprStartTime := time.Now()
-	vars := w.se.GetSessionVars()
+	vars := w.se.GetSessionVars() //nolint:forbidigo
 	sc := vars.StmtCtx
 	cnt, lastHandle, err := writeChunk(w.ctx, w.writers, w.indexes, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
 	if err != nil || cnt == 0 {

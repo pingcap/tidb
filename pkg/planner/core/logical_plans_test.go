@@ -145,7 +145,7 @@ func TestPredicatePushDown(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.sctx, nodeW, s.is)
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -507,7 +507,7 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
@@ -1127,7 +1127,7 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
-	vardef.EnableMDL.Store(false)
+	vardef.SetEnableMDL(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo

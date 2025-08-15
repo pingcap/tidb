@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -1106,7 +1106,7 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	ddl.ResultCounterForTest = nil
 }
 
-func getJobsBySQL(se sessiontypes.Session, tbl, condition string) ([]*model.Job, error) {
+func getJobsBySQL(se sessionapi.Session, tbl, condition string) ([]*model.Job, error) {
 	rs, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s %s", tbl, condition))
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1713,7 +1713,7 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk2.MustExec("use test")
 
 	// Test issue 57414.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge", func() {
 		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
 	})
 

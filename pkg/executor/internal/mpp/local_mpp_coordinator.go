@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -502,13 +504,13 @@ func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {
 // Currently, return true if there is a limit operator in the path from current TableReader to root
 func needReportExecutionSummary(plan base.PhysicalPlan, destTablePlanID int, foundLimit bool) bool {
 	switch x := plan.(type) {
-	case *plannercore.PhysicalLimit:
+	case *physicalop.PhysicalLimit:
 		return needReportExecutionSummary(x.Children()[0], destTablePlanID, true)
 	case *plannercore.PhysicalTableReader:
 		if foundLimit {
 			return x.GetTablePlan().ID() == destTablePlanID
 		}
-	case *plannercore.PhysicalShuffleReceiverStub:
+	case *physicalop.PhysicalShuffleReceiverStub:
 		return needReportExecutionSummary(x.DataSource, destTablePlanID, foundLimit)
 	case *plannercore.PhysicalCTE:
 		if needReportExecutionSummary(x.SeedPlan, destTablePlanID, foundLimit) {
@@ -673,7 +675,17 @@ func (c *localMppCoordinator) cancelMppTasks() {
 }
 
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
-	stream, err := c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta})
+	var stream *tikvrpc.MPPStreamResponse
+	var err error
+	var retry bool
+	for {
+		stream, retry, err = c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta, Bo: bo.TiKVBackoffer()})
+		if retry {
+			logutil.BgLogger().Warn("establish mpp connection meet error and retrying", zap.Error(err), zap.Uint64("timestamp", c.startTS), zap.Int64("task", req.ID), zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+			continue
+		}
+		break
+	}
 	if err != nil {
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {

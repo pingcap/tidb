@@ -55,7 +55,6 @@ type CheckTableExec struct {
 	indexInfos []*model.IndexInfo
 	srcs       []*IndexLookUpExecutor
 	done       bool
-	is         infoschema.InfoSchema
 	exitCh     chan struct{}
 	retCh      chan error
 	checkIndex bool
@@ -316,9 +315,23 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 
 	sessVars.OptimizerUseInvisibleIndexes = true
 	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
+	if snapshot != 0 {
+		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
+		if err != nil {
+			logutil.BgLogger().Error("fail to set tidb_snapshot", zap.Error(err), zap.Uint64("snapshot ts", snapshot))
+		}
+	}
+
 	return func() {
 		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 		sessVars.MemQuotaQuery = originMemQuotaQuery
+		if snapshot != 0 {
+			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
+			if err != nil {
+				logutil.BgLogger().Error("fail to set tidb_snapshot to 0", zap.Error(err))
+			}
+		}
 	}
 }
 
@@ -384,15 +397,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	lookupCheckThreshold := int64(100)
 	checkOnce := false
 
-	if w.e.Ctx().GetSessionVars().SnapshotTS != 0 {
-		se.GetSessionVars().SnapshotTS = w.e.Ctx().GetSessionVars().SnapshotTS
-		defer func() {
-			se.GetSessionVars().SnapshotTS = 0
-		}()
-	}
-
-	if _, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin"); err != nil {
-		return err
+	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
+	if err != nil {
+		trySaveErr(err)
+		return
 	}
 
 	times := 0
@@ -524,11 +532,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
 		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
-			handleDatum := make([]types.Datum, 0)
-			for i, t := range pkTypes {
-				handleDatum = append(handleDatum, row.GetDatum(i, t))
-			}
-			if w.table.Meta().IsCommonHandle {
+			if tblMeta.IsCommonHandle {
+				handleDatum := make([]types.Datum, 0)
+				for i, t := range pkTypes {
+					handleDatum = append(handleDatum, row.GetDatum(i, t))
+				}
 				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
 				err = errCtx.HandleError(err)
 				if err != nil {

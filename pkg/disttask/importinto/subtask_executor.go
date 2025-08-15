@@ -19,13 +19,21 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -35,7 +43,7 @@ import (
 // MiniTaskExecutor is the interface for a minimal task executor.
 // exported for testing.
 type MiniTaskExecutor interface {
-	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error
+	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter, collector execute.Collector) error
 }
 
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
@@ -51,7 +59,11 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	}
 }
 
-func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
+func (e *importMinimalTaskExecutor) Run(
+	ctx context.Context,
+	dataWriter, indexWriter backend.EngineWriter,
+	collector execute.Collector,
+) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
 	failpoint.Inject("beforeSortChunk", func() {})
@@ -71,6 +83,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			sharedVars.IndexEngine,
 			logger,
 			checksum,
+			collector,
 		); err != nil {
 			return err
 		}
@@ -83,6 +96,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			indexWriter,
 			logger,
 			checksum,
+			collector,
 		); err != nil {
 			return err
 		}
@@ -95,24 +109,18 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 }
 
 // postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.InjectCall("syncBeforePostProcess", taskMeta.JobID)
+func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	failpoint.InjectCall("syncBeforePostProcess", p.taskMeta.JobID)
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if err = importer.RebaseAllocatorBases(ctx, store, subtaskMeta.MaxIDs, &taskMeta.Plan, logger); err != nil {
+	plan := &p.taskMeta.Plan
+	if err = importer.RebaseAllocatorBases(ctx, p.store, subtaskMeta.MaxIDs, plan, logger); err != nil {
 		return err
 	}
-
-	// TODO: create table indexes depends on the option.
-	// create table indexes even if the post process is failed.
-	// defer func() {
-	// 	err2 := createTableIndexes(ctx, globalTaskManager, taskMeta, logger)
-	// 	err = multierr.Append(err, err2)
-	// }()
 
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
@@ -126,12 +134,45 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
 
-	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if kerneltype.IsNextGen() {
+		bfWeight := importer.GetBackoffWeight(plan)
+		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
+			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
+		defer mgr.Close()
+		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+			func() (*local.RemoteChecksum, error) {
+				ctxWithLogger := logutil.WithLogger(ctx, logger)
+				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
+					DB:   plan.DBName,
+					Name: plan.TableInfo.Name.L,
+					Core: plan.TableInfo,
+				})
+			},
+		)
+	}
+
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum.MergedChecksum(), se, logger)
+		err = importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+			func() (*local.RemoteChecksum, error) {
+				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
+			},
+		)
+		if kerneltype.IsClassic() {
+			failpoint.Inject("skipPostProcessAlterTableMode", func() {
+				failpoint.Return(err)
+			})
+			// log error instead of raise error to avoid user rerun task,
+			// clean up will alter table mode to normal finally.
+			err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
+			if err2 != nil {
+				callLog.Warn("alter table mode to normal failure", zap.Error(err2))
+			}
+		}
+		return err
 	})
 }

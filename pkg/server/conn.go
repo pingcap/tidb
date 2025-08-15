@@ -110,7 +110,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -119,6 +118,8 @@ const (
 	connStatusReading
 	connStatusShutdown     = variable.ConnStatusShutdown // Closed by server.
 	connStatusWaitShutdown = 3                           // Notified by server to close.
+
+	tidbGatewayAttrsConnKey = "TiDB-Gateway-ConnID"
 )
 
 var (
@@ -382,6 +383,7 @@ func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
+	metrics.DDLClearTempIndexWrite(cc.connectionID)
 	return closeConn(cc)
 }
 
@@ -1111,6 +1113,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
 					} else {
 						idleTime := time.Since(start)
+						tidbGatewayConnID := cc.attrs[tidbGatewayAttrsConnKey]
+						cc.server.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, "read packet timeout")
 						logutil.Logger(ctx).Info("read packet timeout, close this connection",
 							zap.Duration("idle", idleTime),
 							zap.Uint64("waitTimeout", waitTimeout),
@@ -1344,6 +1348,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 		cc.server.releaseToken(token)
 		cc.lastActive = time.Now()
+		if cc.server.StandbyController != nil {
+			cc.server.StandbyController.OnConnActive()
+		}
 	}()
 
 	vars := cc.ctx.GetSessionVars()
@@ -2020,9 +2027,7 @@ func (cc *clientConn) handleStmt(
 	ctx context.Context, stmt ast.StmtNode,
 	warns []contextutil.SQLWarn, lastStmt bool,
 ) (bool, error) {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
-	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
 

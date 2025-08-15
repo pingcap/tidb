@@ -474,7 +474,7 @@ func TestCopPaging(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set session tidb_enable_paging = 1")
 	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
@@ -547,7 +547,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
 		for partialIsCop := range 2 {
 			for isMPPTask := range 2 {
-				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
+				partial, final, _ := physicalop.BuildFinalModeAggregation(sctx, &physicalop.AggInfo{
 					AggFuncs:     aggFuncs,
 					GroupByItems: groubyItems,
 					Schema:       aggSchemaBuilder(sctx, aggFuncs),
@@ -678,17 +678,17 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 }
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
-	window := &core.PhysicalWindow{}
+	window := &physicalop.PhysicalWindow{}
 	newPlan, err := window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	newWindow, ok := newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	window.TiFlashFineGrainedShuffleStreamCount = 8
 	newPlan, err = window.Clone(nil)
 	require.NoError(t, err)
-	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	newWindow, ok = newPlan.(*physicalop.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 

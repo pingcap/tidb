@@ -105,6 +105,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
+		external.NewMergeCollector(ctx, nil),
 		int(res.CPU.Capacity()),
 		true,
 		engineapi.OnDuplicateKeyError,

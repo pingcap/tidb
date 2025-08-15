@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/session"
@@ -1704,7 +1705,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		selection, ok := p.(*plannercore.Update).SelectPlan.(*plannercore.PhysicalSelection)
+		selection, ok := p.(*plannercore.Update).SelectPlan.(*physicalop.PhysicalSelection)
 		require.True(t, ok)
 		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
 		require.True(t, ok)
@@ -1725,7 +1726,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		del := p.(*plannercore.Delete)
 		require.Equal(t, "PointGet(Index(test6.uk_expr)[KindUint64 32 KindInt64 45])->Sel([eq(test.test6.b, 46)])->Projection", plannercore.ToString(del.SelectPlan))
-		proj := del.SelectPlan.(*plannercore.PhysicalProjection)
+		proj := del.SelectPlan.(*physicalop.PhysicalProjection)
 		//nolint: printexpression
 		require.Equal(t, "[test.test6.id test.test6.a tidb_shard(test.test6.a)]", fmt.Sprintf("%v", proj.Exprs))
 	})
@@ -2389,9 +2390,9 @@ func TestIssue40997(t *testing.T) {
         )
     )
 	`).Check(testkit.Rows(
-		"IndexLookUp_7 1.25 root  ",
-		"├─IndexRangeScan_5(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
+		"IndexLookUp_8 1.25 root  ",
+		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
 	))
 }
 
