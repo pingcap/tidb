@@ -369,6 +369,7 @@ func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
+	metrics.DDLClearTempIndexWrite(cc.connectionID)
 	return closeConn(cc)
 }
 
