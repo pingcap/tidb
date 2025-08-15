@@ -290,6 +290,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for i := range e.indexInfos {
 		ch <- checkIndexTask{indexOffset: i}
 	}
+	close(ch)
 
 	workerPool.Wait()
 	workerPool.Release()
