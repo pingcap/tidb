@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -239,8 +240,8 @@ type TableScanTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
-	return metrics.LblAddIndex, "tableScanTask", false
+func (TableScanTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return metrics.LblAddIndex, "tableScanTask", false, dbterror.ErrReorgPanic
 }
 
 // String implement fmt.Stringer interface.
@@ -259,8 +260,8 @@ type IndexRecordChunk struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
-	return metrics.LblAddIndex, "IndexRecordChunk", false
+func (IndexRecordChunk) RecoverArgs() (metricsLabel string, funcInfo string, quit bool, err error) {
+	return metrics.LblAddIndex, "IndexRecordChunk", false, dbterror.ErrReorgPanic
 }
 
 // TableScanTaskSource produces TableScanTask by splitting table records into ranges.
