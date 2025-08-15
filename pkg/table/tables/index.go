@@ -275,7 +275,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				// DDL: Writing the same normal index key, but it does not lock primary record.
 				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
 			} else {
-				err = txn.GetMemBuffer().Set(key, val)
+				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedConstraintCheckInPrewrite)
 			}
 			if err != nil {
 				return nil, err
@@ -500,7 +500,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 					// In this case, we should lock the index key in DML to grantee the serialization.
 					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 				} else {
-					err = txn.GetMemBuffer().Delete(key)
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				if err != nil {
 					return err
