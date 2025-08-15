@@ -170,6 +170,7 @@ type StatementContext struct {
 	NoZeroDate                    bool
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
+	NoDefaultAsWarning            bool
 	DividedByZeroAsWarning        bool
 	TruncateAsWarning             bool
 	OverflowAsWarning             bool
