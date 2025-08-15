@@ -470,9 +470,10 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			pinfo, _ := v.([]float64)
 			rowSize, ratio := pinfo[0], pinfo[1]
 			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * ratio)
-			rows := float64(info.FileMeta.RealSize) / rowSize
+			info.FileMeta.Rows = int64(float64(info.FileMeta.RealSize) / rowSize)
+
 			if m, ok := metric.FromContext(ctx); ok {
-				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(rows)
+				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, info.TableName.String()).Add(float64(info.FileMeta.Rows))
 			}
 		}
 
@@ -622,9 +623,6 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 			compressionRatio := float64(info.FileMeta.FileSize) / (rowSize * float64(rows))
 			s.sampledParquetInfo.Store(tableName, []float64{rowSize, compressionRatio})
 		}
-
-		// Postpone the row count calculation
-		info.FileMeta.Rows = 0
 	}
 
 	logger.Debug("file route result", zap.String("schema", res.Schema),
