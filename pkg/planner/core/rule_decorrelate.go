@@ -90,7 +90,7 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.C
 		allOuterSchemas = append(allOuterSchemas, outerPlan.Schema())
 		handler(v.Children()[0])
 		handler(v.Children()[1])
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		handler(v.SeedPlan)
 		handler(v.RecurPlan)
 	default:

@@ -210,13 +210,6 @@ func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	return plans
 }
 
-// Init only assigns type and context.
-func (p PhysicalCTE) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTE {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeCTE, &p, 0)
-	p.SetStats(stats)
-	return &p
-}
-
 // Init initializes FKCheck.
 func (p FKCheck) Init(ctx base.PlanContext) *FKCheck {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeForeignKeyCheck, &p, 0)

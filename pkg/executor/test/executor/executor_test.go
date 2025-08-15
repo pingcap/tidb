@@ -804,7 +804,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		&physicalop.PhysicalLimit{},
 		&physicalop.PhysicalSort{},
 		&physicalop.PhysicalTopN{},
-		&plannercore.PhysicalCTE{},
+		&physicalop.PhysicalCTE{},
 		&physicalop.PhysicalCTETable{},
 		&physicalop.PhysicalMaxOneRow{},
 		&physicalop.PhysicalProjection{},
@@ -871,7 +871,7 @@ func TestUnreasonablyClose(t *testing.T) {
 				}
 				require.True(t, found, fmt.Sprintf("case: %v sql: %s operator %v is not registered in opsNeedsCoveredMask", i, tc, reflect.TypeOf(ch)))
 				switch x := ch.(type) {
-				case *plannercore.PhysicalCTE:
+				case *physicalop.PhysicalCTE:
 					newChild = append(newChild, x.RecurPlan)
 					newChild = append(newChild, x.SeedPlan)
 					hasCTE = true

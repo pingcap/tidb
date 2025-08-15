@@ -418,6 +418,13 @@ var GetPlanCostVer24PhysicalApply func(pp base.PhysicalPlan, taskType property.T
 // Attach2Task4PhysicalSequence will be called by PhysicalSequence in physicalOp pkg.
 var Attach2Task4PhysicalSequence func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
 
+// GetPlanCostVer24PhysicalCTE will be called by PhysicalCTE in physicalOp pkg.
+var GetPlanCostVer24PhysicalCTE func(pp base.PhysicalPlan, taskType property.TaskType,
+	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error)
+
+// Attach2Task4PhysicalCTEStorage will be called by PhysicalCTEStorage in physicalOp pkg.
+var Attach2Task4PhysicalCTEStorage func(pp base.PhysicalPlan, tasks ...base.Task) base.Task
+
 // ****************************************** task related ***********************************************
 
 // AttachPlan2Task will be called by BasePhysicalPlan in physicalOp pkg.
