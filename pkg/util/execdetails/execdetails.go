@@ -112,26 +112,14 @@ type StmtExecDetails struct {
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
-	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
-	ProcessTimeStr = "Process_time"
 	// WaitTimeStr means the time of all coprocessor wait.
 	WaitTimeStr = "Wait_time"
-	// BackoffTimeStr means the time of all back-off.
-	BackoffTimeStr = "Backoff_time"
 	// LockKeysTimeStr means the time interval between pessimistic lock wait start and lock got obtain
 	LockKeysTimeStr = "LockKeys_time"
 	// RequestCountStr means the request count.
 	RequestCountStr = "Request_count"
-	// TotalKeysStr means the total scan keys.
-	TotalKeysStr = "Total_keys"
-	// ProcessKeysStr means the total processed keys.
-	ProcessKeysStr = "Process_keys"
-	// PreWriteTimeStr means the time of pre-write.
-	PreWriteTimeStr = "Prewrite_time"
 	// WaitPrewriteBinlogTimeStr means the time of waiting prewrite binlog finished when transaction committing.
 	WaitPrewriteBinlogTimeStr = "Wait_prewrite_binlog_time"
-	// CommitTimeStr means the time of commit.
-	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
 	GetCommitTSTimeStr = "Get_commit_ts_time"
 	// GetLatestTsTimeStr means the time of getting latest ts in async commit and 1pc.
@@ -148,12 +136,6 @@ const (
 	ResolveLockTimeStr = "Resolve_lock_time"
 	// LocalLatchWaitTimeStr means the time of waiting in local latch.
 	LocalLatchWaitTimeStr = "Local_latch_wait_time"
-	// WriteKeysStr means the count of keys in the transaction.
-	WriteKeysStr = "Write_keys"
-	// WriteSizeStr means the key/value size in the transaction.
-	WriteSizeStr = "Write_size"
-	// PrewriteRegionStr means the count of region when pre-write.
-	PrewriteRegionStr = "Prewrite_region"
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
 	// GetSnapshotTimeStr means the time spent on getting an engine snapshot.
@@ -170,6 +152,28 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+
+	// The following constants define the set of fields for SlowQueryLogItems
+	// that are relevant to evaluating and triggering SlowLogRules.
+
+	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
+	ProcessTimeStr = "Process_time"
+	// BackoffTimeStr means the time of all back-off.
+	BackoffTimeStr = "Backoff_time"
+	// TotalKeysStr means the total scan keys.
+	TotalKeysStr = "Total_keys"
+	// ProcessKeysStr means the total processed keys.
+	ProcessKeysStr = "Process_keys"
+	// PreWriteTimeStr means the time of pre-write.
+	PreWriteTimeStr = "Prewrite_time"
+	// CommitTimeStr means the time of commit.
+	CommitTimeStr = "Commit_time"
+	// WriteKeysStr means the count of keys in the transaction.
+	WriteKeysStr = "Write_keys"
+	// WriteSizeStr means the key/value size in the transaction.
+	WriteSizeStr = "Write_size"
+	// PrewriteRegionStr means the count of region when pre-write.
+	PrewriteRegionStr = "Prewrite_region"
 )
 
 // String implements the fmt.Stringer interface.

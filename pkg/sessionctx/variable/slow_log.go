@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -57,62 +56,26 @@ const (
 	SlowLogUserStr = "User"
 	// SlowLogHostStr only for slow_query table usage.
 	SlowLogHostStr = "Host"
-	// SlowLogConnIDStr is slow log field name.
-	SlowLogConnIDStr = "Conn_ID"
-	// SlowLogSessAliasStr is the session alias set by user
-	SlowLogSessAliasStr = "Session_alias"
-	// SlowLogQueryTimeStr is slow log field name.
-	SlowLogQueryTimeStr = "Query_time"
-	// SlowLogParseTimeStr is the parse sql time.
-	SlowLogParseTimeStr = "Parse_time"
-	// SlowLogCompileTimeStr is the compile plan time.
-	SlowLogCompileTimeStr = "Compile_time"
 	// SlowLogRewriteTimeStr is the rewrite time.
 	SlowLogRewriteTimeStr = "Rewrite_time"
-	// SlowLogOptimizeTimeStr is the optimization time.
-	SlowLogOptimizeTimeStr = "Optimize_time"
-	// SlowLogWaitTSTimeStr is the time of waiting TS.
-	SlowLogWaitTSTimeStr = "Wait_TS"
 	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
 	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
 	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
 	SlowLogPreProcSubQueryTimeStr = "Preproc_subqueries_time"
-	// SlowLogDBStr is slow log field name.
-	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
 	SlowLogIsInternalStr = "Is_internal"
 	// SlowLogIndexNamesStr is slow log field name.
 	SlowLogIndexNamesStr = "Index_names"
-	// SlowLogDigestStr is slow log field name.
-	SlowLogDigestStr = "Digest"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 	// SlowLogStatsInfoStr is plan stats info.
 	SlowLogStatsInfoStr = "Stats"
-	// SlowLogNumCopTasksStr is the number of cop-tasks.
-	SlowLogNumCopTasksStr = "Num_cop_tasks"
-	// SlowLogCopProcAvg is the average process time of all cop-tasks.
-	SlowLogCopProcAvg = "Cop_proc_avg"
 	// SlowLogCopProcP90 is the p90 process time of all cop-tasks.
 	SlowLogCopProcP90 = "Cop_proc_p90"
-	// SlowLogCopProcMax is the max process time of all cop-tasks.
-	SlowLogCopProcMax = "Cop_proc_max"
-	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
-	SlowLogCopProcAddr = "Cop_proc_addr"
-	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
-	SlowLogCopWaitAvg = "Cop_wait_avg" // #nosec G101
 	// SlowLogCopWaitP90 is the p90 wait time of all cop-tasks.
 	SlowLogCopWaitP90 = "Cop_wait_p90" // #nosec G101
-	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
-	SlowLogCopWaitMax = "Cop_wait_max"
-	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
-	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
 	// SlowLogCopBackoffPrefix contains backoff information.
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
-	// SlowLogMemMax is the max number bytes of memory used in this statement.
-	SlowLogMemMax = "Mem_max"
-	// SlowLogDiskMax is the max number bytes of disk used in this statement.
-	SlowLogDiskMax = "Disk_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
 	SlowLogPrepared = "Prepared"
 	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
@@ -121,14 +84,10 @@ const (
 	SlowLogPlanFromBinding = "Plan_from_binding"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
-	// SlowLogSucc is used to indicate whether this sql execute successfully.
-	SlowLogSucc = "Succ"
 	// SlowLogPrevStmt is used to show the previous executed statement.
 	SlowLogPrevStmt = "Prev_stmt"
 	// SlowLogPlan is used to record the query plan.
 	SlowLogPlan = "Plan"
-	// SlowLogPlanDigest is used to record the query plan digest.
-	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogBinaryPlan is used to record the binary plan.
 	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
@@ -161,10 +120,6 @@ const (
 	SlowLogUnpackedBytesSentTiFlashCrossZone = "Unpacked_bytes_sent_tiflash_cross_zone"
 	// SlowLogUnpackedBytesReceivedTiFlashCrossZone is the cross zone bytes received by tiflash.
 	SlowLogUnpackedBytesReceivedTiFlashCrossZone = "Unpacked_bytes_received_tiflash_cross_zone"
-	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
-	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
-	// SlowLogExecRetryCount is the execution retry count.
-	SlowLogExecRetryCount = "Exec_retry_count"
 	// SlowLogExecRetryTime is the execution retry time.
 	SlowLogExecRetryTime = "Exec_retry_time"
 	// SlowLogBackoffDetail is the detail of backoff.
@@ -180,8 +135,6 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
 	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
-	// SlowLogResourceGroup is the resource group name that the current session bind.
-	SlowLogResourceGroup = "Resource_group"
 	// SlowLogRRU is the read request_unit(RU) cost
 	SlowLogRRU = "Request_unit_read"
 	// SlowLogWRU is the write request_unit(RU) cost
@@ -196,6 +149,56 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
+
+	// The following constants define the set of fields for SlowQueryLogItems
+	// that are relevant to evaluating and triggering SlowLogRules.
+
+	// SlowLogConnIDStr is slow log field name.
+	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogSessAliasStr is the session alias set by user
+	SlowLogSessAliasStr = "Session_alias"
+	// SlowLogQueryTimeStr is slow log field name.
+	SlowLogQueryTimeStr = "Query_time"
+	// SlowLogParseTimeStr is the parse sql time.
+	SlowLogParseTimeStr = "Parse_time"
+	// SlowLogCompileTimeStr is the compile plan time.
+	SlowLogCompileTimeStr = "Compile_time"
+	// SlowLogOptimizeTimeStr is the optimization time.
+	SlowLogOptimizeTimeStr = "Optimize_time"
+	// SlowLogWaitTSTimeStr is the time of waiting TS.
+	SlowLogWaitTSTimeStr = "Wait_TS"
+	// SlowLogDBStr is slow log field name.
+	SlowLogDBStr = "DB"
+	// SlowLogDigestStr is slow log field name.
+	SlowLogDigestStr = "Digest"
+	// SlowLogNumCopTasksStr is the number of cop-tasks.
+	SlowLogNumCopTasksStr = "Num_cop_tasks"
+	// SlowLogCopProcAvg is the average process time of all cop-tasks.
+	SlowLogCopProcAvg = "Cop_proc_avg"
+	// SlowLogCopProcMax is the max process time of all cop-tasks.
+	SlowLogCopProcMax = "Cop_proc_max"
+	// SlowLogCopProcAddr is the address of TiKV where the cop-task which cost max process time run.
+	SlowLogCopProcAddr = "Cop_proc_addr"
+	// SlowLogCopWaitAvg is the average wait time of all cop-tasks.
+	SlowLogCopWaitAvg = "Cop_wait_avg" // #nosec G101
+	// SlowLogCopWaitMax is the max wait time of all cop-tasks.
+	SlowLogCopWaitMax = "Cop_wait_max"
+	// SlowLogCopWaitAddr is the address of TiKV where the cop-task which cost wait process time run.
+	SlowLogCopWaitAddr = "Cop_wait_addr" // #nosec G101
+	// SlowLogMemMax is the max number bytes of memory used in this statement.
+	SlowLogMemMax = "Mem_max"
+	// SlowLogDiskMax is the max number bytes of disk used in this statement.
+	SlowLogDiskMax = "Disk_max"
+	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
+	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
+	// SlowLogSucc is used to indicate whether this sql execute successfully.
+	SlowLogSucc = "Succ"
+	// SlowLogPlanDigest is used to record the query plan digest.
+	SlowLogPlanDigest = "Plan_digest"
+	// SlowLogExecRetryCount is the execution retry count.
+	SlowLogExecRetryCount = "Exec_retry_count"
+	// SlowLogResourceGroup is the resource group name that the current session bind.
+	SlowLogResourceGroup = "Resource_group"
 )
 
 // JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
@@ -522,67 +525,65 @@ func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
 }
 
-type SlowLogRuleItems struct {
-	TxnTS             uint64
-	KeyspaceName      string
-	UserAndHost       string // new
-	ConnID            int64  // new
-	SlowLogSessAlias  string // new
-	CurrentDB         string // new
-	Digest            string
-	TimeTotal         time.Duration
-	TimeParse         time.Duration
-	TimeCompile       time.Duration
-	TimeOptimize      time.Duration
-	TimeWaitTS        time.Duration
-	IndexNames        string
-	Succ              bool
-	IsInternal        bool // new
-	IsExplicitTxn     bool
-	IsSyncStatsFailed bool
-	Prepared          bool
-	// plan information
-	PlanFromCache   bool
-	PlanFromBinding bool
-	HasMoreResults  bool
-	PlanDigest      string
-	// execution detail information
-	UsedStats         *stmtctx.UsedStatsInfo
-	CopTasks          *execdetails.CopTasksDetails
-	RewriteInfo       RewritePhaseInfo
-	WriteSQLRespTotal time.Duration
-	KVExecDetail      *util.ExecDetails
-	ExecDetail        execdetails.ExecDetails
-	ExecRetryCount    uint
-	ResultRows        int64
-	// resource information
-	MemMax     int64
-	DiskMax    int64
-	CPUUsages  ppcpuusage.CPUUsages
-	StorageKV  bool // query read from TiKV
-	StorageMPP bool // query read from TiFlash
-}
-
+// SlowLogCondition defines a single condition within a slow log rule.
 type SlowLogCondition struct {
-	Field     string
-	Threshold interface{}
+	Field     string      // Name of the slow log field to check (e.g., "Conn_ID", "Query_time").
+	Threshold interface{} // Threshold value for triggering the condition.
 }
 
+// SlowLogRule represents a single slow log rule.
+// A rule is triggered only if **all** of its Conditions are satisfied (logical AND).
 type SlowLogRule struct {
-	Conditions []SlowLogCondition // AND
+	Conditions []SlowLogCondition // List of conditions combined with logical AND.
 }
 
+// SlowLogRules represents all slow log rules defined for the current scope (e.g., session/global).
+// The rules are evaluated using logical OR between them: if any rule matches, it triggers the slow log.
 type SlowLogRules struct {
 	RawRules           string
-	AllConditionFields map[string]struct{}
-	Rules              []SlowLogRule // OR
+	AllConditionFields map[string]struct{} // Set of all unique field names used in all conditions.
+	Rules              []SlowLogRule       // List of rules combined with logical OR.
 }
 
-type FieldGetterAndSetter struct {
-	Setter func(ctx sessionctx.Context, items *SlowQueryLogItems)
-	Getter func(ctx sessionctx.Context, items *SlowQueryLogItems) interface{}
+// SlowLogRuleFields defines the set of field names in SlowQueryLogItems
+// that can be used in evaluating and triggering SlowLogRules.
+var SlowLogRuleFields = map[string]struct{}{
+	SlowLogConnIDStr:         {},
+	SlowLogSessAliasStr:      {},
+	SlowLogDBStr:             {},
+	SlowLogExecRetryCount:    {},
+	SlowLogQueryTimeStr:      {},
+	SlowLogParseTimeStr:      {},
+	SlowLogCompileTimeStr:    {},
+	SlowLogOptimizeTimeStr:   {},
+	SlowLogWaitTSTimeStr:     {},
+	SlowLogDigestStr:         {},
+	SlowLogNumCopTasksStr:    {},
+	SlowLogCopProcAvg:        {},
+	SlowLogCopProcMax:        {},
+	SlowLogCopProcAddr:       {},
+	SlowLogCopWaitAvg:        {},
+	SlowLogCopWaitMax:        {},
+	SlowLogCopWaitAddr:       {},
+	SlowLogMemMax:            {},
+	SlowLogDiskMax:           {},
+	SlowLogSucc:              {},
+	SlowLogWriteSQLRespTotal: {},
+	SlowLogPlanDigest:        {},
+	SlowLogResourceGroup:     {},
+	// The following fields are related to execdetails.ExecDetails.
+	execdetails.ProcessTimeStr:    {},
+	execdetails.BackoffTimeStr:    {},
+	execdetails.TotalKeysStr:      {},
+	execdetails.ProcessKeysStr:    {},
+	execdetails.PreWriteTimeStr:   {},
+	execdetails.CommitTimeStr:     {},
+	execdetails.WriteKeysStr:      {},
+	execdetails.WriteSizeStr:      {},
+	execdetails.PrewriteRegionStr: {},
 }
 
+// ParseSlowLogRules parses a raw slow log rules string into a structured SlowLogRules object.
 func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 	rawRules = strings.TrimSpace(rawRules)
 	if rawRules == "" {
@@ -597,9 +598,10 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 		return nil, errors.Errorf("invalid slow log rules count:%d", len(rules))
 	}
 
-	slowLogRules := SlowLogRules{
-		RawRules: rawRules,
-		Rules:    make([]SlowLogRule, len(rules))}
+	slowLogRules := &SlowLogRules{
+		RawRules:           rawRules,
+		AllConditionFields: make(map[string]struct{}),
+		Rules:              make([]SlowLogRule, 0, len(rules))}
 	for _, rule := range rules {
 		rule = strings.TrimSpace(rule)
 		if rule == "" {
@@ -618,10 +620,12 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 				return nil, errors.Errorf("invalid slow log field format:%s", field)
 			}
 
-			// TODO: Check if this to vals are validated.
 			fieldName := strings.TrimSpace(kv[0])
-			fieldValue := strings.TrimSpace(kv[1])
+			if _, ok := SlowLogRuleFields[fieldName]; !ok {
+				return nil, errors.Errorf("unknown slow log field name:%s", fieldName)
+			}
 
+			fieldValue := strings.TrimSpace(kv[1])
 			slowLogRule.Conditions = append(slowLogRule.Conditions, SlowLogCondition{
 				Field:     fieldName,
 				Threshold: fieldValue,
@@ -630,5 +634,5 @@ func ParseSlowLogRules(rawRules string) (*SlowLogRules, error) {
 		}
 		slowLogRules.Rules = append(slowLogRules.Rules, slowLogRule)
 	}
-	return nil, nil
+	return slowLogRules, nil
 }

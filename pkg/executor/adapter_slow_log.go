@@ -26,8 +26,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
-func makeExecDetailAccessors(getter func(*execdetails.ExecDetails) interface{}) variable.FieldGetterAndSetter {
-	return variable.FieldGetterAndSetter{
+// SlowLogFieldAccessor defines how to get or set a specific field in SlowQueryLogItems.
+// - Setter is optional and pre-fills the field before matching if it needs explicit preparation.
+// - Getter is required and returns the field value for rule matching.
+type SlowLogFieldAccessor struct {
+	Setter func(ctx sessionctx.Context, items *variable.SlowQueryLogItems)
+	Getter func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{}
+}
+
+func makeExecDetailAccessor(getter func(*execdetails.ExecDetails) interface{}) SlowLogFieldAccessor {
+	return SlowLogFieldAccessor{
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			if items.ExecDetail == nil {
 				execDetail := ctx.GetSessionVars().StmtCtx.GetExecDetails()
@@ -40,8 +48,8 @@ func makeExecDetailAccessors(getter func(*execdetails.ExecDetails) interface{}) 
 	}
 }
 
-func makeCopDetailAccessors(getter func(*execdetails.CopTasksDetails) interface{}) variable.FieldGetterAndSetter {
-	return variable.FieldGetterAndSetter{
+func makeCopDetailAccessor(getter func(*execdetails.CopTasksDetails) interface{}) SlowLogFieldAccessor {
+	return SlowLogFieldAccessor{
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			if items.CopTasks == nil {
 				copTasksDetail := ctx.GetSessionVars().StmtCtx.CopTasksDetails()
@@ -54,31 +62,25 @@ func makeCopDetailAccessors(getter func(*execdetails.CopTasksDetails) interface{
 	}
 }
 
-var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
-	"Keyspace_name": {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.KeyspaceName = keyspace.GetKeyspaceNameBySettings()
-		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return items.KeyspaceName
-		},
-	},
-	"Conn_ID": {
+// slowLogRuleFieldAccessors defines the set of field accessors for SlowQueryLogItems
+// that are relevant to evaluating and triggering SlowLogRules.
+var slowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
+	variable.SlowLogConnIDStr: {
 		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return ctx.GetSessionVars().ConnectionID
 		},
 	},
-	"Session_alias": {
+	variable.SlowLogSessAliasStr: {
 		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return ctx.GetSessionVars().SessionAlias
 		},
 	},
-	"DB": {
+	variable.SlowLogDBStr: {
 		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return ctx.GetSessionVars().CurrentDB
 		},
 	},
-	"Exec_retry_count": {
+	variable.SlowLogExecRetryCount: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.ExecRetryCount = ctx.GetSessionVars().StmtCtx.ExecRetryCount
 		},
@@ -86,7 +88,7 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.ExecRetryCount
 		},
 	},
-	"Query_time": {
+	variable.SlowLogQueryTimeStr: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.TimeTotal = ctx.GetSessionVars().GetTotalCostDuration()
 		},
@@ -94,62 +96,27 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.TimeTotal
 		},
 	},
-	"Parse_time": {
+	variable.SlowLogParseTimeStr: {
 		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return ctx.GetSessionVars().DurationParse
 		},
 	},
-	"Compile_time": {
+	variable.SlowLogCompileTimeStr: {
 		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return ctx.GetSessionVars().DurationCompile
 		},
 	},
-	"Optimize_time": {
+	variable.SlowLogOptimizeTimeStr: {
 		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return ctx.GetSessionVars().DurationOptimization
 		},
 	},
-	"Wait_TS": {
+	variable.SlowLogWaitTSTimeStr: {
 		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
 			return ctx.GetSessionVars().DurationWaitTS
 		},
 	},
-	"Rewrite_time": {
-		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-			items.RewriteInfo = ctx.GetSessionVars().RewritePhaseInfo
-		},
-		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
-			return items.RewriteInfo.DurationPreprocessSubQuery.Seconds()
-		},
-	},
-	"Process_time": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.TimeDetail.ProcessTime.Seconds()
-	}),
-	"Backoff_time": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.BackoffTime.Seconds()
-	}),
-	"Total_keys": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.ScanDetail.TotalKeys
-	}),
-	"Process_keys": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.ScanDetail.ProcessedKeys
-	}),
-	"Prewrite_time": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.CommitDetail.PrewriteTime.Seconds()
-	}),
-	"Commit_time": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.CommitDetail.CommitTime.Seconds()
-	}),
-	"Write_keys": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.CommitDetail.WriteKeys
-	}),
-	"Write_size": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return d.CommitDetail.WriteSize
-	}),
-	"Prewrite_region": makeExecDetailAccessors(func(d *execdetails.ExecDetails) interface{} {
-		return atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)
-	}),
-	"Digest": {
+	variable.SlowLogDigestStr: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			_, digest := ctx.GetSessionVars().StmtCtx.SQLDigest()
 			items.Digest = digest.String()
@@ -158,28 +125,28 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.Digest
 		},
 	},
-	"Num_cop_tasks": makeCopDetailAccessors(func(d *execdetails.CopTasksDetails) interface{} {
+	variable.SlowLogNumCopTasksStr: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
 		return d.NumCopTasks
 	}),
-	"Cop_proc_avg": makeCopDetailAccessors(func(d *execdetails.CopTasksDetails) interface{} {
+	variable.SlowLogCopProcAvg: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
 		return d.ProcessTimeStats.AvgTime
 	}),
-	"Cop_proc_max": makeCopDetailAccessors(func(d *execdetails.CopTasksDetails) interface{} {
+	variable.SlowLogCopProcMax: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
 		return d.ProcessTimeStats.MaxTime
 	}),
-	"Cop_proc_addr": makeCopDetailAccessors(func(d *execdetails.CopTasksDetails) interface{} {
+	variable.SlowLogCopProcAddr: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
 		return d.ProcessTimeStats.MaxAddress
 	}),
-	"Cop_wait_avg": makeCopDetailAccessors(func(d *execdetails.CopTasksDetails) interface{} {
+	variable.SlowLogCopWaitAvg: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
 		return d.WaitTimeStats.AvgTime
 	}),
-	"Cop_wait_max": makeCopDetailAccessors(func(d *execdetails.CopTasksDetails) interface{} {
+	variable.SlowLogCopWaitMax: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
 		return d.WaitTimeStats.MaxTime
 	}),
-	"Cop_wait_addr": makeCopDetailAccessors(func(d *execdetails.CopTasksDetails) interface{} {
+	variable.SlowLogCopWaitAddr: makeCopDetailAccessor(func(d *execdetails.CopTasksDetails) interface{} {
 		return d.WaitTimeStats.MaxAddress
 	}),
-	"Mem_max": {
+	variable.SlowLogMemMax: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.MemMax = ctx.GetSessionVars().MemTracker.MaxConsumed()
 		},
@@ -187,7 +154,7 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.MemMax
 		},
 	},
-	"Disk_max": {
+	variable.SlowLogDiskMax: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.DiskMax = ctx.GetSessionVars().DiskTracker.MaxConsumed()
 		},
@@ -195,7 +162,20 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.DiskMax
 		},
 	},
-	"Succ": {
+	variable.SlowLogWriteSQLRespTotal: {
+		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
+			// TODO: ctx is context.Context, not sessionctx.Context, so we need to use Value instead of GetSessionVars().
+			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
+			if stmtDetailRaw != nil {
+				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
+			}
+		},
+		Getter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) interface{} {
+			return items.WriteSQLRespTotal
+		},
+	},
+	variable.SlowLogSucc: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.Succ = ctx.GetSessionVars().StmtCtx.ExecSucc
 		},
@@ -203,7 +183,7 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.Succ
 		},
 	},
-	"Plan_digest": {
+	variable.SlowLogPlanDigest: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			_, planDigest := GetPlanDigest(ctx.GetSessionVars().StmtCtx)
 			items.PlanDigest = planDigest.String()
@@ -212,7 +192,7 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.PlanDigest
 		},
 	},
-	"Resource_group": {
+	variable.SlowLogResourceGroup: {
 		Setter: func(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
 			items.ResourceGroupName = ctx.GetSessionVars().StmtCtx.ResourceGroupName
 		},
@@ -220,6 +200,34 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 			return items.ResourceGroupName
 		},
 	},
+	// The following fields are related to execdetails.ExecDetails.
+	execdetails.ProcessTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.TimeDetail.ProcessTime.Seconds()
+	}),
+	execdetails.BackoffTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.BackoffTime.Seconds()
+	}),
+	execdetails.TotalKeysStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.ScanDetail.TotalKeys
+	}),
+	execdetails.ProcessKeysStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.ScanDetail.ProcessedKeys
+	}),
+	execdetails.PreWriteTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.CommitDetail.PrewriteTime.Seconds()
+	}),
+	execdetails.CommitTimeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.CommitDetail.CommitTime.Seconds()
+	}),
+	execdetails.WriteKeysStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.CommitDetail.WriteKeys
+	}),
+	execdetails.WriteSizeStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return d.CommitDetail.WriteSize
+	}),
+	execdetails.PrewriteRegionStr: makeExecDetailAccessor(func(d *execdetails.ExecDetails) interface{} {
+		return atomic.LoadInt32(&d.CommitDetail.PrewriteRegionNum)
+	}),
 }
 
 // PrepareSlowLogItemsForRules builds a SlowQueryLogItems containing only the fields referenced by current session's SlowLogRules.
@@ -227,7 +235,7 @@ var SlowLogFieldGetterAndSetter = map[string]variable.FieldGetterAndSetter{
 func PrepareSlowLogItemsForRules(ctx sessionctx.Context) *variable.SlowQueryLogItems {
 	items := &variable.SlowQueryLogItems{}
 	for field := range ctx.GetSessionVars().SlowLogRules.AllConditionFields {
-		gs := SlowLogFieldGetterAndSetter[field]
+		gs := slowLogRuleFieldAccessors[field]
 		if gs.Setter != nil {
 			gs.Setter(ctx, items)
 		}
@@ -239,7 +247,7 @@ func PrepareSlowLogItemsForRules(ctx sessionctx.Context) *variable.SlowQueryLogI
 // completeSlowLogItemsForRules fills in the remaining SlowQueryLogItems fields
 // that are relevant to triggering the current session's SlowLogRules.
 func completeSlowLogItemsForRules(ctx sessionctx.Context, items *variable.SlowQueryLogItems) {
-	for field, sg := range SlowLogFieldGetterAndSetter {
+	for field, sg := range slowLogRuleFieldAccessors {
 		if _, ok := ctx.GetSessionVars().SlowLogRules.AllConditionFields[field]; ok {
 			continue
 		}
@@ -277,7 +285,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 		indexNames = buf.String()
 	}
 
-	stmtDetail, tikvExecDetail, ruDetails := execdetails.GetExecDetailsFromContext(a.GoCtx)
+	_, tikvExecDetail, ruDetails := execdetails.GetExecDetailsFromContext(a.GoCtx)
 
 	binaryPlan := ""
 	if variable.GenerateBinaryPlan.Load() {
@@ -306,7 +314,6 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.PlanFromBinding = sessVars.FoundInBinding
 	items.RewriteInfo = sessVars.RewritePhaseInfo
 	items.KVExecDetail = &tikvExecDetail
-	items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
 	items.ResultRows = stmtCtx.GetResultRowsCount()
 	items.IsExplicitTxn = sessVars.TxnCtx.IsExplicit
 	items.IsWriteCacheTable = stmtCtx.WaitLockLeaseTime > 0
@@ -345,7 +352,7 @@ func Match(ctx sessionctx.Context, items *variable.SlowQueryLogItems) bool {
 
 		// And logical relationship
 		for _, condition := range rule.Conditions {
-			gs := SlowLogFieldGetterAndSetter[condition.Field]
+			gs := slowLogRuleFieldAccessors[condition.Field]
 			value := gs.Getter(ctx, items)
 
 			switch v := value.(type) {
