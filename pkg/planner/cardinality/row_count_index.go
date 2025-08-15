@@ -91,7 +91,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		count, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
-		result = statistics.RowEstimate{Est: count, MinEst: 0, MaxEst: 0}
+		result = statistics.DefaultRowEst(count)
 	} else {
 		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
 	}
@@ -183,7 +183,6 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			}
 			var count float64
 			var err error
-			var tempResult statistics.RowEstimate
 			colUniqueIDs := coll.Idx2ColUniqueIDs[idxID]
 			var colUniqueID int64
 			if rangePosition >= len(colUniqueIDs) {
@@ -194,6 +193,7 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 			// prefer index stats over column stats
 			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
+				var tempResult statistics.RowEstimate
 				tempResult, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang}, nil)
 				count = tempResult.Est
 			} else {
