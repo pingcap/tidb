@@ -212,8 +212,8 @@
           {
             "Depth": 2,
             "Label": 0,
-            "IsRoot": false,
-            "StoreType": 0,
+            "IsRoot": true,
+            "StoreType": 2,
             "ReqType": 0,
             "IsPhysicalPlan": true,
             "TextTreeIndent": "│ │ ",
@@ -232,15 +232,80 @@
           {
             "Depth": 2,
             "Label": 0,
-            "IsRoot": false,
-            "StoreType": 0,
+            "IsRoot": true,
+            "StoreType": 2,
             "ReqType": 0,
             "IsPhysicalPlan": true,
             "TextTreeIndent": "  │ ",
             "IsLastChild": true
           }
         ],
-        "CTEs": null
+        "CTEs": [
+          [
+            {
+              "Depth": 0,
+              "Label": 0,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 1,
+              "Label": 3,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 2,
+              "Label": 0,
+              "IsRoot": false,
+              "StoreType": 0,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "  │ ",
+              "IsLastChild": true
+            }
+          ],
+          [
+            {
+              "Depth": 0,
+              "Label": 0,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 1,
+              "Label": 3,
+              "IsRoot": true,
+              "StoreType": 2,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": true
+            },
+            {
+              "Depth": 2,
+              "Label": 0,
+              "IsRoot": false,
+              "StoreType": 0,
+              "ReqType": 0,
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "  │ ",
+              "IsLastChild": true
+            }
+          ]
+        ]
       },
       {
         "SQL": "WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;",
