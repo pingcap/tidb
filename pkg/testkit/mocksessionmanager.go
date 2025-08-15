@@ -150,6 +150,17 @@ func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Unlock()
 }
 
+// ContainsInternalSession checks if the internal session pointer is in the map in the SessionManager
+func (msm *MockSessionManager) ContainsInternalSession(se any) bool {
+	msm.mu.Lock()
+	defer msm.mu.Unlock()
+	if msm.internalSessions == nil {
+		return false
+	}
+	_, ok := msm.internalSessions[se]
+	return ok
+}
+
 // GetInternalSessionStartTSList is to get all startTS of every transaction running in the current internal sessions
 func (msm *MockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	msm.mu.Lock()

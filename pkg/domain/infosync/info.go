@@ -1333,6 +1333,21 @@ func DeleteInternalSession(se any) {
 	sm.DeleteInternalSession(se)
 }
 
+// ContainsInternalSessionForTest is the entry function for check whether an internal session is in SessionManager.
+// It is only used for test.
+func ContainsInternalSessionForTest(se any) bool {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return false
+	}
+
+	return sm.ContainsInternalSession(se)
+}
+
 // SetEtcdClient is only used for test.
 // SetEtcdClient is not thread-safe and may cause data race with the initialization of the domain.
 // Because this usage is test-only, we don't need to introduce a lock or atomic variable for it.

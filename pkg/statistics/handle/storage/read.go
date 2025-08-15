@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -590,6 +591,15 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsHa
 			err = loadNeededIndexHistograms(sctx, statsCache, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
+			statslogutil.StatsLogger().Error("load needed histogram failed",
+				zap.Error(err),
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("histID", item.ID),
+				zap.Bool("isIndex", item.IsIndex),
+				zap.Bool("IsSyncLoadFailed", item.IsSyncLoadFailed),
+				zap.Bool("fullLoad", item.FullLoad),
+			)
+			intest.Assert(false, "load needed histogram failed")
 			return err
 		}
 	}

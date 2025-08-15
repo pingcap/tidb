@@ -653,6 +653,9 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.sPool.Put(resource)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.sPool.Destroy(resource)
 		}
 	}()
 	sctx := resource.(sessionctx.Context)
