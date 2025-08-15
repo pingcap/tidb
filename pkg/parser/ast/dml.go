@@ -3061,6 +3061,7 @@ const (
 	ShowSessionStates
 	ShowCreateResourceGroup
 	ShowImportJobs
+	ShowImportGroups
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
@@ -3115,6 +3116,8 @@ type ShowStmt struct {
 	ShowProfileTypes []int  // Used for `SHOW PROFILE` syntax
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
+
+	ShowGroupKey string // Used for `SHOW IMPORT GROUP <GROUP_KEY>` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
 
@@ -3335,6 +3338,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlainf("%d", *n.ImportJobID)
 		} else {
 			ctx.WriteKeyWord("IMPORT JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
+	case ShowImportGroups:
+		if n.ShowGroupKey != "" {
+			ctx.WriteKeyWord("IMPORT GROUP ")
+			ctx.WriteString(n.ShowGroupKey)
+		} else {
+			ctx.WriteKeyWord("IMPORT GROUPS")
 			restoreShowLikeOrWhereOpt()
 		}
 	case ShowDistributionJobs:

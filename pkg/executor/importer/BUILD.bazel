@@ -70,6 +70,7 @@ go_library(
         "//pkg/util/filter",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/naming",
         "//pkg/util/promutil",
         "//pkg/util/sem",
         "//pkg/util/sqlexec",
