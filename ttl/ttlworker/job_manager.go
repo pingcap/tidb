@@ -447,7 +447,41 @@ j:
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
+<<<<<<< HEAD:ttl/ttlworker/job_manager.go
 	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
+=======
+	tz, err := se.GlobalTimeZone(m.ctx)
+	if err != nil {
+		terror.Log(err)
+	} else {
+		now = now.In(tz)
+	}
+
+	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
+	// never be cancelled.
+	jobTables := m.readyForLockHBTimeoutJobTables(now)
+	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
+	// when the heart beat is not sent
+	for _, table := range jobTables {
+		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
+		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
+			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
+		}
+	}
+
+	cancelJobs := false
+	cancelReason := ""
+	switch {
+	case !variable.EnableTTLJob.Load():
+		cancelJobs = true
+		cancelReason = "tidb_ttl_job_enable turned off"
+	case !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now):
+		cancelJobs = true
+		cancelReason = "out of TTL job schedule window"
+	}
+
+	if cancelJobs {
+>>>>>>> afe8a09e928 (ttl: cancel the hearbeat timeout job after disable the TTL (#57452)):pkg/ttl/ttlworker/job_manager.go
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
 				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id))
@@ -487,6 +521,7 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		}
 		m.removeJob(job)
 	}
+<<<<<<< HEAD:ttl/ttlworker/job_manager.go
 
 	// don't lock job if there's no free scan workers in local
 	// it's a mechanism to avoid too many scan tasks waiting in the ttl_tasks table.
@@ -508,6 +543,8 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 			logutil.Logger(m.ctx).Warn("fail to create new job", zap.Error(err))
 		}
 	}
+=======
+>>>>>>> afe8a09e928 (ttl: cancel the hearbeat timeout job after disable the TTL (#57452)):pkg/ttl/ttlworker/job_manager.go
 }
 
 func (m *JobManager) localJobs() []*ttlJob {
