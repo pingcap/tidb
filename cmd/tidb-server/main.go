@@ -922,12 +922,12 @@ func setupTracing() {
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
-	ddl.CloseOwnerManager()
+	ddl.CloseOwnerManager(storage)
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
-	if keyspace.IsRunningOnUser() {
+	if kv.IsUserKS(storage) {
 		err = kvstore.GetSystemStorage().Close()
 		terror.Log(errors.Annotate(err, "close system storage"))
 	}

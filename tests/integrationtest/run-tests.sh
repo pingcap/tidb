@@ -220,6 +220,7 @@ function start_tidb_server()
         config_file="disable_new_collation.toml"
     fi
     echo "start tidb-server, log file: $mysql_tester_log"
+    $tidb_server -V
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
         SERVER_PID=$!
