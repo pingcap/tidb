@@ -286,23 +286,21 @@ func (p *WorkerPool[T, R]) Name() string {
 	return p.name
 }
 
-// ReleaseAndWait releases the pool and wait for complete.
-func (p *WorkerPool[T, R]) ReleaseAndWait() {
-	close(p.quitChan)
-	p.Release()
-	p.Wait()
-}
-
-// Wait waits for all workers to complete.
-func (p *WorkerPool[T, R]) Wait() {
-	p.wg.Wait()
-}
-
-// Release releases the pool.
-func (p *WorkerPool[T, R]) Release() {
+// CloseAndWait manually closes the pool and wait for complete.
+// It's used in test only.
+func (p *WorkerPool[T, R]) CloseAndWait() {
 	if p.ctx != nil {
 		p.ctx.Cancel()
 	}
+	close(p.quitChan)
+	p.Release()
+}
+
+// Wait waits the pool to be released.
+func (p *WorkerPool[T, R]) Release() {
+	// First wait waits for all workers to complete.
+	p.wg.Wait()
+
 	if p.resChan != nil {
 		close(p.resChan)
 		p.resChan = nil

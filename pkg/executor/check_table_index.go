@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -279,22 +280,22 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.Ctx().GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
-	opCtx := poolutil.NewContext(ctx)
-	workerPool := workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
-		poolutil.CheckTable, 3, e.createWorker)
-
 	ch := make(chan checkIndexTask)
-	workerPool.SetTaskReceiver(ch)
-	workerPool.Start(opCtx)
+	dc := operator.NewSimpleDataChannel[checkIndexTask](ch)
+
+	opCtx := poolutil.NewContext(ctx)
+	op := operator.NewAsyncOperator(opCtx,
+		workerpool.NewWorkerPool[checkIndexTask]("checkIndex",
+			poolutil.CheckTable, 3, e.createWorker))
+	op.SetSource(dc)
+	op.Open()
 
 	for i := range e.indexInfos {
 		ch <- checkIndexTask{indexOffset: i}
 	}
 	close(ch)
 
-	workerPool.Wait()
-	workerPool.Release()
-	return opCtx.OperatorErr()
+	return op.Close()
 }
 
 func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, workerpool.None] {
