@@ -148,17 +148,8 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		)
 	}
 
-<<<<<<< HEAD
-	taskManager, err := storage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
-=======
 	return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
-		err = importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
->>>>>>> 9cd2b038332 (dxf/crossks: check by inner fields not global var and make crossks real tikvtest work (#62918))
+		return importer.VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
 			func() (*local.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},

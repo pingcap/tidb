@@ -23,11 +23,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/config"
-=======
-	"github.com/pingcap/failpoint"
->>>>>>> 9cd2b038332 (dxf/crossks: check by inner fields not global var and make crossks real tikvtest work (#62918))
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
