@@ -249,7 +249,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 	tk := testkit.NewTestKit(t, store)
 	// set it to default value.
 	tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", vardef.DefInnodbLockWaitTimeout))
-	tk.PrepareDB("test")
+	tk.MustExec("use test")
 
 	if !option.retainData {
 		tk.MustExec("delete from mysql.tidb_global_task;")

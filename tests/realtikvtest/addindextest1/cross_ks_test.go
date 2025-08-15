@@ -39,7 +39,7 @@ func TestAddIndexOnSystemTable(t *testing.T) {
 	userStore := runtimes["keyspace1"].Store
 	// submit add index sql on user keyspace
 	tk := testkit.NewTestKit(t, userStore)
-	tk.MustExec("use test")
+	tk.PrepareDB("crossks")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t values (1, 2);")
 	tk.MustExec("alter table t add index idx_a (a);")
