@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -53,13 +52,8 @@ func TestTaskTable(t *testing.T) {
 	_, err := gm.CreateTask(ctx, "key1", "test", "", 999, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
 
-	bak := *config.GetGlobalConfig()
-	t.Cleanup(func() {
-		config.StoreGlobalConfig(&bak)
-	})
-	config.GetGlobalConfig().KeyspaceName = "test_keyspace"
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
-	id, err := gm.CreateTask(ctx, "key1", "test", "", 4, "aaa", 12, proto.ExtraParams{ManualRecovery: true}, []byte("testmeta"))
+	id, err := gm.CreateTask(ctx, "key1", "test", "test_keyspace", 4, "aaa", 12, proto.ExtraParams{ManualRecovery: true}, []byte("testmeta"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
