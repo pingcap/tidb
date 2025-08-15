@@ -15,6 +15,7 @@
 package gctuner
 
 import (
+	"os"
 	"runtime"
 	"runtime/debug"
 	"sync/atomic"
@@ -30,6 +31,10 @@ type testState struct {
 }
 
 func TestFinalizer(t *testing.T) {
+	origValue := os.Getenv("GO_GC_TUNER_ENABLED")
+	defer os.Setenv("GO_GC_TUNER_ENABLED", origValue)
+	os.Setenv("GO_GC_TUNER_ENABLED", "1")
+
 	require.True(t, intest.InTest)
 	debug.SetGCPercent(1000)
 	maxCount := int32(8)
