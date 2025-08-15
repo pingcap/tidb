@@ -237,6 +237,7 @@ func WithRetryV2[T any](
 		allErrors = multierr.Append(allErrors, err)
 		select {
 		case <-ctx.Done():
+			// allErrors must not be `nil` here, so ignore the context error.
 			return *new(T), allErrors
 		case <-time.After(backoffer.NextBackoff(err)):
 		}
