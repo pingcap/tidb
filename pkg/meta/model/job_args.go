@@ -1809,3 +1809,21 @@ func (a *RefreshMetaArgs) decodeV1(job *Job) error {
 func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
 	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
 }
+
+// AlterEngineAttributeArgs is the arguments for alter table placements ddl job.
+type AlterEngineAttributeArgs struct {
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+}
+
+func (a *AlterEngineAttributeArgs) getArgsV1(*Job) []any {
+	return []any{a.EngineAttribute}
+}
+
+func (a *AlterEngineAttributeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.EngineAttribute))
+}
+
+// GetAlterEngineAttributeArgs gets the args for alter table placements ddl job.
+func GetAlterEngineAttributeArgs(job *Job) (*AlterEngineAttributeArgs, error) {
+	return getOrDecodeArgs[*AlterEngineAttributeArgs](&AlterEngineAttributeArgs{}, job)
+}

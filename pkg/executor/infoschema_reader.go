@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -705,6 +706,10 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		rowCount, avgRowLength, dataLength, indexLength := cache.TableRowStatsCache.EstimateDataLength(table)
 
+		var storageClass any
+		if kerneltype.IsNextGen() {
+			storageClass = string(table.StorageClassTier)
+		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.O,              // TABLE_SCHEMA
@@ -732,6 +737,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
 			table.Mode.String(),   // TIDB_TABLE_MODE
+			storageClass,          // TIDB_STORAGE_CLASS
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -763,6 +769,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
 			nil,                   // TIDB_TABLE_MODE
+			nil,                   // TIDB_STORAGE_CLASS
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -868,6 +875,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 					nil,                   // TIDB_TABLE_MODE
+					nil,                   // TIDB_STORAGE_CLASS
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1338,6 +1346,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				nil,                   // TABLESPACE_NAME
 				nil,                   // TIDB_PARTITION_ID
 				nil,                   // TIDB_PLACEMENT_POLICY_NAME
+				nil,                   // TIDB_STORAGE_CLASS
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
@@ -1404,6 +1413,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if pi.PlacementPolicyRef != nil {
 					policyName = pi.PlacementPolicyRef.Name.O
 				}
+				var storageClass any
+				if kerneltype.IsNextGen() {
+					storageClass = string(pi.StorageClassTier)
+				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.O,              // TABLE_SCHEMA
@@ -1432,6 +1445,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					nil,                   // TABLESPACE_NAME
 					pi.ID,                 // TIDB_PARTITION_ID
 					policyName,            // TIDB_PLACEMENT_POLICY_NAME
+					storageClass,          // TIDB_STORAGE_CLASS
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
