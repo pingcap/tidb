@@ -58,7 +58,7 @@ var (
 	_ base.PhysicalPlan = &physicalop.PhysicalTableScan{}
 	_ base.PhysicalPlan = &PhysicalTableReader{}
 	_ base.PhysicalPlan = &PhysicalIndexReader{}
-	_ base.PhysicalPlan = &PhysicalIndexLookUpReader{}
+	_ base.PhysicalPlan = &physicalop.PhysicalIndexLookUpReader{}
 	_ base.PhysicalPlan = &PhysicalIndexMergeReader{}
 	_ base.PhysicalPlan = &physicalop.PhysicalHashAgg{}
 	_ base.PhysicalPlan = &physicalop.PhysicalStreamAgg{}
@@ -168,7 +168,7 @@ func (p *PhysicalTableReader) GetTableScan() (*physicalop.PhysicalTableScan, err
 
 // GetAvgRowSize return the average row size of this plan.
 func (p *PhysicalTableReader) GetAvgRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 }
 
 // MemoryUsage return the memory usage of PhysicalTableReader
@@ -239,14 +239,14 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	// TablePlans are actually the flattened plans in tablePlan, so can't copy them, just need to extract from tablePlan
-	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
+	cloned.TablePlans = physicalop.FlattenPushDownPlan(cloned.tablePlan)
 	return cloned, nil
 }
 
 // SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 	p.tablePlan = children[0]
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -269,7 +269,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 // AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
-	appendChildCandidate(p, p.tablePlan, op)
+	physicalop.AppendChildCandidate(p, p.tablePlan, op)
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -299,7 +299,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	if cloned.indexPlan, err = p.indexPlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
-	if cloned.IndexPlans, err = clonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
+	if cloned.IndexPlans, err = physicalop.ClonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
 		return nil, err
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
@@ -309,7 +309,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 // SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
-		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
+		p.IndexPlans = physicalop.FlattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
 		case *physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg, *physicalop.PhysicalProjection:
 			p.PhysicalSchemaProducer.SetSchema(p.indexPlan.Schema())
@@ -348,7 +348,7 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
-		appendChildCandidate(p, p.indexPlan, op)
+		physicalop.AppendChildCandidate(p, p.indexPlan, op)
 	}
 }
 
@@ -376,146 +376,6 @@ func (p *PhysicalIndexReader) MemoryUsage() (sum int64) {
 func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
 	is := p.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 	loadTableStats(ctx, is.Table, is.PhysicalTableID)
-}
-
-// PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
-type PhysicalIndexLookUpReader struct {
-	physicalop.PhysicalSchemaProducer
-
-	indexPlan base.PhysicalPlan
-	tablePlan base.PhysicalPlan
-	// IndexPlans flats the indexPlan to construct executor pb.
-	IndexPlans []base.PhysicalPlan
-	// TablePlans flats the tablePlan to construct executor pb.
-	TablePlans []base.PhysicalPlan
-	Paging     bool
-
-	ExtraHandleCol *expression.Column
-	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
-	PushedLimit *physicalop.PushedDownLimit
-
-	CommonHandleCols []*expression.Column
-
-	// Used by partition table.
-	PlanPartInfo *physicalop.PhysPlanPartInfo
-
-	// required by cost calculation
-	expectedCnt uint64
-	keepOrder   bool
-}
-
-// Clone implements op.PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalIndexLookUpReader)
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.PhysicalSchemaProducer = *base
-	if cloned.IndexPlans, err = clonePhysicalPlan(newCtx, p.IndexPlans); err != nil {
-		return nil, err
-	}
-	if cloned.TablePlans, err = clonePhysicalPlan(newCtx, p.TablePlans); err != nil {
-		return nil, err
-	}
-	if cloned.indexPlan, err = p.indexPlan.Clone(newCtx); err != nil {
-		return nil, err
-	}
-	if cloned.tablePlan, err = p.tablePlan.Clone(newCtx); err != nil {
-		return nil, err
-	}
-	if p.ExtraHandleCol != nil {
-		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
-	}
-	if p.PushedLimit != nil {
-		cloned.PushedLimit = p.PushedLimit.Clone()
-	}
-	if len(p.CommonHandleCols) != 0 {
-		cloned.CommonHandleCols = make([]*expression.Column, 0, len(p.CommonHandleCols))
-		for _, col := range p.CommonHandleCols {
-			cloned.CommonHandleCols = append(cloned.CommonHandleCols, col.Clone().(*expression.Column))
-		}
-	}
-	return cloned, nil
-}
-
-// ExtractCorrelatedCols implements op.PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
-	for _, child := range p.TablePlans {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	for _, child := range p.IndexPlans {
-		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
-	}
-	return corCols
-}
-
-// GetIndexNetDataSize return the estimated total size in bytes via network transfer.
-func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
-}
-
-// GetAvgTableRowSize return the average row size of each final row.
-func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.indexPlan != nil {
-		rp.Children = append(rp.Children, p.indexPlan.BuildPlanTrace())
-	}
-	if p.tablePlan != nil {
-		rp.Children = append(rp.Children, p.tablePlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	if p.indexPlan != nil {
-		appendChildCandidate(p, p.indexPlan, op)
-	}
-	if p.tablePlan != nil {
-		appendChildCandidate(p, p.tablePlan, op)
-	}
-}
-
-// MemoryUsage return the memory usage of PhysicalIndexLookUpReader
-func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfBool*2 + p.PlanPartInfo.MemoryUsage() + size.SizeOfUint64
-
-	if p.indexPlan != nil {
-		sum += p.indexPlan.MemoryUsage()
-	}
-	if p.tablePlan != nil {
-		sum += p.tablePlan.MemoryUsage()
-	}
-	if p.ExtraHandleCol != nil {
-		sum += p.ExtraHandleCol.MemoryUsage()
-	}
-	if p.PushedLimit != nil {
-		sum += p.PushedLimit.MemoryUsage()
-	}
-
-	// since IndexPlans and TablePlans are the flats of indexPlan and tablePlan, so we don't count it
-	for _, col := range p.CommonHandleCols {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
-// LoadTableStats preloads the stats data for the physical table
-func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*physicalop.PhysicalTableScan)
-	loadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
@@ -552,7 +412,7 @@ type PhysicalIndexMergeReader struct {
 
 // GetAvgTableRowSize return the average row size of table plan.
 func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
+	return cardinality.GetAvgRowSize(p.SCtx(), physicalop.GetTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -587,10 +447,10 @@ func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.BasePhysicalPlan.AppendChildCandidate(op)
 	if p.tablePlan != nil {
-		appendChildCandidate(p, p.tablePlan, op)
+		physicalop.AppendChildCandidate(p, p.tablePlan, op)
 	}
 	for _, partialPlan := range p.partialPlans {
-		appendChildCandidate(p, partialPlan, op)
+		physicalop.AppendChildCandidate(p, partialPlan, op)
 	}
 }
 
@@ -854,10 +714,10 @@ func CollectPlanStatsVersion(plan base.PhysicalPlan, statsInfos map[string]uint6
 		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
 	case *PhysicalIndexReader:
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
-	case *PhysicalIndexLookUpReader:
+	case *physicalop.PhysicalIndexLookUpReader:
 		// For index loop up, only the indexPlan is necessary,
 		// because they use the same stats and we do not set the stats info for tablePlan.
-		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
+		statsInfos = CollectPlanStatsVersion(copPlan.IndexPlan, statsInfos)
 	case *physicalop.PhysicalIndexScan:
 		statsInfos[copPlan.Table.Name.O] = copPlan.StatsInfo().StatsVersion
 	case *physicalop.PhysicalTableScan:
@@ -1065,18 +925,4 @@ func (p *PhysicalCTEStorage) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 		return nil, err
 	}
 	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
-}
-
-func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
-	candidate := &tracing.CandidatePlanTrace{
-		PlanTrace: &tracing.PlanTrace{
-			ID:          pp.ID(),
-			TP:          pp.TP(),
-			ExplainInfo: pp.ExplainInfo(),
-			// TODO: trace the cost
-		},
-	}
-	op.AppendCandidate(candidate)
-	pp.AppendChildCandidate(op)
-	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }

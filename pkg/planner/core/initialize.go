@@ -55,15 +55,6 @@ func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
 	return &p
 }
 
-// Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
-	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
-	p.SetSchema(p.tablePlan.Schema())
-	return &p
-}
-
 // Init initializes PhysicalIndexMergeReader.
 func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexMergeReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexMerge, &p, offset)
@@ -79,11 +70,11 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
-		tempPlans := flattenPushDownPlan(partialPlan)
+		tempPlans := physicalop.FlattenPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
 		p.SetSchema(p.tablePlan.Schema())
 		p.HandleCols = p.TablePlans[0].(*physicalop.PhysicalTableScan).HandleCols
 	} else {
@@ -148,7 +139,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.tablePlan == nil {
 		return &p
 	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.TablePlans = physicalop.FlattenPushDownPlan(p.tablePlan)
 	p.SetSchema(p.tablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
@@ -189,25 +180,6 @@ func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
-}
-
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
-	plans = append(plans, plan)
-	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
-	}
-	return plans
-}
-
-// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
-	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
-	for i := range len(plans) / 2 {
-		j := len(plans) - i - 1
-		plans[i], plans[j] = plans[j], plans[i]
-	}
-	return plans
 }
 
 // Init only assigns type and context.
