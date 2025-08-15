@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func runPredicatePushdownTestData(t *testing.T, tk *testkit.TestKit, name string) {
+func runPredicatePushdownTestData(t *testing.T, tk *testkit.TestKit, cascades, name string) {
 	var input []string
 	var output []struct {
 		SQL     string
@@ -31,7 +31,7 @@ func runPredicatePushdownTestData(t *testing.T, tk *testkit.TestKit, name string
 		Warning []string
 	}
 	predicatePushdownSuiteData := GetPredicatePushdownSuiteData()
-	predicatePushdownSuiteData.LoadTestCasesByName(name, t, &input, &output)
+	predicatePushdownSuiteData.LoadTestCasesByName(name, t, &input, &output, cascades)
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		if strings.Contains(input[i], "set") {
@@ -49,10 +49,11 @@ func runPredicatePushdownTestData(t *testing.T, tk *testkit.TestKit, name string
 }
 
 func TestConstantPropagateWithCollation(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec("use test")
-		testKit.MustExec("create table t (id int primary key, name varchar(20));")
-
-		runPredicatePushdownTestData(t, testKit, "TestConstantPropagateWithCollation")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t (id int primary key, name varchar(20));")
+		tk.MustExec(`create table foo(a int, b int, c int, primary key(a));`)
+		tk.MustExec(`create table bar(a int, b int, c int, primary key(a));`)
+		runPredicatePushdownTestData(t, tk, cascades, "TestConstantPropagateWithCollation")
 	})
 }

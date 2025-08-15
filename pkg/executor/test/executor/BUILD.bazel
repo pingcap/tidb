@@ -31,6 +31,7 @@ go_test(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/session",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
