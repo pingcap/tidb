@@ -317,7 +317,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexMergeReader(v)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
-	case *plannercore.PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		return b.buildCTE(v)
 	case *physicalop.PhysicalCTETable:
 		return b.buildCTETableReader(v)
@@ -5771,7 +5771,7 @@ func (b *executorBuilder) buildTableSample(v *physicalop.PhysicalTableSample) *T
 	return e
 }
 
-func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
+func (b *executorBuilder) buildCTE(v *physicalop.PhysicalCTE) exec.Executor {
 	if b.Ti != nil {
 		b.Ti.UseNonRecursive = true
 	}

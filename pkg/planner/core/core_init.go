@@ -130,18 +130,19 @@ func init() {
 	utilfuncp.GetCost4PhysicalApply = getCost4PhysicalApply
 	utilfuncp.GetPlanCostVer14PhysicalApply = getPlanCostVer14PhysicalApply
 	utilfuncp.GetPlanCostVer24PhysicalApply = getPlanCostVer24PhysicalApply
-
 	// for physical window
 	utilfuncp.Attach2Task4PhysicalWindow = attach2Task4PhysicalWindow
 	// for physical sequence
 	utilfuncp.Attach2Task4PhysicalSequence = attach2Task4PhysicalSequence
-
 	// for physicalIndexScan.
 	utilfuncp.GetPlanCostVer14PhysicalIndexScan = getPlanCostVer14PhysicalIndexScan
 	utilfuncp.GetPlanCostVer24PhysicalIndexScan = getPlanCostVer24PhysicalIndexScan
 	// for physical PhysicalTableScan
 	utilfuncp.GetPlanCostVer14PhysicalTableScan = getPlanCostVer14PhysicalTableScan
 	utilfuncp.GetPlanCostVer24PhysicalTableScan = getPlanCostVer24PhysicalTableScan
+	// for physical cte
+	utilfuncp.GetPlanCostVer24PhysicalCTE = getPlanCostVer24PhysicalCTE
+	utilfuncp.Attach2Task4PhysicalCTEStorage = attach2Task4PhysicalCTEStorage
 
 	utilfuncp.DoOptimize = doOptimize
 	utilfuncp.GetPlanCost = getPlanCost

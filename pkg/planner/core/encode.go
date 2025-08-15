@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -63,7 +64,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	encodeFlatPlanTree(flat.Main, 0, &buf)
 	for _, cte := range flat.CTEs {
 		fop := cte[0]
-		cteDef := cte[0].Origin.(*CTEDefinition)
+		cteDef := cte[0].Origin.(*physicalop.CTEDefinition)
 		id := cteDef.CTE.IDForStorage
 		tp := plancodec.TypeCTEDefinition
 		taskTypeInfo := plancodec.EncodeTaskType(fop.IsRoot, fop.StoreType)
@@ -148,7 +149,7 @@ type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
 
-	ctes []*PhysicalCTE
+	ctes []*physicalop.PhysicalCTE
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
@@ -186,7 +187,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 	}
 	explainedCTEPlan := make(map[int]struct{})
 	for i := range pn.ctes {
-		x := (*CTEDefinition)(pn.ctes[i])
+		x := (*physicalop.CTEDefinition)(pn.ctes[i])
 		// skip if the CTE has been explained, the same CTE has same IDForStorage
 		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
 			continue
@@ -248,7 +249,7 @@ func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, 
 		if copPlan.tablePlan != nil {
 			pn.encodePlan(copPlan.tablePlan, false, store, depth)
 		}
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		pn.ctes = append(pn.ctes, copPlan)
 	}
 }

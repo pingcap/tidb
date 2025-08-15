@@ -382,7 +382,7 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 			str += ")"
 		}
 		str += ")"
-	case *PhysicalCTE:
+	case *physicalop.PhysicalCTE:
 		str = "CTEReader("
 		str += fmt.Sprintf("%v", x.CTE.IDForStorage)
 		str += ")"
