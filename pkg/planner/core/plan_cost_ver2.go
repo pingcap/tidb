@@ -925,8 +925,9 @@ func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *
 	return p.planCostVer2, nil
 }
 
-// GetPlanCostVer2 implements PhysicalPlan interface.
-func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+// getPlanCostVer24PhysicalCTE implements PhysicalPlan interface.
+func getPlanCostVer24PhysicalCTE(pp base.PhysicalPlan, taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	p := pp.(*physicalop.PhysicalCTE)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}

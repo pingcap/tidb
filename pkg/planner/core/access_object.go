@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,33 +102,6 @@ func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 	pb.AccessObjects = []*tipb.AccessObject{
 		{
 			AccessObject: &tipb.AccessObject_DynamicPartitionObjects{DynamicPartitionObjects: &pbObjs},
-		},
-	}
-}
-
-// OtherAccessObject represents other kinds of access.
-type OtherAccessObject string
-
-func (o OtherAccessObject) String() string {
-	return string(o)
-}
-
-// NormalizedString implements AccessObject.
-func (o OtherAccessObject) NormalizedString() string {
-	return o.String()
-}
-
-// SetIntoPB implements AccessObject.
-func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
-	if pb == nil {
-		return
-	}
-	if o == "" {
-		return
-	}
-	pb.AccessObjects = []*tipb.AccessObject{
-		{
-			AccessObject: &tipb.AccessObject_OtherObject{OtherObject: string(o)},
 		},
 	}
 }
@@ -253,7 +225,7 @@ func (p *PhysicalTableReader) AccessObject(sctx base.PlanContext) base.AccessObj
 	if len(p.TableScanAndPartitionInfos) == 0 {
 		ts, ok := p.TablePlans[0].(*physicalop.PhysicalTableScan)
 		if !ok {
-			return OtherAccessObject("")
+			return access.OtherAccessObject("")
 		}
 		asName := ""
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
@@ -340,12 +312,4 @@ func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.Acce
 		return DynamicPartitionAccessObjects(nil)
 	}
 	return DynamicPartitionAccessObjects{res}
-}
-
-// AccessObject implements DataAccesser interface.
-func (p *PhysicalCTE) AccessObject() base.AccessObject {
-	if p.cteName == p.cteAsName {
-		return OtherAccessObject(fmt.Sprintf("CTE:%s", p.cteName.L))
-	}
-	return OtherAccessObject(fmt.Sprintf("CTE:%s AS %s", p.cteName.L, p.cteAsName.L))
 }
