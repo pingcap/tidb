@@ -78,8 +78,8 @@ type mergeMinimalTask struct {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "mergeSortOperator", "RecoverArgs", nil, false
+func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
+	return "mergeSortOperator", "mergeMinimalTask", false
 }
 
 // MergeOperator is the operator that merges overlapping files.

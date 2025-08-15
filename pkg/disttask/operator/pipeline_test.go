@@ -75,8 +75,8 @@ type strCnt struct {
 
 type stringTask string
 
-func (stringTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
-	return "", "", nil, false
+func (stringTask) RecoverArgs() (metricsLabel string, funcInfo string, quit bool) {
+	return "", "", false
 }
 
 func makeLower(ctx *util.Context) *simpleOperator[stringTask, stringTask] {

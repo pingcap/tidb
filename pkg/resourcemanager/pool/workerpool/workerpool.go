@@ -32,7 +32,7 @@ import (
 // the task.
 type TaskMayPanic interface {
 	// RecoverArgs returns the argument for pkg/util.Recover function of this task.
-	RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool)
+	RecoverArgs() (metricsLabel string, funcInfo string, quit bool)
 }
 
 // Worker is worker interface.
@@ -140,15 +140,12 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 		p.runningTask.Add(-1)
 	}()
 
-	label, funcInfo, recoverFn, quit := task.RecoverArgs()
-	wrapFn := func() {
+	label, funcInfo, quit := task.RecoverArgs()
+	recoverFn := func() {
 		p.ctx.OnError(errors.Errorf("task panic: %s, func info: %s", label, funcInfo))
-		if recoverFn != nil {
-			recoverFn()
-		}
 	}
 
-	defer tidbutil.Recover(label, funcInfo, wrapFn, quit)
+	defer tidbutil.Recover(label, funcInfo, recoverFn, quit)
 
 	sendResult := func(r R) {
 		if p.resChan == nil {
