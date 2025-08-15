@@ -466,28 +466,59 @@ func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN,
 	if data == nil && len(topNRows) == 0 {
 		return nil, nil, nil
 	}
-	pbTopN := make([]*tipb.CMSketchTopN, 0, len(topNRows))
-	for _, row := range topNRows {
-		data := make([]byte, len(row.GetBytes(0)))
-		copy(data, row.GetBytes(0))
-		pbTopN = append(pbTopN, &tipb.CMSketchTopN{
-			Data:  data,
-			Count: row.GetUint64(1),
-		})
-	}
 	if len(data) == 0 {
-		return nil, TopNFromProto(pbTopN), nil
+		return nil, DecodeTopN(topNRows), nil
 	}
-	p := &tipb.CMSketch{}
-	err := p.Unmarshal(data)
+	cm, err := DecodeCMSketch(data)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	p.TopN = pbTopN
-	cm, topN := CMSketchAndTopNFromProto(p)
-	return cm, topN, nil
+	return cm, DecodeTopN(topNRows), nil
 }
 
+<<<<<<< HEAD:statistics/cmsketch.go
+=======
+// DecodeTopN decodes a TopN from the given byte slice.
+func DecodeTopN(topNRows []chunk.Row) *TopN {
+	if len(topNRows) == 0 {
+		return nil
+	}
+	topN := NewTopN(len(topNRows))
+	for _, row := range topNRows {
+		data := make([]byte, len(row.GetBytes(0)))
+		copy(data, row.GetBytes(0))
+		topN.AppendTopN(data, row.GetUint64(1))
+	}
+	topN.Sort()
+	return topN
+}
+
+// DecodeCMSketch encodes the given CMSketch to byte slice.
+func DecodeCMSketch(data []byte) (*CMSketch, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	protoSketch := &tipb.CMSketch{}
+	err := protoSketch.Unmarshal(data)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(protoSketch.Rows) == 0 {
+		return nil, nil
+	}
+	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
+	for i, row := range protoSketch.Rows {
+		c.count = 0
+		for j, counter := range row.Counters {
+			c.table[i][j] = counter
+			c.count = c.count + uint64(counter)
+		}
+	}
+	c.defaultValue = protoSketch.DefaultValue
+	return c, nil
+}
+
+>>>>>>> f69f37a9fb5 (statistics: avoid unnecessary copy at CMSketchAndTopNFromProto (#47598)):pkg/statistics/cmsketch.go
 // TotalCount returns the total count in the sketch, it is only used for test.
 func (c *CMSketch) TotalCount() uint64 {
 	if c == nil {
