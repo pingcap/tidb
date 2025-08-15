@@ -3956,6 +3956,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 }
 
 func (e *memtableRetriever) setDataFromSchemataExtensions(ctx sessionctx.Context) (err error) {
+	const readOnly = "READ ONLY=1"
 	checker := privilege.GetPrivilegeManager(ctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaSchemataExtractor)
 	if !ok {
@@ -3976,12 +3977,10 @@ func (e *memtableRetriever) setDataFromSchemataExtensions(ctx sessionctx.Context
 			infoschema.CatalogVal, // CATALOG_NAME
 			schema.Name.O,         // SCHEMA_NAME
 		)
-		// todo:
-		//if schema.ReadOnly {
-		//	record = append(record, types.NewStringDatum("READ ONLY=1"))
-		//}
+		if schema.ReadOnly {
+			record = append(record, types.NewStringDatum(readOnly))
+		}
 		rows = append(rows, record)
-		e.recordMemoryConsume(record)
 	}
 	e.rows = rows
 	return

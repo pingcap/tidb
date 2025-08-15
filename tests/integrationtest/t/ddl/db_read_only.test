@@ -1,0 +1,9 @@
+create database if not exists test;
+
+# test information_schema.schemata_extensions
+desc information_schema.schemata_extensions;
+select * from information_schema.schemata_extensions;
+alter schema test read only 1;
+select * from information_schema.schemata_extensions;
+alter schema test read only 0;
+select * from information_schema.schemata_extensions;
