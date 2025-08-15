@@ -19,9 +19,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
 	tidbutils "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	tidbutils "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+>>>>>>> d0d24aeef42 (br, lightning: call memory hook init in main() (#49843))
 	"github.com/spf13/cobra"
 )
 
@@ -159,6 +166,7 @@ func Init(cmd *cobra.Command) (err error) {
 			return
 		}
 		log.ReplaceGlobals(lg, p)
+		memory.InitMemoryHook()
 
 		redactLog, e := cmd.Flags().GetBool(FlagRedactLog)
 		if e != nil {
