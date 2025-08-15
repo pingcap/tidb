@@ -563,6 +563,9 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
+		if index.State != model.StatePublic {
+			continue
+		}
 		nonUnique := "1"
 		if index.Unique {
 			nonUnique = "0"
