@@ -1507,7 +1507,7 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 
 	testKit.MustExec("analyze table t with 5 buckets, 0 topn")
 
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(table.Meta())
 	sctx := testKit.Session()
@@ -1564,11 +1564,11 @@ func TestLastBucketEndValueHeuristic(t *testing.T) {
 	// Test index estimation as well
 	idx := statsTbl.GetIdx(table.Meta().Indices[0].ID)
 	if idx != nil {
-		idxEnhancedCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11))
+		idxEnhancedCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(11, 11))
 		require.NoError(t, err)
 		require.InDelta(t, 100.09, idxEnhancedCount, 0.1, "Index enhanced count should be approximately 100.09")
 
-		idxOtherCount, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3))
+		idxOtherCount, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, table.Meta().Indices[0].ID, getRange(3, 3))
 		require.NoError(t, err)
 		require.InDelta(t, 109.99, idxOtherCount, 0.1, "Index other count should be approximately 109.99")
 	}
