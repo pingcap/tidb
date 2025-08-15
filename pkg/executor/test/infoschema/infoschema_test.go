@@ -1151,7 +1151,7 @@ func TestKeyspaceMeta(t *testing.T) {
 		Config: cfg,
 	}
 
-	store := testkit.CreateMockStore(t, mockstore.WithKeyspaceMeta(keyspaceMeta))
+	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(keyspaceMeta))
 	tk := testkit.NewTestKit(t, store)
 
 	rows := tk.MustQuery("select * from information_schema.keyspace_meta").Rows()
