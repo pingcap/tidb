@@ -169,6 +169,12 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 	}
 
 	var mockBackend BackendCtx
+	// Wrap cpOp for failpoint.Call: reflect can't take a zero (nil interface) argument.
+	fpCpOp := cpOp
+	if fpCpOp == nil {
+		var nilMgr *CheckpointManager
+		fpCpOp = nilMgr // typed-nil that implements CheckpointOperator
+	}
 	failpoint.InjectCall("mockNewBackendContext", b.job, cpOp, &mockBackend)
 	if mockBackend != nil {
 		BackendCounterForTest.Inc()
