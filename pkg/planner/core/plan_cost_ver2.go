@@ -646,7 +646,8 @@ func getPlanCostVer24PhysicalMergeJoin(pp base.PhysicalPlan, taskType property.T
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := costusage.SumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
-		filterCostVer2(option, rightRows, p.RightConditions, cpuFactor))
+		filterCostVer2(option, rightRows, p.RightConditions, cpuFactor),
+		filterCostVer2(option, leftRows+rightRows, p.OtherConditions, cpuFactor)) // OtherConditions are applied to both sides
 	groupCost := costusage.SumCostVer2(groupCostVer2(option, leftRows, cols2Exprs(p.LeftJoinKeys), cpuFactor),
 		groupCostVer2(option, rightRows, cols2Exprs(p.LeftJoinKeys), cpuFactor))
 
