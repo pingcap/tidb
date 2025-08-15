@@ -433,3 +433,16 @@ select space(1), b from issue52198 where b in (1);
 space(1)	b
  	1
 drop table issue52198;
+drop table if exists t;
+set tidb_partition_prune_mode=static;
+CREATE TABLE t (
+a text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+b mediumint(8) unsigned NOT NULL DEFAULT '11075363',
+c tinyblob NOT NULL,
+PRIMARY KEY (b) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+PARTITION BY KEY (b) PARTITIONS 7;
+insert into t values ('a' ,6970066, 'a');
+update t set c = 'AH6' where b in ( 7691699 ,11807884 ,10523838 ,15662349 ,6970066 );
+drop table t;
+set tidb_partition_prune_mode=default;
